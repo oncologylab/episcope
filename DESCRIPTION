@@ -1,0 +1,47 @@
+Package: craftgrn
+Title: CraftGRN: Integrative ATAC-RNA Framework for Condition-Specific Gene Regulatory Networks
+Version: 0.1.2
+Authors@R: c(
+    person("Yaoxiang", "Li", , "yaoxiang@example.com", role = c("aut", "cre")),
+    person("Chunling", "Yi", , "chunling@example.com", role = "aut")
+  )
+Description: CraftGRN provides a reproducible framework for constructing and comparing gene regulatory networks by integrating bulk ATAC-seq footprinting with matched RNA-seq expression data. It implements context-specific enhancer-gene linking, TF-centric and differential GRN analysis, and benchmarking modules. CraftGRN enables systematic exploration of transcriptional regulation under diverse conditions.
+License: GPL (>= 3)
+Imports: 
+    cli,
+    cluster,
+    config,
+    data.table,
+    dplyr,
+    future,
+    future.apply,
+    ggplot2,
+    golem,
+    magrittr,
+    methods,
+    readr,
+    rlang,
+    shiny,
+    tibble,
+    tidyr,
+    yaml
+Suggests: 
+    enrichR,
+    ggraph,
+    ggrepel,
+    gridExtra,
+    igraph,
+    parallelly,
+    pheatmap,
+    progressr,
+    RColorBrewer,
+    rstudioapi,
+    scales,
+    spelling,
+    testthat
+Config/testthat/edition: 3
+Encoding: UTF-8
+Language: en-US
+RoxygenNote: 7.3.3
+URL: https://github.com/oncologylab/craftgrn
+BugReports: https://github.com/oncologylab/craftgrn/issues
