@@ -1,47 +1,44 @@
-episcope — Epigenomic Integration and Cell-State–Specific Gene Regulatory Network Analysis
-=========================================================================================
+episcope — Integrative Multi-Omics Framework for Condition-Specific Gene Regulatory Networks
+===========================================================================================
 
-[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg?style=plastic)](https://github.com/yaoxiangli/episcope)
-[![License](https://img.shields.io/badge/license-MIT-green.svg?style=plastic)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=plastic)](https://github.com/oncologylab/episcope)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=plastic)](https://github.com/oncologylab/episcope/blob/main/LICENSE)
 [![Bioconductor](https://img.shields.io/badge/install%20via-BiocManager-orange.svg?style=plastic)](https://bioconductor.org)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=plastic)](https://github.com/yaoxiangli/episcope/graphs/commit-activity)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=plastic)](https://github.com/oncologylab/episcope/graphs/commit-activity)
 [![publication](https://img.shields.io/badge/Publication-in%20prep-blue.svg?style=plastic)]()
 
 ---
 
 ## Introduction
 
-**episcope** is an R/Bioconductor-style framework for *integrative, reproducible, and cell-state–specific* analysis of chromatin accessibility and transcriptional regulation.  
-It bridges ATAC-seq and RNA-seq data to infer **gene regulatory networks (GRNs)** that are **cell-type– and condition-dependent**, with built-in visualization, delta analysis, and network clustering modules.
+**episcope** is a modular, reproducible framework for building and analyzing **condition-specific gene regulatory networks (GRNs)** through the integration of **chromatin accessibility**, **footprinting**, and **transcriptomic** data.
 
-<img align="right" width=150 src="man/figures/episcope_logo.png">
+It extends the ideas of ATAC-seq footprinting (as in TOBIAS) to full multi-omics GRN modeling, enabling users to:
 
-episcope provides:
+- Load ATAC, footprint, and RNA-seq data from any source  
+- Align and correct footprint signals across conditions  
+- Correlate TF binding and expression to refine assignments  
+- Build regulation priors using GeneHancer, TSS proximity, or Hi-C data  
+- Infer data-specific TF→enhancer→gene networks  
+- Compare and visualize GRNs across multiple conditions or perturbations  
 
-- Unified pipelines for **ATAC-seq**, **RNA-seq**, and **multi-condition delta analyses**
-- Integration of **GeneHancer**, **JASPAR**, and **HOCOMOCO** regulatory priors
-- Automated construction of **TF→enhancer→gene** regulatory graphs
-- Interactive **visNetwork**-based TF-centric and topic-centric subnetworks
-- LDA and Louvain clustering of differential GRNs to identify shared regulatory programs
-- Fully reproducible R package infrastructure compatible with Bioconductor workflows
-
-While developed for **pancreatic ductal adenocarcinoma (PDAC)** nutrient-stress and EMT studies, episcope is broadly applicable to any context combining ATAC-seq and RNA-seq across multiple perturbations or cell types.
+episcope is data- and cell-type–agnostic: it supports **any organism**, **treatment**, or **perturbation**, including large-scale matched ATAC–RNA datasets.
 
 ---
 
 ## Installation
 
-episcope is written as an R package and can be installed directly from GitHub:
+episcope is written in R and available on GitHub.
 
 ```r
 # Using remotes
-remotes::install_github("yaoxiangli/episcope")
+remotes::install_github("oncologylab/episcope")
 
 # or using pak
-pak::pak("yaoxiangli/episcope")
+pak::pak("oncologylab/episcope")
 ```
 
-To install all dependencies (recommended for full functionality):
+Dependencies (Bioconductor and CRAN):
 ```r
 install.packages(c("visNetwork", "igraph", "ggplot2", "data.table", "BiocManager"))
 BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
@@ -51,99 +48,149 @@ BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
 
 ## Usage Overview
 
-All episcope functions are available directly within R.  
-The main workflow follows three stages:
-
-1. **Prepare inputs** — processed ATAC and RNA tables, plus enhancer–gene priors (e.g., GeneHancer ELITE)
-2. **Integrate and model** — compute differential accessibility and expression, correlate features, and build GRNs
-3. **Visualize and interpret** — render interactive networks or topic-based subnetworks for exploratory analysis
-
-Example:
+episcope modules are fully interoperable and can be executed independently or as part of a full pipeline.
 
 ```r
 library(episcope)
 
-# Load ATAC and RNA tables
-atac <- episcope::load_links_table("AsPC1_FBS_vs_0pctFBS_links.csv")
-rna  <- episcope::load_rna_table("AsPC1_FBS_vs_0pctFBS_rna.csv")
+# Example: build GRN from matched ATAC–RNA dataset
+epi_links <- episcope::LoadFootprints("footprints_corrected.bw", "peaks.bed")
+epi_rna   <- episcope::LoadRNA("rna_expression.csv")
 
-# Build condition-specific GRN
-grn <- episcope::compare_links_two_conditions(atac, rna)
+aligned_fp <- episcope::AlignFootprints(epi_links)
+tf_corr    <- episcope::CorrelateFootprintsToTFs(aligned_fp, epi_rna)
 
-# Render TF hub (bi-directional)
-episcope::render_tf_hub_network(
-  comp_csv = "AsPC1_FBS_vs_0pctFBS_delta_links_filtered_lda_K20.csv",
-  input_tf = "CEBPB"
-)
+priors     <- episcope::BuildRegulationPriors(method = "genehancer")
+refined1   <- episcope::RefineByATACCorrelation(priors, epi_links, epi_rna)
+refined2   <- episcope::RefineByFootprintGeneCorrelation(refined1)
 
-# Or Δ-links network
-episcope::render_tf_hub_delta_network(
-  comp_csv = "AsPC1_FBS_vs_0pctFBS_delta_links_filtered_lda_K20.csv",
-  input_tf = "CEBPB"
-)
+grn        <- episcope::BuildBasalNetwork(refined2)
+episcope::ValidateNetwork(grn, perturb_db = "perturbdb.sqlite")
+
+episcope::RenderConditionNetwork(grn, condition = "GlcLow")
+episcope::CompareDifferentialNetworks(grn, conditionA="Ctrl", conditionB="Stress")
 ```
 
 ---
 
-## Major Modules
+## Modules Overview
 
-* [utils_grn_diff.R](R/utils_grn_diff.R): Compute link deltas across conditions  
-* [utils_grn_filter.R](R/utils_grn_filter.R): Filter and normalize link tables  
-* [utils_grn_link_network_tf.R](R/utils_grn_link_network_tf.R): Render TF-centric subnetworks  
-* [utils_grn_link_network_topic.R](R/utils_grn_link_network_topic.R): Render topic-based subnetworks (LDA clusters)  
-* [utils_grn_lda.R](R/utils_grn_lda.R): Topic modeling of differential link matrices  
-* [utils_tobias_overview_loader_simple.R](R/utils_tobias_overview_loader_simple.R): Simplified TOBIAS output integration  
+Each module has its own dedicated **Wiki** page with examples and detailed documentation.
 
 ---
 
-## Example Workflow
+### 🧩 **1. Data Loading**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **LoadFootprints** | Load ATAC-seq peaks and footprint score data from fp-tools or TOBIAS outputs. | [Wiki → LoadFootprints](https://github.com/oncologylab/episcope/wiki/LoadFootprints) |
+| **LoadRNA** | Load and normalize matched RNA-seq data (TPM/FPKM/Counts). | [Wiki → LoadRNA](https://github.com/oncologylab/episcope/wiki/LoadRNA) |
 
-The episcope pipeline typically runs as:
+---
 
-1. **Load preprocessed ATAC and RNA data**
-2. **Compute link deltas** with `compare_links_bulk()`
-3. **Integrate GeneHancer priors** (TF–enhancer–gene)
-4. **Filter edges** by correlation and motif evidence
-5. **Cluster GRNs** with Louvain or LDA
-6. **Visualize** TF- or topic-centric subnetworks interactively
+### ⚙️ **2. Footprint Alignment & Correction**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **AlignFootprints** | Perform data-driven footprint alignment across samples. | [Wiki → AlignFootprints](https://github.com/oncologylab/episcope/wiki/AlignFootprints) |
+| **CorrectFootprints** | Apply signal-based correction to harmonize footprint bias. | [Wiki → CorrectFootprints](https://github.com/oncologylab/episcope/wiki/CorrectFootprints) |
 
-```
-ATAC + RNA  →  Δ-link tables  →  GRN (TF–enhancer–gene)
-                           ↘
-                       visualization & topic analysis
-```
+---
+
+### 🔗 **3. TF Assignment via Correlation**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **CorrelateFootprintsToTFs** | Correlate footprint scores to TF expression to assign footprints to regulators. | [Wiki → CorrelateFootprintsToTFs](https://github.com/oncologylab/episcope/wiki/CorrelateFootprintsToTFs) |
+
+---
+
+### 🧬 **4. Build Regulation Priors**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **BuildRegulationPriors** | Generate TF–gene priors using GeneHancer, ±30kb TSS, or Hi-C data. | [Wiki → BuildRegulationPriors](https://github.com/oncologylab/episcope/wiki/BuildRegulationPriors) |
+
+---
+
+### 🔄 **5. Regulation Refinement**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **RefineByATACCorrelation** | Correlate ATAC peak signals with gene expression to refine priors. | [Wiki → RefineByATACCorrelation](https://github.com/oncologylab/episcope/wiki/RefineByATACCorrelation) |
+| **RefineByFootprintGeneCorrelation** | Correlate footprint signals with target gene expression to identify active edges. | [Wiki → RefineByFootprintGeneCorrelation](https://github.com/oncologylab/episcope/wiki/RefineByFootprintGeneCorrelation) |
+
+---
+
+### 🧠 **6. Network Construction**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **BuildBasalNetwork** | Build the condition-independent (basal) GRN from refined data. | [Wiki → BuildBasalNetwork](https://github.com/oncologylab/episcope/wiki/BuildBasalNetwork) |
+
+---
+
+### 🧪 **7. Perturbation Validation**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **ValidateNetwork** | Validate TF–gene edges using SQLite perturbation DB or PerturbDB resources. | [Wiki → ValidateNetwork](https://github.com/oncologylab/episcope/wiki/ValidateNetwork) |
+
+---
+
+### 🌐 **8. Condition-Specific GRN Lighting**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **RenderConditionNetwork** | Visualize GRN activity per condition with replicate pooling or strict integration. | [Wiki → RenderConditionNetwork](https://github.com/oncologylab/episcope/wiki/RenderConditionNetwork) |
+
+---
+
+### ⚖️ **9. Differential GRN Analysis**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **CompareDifferentialNetworks** | Identify edges/nodes differing between conditions. | [Wiki → CompareDifferentialNetworks](https://github.com/oncologylab/episcope/wiki/CompareDifferentialNetworks) |
+| **FilterDifferentialNetworks** | Filter differential GRNs based on score or correlation thresholds. | [Wiki → FilterDifferentialNetworks](https://github.com/oncologylab/episcope/wiki/FilterDifferentialNetworks) |
+
+---
+
+### 🧩 **10. Clustering & Topic Modeling**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **ClusterNetworks** | Cluster edges by regulatory activity using Louvain or hierarchical clustering. | [Wiki → ClusterNetworks](https://github.com/oncologylab/episcope/wiki/ClusterNetworks) |
+| **TopicModelNetworks** | Perform LDA-based topic modeling across GRN edge matrices. | [Wiki → TopicModelNetworks](https://github.com/oncologylab/episcope/wiki/TopicModelNetworks) |
+
+---
+
+### 🌟 **11. Hub TF Analysis & Visualization**
+| Module | Description | Wiki |
+|--------|--------------|------|
+| **FindHubTFs** | Identify hub TFs in each topic using HITS or degree centrality. | [Wiki → FindHubTFs](https://github.com/oncologylab/episcope/wiki/FindHubTFs) |
+| **RenderTopicNetworks** | Visualize topic-level GRNs (pairwise or delta). | [Wiki → RenderTopicNetworks](https://github.com/oncologylab/episcope/wiki/RenderTopicNetworks) |
+| **RenderTFNetworks** | Visualize TF-centric subnetworks (pairwise or delta). | [Wiki → RenderTFNetworks](https://github.com/oncologylab/episcope/wiki/RenderTFNetworks) |
 
 ---
 
 ## Pipelines
 
-episcope modules can be run independently or as part of a unified analysis pipeline.
+episcope supports multiple orchestrated pipelines:
 
-**Snakemake pipeline (HPC compatible)**  
-Pre-set workflow for bias-correction, footprinting, GRN inference, and visualization:  
-👉 [episcope_snakemake](https://github.com/yaoxiangli/episcope_snakemake)
+- **Snakemake** — scalable, HPC-optimized  
+- **Nextflow** — reproducible, cloud-ready  
+- **R scripts** — local exploratory runs
 
-**Nextflow pipeline (cloud-ready)**  
-Nextflow version for scalable parallel execution:  
-👉 [episcope_nextflow](https://github.com/yaoxiangli/episcope_nextflow)
+👉 [episcope_snakemake](https://github.com/oncologylab/episcope_snakemake)  
+👉 [episcope_nextflow](https://github.com/oncologylab/episcope_nextflow)
 
 ---
 
 ## Help and Documentation
 
-- 📘 [Wiki and Tutorials](https://github.com/yaoxiangli/episcope/wiki)
-- ❓ [FAQ](https://github.com/yaoxiangli/episcope/wiki/FAQ)
-- 🐛 [Report an Issue](https://github.com/yaoxiangli/episcope/issues)
+- 📘 [Wiki and Tutorials](https://github.com/oncologylab/episcope/wiki)
+- ❓ [FAQ](https://github.com/oncologylab/episcope/wiki/FAQ)
+- 🐛 [Report Issues](https://github.com/oncologylab/episcope/issues)
 
 ---
 
 ## How to Cite
 
-Li, Y. *et al.* (in preparation).  
-**episcope:** A reproducible framework for integrative chromatin and transcriptomic network analysis in PDAC.
+Li, Y., Yi, C *et al.* (in preparation).  
+**episcope:** An integrative multi-omics framework for condition-specific gene regulatory network analysis.
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](https://github.com/oncologylab/episcope/blob/main/LICENSE).
