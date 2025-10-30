@@ -1,26 +1,37 @@
 Package: episcope
 Title: Episcope: An Integrative Epigenomic Analysis Framework
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: c(
     person("Yaoxiang", "Li", , "yaoxiang@example.com", role = c("aut", "cre")),
     person("Chunling", "Yi", , "chunling@example.com", role = "aut")
   )
-Description: Robust and reproducible framework for epigenetic data
-    analysis. It integrates functionalities for ChromHMM analysis, DNA
-    methylation assessment, differentiation state profiling, nutrient
-    stress analysis, and functional mapping to facilitate comprehensive
-    epigenomic studies.
+Description: Robust and reproducible framework for epigenetic data analysis. It integrates functionalities for ChromHMM analysis, DNA methylation assessment, differentiation state profiling, paired ATAC-seq and RNA-seq analysis, and functional mapping to facilitate comprehensive epigenomic studies.
 License: GPL (>= 3)
+Depends: R (>= 4.1.0)
 Imports: 
     basilisk,
     config,
+    dplyr,
     golem,
-    shiny
+    htmltools,
+    htmlwidgets,
+    igraph,
+    jsonlite,
+    magrittr,
+    purrr,
+    readr,
+    rlang,
+    scales,
+    shiny,
+    stringr,
+    tibble,
+    tidyr,
+    visNetwork
 Suggests: 
     knitr,
     rmarkdown,
     spelling,
-    testthat (>= 3.0.0)
+    testthat
 Config/testthat/edition: 3
 Encoding: UTF-8
 Language: en-US
