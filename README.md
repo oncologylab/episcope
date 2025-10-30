@@ -134,15 +134,15 @@ episcope supports multiple orchestrated pipelines:
 
 ## Help and Documentation
 
-- 📘 [https://github.com/oncologylab/episcope/wiki](https://github.com/oncologylab/episcope/wiki)  
-- ❓ [https://github.com/oncologylab/episcope/wiki/FAQ](https://github.com/oncologylab/episcope/wiki/FAQ)  
-- 🐛 [https://github.com/oncologylab/episcope/issues](https://github.com/oncologylab/episcope/issues)
+- 📘 Docs [https://github.com/oncologylab/episcope/wiki](https://github.com/oncologylab/episcope/wiki)  
+- ❓ FAQ [https://github.com/oncologylab/episcope/wiki/FAQ](https://github.com/oncologylab/episcope/wiki/FAQ)  
+- 🐛 Bug report [https://github.com/oncologylab/episcope/issues](https://github.com/oncologylab/episcope/issues)
 
 ---
 
 ## How to Cite
 
-Li, Y. *et al.* (in preparation).  
+Li, Y., Yi, C. *et al.* (in preparation).  
 **episcope:** An integrative multi-omics framework for condition-specific gene regulatory network analysis.
 
 ---
