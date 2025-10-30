@@ -153,6 +153,3 @@ This project is licensed under the [MIT License](https://github.com/oncologylab/
 
 ---
 
-## Presentation Title Suggestion
-
-**Integrative Footprint-Based Framework for Constructing and Comparing Condition-Specific Gene Regulatory Networks**
