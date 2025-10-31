@@ -110,14 +110,14 @@ Episcope provides modular functions for each step, from footprint data to condit
 - `cluster_grn()` groups edges by shared activity patterns (Louvain / hierarchical).  
 - `topic_model_grn()` performs **LDA topic modeling** across GRN edge matrices.  
 - `find_hub_tfs()` ranks TFs by centrality metrics (HITS/degree) within each topic.  
-  → https://github.com/oncologylab/episcope/wiki/topic_model_grn
+  → https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs
 
 ### Interactive Gene Regulatory Network Visualization
 - `plot_topic_network_pairwise()` - topic-level pairwise visualization (left/right).  
 - `plot_topic_network_delta()` - topic-level **delta** visualization (single-panel).  
 - `plot_tf_network_pairwise()` - TF-centric pairwise visualization (left/right).  
 - `plot_tf_network_delta()` - TF-centric **delta** visualization (single-panel).  
-  → https://github.com/oncologylab/episcope/wiki/plot_tf_network
+  → https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization
 
 ---
 
