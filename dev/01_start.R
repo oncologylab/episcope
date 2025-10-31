@@ -51,20 +51,6 @@ suggests <- c("testthat", "knitr", "rmarkdown")
 for (pkg in suggests) usethis::use_package(pkg, type = "Suggests")
 
 
-render_tf_hub_delta_network(
-  comp_csv  = "Z:/episcope/inst/extdata/lighting/AsPC1_Glc_vs_AsPC1_Ctrl_delta_links_filtered_lda_K20.csv",
-  input_tf  = "HNF4A",
-  out_html  = "AsPC1_Glc_vs_AsPC1_Ctrl_delta_links_HNF4A.html",
-  edge_filter_min = 2,
-  edge_filter_on  = "either",
-  gene_fc_thresh  = 1.5,
-  de_reference    = "str_over_ctrl",
-  motif_db = "jaspar2024",
-  ring_tf_only_direct = TRUE
-)
-
-
-
 ## Create Common Files ----
 ## See ?usethis for more information
 usethis::use_gpl3_license() # Set GPL-3 License
