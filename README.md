@@ -112,7 +112,7 @@ episcope provides modular functions for each step, from footprint data to condit
 - `find_hub_tfs()` ranks TFs by centrality metrics (HITS/degree) within each topic.  
   → https://github.com/oncologylab/episcope/wiki/topic_model_grn
 
-### Visualization (four dedicated functions)
+### Interactive Gene Regulatory Network Visualization
 - `plot_topic_network_pairwise()` — topic-level pairwise visualization (left/right).  
 - `plot_topic_network_delta()` — topic-level **delta** visualization (single-panel).  
 - `plot_tf_network_pairwise()` — TF-centric pairwise visualization (left/right).  
