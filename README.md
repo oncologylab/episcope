@@ -1,4 +1,4 @@
-episcope — Integrative ATAC–RNA Framework for Condition-Specific Gene Regulatory Networks
+Episcope - Integrative ATAC-RNA Framework for Condition-Specific Gene Regulatory Networks
 ===========================================================================================
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=plastic)](https://github.com/oncologylab/episcope)
@@ -11,14 +11,14 @@ episcope — Integrative ATAC–RNA Framework for Condition-Specific Gene Regula
 
 ## Introduction
 
-**episcope** is a modular, reproducible framework for building and analyzing **condition-specific gene regulatory networks (GRNs)** from **chromatin accessibility (ATAC)** and **transcriptomic (RNA)** data with footprinting support.
+**Episcope** is a modular, reproducible framework for building and analyzing **condition-specific gene regulatory networks (GRNs)** from **chromatin accessibility (ATAC)** and **transcriptomic (RNA)** data with footprinting support.
 
 It extends classical ATAC-seq footprinting to **integrative GRN modeling**, enabling users to:
 
 - Load ATAC peak sets, **footprint scores** (from mainstream pipelines), and matched RNA-seq quantifications  
 - Align motif-redundant footprints to consensus sites and **bias-correct** footprint intensity  
 - Correlate TF binding evidence with TF expression to refine footprint→TF assignments  
-- Build **regulatory priors** (GeneHancer, TSS ±30 kb, Hi-C enhancer–promoter)  
+- Build **regulatory priors** (GeneHancer, TSS ±30 kb, Hi-C enhancer-promoter)  
 - Infer data-specific **TF→enhancer→gene** networks; perform condition lighting and differential GRN analysis  
 - Visualize topic- and TF-centric subnetworks (pairwise or delta views)-
 - *Perturbation datasets (KO/KD, drug, CRISPRi/a) can be imported and used for **validation** of inferred GRNs*
@@ -27,7 +27,7 @@ It extends classical ATAC-seq footprinting to **integrative GRN modeling**, enab
 
 ## Installation
 
-episcope is an R package available on GitHub.
+Episcope is an R package available on GitHub.
 
 ```r
 # Using remotes
@@ -47,12 +47,12 @@ BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
 
 ## Usage Overview
 
-episcope modules are interoperable and can be executed independently or as part of a pipeline.
+Episcope modules are interoperable and can be executed independently or as part of a pipeline.
 
 ```r
 library(episcope)
 
-# Example: build a GRN from matched ATAC–RNA dataset
+# Example: build a GRN from matched ATAC-RNA dataset
 fp  <- load_footprints(footprint_bw = "footprints_corrected.bw", peaks_bed = "peaks.bed")
 rna <- load_rna("rna_expression.csv")
 
@@ -77,7 +77,7 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 
 ## Modules Overview
 
-episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
+Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
 ### Data Loading and Preprocessing
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
@@ -90,17 +90,17 @@ episcope provides modular functions for each step, from footprint data to condit
 
 ### TF Assignment and Regulation Priors
 - `map_tf_to_footprints()` correlates footprint signals with TF expression to assign regulators.  
-- `build_regulation_priors()` defines TF–gene edges from **GeneHancer**, **TSS ±30 kb**, or **Hi-C** contact maps.  
+- `build_regulation_priors()` defines TF-gene edges from **GeneHancer**, **TSS ±30 kb**, or **Hi-C** contact maps.  
   → https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors
 
 ### Correlation-Based Refinement
-- `correlate_atac_to_gene()` refines enhancer–gene links by ATAC–RNA correlation.  
+- `correlate_atac_to_gene()` refines enhancer-gene links by ATAC-RNA correlation.  
 - `correlate_fp_to_gene()` quantifies TF regulatory activity by correlating footprint scores with gene expression.  
   → https://github.com/oncologylab/episcope/wiki/Correlation‑Based-Refinement-of-Regulatory-Links
 
 ### Network Assembly, Validation, and Condition Lighting
 - `build_basal_grn()` constructs a dataset-specific GRN.  
-- `validate_grn_perturbation()` validates TF–gene links via KO/KD public datasets (SQLite + external perturbation DBs).  
+- `validate_grn_perturbation()` validates TF-gene links via KO/KD public datasets (SQLite + external perturbation DBs).  
 - `light_condition_grn()` identifies **active regulatory edges** within each condition (replicate pooling or strict replicate consensus).  
   → https://github.com/oncologylab/episcope/wiki/Network-Assembly-Validation-and-Condition-Lighting
 
@@ -113,10 +113,10 @@ episcope provides modular functions for each step, from footprint data to condit
   → https://github.com/oncologylab/episcope/wiki/topic_model_grn
 
 ### Interactive Gene Regulatory Network Visualization
-- `plot_topic_network_pairwise()` — topic-level pairwise visualization (left/right).  
-- `plot_topic_network_delta()` — topic-level **delta** visualization (single-panel).  
-- `plot_tf_network_pairwise()` — TF-centric pairwise visualization (left/right).  
-- `plot_tf_network_delta()` — TF-centric **delta** visualization (single-panel).  
+- `plot_topic_network_pairwise()` - topic-level pairwise visualization (left/right).  
+- `plot_topic_network_delta()` - topic-level **delta** visualization (single-panel).  
+- `plot_tf_network_pairwise()` - TF-centric pairwise visualization (left/right).  
+- `plot_tf_network_delta()` - TF-centric **delta** visualization (single-panel).  
   → https://github.com/oncologylab/episcope/wiki/plot_tf_network
 
 ---
@@ -125,9 +125,9 @@ episcope provides modular functions for each step, from footprint data to condit
 
 episcope supports multiple orchestrated pipelines:
 
-- **Snakemake** — scalable, HPC-optimized  
-- **Nextflow** — reproducible, cloud-ready  
-- **R scripts** — local exploratory runs
+- **Snakemake** - scalable, HPC-optimized  
+- **Nextflow** - reproducible, cloud-ready  
+- **R scripts** - local exploratory runs
 
 👉 https://github.com/oncologylab/episcope_snakemake  
 👉 https://github.com/oncologylab/episcope_nextflow
@@ -145,7 +145,7 @@ episcope supports multiple orchestrated pipelines:
 ## How to Cite
 
 Li, Y., Yi, C. *et al.* (in preparation).  
-**episcope:** Integrative ATAC–RNA framework for condition-specific gene regulatory network analysis.
+**Episcope:** Integrative ATAC-RNA framework for condition-specific gene regulatory network analysis.
 
 ---
 
