@@ -129,16 +129,16 @@ episcope supports multiple orchestrated pipelines:
 - **Nextflow** - reproducible, cloud-ready  
 - **R scripts** - local exploratory runs
 
-👉 https://github.com/oncologylab/episcope_snakemake  
-👉 https://github.com/oncologylab/episcope_nextflow
+https://github.com/oncologylab/episcope_snakemake  
+https://github.com/oncologylab/episcope_nextflow
 
 ---
 
 ## Help and Documentation
 
-- 📘 Docs https://github.com/oncologylab/episcope/wiki  
-- ❓ FAQ https://github.com/oncologylab/episcope/wiki/FAQ  
-- 🐛 Bug report https://github.com/oncologylab/episcope/issues
+- Docs https://github.com/oncologylab/episcope/wiki  
+- FAQ https://github.com/oncologylab/episcope/wiki/FAQ  
+- Bug report https://github.com/oncologylab/episcope/issues
 
 ---
 
