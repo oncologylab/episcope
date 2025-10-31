@@ -81,7 +81,7 @@ episcope provides modular functions for each step, from footprint data to condit
 
 ### Data Loading and Preprocessing
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
-  - **Sources supported:** **fp-tools** (https://github.com/oncologylab/fptools) and **TOBIAS** (https://github.com/loosolab/TOBIAS) outputs.  
+  - **Sources supported:** [**fp-tools**](https://github.com/oncologylab/fptools) and [**TOBIAS**](https://github.com/loosolab/TOBIAS) outputs.  
 - `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
 - `align_footprints()` consolidates motif-redundant footprint calls into consensus sites. *(Per-motif consolidation; **not** cross-sample alignment.)*  
 - `correct_footprints()` applies bias correction and depth normalization.  
