@@ -1,0 +1,8 @@
+default:
+  golem_name: craftgrn
+  golem_version: 0.1.2
+  app_prod: no
+production:
+  app_prod: yes
+dev:
+  golem_wd: !expr golem::pkg_path()
