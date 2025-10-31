@@ -20,9 +20,8 @@ It extends classical ATAC-seq footprinting to **integrative GRN modeling**, enab
 - Correlate TF binding evidence with TF expression to refine footprint→TF assignments  
 - Build **regulatory priors** (GeneHancer, TSS ±30 kb, Hi-C enhancer–promoter)  
 - Infer data-specific **TF→enhancer→gene** networks; perform condition lighting and differential GRN analysis  
-- Visualize topic- and TF-centric subnetworks (pairwise or delta views)
-
-**Scope clarification.** *Perturbation datasets (KO/KD, drug, CRISPRi/a) are used for **validation** of inferred GRNs — episcope does not model perturbations by default.*
+- Visualize topic- and TF-centric subnetworks (pairwise or delta views)-
+- *Perturbation datasets (KO/KD, drug, CRISPRi/a) can be imported and used for **validation** of inferred GRNs*
 
 ---
 
