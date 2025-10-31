@@ -102,7 +102,7 @@ episcope provides modular functions for each step, from footprint data to condit
 - `build_basal_grn()` constructs a dataset-specific GRN.  
 - `validate_grn_perturbation()` validates TF–gene links via KO/KD public datasets (SQLite + external perturbation DBs).  
 - `light_condition_grn()` identifies **active regulatory edges** within each condition (replicate pooling or strict replicate consensus).  
-  → https://github.com/oncologylab/episcope/wiki/build_basal_grn
+  → https://github.com/oncologylab/episcope/wiki/Network-Assembly,-Validation,-and-Condition-Lighting
 
 ### Differential GRNs, Clustering, Topics, and Hubs
 - `compare_grn()` computes differential networks between two conditions.  
