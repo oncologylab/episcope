@@ -79,14 +79,14 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 
 Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
-### Data Loading and Preprocessing
+### [Data Loading and Preprocessing](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
   - **Sources supported:** [**fptools**](https://github.com/oncologylab/fptools) and [**TOBIAS**](https://github.com/loosolab/TOBIAS) outputs.  
 - `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
 - `align_footprints()` consolidates motif-redundant footprint calls into consensus sites. *(Per-motif consolidation; **not** cross-sample alignment.)*  
 - `correct_footprints()` applies bias correction and depth normalization.  
 - `quantile_normalize_fp_unique()` performs **peak-wise quantile normalization** of footprint scores (see code below).  
-  → https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing
+  → 
 
 ### TF Assignment and Regulation Priors
 - `map_tf_to_footprints()` correlates footprint signals with TF expression to assign regulators.  

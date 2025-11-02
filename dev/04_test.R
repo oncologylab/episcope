@@ -102,3 +102,12 @@ for (in_path in files) {
   htmlwidgets::saveWidget(w, out_file, selfcontained = FALSE)
   message("    ✓ Saved: ", normalizePath(out_file, mustWork = FALSE))
 }
+
+
+
+
+
+
+
+
+
