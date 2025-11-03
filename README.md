@@ -85,13 +85,12 @@ Episcope provides modular functions for each step, from footprint data to condit
 - `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
 - `align_footprints()` consolidates motif-redundant footprint calls into consensus sites. *(Per-motif consolidation; **not** cross-sample alignment.)*  
 - `correct_footprints()` applies bias correction and depth normalization.  
-- `quantile_normalize_fp_unique()` performs **peak-wise quantile normalization** of footprint scores (see code below).  
-  → 
+- `quantile_normalize_fp_unique()` performs **peak-wise quantile normalization** of footprint scores.  
 
-### TF Assignment and Regulation Priors
+### ![TF Assignment and Regulation Priors](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
 - `map_tf_to_footprints()` correlates footprint signals with TF expression to assign regulators.  
 - `build_regulation_priors()` defines TF-gene edges from **GeneHancer**, **TSS ±30 kb**, or **Hi-C** contact maps.  
-  → https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors
+  → 
 
 ### Correlation-Based Refinement
 - `correlate_atac_to_gene()` refines enhancer-gene links by ATAC-RNA correlation.  
