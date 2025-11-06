@@ -1,6 +1,6 @@
 default:
   golem_name: episcope
-  golem_version: 0.1.1
+  golem_version: 0.1.2
   app_prod: no
 production:
   app_prod: yes

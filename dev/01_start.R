@@ -3,9 +3,9 @@
 ## to change the name in the app_sys() function in app_config.R /!\
 ##
 golem::fill_desc(
-  pkg_name = "episcope", # The name of the golem package (lowercase, no underscores or periods)
-  pkg_title = "Episcope: An Integrative Epigenomic Analysis Framework", # One-line title describing the package
-  pkg_description = "Robust and reproducible framework for epigenetic data analysis. It integrates functionalities for ChromHMM analysis, DNA methylation assessment, differentiation state profiling, paired ATAC-seq and RNA-seq analysis, and functional mapping to facilitate comprehensive epigenomic studies.",
+  pkg_name = "episcope",  # package name (lowercase, no underscores)
+  pkg_title = "Episcope: Integrative ATAC-RNA Framework for Condition-Specific Gene Regulatory Networks",
+  pkg_description = "Episcope provides a reproducible framework for constructing and comparing gene regulatory networks by integrating bulk ATAC-seq footprinting with matched RNA-seq expression data. It implements context-specific enhancer–gene linking, TF-centric and differential GRN analysis, and benchmarking modules. Episcope enables systematic exploration of transcriptional regulation under diverse conditions.",
   authors = c(
     person(
       given = "Yaoxiang",
@@ -20,8 +20,8 @@ golem::fill_desc(
       role = c("aut")
     )
   ),
-  repo_url = NULL,
-  pkg_version = "0.1.1",
+  repo_url = "https://github.com/oncologylab/episcope",
+  pkg_version = "0.1.2",
   set_options = TRUE
 )
 

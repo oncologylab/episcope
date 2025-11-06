@@ -79,7 +79,7 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 
 Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
-### [**Data Loading and Preprocessing**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
+### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
   - **Sources supported:** [**fptools**](https://github.com/oncologylab/fptools) and [**TOBIAS**](https://github.com/loosolab/TOBIAS) outputs.  
 - `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
@@ -87,27 +87,27 @@ Episcope provides modular functions for each step, from footprint data to condit
 - `correct_footprints()` applies bias correction and depth normalization.  
 - `quantile_normalize_fp_unique()` performs **peak-wise quantile normalization** of footprint scores.  
 
-### [**TF Assignment and Regulation Priors**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
+### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
 - `map_tf_to_footprints()` correlates footprint signals with TF expression to assign regulators.  
 - `build_regulation_priors()` defines TF-gene edges from **GeneHancer**, **TSS ±30 kb**, or **Hi-C** contact maps.  
 
-### [**Correlation-Based Refinement**](https://github.com/oncologylab/episcope/wiki/Correlation‑Based-Refinement-of-Regulatory-Links)
+### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/Correlation‑Based-Refinement-of-Regulatory-Links)
 - `correlate_atac_to_gene()` refines enhancer-gene links by ATAC-RNA correlation.  
 - `correlate_fp_to_gene()` quantifies TF regulatory activity by correlating footprint scores with gene expression.  
 
-### [**Network Assembly, Validation, and Condition Lighting**](https://github.com/oncologylab/episcope/wiki/Network-Assembly-Validation-and-Condition-Lighting)
+### [**Build basal GRN & identify active regulatory edges per condition**](https://github.com/oncologylab/episcope/wiki/Network-Assembly-Validation-and-Condition-Lighting)
 - `build_basal_grn()` constructs a dataset-specific GRN.  
 - `validate_grn_perturbation()` validates TF-gene links via KO/KD public datasets (SQLite + external perturbation DBs).  
 - `light_condition_grn()` identifies **active regulatory edges** within each condition (replicate pooling or strict replicate consensus).  
 
-### [**Differential GRNs, Clustering, Topics, and Hubs**](https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs)
+### [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs)
 - `compare_grn()` computes differential networks between two conditions.  
 - `filter_grn_diff()` filters differential GRNs by score/correlation/evidence.  
 - `cluster_grn()` groups edges by shared activity patterns (Louvain / hierarchical).  
 - `topic_model_grn()` performs **LDA topic modeling** across GRN edge matrices.  
 - `find_hub_tfs()` ranks TFs by centrality metrics (HITS/degree) within each topic.  
 
-### [**Interactive Gene Regulatory Network Visualization**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
+### [**Generate interactive Topic & TF regulatory hub subnetworks**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
 - `plot_topic_network_pairwise()` - topic-level pairwise visualization (left/right).  
 - `plot_topic_network_delta()` - topic-level **delta** visualization (single-panel).  
 - `plot_tf_network_pairwise()` - TF-centric pairwise visualization (left/right).  

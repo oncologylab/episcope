@@ -1,11 +1,11 @@
 Package: episcope
-Title: Episcope: An Integrative Epigenomic Analysis Framework
-Version: 0.1.1
+Title: Episcope: Integrative ATAC-RNA Framework for Condition-Specific Gene Regulatory Networks
+Version: 0.1.2
 Authors@R: c(
     person("Yaoxiang", "Li", , "yaoxiang@example.com", role = c("aut", "cre")),
     person("Chunling", "Yi", , "chunling@example.com", role = "aut")
   )
-Description: Robust and reproducible framework for epigenetic data analysis. It integrates functionalities for ChromHMM analysis, DNA methylation assessment, differentiation state profiling, paired ATAC-seq and RNA-seq analysis, and functional mapping to facilitate comprehensive epigenomic studies.
+Description: Episcope provides a reproducible framework for constructing and comparing gene regulatory networks by integrating bulk ATAC-seq footprinting with matched RNA-seq expression data. It implements context-specific enhancer–gene linking, TF-centric and differential GRN analysis, and benchmarking modules. Episcope enables systematic exploration of transcriptional regulation under diverse conditions.
 License: GPL (>= 3)
 Depends: R (>= 4.1.0)
 Imports: 
@@ -38,3 +38,5 @@ Language: en-US
 LazyData: true
 RoxygenNote: 7.3.2
 VignetteBuilder: knitr
+URL: https://github.com/oncologylab/episcope
+BugReports: https://github.com/oncologylab/episcope/issues
