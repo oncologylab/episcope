@@ -1,4 +1,5 @@
 library(episcope)
+load_episcope_config("episcope_grn.yaml")
 
 # 1. stream_write_overviews_by_motif
 # 2. trim_fp_manifest
@@ -63,7 +64,7 @@ summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TR
 dplyr::count(summary_tbl, status)
 sum(summary_tbl$n_fixed, na.rm = TRUE)
 
-options(future.globals.maxSize = 64 * 1024^3)
+options(future.globals.maxSize = 16 * 1024^3)
 # Align the peaks based on the peak similarity
 fp_aligned <- align_footprints(fp_manifest,
                                         mid_slop        = 10L, # midpoint tolerance (bp)
