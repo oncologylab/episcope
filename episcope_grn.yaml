@@ -1,0 +1,19 @@
+# TFBS DB
+db: jaspar2024  # one of: jaspar2024, hocomocov13
+
+# Basal network thresholds
+threshold_tf_expr: 10
+threshold_gene_expr: 4
+threshold_fp_score: 2
+threshold_link_score: 2
+
+threshold_fp_tf_corr_p: 0.05
+threshold_fp_tf_corr_r: 0.3          # positive only
+threshold_fp_gene_corr_p: 0.05
+threshold_fp_gene_corr_abs_r: 0.3    # positive & negative
+threshold_atac_gene_corr_p: 0.05
+threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
+
+# Lighting filters
+link_score_threshold: 0.001
+fp_score_threshold: 0.001

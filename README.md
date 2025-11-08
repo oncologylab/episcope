@@ -82,10 +82,16 @@ Episcope provides modular functions for each step, from footprint data to condit
 ### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
   - **Sources supported:** [**fptools**](https://github.com/oncologylab/fptools) and [**TOBIAS**](https://github.com/loosolab/TOBIAS) outputs.  
-- `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
+- `fp_manifest_trim()` 
+- `fp_manifest_trim_annots()` 
 - `align_footprints()` consolidates motif-redundant footprint calls into consensus sites. *(Per-motif consolidation; **not** cross-sample alignment.)*  
-- `correct_footprints()` applies bias correction and depth normalization.  
-- `quantile_normalize_fp_unique()` performs **peak-wise quantile normalization** of footprint scores.  
+- `qn_footprints()` performs **peak-wise quantile normalization** of footprint scores.  
+- `save_footprints()` writes the aligned/normalized footprint data for reuse.
+- `filter_footprints()` RNA expression and ATAC peak based footprint filter.
+- `process_motifs_tf_corr_in_parallel()` Correlate footprint with predicted binded TFs RNA expression per motif.
+- `
+
+- `load_rna()` loads RNA-seq quantifications from mainstream tools (STAR+featureCounts counts, Salmon/Kallisto TPM/counts).  
 
 ### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
 - `map_tf_to_footprints()` correlates footprint signals with TF expression to assign regulators.  
