@@ -79,29 +79,24 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 
 Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
-
-## Modules Overview
-
-Episcope follows a five-step workflow from raw motif footprints to interactive, condition-specific GRNs.
-
-### 1) [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
+### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
 Stream footprint overviews from TOBIAS/fp-tools, standardize the manifest, align redundant peaks across samples, apply peak-wise quantile normalization, and filter candidates using ATAC/RNA evidence. Outputs a clean, normalized footprint manifest.
 
-### 2) [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
+### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
 Construct regulatory priors (GeneHancer ELITE or windowed TSS rules), load ATAC/RNA matrices, and refine peak→gene links via ATAC–RNA correlation while quantifying TF activity via footprint–RNA correlation. Produces TF–peak–gene triplets with scores.
 
-### 3) [**Build basal GRN & identify active regulatory edges per condition**](https://github.com/oncologylab/episcope/wiki/Network-Assembly-Validation-and-Condition-Lighting)
+### [**Build basal GRN & identify active regulatory edges per condition**](https://github.com/oncologylab/episcope/wiki/Network-Assembly-Validation-and-Condition-Lighting)
 Assemble a dataset-specific basal network, then “light” (activate) edges per condition using thresholds on TF expression, footprint, and link scores. Generates per-condition link tables and an index for contrasts.
 
-### 4) [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs)
+### [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs)
 Compute stress–control contrasts to obtain Δ(link) scores, filter edges with expression-consistent direction, and run LDA topic modeling across contrasts. Summaries rank topic-level TFs and separate activation vs repression.
 
-### 5) [**Generate interactive Topic & TF regulatory hub subnetworks**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
+### [**Generate interactive Topic & TF regulatory hub subnetworks**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
 Render Δ-topic and TF-hub subnetworks as self-contained HTML (optional PDFs), encoding Δ(link) in edge color/width and TF/gene expression in node styling. Supports one-off pairs and bulk rendering across many topics.
 
 
 
-<!-- ### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
+<!-- ### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Predict-TF-binding-sites)
 - `load_footprints()` imports footprint score tracks and ATAC peaks.  
   - **Sources supported:** [**fptools**](https://github.com/oncologylab/fptools) and [**TOBIAS**](https://github.com/loosolab/TOBIAS) outputs.  
 - `fp_manifest_trim()` 
