@@ -534,3 +534,22 @@ purrr::walk(batch, function(x) {
   save_benchmark_plots(tf = x$tf, pred_path = x$pred, chip_path = x$chip, out_dir = out_dir)
 })
 
+
+base_dir <- "Z:/episcope_test/benchmark_tf_binding_sites_prediction"
+
+batch <- list(
+  list(tf = "HNF4A",
+       pred = file.path(base_dir, "predicted_all_tfbs", "HNF4A_overview.txt"),
+       chip = file.path(base_dir, "cutntag",  "cy83.hg38.rp10m.narrowpeaks.bed")),
+  list(tf = "MAFF",
+       pred = file.path(base_dir, "predicted_all_tfbs", "MAFF_overview.txt"),
+       chip = file.path(base_dir, "cutntag",  "cy84.hg38.rp10m.narrowpeaks.bed")),
+  list(tf = "ZEB1",
+       pred = file.path(base_dir, "predicted_all_tfbs", "ZEB1_overview.txt"),
+       chip = file.path(base_dir, "cutntag",  "cy76.hg38.rp10m.narrowpeaks.bed"))
+)
+
+out_dir <- file.path(base_dir, "plots_pdf_all_tfbs")
+purrr::walk(batch, function(x) {
+  save_benchmark_plots(tf = x$tf, pred_path = x$pred, chip_path = x$chip, out_dir = out_dir)
+})
