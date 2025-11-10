@@ -79,7 +79,7 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 
 Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
-### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Data-Loading-and-Preprocessing)
+### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Predict-TF-binding-sites)
 Stream footprint overviews from TOBIAS/fp-tools, standardize the manifest, align redundant peaks across samples, apply peak-wise quantile normalization, and filter candidates using ATAC/RNA evidence. Outputs a clean, normalized footprint manifest.
 
 ### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/TF-Assignment-and-Regulation-Priors)
