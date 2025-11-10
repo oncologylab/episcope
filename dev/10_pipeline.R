@@ -184,17 +184,14 @@ fp_corr_manifest <- tf_corr_footprints(
 readr::write_csv(fp_corr_manifest, paste0("/data/homes/yl814/episcope_test/nutrient_stress/fp_jaspar2024/fp_aligned_normalized_filtered_corr_manifest_", db, ".csv"))
 
 
-tf_vec <- strict_rna |> dplyr::filter(HGNC == "ZEB1") |> dplyr::select(-ensembl_gene_id, -HGNC) |> simplify2array()
-res <- tf_corr_footprints_all_tfbs(
-  fp_manifest = fp_aligned_normalized_filtered_manifest,
-  tf_name  = "ZEB1",
-  tf_expr  = tf_vec,
-  out_dir  = "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction/predicted_all_tfbs"
-)
-res$files
-
-
-
+# tf_vec <- strict_rna |> dplyr::filter(HGNC == "ZEB1") |> dplyr::select(-ensembl_gene_id, -HGNC) |> simplify2array()
+# res <- tf_corr_footprints_all_tfbs(
+#   fp_manifest = fp_aligned_normalized_filtered_manifest,
+#   tf_name  = "ZEB1",
+#   tf_expr  = tf_vec,
+#   out_dir  = "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction/predicted_all_tfbs"
+# )
+# res$files
 
 combined      <- tf_corr_footprints_filter(fp_corr_manifest, p_thr = threshold_fp_tf_corr_p, r_thr = threshold_fp_tf_corr_r, output_bed = "/data/homes/yl814/episcope_test/nutrient_stress")
 
