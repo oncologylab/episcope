@@ -88,7 +88,7 @@ Construct regulatory priors (GeneHancer ELITE or windowed TSS rules), load ATAC/
 ### [**Build basal GRN & identify active regulatory edges per condition**](https://github.com/oncologylab/episcope/wiki/Build-basal-GRN-&-identify-active-regulatory-edges-per-condition)
 Assemble a dataset-specific basal network, then “light” (activate) edges per condition using thresholds on TF expression, footprint, and link scores. Generates per-condition link tables and an index for contrasts.
 
-### [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Differential-GRNs-Clustering-Topics-and-Hubs)
+### [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Perform-differential-GRN-analysis-&-identify-master-TFs)
 Compute stress–control contrasts to obtain Δ(link) scores, filter edges with expression-consistent direction, and run LDA topic modeling across contrasts. Summaries rank topic-level TFs and separate activation vs repression.
 
 ### [**Generate interactive Topic & TF regulatory hub subnetworks**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
