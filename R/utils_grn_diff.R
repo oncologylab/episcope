@@ -566,24 +566,113 @@ compare_links_bulk <- function(specs,
   }
 }
 
-# ==============================
-# Build specs from index (cell-wise contrasts)
-# ==============================
-
-#' Build per-cell “everything vs 10_FBS” contrasts from index CSV
+#' # ==============================
+#' # Build specs from index (cell-wise contrasts)
+#' # ==============================
 #'
-#' The index CSV must contain a `label` column (e.g., "HPAFII_10_FBS", "HPAFII_0_FBS", ...).
-#' For each `cell` (prefix before first underscore), constructs stress vs control
-#' pairs and emits a spec table consumable by `compare_links_bulk()`.
+#' #' Build per-cell “everything vs 10_FBS” contrasts from index CSV
+#' #'
+#' #' The index CSV must contain a `label` column (e.g., "HPAFII_10_FBS", "HPAFII_0_FBS", ...).
+#' #' For each `cell` (prefix before first underscore), constructs stress vs control
+#' #' pairs and emits a spec table consumable by `compare_links_bulk()`.
+#' #'
+#' #' @param index_csv Path to `lighting_per_condition_index.csv` (must contain `label`).
+#' #' @param out_dir Directory containing per-condition links CSVs.
+#' #' @param prefix File prefix (default `"lighting"`).
+#' #' @param ctrl_tag Control tag appended after `<cell>_` (default `"10_FBS"`).
+#' #' @param clean_names Logical; sanitize condition names in specs.
+#' #' @param verbose Logical.
+#' #'
+#' #' @return A tibble with columns `cond1_label`, `cond2_label`, `cond1_source`,
+#' #'   `cond2_source`, `cond1_name`, `cond2_name`, `out_file`.
+#' #' @export
+#' #'
+#' #' @importFrom readr read_csv
+#' #' @importFrom tibble tibble as_tibble
+#' build_cellwise_contrasts_from_index <- function(index_csv,
+#'                                                 out_dir,
+#'                                                 prefix = "lighting",
+#'                                                 ctrl_tag = "10_FBS",
+#'                                                 clean_names = FALSE,
+#'                                                 verbose = TRUE) {
+#'   .log(paste0("Reading index: ", index_csv), verbose = verbose)
+#'   idx <- readr::read_csv(index_csv, show_col_types = FALSE)
+#'   if (!("label" %in% names(idx))) cli::cli_abort("Index missing required column `label`.")
+#'
+#'   # label -> cell (prefix before first underscore)
+#'   label_chr <- as.character(idx[["label"]])
+#'   cell_chr  <- sub("_.*$", "", label_chr)
+#'
+#'   ctrl_label <- paste0(cell_chr, "_", ctrl_tag)
+#'   is_ctrl <- label_chr == ctrl_label
+#'
+#'   ctrl_df <- unique(data.frame(cell = cell_chr[is_ctrl],
+#'                                control = label_chr[is_ctrl],
+#'                                stringsAsFactors = FALSE))
+#'
+#'   stress_df <- unique(data.frame(cell = cell_chr[!is_ctrl],
+#'                                  stress = label_chr[!is_ctrl],
+#'                                  stringsAsFactors = FALSE))
+#'
+#'   pairs <- merge(ctrl_df, stress_df, by = "cell", all = FALSE, sort = TRUE)
+#'   pairs <- pairs[order(pairs$cell, pairs$stress, method = "radix"), , drop = FALSE]
+#'
+#'   if (!nrow(pairs)) {
+#'     cli::cli_warn("No contrasts built — ensure '<cell>_{ctrl_tag}' exists in labels.")
+#'     return(tibble::tibble())
+#'   }
+#'
+#'   mk_path <- function(lab) {
+#'     file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv", prefix, .safe_label(lab)))
+#'   }
+#'   name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
+#'
+#'   cond1_label <- pairs$stress
+#'   cond2_label <- pairs$control
+#'
+#'   specs <- data.frame(
+#'     cond1_label  = cond1_label,
+#'     cond2_label  = cond2_label,
+#'     cond1_source = vapply(cond1_label, mk_path, character(1)),
+#'     cond2_source = vapply(cond2_label, mk_path, character(1)),
+#'     cond1_name   = vapply(cond1_label, function(z) name_fun(z), character(1)),
+#'     cond2_name   = vapply(cond2_label, function(z) name_fun(z), character(1)),
+#'     out_file     = file.path(out_dir,
+#'                              sprintf("%s_vs_%s_delta_links.csv",
+#'                                      .safe_label(cond1_label), .safe_label(cond2_label))),
+#'     stringsAsFactors = FALSE,
+#'     check.names = FALSE
+#'   )
+#'
+#'   # Warn about missing inputs but still return specs
+#'   all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
+#'   for (p in all_paths) {
+#'     if (!file.exists(p)) cli::cli_warn("File not found (will fail when run): {p}")
+#'   }
+#'
+#'   tibble::as_tibble(specs)
+#' }
+# ===============================
+# Build specs from index (cell-wise or global-control)
+# ===============================
+
+#' Build contrasts from lighting index: either per-cell or global control
+#'
+#' If the index contains an exact match to `ctrl_tag` (e.g., "Ctrl"), build
+#' contrasts of **every other label vs that global control**.
+#'
+#' Otherwise, fall back to the original per-cell behavior where `label` has the
+#' form `<cell>_<condition>` and the control is `<cell>_{ctrl_tag}` (e.g., "HPAFII_10_FBS").
 #'
 #' @param index_csv Path to `lighting_per_condition_index.csv` (must contain `label`).
 #' @param out_dir Directory containing per-condition links CSVs.
-#' @param prefix File prefix (default `"lighting"`).
-#' @param ctrl_tag Control tag appended after `<cell>_` (default `"10_FBS"`).
-#' @param clean_names Logical; sanitize condition names in specs.
+#' @param prefix File prefix used by `light_by_condition()` (default `"lighting"`).
+#' @param ctrl_tag Control tag. For global control, this is the **exact label** (e.g., `"Ctrl"`).
+#'   For per-cell control, this is the suffix after `<cell>_` (e.g., `"10_FBS"`).
+#' @param clean_names Logical; sanitize condition names in specs with `janitor::make_clean_names()`.
 #' @param verbose Logical.
 #'
-#' @return A tibble with columns `cond1_label`, `cond2_label`, `cond1_source`,
+#' @return Tibble with columns `cond1_label`, `cond2_label`, `cond1_source`,
 #'   `cond2_source`, `cond1_name`, `cond2_name`, `out_file`.
 #' @export
 #'
@@ -595,36 +684,69 @@ build_cellwise_contrasts_from_index <- function(index_csv,
                                                 ctrl_tag = "10_FBS",
                                                 clean_names = FALSE,
                                                 verbose = TRUE) {
-  .log(paste0("Reading index: ", index_csv), verbose = verbose)
+  .log <- function(msg, verbose = TRUE) if (isTRUE(verbose)) message("[utils_grn_diff] ", msg)
+  .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+
+  .log(paste0("Reading index:\n  ", index_csv), verbose = verbose)
   idx <- readr::read_csv(index_csv, show_col_types = FALSE)
   if (!("label" %in% names(idx))) cli::cli_abort("Index missing required column `label`.")
 
-  # label -> cell (prefix before first underscore)
   label_chr <- as.character(idx[["label"]])
-  cell_chr  <- sub("_.*$", "", label_chr)
 
+  # --- Branch 1: Global control present (exact match to ctrl_tag) ---
+  if (ctrl_tag %in% label_chr) {
+    ctrl_label <- ctrl_tag
+    stress_labels <- setdiff(label_chr, ctrl_label)
+    if (!length(stress_labels)) {
+      cli::cli_warn("No contrasts built — only the global control `{ctrl_tag}` exists.")
+      return(tibble::tibble())
+    }
+
+    mk_path <- function(lab) file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
+                                                        prefix, .safe_label(lab)))
+    name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
+
+    specs <- data.frame(
+      cond1_label  = stress_labels,
+      cond2_label  = rep(ctrl_label, length(stress_labels)),
+      cond1_source = vapply(stress_labels, mk_path, character(1)),
+      cond2_source = rep(mk_path(ctrl_label), length(stress_labels)),
+      cond1_name   = vapply(stress_labels, function(z) name_fun(z), character(1)),
+      cond2_name   = rep(name_fun(ctrl_label), length(stress_labels)),
+      out_file     = file.path(out_dir,
+                               sprintf("%s_vs_%s_delta_links.csv",
+                                       .safe_label(stress_labels), .safe_label(ctrl_label))),
+      stringsAsFactors = FALSE, check.names = FALSE
+    )
+
+    # warn about missing inputs but still return specs
+    all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
+    for (p in all_paths) if (!file.exists(p)) cli::cli_warn("File not found (will fail when run): {p}")
+
+    return(tibble::as_tibble(specs))
+  }
+
+  # --- Branch 2: Per-cell control (<cell>_{ctrl_tag}) ---
+  cell_chr  <- sub("_.*$", "", label_chr)              # prefix before first underscore
   ctrl_label <- paste0(cell_chr, "_", ctrl_tag)
   is_ctrl <- label_chr == ctrl_label
 
   ctrl_df <- unique(data.frame(cell = cell_chr[is_ctrl],
                                control = label_chr[is_ctrl],
                                stringsAsFactors = FALSE))
-
   stress_df <- unique(data.frame(cell = cell_chr[!is_ctrl],
                                  stress = label_chr[!is_ctrl],
                                  stringsAsFactors = FALSE))
-
   pairs <- merge(ctrl_df, stress_df, by = "cell", all = FALSE, sort = TRUE)
   pairs <- pairs[order(pairs$cell, pairs$stress, method = "radix"), , drop = FALSE]
 
   if (!nrow(pairs)) {
-    cli::cli_warn("No contrasts built — ensure '<cell>_{ctrl_tag}' exists in labels.")
+    cli::cli_warn("No contrasts built — ensure either a global control '{ctrl_tag}' exists in labels, or per-cell '<cell>_{ctrl_tag}' labels are present.")
     return(tibble::tibble())
   }
 
-  mk_path <- function(lab) {
-    file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv", prefix, .safe_label(lab)))
-  }
+  mk_path <- function(lab) file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
+                                                      prefix, .safe_label(lab)))
   name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
   cond1_label <- pairs$stress
@@ -640,15 +762,11 @@ build_cellwise_contrasts_from_index <- function(index_csv,
     out_file     = file.path(out_dir,
                              sprintf("%s_vs_%s_delta_links.csv",
                                      .safe_label(cond1_label), .safe_label(cond2_label))),
-    stringsAsFactors = FALSE,
-    check.names = FALSE
+    stringsAsFactors = FALSE, check.names = FALSE
   )
 
-  # Warn about missing inputs but still return specs
   all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
-  for (p in all_paths) {
-    if (!file.exists(p)) cli::cli_warn("File not found (will fail when run): {p}")
-  }
+  for (p in all_paths) if (!file.exists(p)) cli::cli_warn("File not found (will fail when run): {p}")
 
   tibble::as_tibble(specs)
 }
@@ -656,45 +774,89 @@ build_cellwise_contrasts_from_index <- function(index_csv,
 # ==============================
 # Driver
 # ==============================
-
-#' Driver: run all cell-wise contrasts and write CSVs
+#' Run link-delta comparisons from a prebuilt specs table
 #'
-#' Convenience wrapper that builds specs from an index and runs
-#' `compare_links_bulk()` with your chosen parallel settings.
-#'
-#' @inheritParams compare_links_two_conditions
-#' @param out_dir Base directory with inputs and where outputs are written.
-#' @param prefix File prefix (default `"lighting"`).
-#' @param index_csv Path to index CSV (default `file.path(out_dir, "lighting_per_condition_index.csv")`).
-#' @param ctrl_tag Control tag (default `"10_FBS"`).
+#' @param specs Tibble/data.frame with columns:
+#'   `cond1_source`, `cond2_source`, `cond1_name`, `cond2_name`, `out_file`.
+#' @param clean_names Logical; pass-through to `compare_links_bulk()`.
+#' @param parallel Logical; pass-through to `compare_links_bulk()`.
+#' @param plan Future plan name or function; pass-through to `compare_links_bulk()`.
+#' @param workers Integer or NULL; pass-through to `compare_links_bulk()`.
+#' @param dedupe Logical; pass-through to `compare_links_bulk()`.
+#' @param pseudocount Numeric; pass-through to `compare_links_bulk()`.
+#' @param verbose Logical; pass-through to `compare_links_bulk()`.
 #'
 #' @return (invisible) list of result tibbles.
 #' @export
-run_links_deltas_driver <- function(out_dir = "inst/extdata/lighting",
-                                    prefix = "lighting",
-                                    index_csv = file.path(out_dir, "lighting_per_condition_index.csv"),
-                                    ctrl_tag = "10_FBS",
+run_links_deltas_driver <- function(specs,
                                     clean_names = FALSE,
-                                    parallel = TRUE,
-                                    plan = "multisession",
-                                    workers = NULL,
-                                    dedupe = TRUE,
+                                    parallel    = TRUE,
+                                    plan        = "multisession",
+                                    workers     = NULL,
+                                    dedupe      = TRUE,
                                     pseudocount = 1,
-                                    verbose = TRUE) {
+                                    verbose     = TRUE) {
+  if (!is.data.frame(specs) || nrow(specs) == 0L) {
+    cli::cli_abort("`specs` must be a non-empty data.frame/tibble.")
+  }
+  need <- c("cond1_source","cond2_source","cond1_name","cond2_name","out_file")
+  miss <- setdiff(need, names(specs))
+  if (length(miss)) {
+    cli::cli_abort(c("`specs` missing required columns.", i = paste(miss, collapse = ", ")))
+  }
 
-  specs <- build_cellwise_contrasts_from_index(index_csv, out_dir, prefix, ctrl_tag,
-                                               clean_names = clean_names, verbose = verbose)
-  if (!nrow(specs)) return(invisible(list()))
+  # Optional: warn if any input files are absent (do not stop)
+  paths <- unique(c(specs$cond1_source, specs$cond2_source))
+  for (p in paths) if (!file.exists(p)) cli::cli_warn("File not found (may fail later): {p}")
 
   compare_links_bulk(specs,
-                     clean_names        = clean_names,
-                     parallel           = parallel,
-                     plan               = plan,
-                     workers            = workers,
-                     dedupe             = dedupe,
-                     pseudocount        = pseudocount,
-                     verbose            = verbose)
+                     clean_names = clean_names,
+                     parallel    = parallel,
+                     plan        = plan,
+                     workers     = workers,
+                     dedupe      = dedupe,
+                     pseudocount = pseudocount,
+                     verbose     = verbose)
 }
+
+#' #' Driver: run all cell-wise contrasts and write CSVs
+#' #'
+#' #' Convenience wrapper that builds specs from an index and runs
+#' #' `compare_links_bulk()` with your chosen parallel settings.
+#' #'
+#' #' @inheritParams compare_links_two_conditions
+#' #' @param out_dir Base directory with inputs and where outputs are written.
+#' #' @param prefix File prefix (default `"lighting"`).
+#' #' @param index_csv Path to index CSV (default `file.path(out_dir, "lighting_per_condition_index.csv")`).
+#' #' @param ctrl_tag Control tag (default `"10_FBS"`).
+#' #'
+#' #' @return (invisible) list of result tibbles.
+#' #' @export
+#' run_links_deltas_driver <- function(out_dir = "inst/extdata/lighting",
+#'                                     prefix = "lighting",
+#'                                     index_csv = file.path(out_dir, "lighting_per_condition_index.csv"),
+#'                                     ctrl_tag = "10_FBS",
+#'                                     clean_names = FALSE,
+#'                                     parallel = TRUE,
+#'                                     plan = "multisession",
+#'                                     workers = NULL,
+#'                                     dedupe = TRUE,
+#'                                     pseudocount = 1,
+#'                                     verbose = TRUE) {
+#'
+#'   specs <- build_cellwise_contrasts_from_index(index_csv, out_dir, prefix, ctrl_tag,
+#'                                                clean_names = clean_names, verbose = verbose)
+#'   if (!nrow(specs)) return(invisible(list()))
+#'
+#'   compare_links_bulk(specs,
+#'                      clean_names        = clean_names,
+#'                      parallel           = parallel,
+#'                      plan               = plan,
+#'                      workers            = workers,
+#'                      dedupe             = dedupe,
+#'                      pseudocount        = pseudocount,
+#'                      verbose            = verbose)
+#' }
 
 # ---------------------------------------------------------------------------
 # Examples (not run)

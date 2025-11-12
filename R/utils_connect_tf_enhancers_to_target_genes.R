@@ -1,5 +1,6 @@
 # Build a reference gene table for hg38 (GRCh38) or mm10 (GRCm38)
 # Returns tibble: ensembl_gene_id, HGNC, chrom, start, end, strand, tss
+#' @export
 episcope_build_gene_annot <- function(assembly = c("hg38","mm10"), ensdb = NULL) {
   assembly <- base::match.arg(assembly)
 
@@ -785,7 +786,160 @@ make_basal_links <- function(fp_gene_corr_kept, fp_annotation,
   basal
 }
 
+#' # Lighting by condition
+#' #' @export
+#' light_by_condition <- function(ds, basal_links,
+#'                                out_dir, prefix = "lighting",
+#'                                label_col = c("strict_match_rna","cell_stress_type"),
+#'                                link_score_threshold = 0,
+#'                                fp_score_threshold   = 1,
+#'                                tf_expr_threshold    = 10,
+#'                                use_parallel = TRUE,
+#'                                workers = max(1L, round(parallel::detectCores(logical = TRUE)/2)),
+#'                                verbose = TRUE) {
+#'   label_col <- match.arg(label_col, c("strict_match_rna","cell_stress_type"))
+#'   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+#'   .log  <- function(...) if (isTRUE(verbose)) message("[light_by_condition] ", sprintf(...))
+#'   .safe <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+#'
+#'   # ------- sanity & shared sample ids -------
+#'   stopifnot(is.data.frame(ds$fp_score), "peak_ID" %in% names(ds$fp_score))
+#'   stopifnot(is.data.frame(ds$rna), all(c("HGNC","ensembl_gene_id") %in% names(ds$rna)))
+#'
+#'   samp_fp  <- setdiff(names(ds$fp_score), "peak_ID")
+#'   samp_rna <- setdiff(names(ds$rna),      c("HGNC","ensembl_gene_id"))
+#'   common_ids <- intersect(samp_fp, samp_rna)
+#'   if (length(common_ids) == 0) stop("No shared samples between fp_score and rna.")
+#'
+#'   # ------- metadata (use sample_metadata_used; no mapping needed) -------
+#'   meta_src <- ds$sample_metadata_used
+#'   stopifnot(is.data.frame(meta_src), "id" %in% names(meta_src))
+#'   have_label <- label_col %in% names(meta_src)
+#'
+#'   meta <- meta_src |>
+#'     dplyr::filter(.data$id %in% common_ids) |>
+#'     dplyr::mutate(
+#'       .base = if (have_label) .data[[label_col]] else .data$id,
+#'       .base = dplyr::coalesce(.base, .data$id)
+#'     ) |>
+#'     dplyr::group_by(.base) |>
+#'     dplyr::mutate(.dup = dplyr::row_number()) |>
+#'     dplyr::ungroup() |>
+#'     dplyr::mutate(label = ifelse(.dup > 1, paste0(.base, "_", id), .base)) |>
+#'     dplyr::select(id, label)
+#'
+#'   # ------- RNA table keyed by gene_key (prefer HGNC, else ENSG) -------
+#'   sample_cols_rna <- samp_rna
+#'   rna_hgnc <- ds$rna |>
+#'     dplyr::filter(!is.na(HGNC), HGNC != "") |>
+#'     dplyr::transmute(gene_key = HGNC, dplyr::across(dplyr::all_of(sample_cols_rna)))
+#'   rna_ensg <- ds$rna |>
+#'     dplyr::filter(!is.na(ensembl_gene_id), ensembl_gene_id != "") |>
+#'     dplyr::transmute(gene_key = ensembl_gene_id, dplyr::across(dplyr::all_of(sample_cols_rna)))
+#'   rna_gk <- dplyr::bind_rows(rna_hgnc, dplyr::anti_join(rna_ensg, rna_hgnc, by = "gene_key")) |>
+#'     dplyr::distinct(gene_key, .keep_all = TRUE)
+#'
+#'   # ------- helper: normalize edge_weight within (peak_ID, gene_key) -------
+#'   normalize_edge_wt <- function(df, floor = 0) {
+#'     df |>
+#'       dplyr::mutate(edge_weight_raw = pmax(tf_expr, 0)) |>
+#'       dplyr::group_by(peak_ID, gene_key) |>
+#'       dplyr::mutate(
+#'         .tot = sum(edge_weight_raw, na.rm = TRUE),
+#'         edge_weight = dplyr::if_else(.tot > 0, edge_weight_raw / .tot, floor),
+#'         .tot = NULL
+#'       ) |>
+#'       dplyr::ungroup()
+#'   }
+#'
+#'   # ------- one condition -------
+#'   build_one <- function(cond_id, cond_label) {
+#'     atac_one <- ds$fp_score |>
+#'       dplyr::select(peak_ID, fp_score = dplyr::all_of(cond_id)) |>
+#'       dplyr::distinct(peak_ID, .keep_all = TRUE)
+#'
+#'     tf_expr_tbl <- ds$rna |>
+#'       dplyr::select(HGNC, tf_expr = dplyr::all_of(cond_id)) |>
+#'       dplyr::distinct(HGNC, .keep_all = TRUE)
+#'
+#'     gene_expr_tbl <- rna_gk |>
+#'       dplyr::select(gene_key, gene_expr = dplyr::all_of(cond_id))
+#'
+#'     links <- basal_links |>
+#'       dplyr::left_join(atac_one,      by = "peak_ID") |>
+#'       dplyr::left_join(tf_expr_tbl,   by = c("TF" = "HGNC")) |>
+#'       dplyr::left_join(gene_expr_tbl, by = "gene_key") |>
+#'       dplyr::mutate(
+#'         fp_score  = tidyr::replace_na(fp_score,  0),
+#'         tf_expr   = tidyr::replace_na(tf_expr,   0),
+#'         gene_expr = tidyr::replace_na(gene_expr, 0)
+#'       ) |>
+#'       normalize_edge_wt(floor = 0) |>
+#'       dplyr::mutate(
+#'         link_score  = dplyr::coalesce(r_gene, 0) *
+#'           dplyr::coalesce(fp_score,   0),
+#'         active_link = is.finite(link_score) &
+#'           fp_score >= fp_score_threshold &
+#'           abs(link_score) >= link_score_threshold &
+#'           tf_expr >= tf_expr_threshold
+#'       ) |>
+#'       dplyr::select(
+#'         TF, gene_key, peak_ID,
+#'         edge_weight,
+#'         r_gene, p_gene, p_adj_gene,
+#'         n_used_tf, r_tf, p_tf, p_adj_tf, motif,
+#'         fp_score, tf_expr, gene_expr,
+#'         active_link, link_score
+#'       ) |>
+#'       dplyr::arrange(dplyr::desc(abs(link_score)), TF, gene_key, peak_ID)
+#'
+#'     # links |> dplyr::filter(link_score != 0)
+#'     # basal_links |>
+#'     #   dplyr::left_join(atac_one,      by = "peak_ID") |>
+#'     #   dplyr::filter(!is.na(fp_score))
+#'
+#'     readr::write_csv(
+#'       links,
+#'       file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv", prefix, .safe(cond_label)))
+#'     )
+#'     tibble::tibble(label = cond_label, n_links_rows = nrow(links))
+#'   }
+#'
+#'   # ------- run all conditions -------
+#'   ids  <- meta$id
+#'   labs <- meta$label
+#'   if (use_parallel && length(ids) > 1L && workers > 1L) {
+#'     oplan <- future::plan(); on.exit(future::plan(oplan), add = TRUE)
+#'     future::plan(future::multisession, workers = workers)
+#'     idx_list <- future.apply::future_mapply(build_one, ids, labs, SIMPLIFY = FALSE)
+#'     index <- dplyr::bind_rows(idx_list)
+#'   } else {
+#'     index <- purrr::map2_dfr(ids, labs, build_one)
+#'   }
+#'
+#'   readr::write_csv(index, file.path(out_dir, sprintf("%s_per_condition_index.csv", prefix)))
+#'   .log("Wrote per-condition index: %s rows.", format(nrow(index), big.mark = ","))
+#'   invisible(index)
+#' }
+
 # Lighting by condition
+#' Build per-condition TF→gene link tables ("lighting") using a chosen sample label column.
+#'
+#' @param ds A list containing at least: fp_score (peak_ID + samples), rna (HGNC/ensembl_gene_id + samples),
+#'   and sample_metadata_used (must include 'id' and optionally the chosen label column).
+#' @param basal_links Basal TF→enhancer→gene link table.
+#' @param out_dir Output directory.
+#' @param prefix Output file prefix.
+#' @param label_col Character scalar **or** character vector of candidates. The first that exists in
+#'   `ds$sample_metadata_used` will be used; else falls back to `"id"`. Defaults to
+#'   c("strict_match_rna","cell_stress_type") for backward-compatibility.
+#' @param link_score_threshold Numeric threshold on |link_score|.
+#' @param fp_score_threshold Numeric threshold on fp_score.
+#' @param tf_expr_threshold Numeric threshold on TF expression.
+#' @param use_parallel Whether to parallelize across conditions.
+#' @param workers Number of worker processes when `use_parallel = TRUE`.
+#' @param verbose Verbose messages.
+#'
 #' @export
 light_by_condition <- function(ds, basal_links,
                                out_dir, prefix = "lighting",
@@ -796,7 +950,6 @@ light_by_condition <- function(ds, basal_links,
                                use_parallel = TRUE,
                                workers = max(1L, round(parallel::detectCores(logical = TRUE)/2)),
                                verbose = TRUE) {
-  label_col <- match.arg(label_col, c("strict_match_rna","cell_stress_type"))
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   .log  <- function(...) if (isTRUE(verbose)) message("[light_by_condition] ", sprintf(...))
   .safe <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
@@ -810,33 +963,41 @@ light_by_condition <- function(ds, basal_links,
   common_ids <- intersect(samp_fp, samp_rna)
   if (length(common_ids) == 0) stop("No shared samples between fp_score and rna.")
 
-  # ------- metadata (use sample_metadata_used; no mapping needed) -------
+  # ------- metadata (prefer provided label_col when present; otherwise fallback to id) -------
   meta_src <- ds$sample_metadata_used
   stopifnot(is.data.frame(meta_src), "id" %in% names(meta_src))
-  have_label <- label_col %in% names(meta_src)
 
-  meta <- meta_src |>
-    dplyr::filter(.data$id %in% common_ids) |>
-    dplyr::mutate(
-      .base = if (have_label) .data[[label_col]] else .data$id,
-      .base = dplyr::coalesce(.base, .data$id)
-    ) |>
-    dplyr::group_by(.base) |>
-    dplyr::mutate(.dup = dplyr::row_number()) |>
-    dplyr::ungroup() |>
-    dplyr::mutate(label = ifelse(.dup > 1, paste0(.base, "_", id), .base)) |>
-    dplyr::select(id, label)
+  # resolve label_col: allow any name; if a vector, take the first that exists; else use "id"
+  if (length(label_col) > 1L) {
+    pick <- label_col[label_col %in% names(meta_src)]
+    label_col <- if (length(pick)) pick[1L] else "id"
+  } else {
+    if (!is.character(label_col) || length(label_col) != 1L || !(label_col %in% names(meta_src))) {
+      label_col <- "id"
+    }
+  }
+
+  # Keep only common ids; build a stable label with duplicate disambiguation
+  keep <- meta_src[meta_src$id %in% common_ids, , drop = FALSE]
+  base_label <- if (label_col %in% names(keep)) keep[[label_col]] else keep$id
+  base_label[is.na(base_label) | base_label == ""] <- keep$id
+
+  # Disambiguate duplicate labels: append "_<id>" for duplicates
+  dup_idx <- ave(seq_len(nrow(keep)), base_label, FUN = seq_along)
+  label <- ifelse(dup_idx > 1L, paste0(base_label, "_", keep$id), base_label)
+  meta <- data.frame(id = keep$id, label = label, stringsAsFactors = FALSE)
 
   # ------- RNA table keyed by gene_key (prefer HGNC, else ENSG) -------
   sample_cols_rna <- samp_rna
-  rna_hgnc <- ds$rna |>
-    dplyr::filter(!is.na(HGNC), HGNC != "") |>
-    dplyr::transmute(gene_key = HGNC, dplyr::across(dplyr::all_of(sample_cols_rna)))
-  rna_ensg <- ds$rna |>
-    dplyr::filter(!is.na(ensembl_gene_id), ensembl_gene_id != "") |>
-    dplyr::transmute(gene_key = ensembl_gene_id, dplyr::across(dplyr::all_of(sample_cols_rna)))
-  rna_gk <- dplyr::bind_rows(rna_hgnc, dplyr::anti_join(rna_ensg, rna_hgnc, by = "gene_key")) |>
-    dplyr::distinct(gene_key, .keep_all = TRUE)
+  rna_hgnc <- ds$rna[!is.na(ds$rna$HGNC) & ds$rna$HGNC != "", c("HGNC", sample_cols_rna), drop = FALSE]
+  names(rna_hgnc)[1] <- "gene_key"
+  rna_ensg <- ds$rna[!is.na(ds$rna$ensembl_gene_id) & ds$rna$ensembl_gene_id != "", c("ensembl_gene_id", sample_cols_rna), drop = FALSE]
+  names(rna_ensg)[1] <- "gene_key"
+  # bind_rows preferring HGNC keys; anti-join equivalent:
+  rna_hgnc_keys <- rna_hgnc$gene_key
+  rna_ensg_only <- rna_ensg[!(rna_ensg$gene_key %in% rna_hgnc_keys), , drop = FALSE]
+  rna_gk <- dplyr::bind_rows(rna_hgnc, rna_ensg_only)
+  rna_gk <- dplyr::distinct(rna_gk, gene_key, .keep_all = TRUE)
 
   # ------- helper: normalize edge_weight within (peak_ID, gene_key) -------
   normalize_edge_wt <- function(df, floor = 0) {
@@ -853,16 +1014,15 @@ light_by_condition <- function(ds, basal_links,
 
   # ------- one condition -------
   build_one <- function(cond_id, cond_label) {
-    atac_one <- ds$fp_score |>
-      dplyr::select(peak_ID, fp_score = dplyr::all_of(cond_id)) |>
-      dplyr::distinct(peak_ID, .keep_all = TRUE)
+    # dynamic pulls via base subsetting to avoid NSE/rlang
+    atac_one <- ds$fp_score[, c("peak_ID", cond_id), drop = FALSE]
+    names(atac_one) <- c("peak_ID", "fp_score")
 
-    tf_expr_tbl <- ds$rna |>
-      dplyr::select(HGNC, tf_expr = dplyr::all_of(cond_id)) |>
-      dplyr::distinct(HGNC, .keep_all = TRUE)
+    tf_expr_tbl <- ds$rna[, c("HGNC", cond_id), drop = FALSE]
+    names(tf_expr_tbl) <- c("HGNC", "tf_expr")
 
-    gene_expr_tbl <- rna_gk |>
-      dplyr::select(gene_key, gene_expr = dplyr::all_of(cond_id))
+    gene_expr_tbl <- rna_gk[, c("gene_key", cond_id), drop = FALSE]
+    names(gene_expr_tbl) <- c("gene_key", "gene_expr")
 
     links <- basal_links |>
       dplyr::left_join(atac_one,      by = "peak_ID") |>
@@ -875,8 +1035,7 @@ light_by_condition <- function(ds, basal_links,
       ) |>
       normalize_edge_wt(floor = 0) |>
       dplyr::mutate(
-        link_score  = dplyr::coalesce(r_gene, 0) *
-          dplyr::coalesce(fp_score,   0),
+        link_score  = dplyr::coalesce(r_gene, 0) * dplyr::coalesce(fp_score, 0),
         active_link = is.finite(link_score) &
           fp_score >= fp_score_threshold &
           abs(link_score) >= link_score_threshold &
@@ -892,11 +1051,6 @@ light_by_condition <- function(ds, basal_links,
       ) |>
       dplyr::arrange(dplyr::desc(abs(link_score)), TF, gene_key, peak_ID)
 
-    # links |> dplyr::filter(link_score != 0)
-    # basal_links |>
-    #   dplyr::left_join(atac_one,      by = "peak_ID") |>
-    #   dplyr::filter(!is.na(fp_score))
-
     readr::write_csv(
       links,
       file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv", prefix, .safe(cond_label)))
@@ -907,6 +1061,7 @@ light_by_condition <- function(ds, basal_links,
   # ------- run all conditions -------
   ids  <- meta$id
   labs <- meta$label
+
   if (use_parallel && length(ids) > 1L && workers > 1L) {
     oplan <- future::plan(); on.exit(future::plan(oplan), add = TRUE)
     future::plan(future::multisession, workers = workers)
@@ -920,3 +1075,5 @@ light_by_condition <- function(ds, basal_links,
   .log("Wrote per-condition index: %s rows.", format(nrow(index), big.mark = ","))
   invisible(index)
 }
+
+

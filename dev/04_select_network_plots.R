@@ -10,11 +10,14 @@
 #   ring_tf_only_direct = FALSE
 # )
 # --- CONFIG ---
-src_dir  <- "Y:/cy232/cutntag/humanPDAC/Nutrients_basal/Episcope/select_network"
-out_dir  <- "Z:/episcope_test_nutrient_stress/select_network_plots"
+# src_dir  <- "Y:/cy232/cutntag/humanPDAC/Nutrients_basal/Episcope/select_network"
+# out_dir  <- "Z:/episcope_test_nutrient_stress/select_network_plots"
+
+src_dir <- out_dir <- lighting_folder
 layout   <- "fr"           # fixed single layout
 show_peaks <- FALSE        # keep triangles hidden by default
 set.seed(1L)
+motif_db <- "jaspar2024"
 
 # --- helpers (no library(); explicit namespacing only) ---
 is_ctrl_tag <- function(tag) {
@@ -44,26 +47,26 @@ detect_mapping <- function(df_names) {
     gene_expr_str_col  = paste0("gene_expr_",  suf[str_idx])
   )
 }
-pick_motif_db <- function(base_name) {
-  if (grepl("hocomoco", base_name, ignore.case = TRUE)) "hocomocov13" else "jaspar2024"
-}
+# pick_motif_db <- function(base_name) {
+#   if (grepl("hocomoco", base_name, ignore.case = TRUE)) "hocomocov13" else "jaspar2024"
+# }
 
 # --- run ---
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-files <- list.files(src_dir, pattern = "\\.txt$", full.names = TRUE)
-if (!length(files)) stop("No .txt files found in: ", src_dir)
+files <- list.files(src_dir, pattern = "_K20.csv$", full.names = TRUE)
+if (!length(files)) stop("No .txt or .csv files found in: ", src_dir)
 
 for (in_path in files) {
   base_name <- sub("\\.txt$", "", basename(in_path))
   message(">>> Processing: ", base_name)
 
   # read
-  tf_network <- readr::read_tsv(in_path, show_col_types = FALSE)
+  tf_network <- readr::read_csv(in_path, show_col_types = FALSE)
   ns <- names(tf_network)
 
   # per-file mappings and motif_db
   mp <- detect_mapping(ns)
-  motif_db <- pick_motif_db(base_name)
+  # motif_db <- pick_motif_db(base_name)
 
   # plot
   w <- try(
