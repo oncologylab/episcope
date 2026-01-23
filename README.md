@@ -47,30 +47,34 @@ BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
 
 ## Usage Overview
 
-Episcope modules are interoperable and can be executed independently or as part of a pipeline.
+Episcope modules are interoperable and can be executed independently or as part
+of a pipeline.
 
 ```r
 library(episcope)
+load_episcope_config("episcope_grn.yaml")
 
-# Example: build a GRN from matched ATAC-RNA dataset
-fp  <- load_footprints(footprint_bw = "footprints_corrected.bw", peaks_bed = "peaks.bed")
-rna <- load_rna("rna_expression.csv")
+# Step 0: load footprints, ATAC, RNA; build strict grn_set
+fp_manifest <- load_footprints(root_dir = fp_root_dir, db_name = db, out_dir = fp_out_dir)
+fp_aligned <- align_footprints(fp_manifest, output_mode = "distinct")
 
-fp_aligned   <- align_footprints(fp)
-fp_corrected <- correct_footprints(fp_aligned)
-tf_map       <- map_tf_to_footprints(fp_corrected, rna)
+# Step 1: predict TF binding sites with FP–TF correlations
+grn_set <- build_grn_set(...)
+grn_set <- grn_add_fp_tf_corr(grn_set, method = "pearson", cores = 20L)
+grn_set <- grn_filter_fp_tf_corr(grn_set, r_thr = threshold_fp_tf_corr_r, p_thr = threshold_fp_tf_corr_p)
 
-priors   <- build_regulation_priors(method = "genehancer")
-refined1 <- correlate_atac_to_gene(priors, fp, rna)
-refined2 <- correlate_fp_to_gene(refined1)
+# Step 2: link TFBS to target genes and light per condition
+gh_std <- load_genehancer_panc(file.path("inst", "extdata", "GeneHancer_v5.24_elite_panc.csv"))
+fp_res_full_pearson <- correlate_fp_to_genes(grn_set, gh_tbl = gh_std, method = "pearson")
+fp_res_full_spearman <- correlate_fp_to_genes(grn_set, gh_tbl = gh_std, method = "spearman")
+fp_links_filtered <- filter_links_by_fp_rna_criteria(...)
+status_res <- build_link_status_matrix(...)
+light_by_condition(...)
 
-grn <- build_basal_grn(refined2)
-validate_grn_perturbation(grn, perturb_db = "perturbdb.sqlite")
-
-# Condition lighting and differential analysis
-lit_grn <- light_condition_grn(grn, condition = "GlcLow", replicate_policy = "pooled")
-dgrn    <- compare_grn(grn, condition_a = "Ctrl", condition_b = "Stress")
-dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
+# Step 3: differential GRN and topic analysis
+run_links_deltas_driver(...)
+filter_links_deltas_bulk(...)
+run_vae_ctf_multivi(...)
 ```
 
 ---
@@ -80,19 +84,26 @@ dgrn_f  <- filter_grn_diff(dgrn, min_abs_delta = 0.2)
 Episcope provides modular functions for each step, from footprint data to condition-specific regulatory networks.
 
 ### [**Predict TF binding sites**](https://github.com/oncologylab/episcope/wiki/Predict-TF-binding-sites)
-Stream footprint overviews from TOBIAS/fp-tools, standardize the manifest, align redundant peaks, apply peak-wise quantile normalization, and filter candidates using ATAC/RNA evidence. Outputs a clean, normalized footprint manifest.
+Build condition-aware FP-bound and gene-expression matrices, apply FP-wise QN,
+and compute FP–TF correlations (Pearson/Spearman/Kendall; canonical/all modes).
+Outputs TF binding probability overviews and optional TFBS BEDs.
 
 ### [**Connect TF-occupied enhancers to target genes**](https://github.com/oncologylab/episcope/wiki/Connect-TFs-to-Target-Genes)
-Construct regulatory priors (GeneHancer ELITE or windowed TSS rules), load ATAC/RNA matrices, and refine peak→gene links via ATAC–RNA correlation while quantifying TF activity via footprint–RNA correlation. Produces TF–peak–gene triplets with scores.
+Link TFBS to target genes via GeneHancer (or distance/loops), build a
+condition-specific link-status matrix, compute TF–gene correlations, and
+assemble per-condition GRNs with link_score = r(TF–gene) × FP score.
 
 ### [**Build basal GRN & identify active regulatory edges per condition**](https://github.com/oncologylab/episcope/wiki/Build-basal-GRN-&-identify-active-regulatory-edges-per-condition)
-Assemble a dataset-specific basal network, then “light” (activate) edges per condition using thresholds on TF expression, footprint, and link scores. Generates per-condition link tables and an index for contrasts.
+Assemble basal TF–peak–gene links and light edges per condition under FP-bound
+and gene-expression gating. Emits per-condition link tables and an index.
 
 ### [**Perform differential GRN analysis & identify master TFs**](https://github.com/oncologylab/episcope/wiki/Perform-differential-GRN-analysis-&-identify-master-TFs)
-Compute stress–control contrasts to obtain Δ(link) scores, filter edges with expression-consistent direction, and run LDA topic modeling across contrasts. Summaries rank topic-level TFs and separate activation vs repression.
+Compute per-condition contrasts, filter delta links by expression and delta
+thresholds, and run topic modeling with VAE-based workflows.
 
 ### [**Generate interactive Topic & TF regulatory hub subnetworks**](https://github.com/oncologylab/episcope/wiki/Interactive-Gene-Regulatory-Network-Visualization)
-Render Δ-topic and TF-hub subnetworks as self-contained HTML (optional PDFs), encoding Δ(link) in edge color/width and TF/gene expression in node styling. Supports one-off pairs and bulk rendering across many topics.
+Generate doc-topic heatmaps, topic delta subnet plots, and pathway summaries
+from `topic_models/` outputs.
 
 
 
