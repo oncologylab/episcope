@@ -1,5 +1,6 @@
 .Rproj.user
 inst/doc
+inst/extdata
 /doc/
 /Meta/
 workspace.RData
