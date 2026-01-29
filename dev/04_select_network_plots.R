@@ -10,10 +10,9 @@
 #   ring_tf_only_direct = FALSE
 # )
 # --- CONFIG ---
-# src_dir  <- "Y:/cy232/cutntag/humanPDAC/Nutrients_basal/Episcope/select_network"
-# out_dir  <- "Z:/episcope_test_nutrient_stress/select_network_plots"
+src_dir  <- "/data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/Episcope/select_network"
+out_dir  <- "/data/homes/yl814/episcope_test/select_network_plots"
 
-src_dir <- out_dir <- lighting_folder
 layout   <- "fr"           # fixed single layout
 show_peaks <- FALSE        # keep triangles hidden by default
 set.seed(1L)
@@ -22,8 +21,8 @@ motif_db <- "jaspar2024"
 # --- helpers (no library(); explicit namespacing only) ---
 is_ctrl_tag <- function(tag) {
   # heuristics for picking the control column
-  any(grepl(c("(^|_)ctrl($|_)", "control", "baseline", "basal", "_10_fbs($|_)", "10fbs"),
-            tolower(tag), perl = TRUE))
+  ctrl_patterns <- c("(^|_)ctrl($|_)", "control", "baseline", "basal", "_10_fbs($|_)", "10fbs")
+  grepl(paste(ctrl_patterns, collapse = "|"), tolower(tag), perl = TRUE)
 }
 detect_mapping <- function(df_names) {
   # choose the two link_score_* columns
@@ -54,6 +53,8 @@ detect_mapping <- function(df_names) {
 # --- run ---
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 files <- list.files(src_dir, pattern = "_K20.csv$", full.names = TRUE)
+files <- list.files(src_dir, pattern = "txt$", full.names = TRUE)
+
 if (!length(files)) stop("No .txt or .csv files found in: ", src_dir)
 
 for (in_path in files) {
@@ -105,7 +106,6 @@ for (in_path in files) {
   htmlwidgets::saveWidget(w, out_file, selfcontained = FALSE)
   message("    ✓ Saved: ", normalizePath(out_file, mustWork = FALSE))
 }
-
 
 
 

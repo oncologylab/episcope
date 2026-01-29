@@ -2,13 +2,14 @@
 % Please edit documentation in R/utils_plot_tf_network_delta.R
 \name{plot_tf_network_delta}
 \alias{plot_tf_network_delta}
-\title{Plot an interactive Δ-network for all TF–peak–gene links
-(single-panel Δ = stress − control) with crowd-control options.}
+\title{Plot an interactive -network for all TFpeakgene links
+(single-panel  = case ?control) with crowd-control options.}
 \usage{
 plot_tf_network_delta(
   data,
   plot_title,
   out_html = NULL,
+  html_title = NULL,
   layout_algo = c("fr", "kk", "lgl", "dh", "graphopt", "circle", "grid", "sphere",
     "star", "random"),
   add_direct = TRUE,
@@ -18,6 +19,15 @@ plot_tf_network_delta(
   peak_mode = c("show_all", "shared_only", "hide"),
   show_peaks = TRUE,
   gene_fc_thresh = 1.5,
+  col_node_up = "#dfb734",
+  col_node_down = "#283673",
+  col_node_neutral = "#555555",
+  font_color = "#FFFFFF",
+  edge_width_min = 2,
+  edge_width_max = 8,
+  size_by = c("log2fc", "expr_max"),
+  label_inside = TRUE,
+  label_max_chars = 18,
   de_reference = c("str_over_ctrl", "ctrl_over_str"),
   motif_db = c("jaspar2024", "hocomocov13"),
   physics = FALSE,
@@ -36,31 +46,41 @@ plot_tf_network_delta(
 )
 }
 \arguments{
-\item{data}{Tibble/data.frame or path to CSV/TSV with per-row TF–peak–gene entry.
+\item{data}{Tibble/data.frame or path to CSV/TSV with per-row TFpeakgene entry.
 Must contain at least: TF/tf, gene_key/gene, peak_id/peak, and two per-condition
 link scores (e.g., \code{link_score_*}). Signs/expressions are optional.}
+
+\item{plot_title}{Title string shown above the network.}
 
 \item{out_html}{Optional path to write HTML; if `NULL` returns the htmlwidget.}
 
 \item{layout_algo}{One of: "fr","kk","lgl","dh","graphopt","circle","grid","sphere","star","random".}
 
-\item{add_direct}{Logical; also draw faint direct TF→gene Δ edges in addition to TF→PEAK→gene.}
+\item{add_direct}{Logical; also draw faint direct TFgene  edges in addition to TFPEAKgene.}
 
-\item{edge_filter_min}{Keep edges with \code{|score_ctrl|} or \code{|score_str|} ≥ this value (magnitude-only).}
+\item{edge_filter_min}{Keep edges with \code{|score_ctrl|} or \code{|score_str|} ?this value.}
 
-\item{min_delta_abs}{Keep edges with \code{|Δ|} ≥ this value (Δ = str − ctrl).}
+\item{min_delta_abs}{Keep edges with \code{||} ?this value ( = case ?ctrl).}
 
-\item{keep_top_edges_per_tf}{Optional integer; per TF keep only the strongest \code{|Δ|} edges.}
+\item{keep_top_edges_per_tf}{Optional integer; per TF keep only the strongest \code{||} edges.}
 
-\item{peak_mode}{One of: "show_all" (default), "shared_only" (hide unique-peak triangles),
-"hide" (draw TF→gene only; collapses multiple peaks to strongest Δ per TF–gene).}
+\item{peak_mode}{One of: "show_all" (default), "shared_only", "hide".}
 
-\item{show_peaks}{Convenience boolean to show peak triangles (\code{TRUE}, default) or hide them
-entirely (\code{FALSE}). If set to \code{FALSE}, this overrides \code{peak_mode} to "hide".}
+\item{show_peaks}{Convenience boolean; if FALSE, forces \code{peak_mode = "hide"}.}
 
-\item{gene_fc_thresh}{Threshold for node border up/down coloring (reference set by `de_reference`).}
+\item{gene_fc_thresh}{Threshold on |log2FC| used to call nodes up/down vs neutral.}
 
-\item{de_reference}{"str_over_ctrl" (default) or "ctrl_over_str" for log2FC border coloring.}
+\item{col_node_up}{Fill color for up-regulated nodes (TFs/genes).}
+
+\item{col_node_down}{Fill color for down-regulated nodes.}
+
+\item{col_node_neutral}{Fill color for neutral nodes.}
+
+\item{font_color}{Base label color (all nodes).}
+
+\item{edge_width_min, edge_width_max}{Minimum and maximum edge thickness for ||.}
+
+\item{de_reference}{"str_over_ctrl" (default) or "ctrl_over_str" for log2FC sign.}
 
 \item{motif_db}{"jaspar2024" (default) or "hocomocov13" to recognize TF symbols.}
 
@@ -68,22 +88,22 @@ entirely (\code{FALSE}). If set to \code{FALSE}, this overrides \code{peak_mode}
 
 \item{width, height}{Dimensions passed to \code{visNetwork}.}
 
-\item{seed}{Integer seed for reproducible igraph layouts (ignored when \code{physics=TRUE} and nodes are moved).}
+\item{seed}{Integer seed for reproducible igraph layouts.}
 
 \item{verbose}{Logical; print progress messages.}
 
 \item{score_ctrl_col, score_str_col}{Optional explicit column names of per-condition link scores.}
 
-\item{sign_ctrl_col, sign_str_col}{Optional explicit column names of per-condition link signs ("+"|"-"|0 or numeric).}
+\item{sign_ctrl_col, sign_str_col}{Optional explicit column names of per-condition link signs.}
 
-\item{tf_expr_ctrl_col, tf_expr_str_col, gene_expr_ctrl_col, gene_expr_str_col}{Optional
-expression columns (used for node tooltips, TF label sizing, and border coloring).}
+\item{tf_expr_ctrl_col, tf_expr_str_col, gene_expr_ctrl_col, gene_expr_str_col}{Optional expression columns.}
 }
 \value{
 A \code{visNetwork} htmlwidget (or, invisibly, \code{out_html} path if saved).
 }
 \description{
-The plot draws TFs (boxes), genes (dots), and optional peaks (triangles).
-Edge color encodes Δ magnitude/sign (red = gain/activation; blue = loss/repression);
-**arrow head styles** encode sign: **arrow** for activation (+), **blunt bar** for repression (−).
+The plot draws TFs (rounded boxes), genes (circles), and optional peaks (triangles).
+Edge color encodes  magnitude/sign (red = gain/activation; blue = loss/repression);
+arrow head styles encode sign: arrow for activation (+), blunt bar for repression (?.
+Node fill color encodes expression direction (up / down / neutral).
 }

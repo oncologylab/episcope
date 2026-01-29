@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_grn_link_delta_loader.R
 \name{render_link_network_delta_topic}
 \alias{render_link_network_delta_topic}
-\title{Δ-topic (stress − control) single-panel network
+\title{-topic (stress ?control) single-panel network
 See long description in the source code header.}
 \usage{
 render_link_network_delta_topic(
@@ -30,7 +30,7 @@ render_link_network_delta_topic(
 
 \item{top_n_tfs_per_topic}{integer whitelist from summary}
 
-\item{edge_filter_min}{numeric; min |Δ| or per-side score to keep}
+\item{edge_filter_min}{numeric; min || or per-side score to keep}
 
 \item{edge_filter_on}{"either","stress","control","both"}
 
@@ -46,6 +46,6 @@ render_link_network_delta_topic(
 out_html invisibly
 }
 \description{
-Δ-topic (stress − control) single-panel network
+-topic (stress ?control) single-panel network
 See long description in the source code header.
 }

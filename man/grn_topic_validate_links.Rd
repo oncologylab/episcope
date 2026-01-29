@@ -18,7 +18,7 @@ standardized data.frame
 }
 \description{
 Many \code{episcope} functions expect a "links" table in long format where each
-row represents a TF→enhancer→gene candidate relationship (optionally scoped to a
+row represents a TFenhancergene candidate relationship (optionally scoped to a
 topic and a condition) with one or more scores (e.g., link score, footprint score).
 }
 \details{

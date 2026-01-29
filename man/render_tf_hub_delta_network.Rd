@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_grn_link_network_tf.R
 \name{render_tf_hub_delta_network}
 \alias{render_tf_hub_delta_network}
-\title{TF-hub Δ subnetwork (single panel)}
+\title{TF-hub  subnetwork (single panel)}
 \usage{
 render_tf_hub_delta_network(
   comp_csv,
@@ -28,7 +28,7 @@ render_tf_hub_delta_network(
 named `\{file\}_tfhub_delta_\{TF\}.html`).}
 
 \item{edge_filter_min}{Numeric minimum absolute `link_score_*` required for an edge to be
-considered (filtering uses score magnitude only; “active” flags still affect styling).}
+considered (filtering uses score magnitude only; active?flags still affect styling).}
 
 \item{edge_filter_on}{One of \code{"either"}, \code{"stress"}, \code{"control"}, \code{"both"},
 indicating on which side(s) the magnitude threshold must pass.}
@@ -42,14 +42,14 @@ the sign convention for TF box fill and gene border log2FC.}
 Controls how **ring TFs** (non-root TFs) contribute outgoing edges:
 \itemize{
   \item \strong{context}: only show edges needed to explain co-regulated genes with the root TF,
-        plus TF↔TF context.
+        plus TFTF context.
   \item \strong{full}: include all outgoing edges from ring TFs within the TF set.
   \item \strong{full_topk}: like \emph{full} but per-TF keep only the top-K strongest edges.
 }}
 
 \item{ring_tf_topk}{Integer; only used if \code{ring_tf_outgoing="full_topk"} (default `250`).}
 
-\item{motif_db}{Character; \code{"hocomocov13"} (default) or \code{"jaspar2024"}—used to establish
+\item{motif_db}{Character; \code{"hocomocov13"} (default) or \code{"jaspar2024"}used to establish
 the TF symbol universe for TF vs. gene typing.}
 
 \item{verbose}{Logical; print progress messages.}
@@ -65,18 +65,18 @@ second-order TFs brought in by co-regulation context).}
 }
 \description{
 Build and save an interactive, TF-centric **delta-links** network from a single
-“comparison filtered clustered” CSV where per-condition measures already live side-by-side
-(columns like `*_ctrl` and `*_str`). The visualization encodes **Δ = stress − control**
+comparison filtered clustered?CSV where per-condition measures already live side-by-side
+(columns like `*_ctrl` and `*_str`). The visualization encodes ** = stress ?control**
 on edges and preserves your legacy styling and HTML structure (node shapes, colors,
 widths, legends, and jump menus).
 }
 \details{
 Conceptually, the plot places the **root TF** at the center, arranges a ring of TFs around it,
 and shows how regulatory links fan out to target genes through shared or unique enhancer
-“peak” pseudonodes. TF box fill reflects signed TF RNA log2FC, gene dot size reflects the
+peak?pseudonodes. TF box fill reflects signed TF RNA log2FC, gene dot size reflects the
 maximum absolute Z-score of expression across sides, and edge hue/width convey the sign and
-magnitude of Δ link strength. Dashed gray segments correspond to TF→peak, thin gray bridges
-connect peak→gene, and direct TF→gene Δ edges are drawn faintly when also covered by peaks.
+magnitude of  link strength. Dashed gray segments correspond to TFpeak, thin gray bridges
+connect peakgene, and direct TFgene  edges are drawn faintly when also covered by peaks.
 
 
 Expected columns (some are auto-detected with flexible tags): \cr
@@ -90,12 +90,12 @@ control/stress tags from the filename header (e.g., `A_vs_B`) with several commo
 \section{Visual encodings}{
 
 \itemize{
-  \item \strong{TF nodes}: box fill = signed TF RNA log2FC (blue→white→red);
-        label font size ∝ max(TF RNA).
-  \item \strong{Gene nodes}: dot size ∝ max absolute Z(expr) across sides; border color reflects
+  \item \strong{TF nodes}: box fill = signed TF RNA log2FC (bluewhitered);
+        label font size ?max(TF RNA).
+  \item \strong{Gene nodes}: dot size ?max absolute Z(expr) across sides; border color reflects
         up/down per \code{gene_fc_thresh} under \code{de_reference}.
-  \item \strong{Edges}: color = red (Δ>0) or blue (Δ<0); width = fixed bins by |Δ|;
-        TF→peak dashed gray; peak→gene neutral gray bridges; direct TF→gene Δ drawn faint.
+  \item \strong{Edges}: color = red (>0) or blue (<0); width = fixed bins by ||;
+        TFpeak dashed gray; peakgene neutral gray bridges; direct TFgene  drawn faint.
 }
 }
 
