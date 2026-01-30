@@ -54,8 +54,17 @@ if (do_load_footprints_preprocess == TRUE) {
   fp_aligned <- align_footprints(fp_manifest, mid_slop = 10L, round_digits = 1L, score_match_pct = 0.8, cache_dir = fp_cache_dir, cache_tag = db, output_mode = "distinct")
 
   # Example: motif clustering (PFM -> PPM) using JASPAR-like alignment
-  fp_motif_clust <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, run_mode = "pre")
-  fp_motif_clust <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
+  motif_clust_args <- list(
+    fp_aligned = fp_aligned,
+    base_dir = base_dir,
+    ref_db = db,
+    motif_db = motif_db
+  )
+  run_motif_pre <- TRUE
+  if (isTRUE(run_motif_pre)) {
+    fp_motif_clust <- do.call(run_fp_motif_clustering, c(motif_clust_args, list(run_mode = "pre")))
+  }
+  fp_motif_clust <- do.call(run_fp_motif_clustering, motif_clust_args)
   if (!is.null(fp_motif_clust$motif_db)) {
     motif_db <- fp_motif_clust$motif_db
   }
