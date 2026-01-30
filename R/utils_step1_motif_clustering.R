@@ -2053,3 +2053,51 @@ run_fp_motif_clustering <- function(
     motif_db = motif_db_updated
   )
 }
+
+#' Pre-run motif clustering only if best-K grid outputs are missing
+#'
+#' @param fp_aligned Output from align_footprints().
+#' @param out_dir,base_dir Output directory or base dir (tf_motif_clustering).
+#' @param mode One of "both", "data", "hybrid".
+#' @param ... Passed to run_fp_motif_clustering().
+#' @return List with `skipped` flag and, if run, the pre-run result.
+#' @noRd
+run_fp_motif_clustering_pre_if_needed <- function(
+  fp_aligned,
+  out_dir = NULL,
+  base_dir = NULL,
+  mode = c("both", "data", "hybrid"),
+  ...
+) {
+  mode <- match.arg(mode)
+  if (is.null(out_dir)) {
+    if (is.null(base_dir) || !nzchar(base_dir)) {
+      cli::cli_abort("Provide out_dir or base_dir.")
+    }
+    out_dir <- file.path(base_dir, "tf_motif_clustering")
+  }
+  stopifnot(is.character(out_dir), length(out_dir) == 1L)
+  data_ok <- file.exists(file.path(out_dir, "qc_best_k_scores_data.csv"))
+  hybrid_ok <- file.exists(file.path(out_dir, "qc_best_k_scores_hybrid.csv"))
+  if (mode == "data" && data_ok) {
+    if (exists(".log_inform")) .log_inform("Pre-run: cached K grid found (data). Skipping.")
+    return(list(skipped = TRUE, result = NULL))
+  }
+  if (mode == "hybrid" && hybrid_ok) {
+    if (exists(".log_inform")) .log_inform("Pre-run: cached K grid found (hybrid). Skipping.")
+    return(list(skipped = TRUE, result = NULL))
+  }
+  if (mode == "both" && data_ok && hybrid_ok) {
+    if (exists(".log_inform")) .log_inform("Pre-run: cached K grids found (data + hybrid). Skipping.")
+    return(list(skipped = TRUE, result = NULL))
+  }
+  res <- run_fp_motif_clustering(
+    fp_aligned = fp_aligned,
+    out_dir = out_dir,
+    base_dir = base_dir,
+    mode = mode,
+    run_mode = "pre",
+    ...
+  )
+  list(skipped = FALSE, result = res)
+}
