@@ -1,4 +1,4 @@
-#' utils_grn_lda_summary.R — Summarize LDA-annotated delta-link tables (episcope)
+#' utils_grn_lda_summary.R ?Summarize LDA-annotated delta-link tables (episcope)
 #'
 #' @author Yaoxiang Li
 #' @family episcope-utils
@@ -17,7 +17,7 @@
 #'   \item \code{topic_rank}     (descending by \code{topic_mean_abs_delta})
 #' }
 #'
-#' @section TF × topic metrics:
+#' @section TF  topic metrics:
 #' \itemize{
 #'   \item \code{tf_delta_sum} (signed, using strict regulatory sign)
 #'   \item \code{tf_delta_sum_activate}, \code{tf_delta_sum_repress}
@@ -37,7 +37,7 @@
 #' Signed aggregation uses
 #' \deqn{\mathrm{delta\_oriented} = \mathrm{delta\_link\_score} \times \mathrm{regulatory\_sign},}
 #' where \eqn{\mathrm{regulatory\_sign} \in \{+1,-1\}} derived from \code{link_sign_*}
-#' (“+”→+1, “−”→−1). Topic-level metrics are based on |delta| and are unaffected by sign.
+#' (?+1, ?). Topic-level metrics are based on |delta| and are unaffected by sign.
 #'
 #' @section Imports:
 #' Uses \pkg{cli}, \pkg{readr}, \pkg{tibble}, \pkg{dplyr}, \pkg{tidyr},
@@ -87,7 +87,7 @@
   paste0(sub("\\.csv$", "", in_csv, ignore.case = TRUE), "_summary.csv")
 }
 
-# Map "+" / "−" → +1 / −1; others → NA_real_
+# Map "+" / "? ?+1 / ?; others ?NA_real_
 .str_sign_to_num <- function(x) {
   x <- as.character(x)
   out <- rep(NA_real_, length(x))
@@ -198,7 +198,7 @@
 # Public API: single file
 # =============================
 
-#' Summarize one LDA-annotated delta-links table (TF × topic)
+#' Summarize one LDA-annotated delta-links table (TF  topic)
 #'
 #' @param x Annotated tibble or CSV path (must include an \code{LDA_K{K}_topic} column).
 #' @param topic_col Optional topic column (auto-detects the latest \code{^LDA_K\\d+_topic$}).
@@ -243,7 +243,7 @@ summarize_lda_annotations <- function(x,
   edges_f <- edges_f[is.finite(edges_f$delta) & abs(edges_f$delta) >= edge_filter_min, , drop = FALSE]
 
   if (!nrow(edges_f)) {
-    warning("No links pass |delta| >= ", edge_filter_min, " — summary will be empty.")
+    warning("No links pass |delta| >= ", edge_filter_min, " ?summary will be empty.")
     empty <- tibble::tibble(
       TF = character(0), topic = integer(0),
       topic_mean_abs_delta = numeric(0), topic_n_TFs = integer(0),
@@ -261,7 +261,7 @@ summarize_lda_annotations <- function(x,
       if (is.null(out_file)) out_file <- .default_summary_path(x)
       dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
       readr::write_csv(empty, out_file)
-      .slog("✓ wrote empty summary: ", out_file, verbose = verbose)
+      .slog("?wrote empty summary: ", out_file, verbose = verbose)
     }
     return(empty)
   }
@@ -283,7 +283,7 @@ summarize_lda_annotations <- function(x,
     .slog("Applied TF r weighting using column: ", picked_tf_r_col, verbose = verbose)
   }
 
-  # STRICT regulatory sign (+1 / −1)
+  # STRICT regulatory sign (+1 / ?)
   reg_sign <- .compute_reg_sign_strict(edges_f, tf_col = tf_col, gene_col = gene_col)
 
   # Oriented/abs deltas
@@ -300,7 +300,7 @@ summarize_lda_annotations <- function(x,
     if (isTRUE(save_csv) && is.character(x) && length(x) == 1L) {
       if (is.null(out_file)) out_file <- .default_summary_path(x)
       readr::write_csv(tibble::tibble(), out_file)
-      .slog("✓ wrote empty summary: ", out_file, verbose = verbose)
+      .slog("?wrote empty summary: ", out_file, verbose = verbose)
     }
     return(tibble::tibble())
   }
@@ -316,7 +316,7 @@ summarize_lda_annotations <- function(x,
     if (isTRUE(save_csv) && is.character(x) && length(x) == 1L) {
       if (is.null(out_file)) out_file <- .default_summary_path(x)
       readr::write_csv(tibble::tibble(), out_file)
-      .slog("✓ wrote empty summary: ", out_file, verbose = verbose)
+      .slog("?wrote empty summary: ", out_file, verbose = verbose)
     }
     return(tibble::tibble())
   }
@@ -333,7 +333,7 @@ summarize_lda_annotations <- function(x,
     dplyr::arrange(dplyr::desc(.data$topic_mean_abs_delta)) |>
     dplyr::mutate(topic_rank = dplyr::row_number())
 
-  # TF × topic summaries
+  # TF  topic summaries
   tf_topic <- expanded |>
     dplyr::group_by(.data$topic, .data[[tf_col]]) |>
     dplyr::summarise(
@@ -426,7 +426,7 @@ summarize_lda_annotations <- function(x,
     if (is.null(out_file)) out_file <- .default_summary_path(x)
     dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
     readr::write_csv(tf_topic_summary, out_file)
-    .slog("✓ wrote: ", out_file, verbose = verbose)
+    .slog("?wrote: ", out_file, verbose = verbose)
   }
 
   tf_topic_summary
@@ -531,7 +531,7 @@ summarize_lda_annotations_bulk <- function(annotated_csvs,
     }
     dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
     readr::write_csv(manifest, manifest_path)
-    .slog("✓ wrote manifest: ", manifest_path, verbose = verbose)
+    .slog("?wrote manifest: ", manifest_path, verbose = verbose)
   }
 
   list(

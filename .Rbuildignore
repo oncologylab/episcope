@@ -10,3 +10,4 @@ $run_dev.*
 ^CODE_OF_CONDUCT\.md$
 ^doc$
 ^Meta$
+^workspace\.RData$

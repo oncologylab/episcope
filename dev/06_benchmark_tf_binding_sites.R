@@ -27,9 +27,11 @@ benchmark_tfbs_vs_chip <- function(
     chip_bed,
     subset = c("all", "bound", "unbound"),
     score_col = NULL,
-    score_higher_is_better = TRUE
+    score_higher_is_better = TRUE,
+    mode = c("fp", "atac")  # BEGIN EDIT: new arg
 ) {
   subset <- base::match.arg(subset)
+  mode   <- base::match.arg(mode)  # END EDIT
 
   # ---- helpers --------------------------------------------------------------
   .stop_if_missing <- function(p) if (!base::file.exists(p)) cli::cli_abort("File not found: {p}")
@@ -117,27 +119,77 @@ benchmark_tfbs_vs_chip <- function(
 
   .label_for_subset <- function(x) switch(x, all = "All rows", bound = "Subset: bound=1", unbound = "Subset: bound=0")
 
+  # BEGIN EDIT: helper to get "truth" intervals with optional ≥50% overlap rule
+  .truth_from_overlap <- function(bed_x, chip_peaks, mode) {
+    ov <- valr::bed_intersect(bed_x, chip_peaks)
+    if (!base::nrow(ov)) {
+      return(bed_x[0, , drop = FALSE])
+    }
+    if (mode == "atac") {
+      # fraction of ATAC peak overlapped by ChIP (using x as ATAC)
+      start_x <- base::as.integer(ov[["start.x"]])
+      end_x   <- base::as.integer(ov[["end.x"]])
+      start_y <- base::as.integer(ov[["start.y"]])
+      end_y   <- base::as.integer(ov[["end.y"]])
+      len_x   <- base::pmax(1L, end_x - start_x)
+      inter_w <- base::pmax(0L, base::pmin(end_x, end_y) - base::pmax(start_x, start_y))
+      frac    <- inter_w / len_x
+      ov <- ov[frac >= 0.5, , drop = FALSE]
+      if (!base::nrow(ov)) {
+        return(bed_x[0, , drop = FALSE])
+      }
+    }
+    .coords_left(ov) |> .collapse_unique_sites()
+  }
+  # END EDIT
+
   # ---- read inputs ----------------------------------------------------------
   chip_peaks <- .read_chip_bed3(chip_bed)
   pred_raw   <- .read_tsv_header(pred_bed)
 
-  if (!base::all(c("TFBS_chr", "TFBS_start", "TFBS_end") %in% base::names(pred_raw))) {
-    cli::cli_abort("`pred_bed` must be an overview table with TFBS_chr, TFBS_start, TFBS_end columns.")
+  # BEGIN EDIT: choose coordinate and bound columns by mode
+  if (mode == "fp") {
+    coord_chr_col   <- "TFBS_chr"
+    coord_start_col <- "TFBS_start"
+    coord_end_col   <- "TFBS_end"
+    coord_required  <- c("TFBS_chr", "TFBS_start", "TFBS_end")
+    bound_candidates <- c("_bound", "bound")
+  } else {
+    coord_chr_col   <- "peak_chr"
+    coord_start_col <- "peak_start"
+    coord_end_col   <- "peak_end"
+    coord_required  <- c("peak_chr", "peak_start", "peak_end")
+    bound_candidates <- c("X_bound", "_bound", "bound")
   }
-  bound_col <- c("_bound", "bound")[c("_bound", "bound") %in% base::names(pred_raw)][1]
-  if (is.null(bound_col)) cli::cli_abort("`pred_bed` must contain a binary prediction column named `_bound` or `bound`.")
+
+  if (!base::all(coord_required %in% base::names(pred_raw))) {
+    cli::cli_abort("`pred_bed` must contain coordinate columns: {paste(coord_required, collapse = ', ')}.")
+  }
+
+  bound_col <- bound_candidates[bound_candidates %in% base::names(pred_raw)][1]
+  if (is.na(bound_col)) {
+    cli::cli_abort("`pred_bed` must contain a binary prediction column named one of: {paste(bound_candidates, collapse = ', ')}.")
+  }
+  # END EDIT
 
   # ---- normalize prediction (0/1) on FULL table -----------------------------
   pred_bin_all <- base::as.integer(base::as.character(pred_raw[[bound_col]]) %in% c("1","TRUE","True","true","T","t",1))
 
   # ---- compute ChIP_bound on FULL table -------------------------------------
-  tfbs_full_bed <- .as_bed3(pred_raw, "TFBS_chr", "TFBS_start", "TFBS_end")
+  tfbs_full_bed <- .as_bed3(pred_raw, coord_chr_col, coord_start_col, coord_end_col)
   tfbs_full_bed <- .collapse_unique_sites(tfbs_full_bed)
-  ov_full <- valr::bed_intersect(tfbs_full_bed, chip_peaks)
-  tfbs_tp_full <- if (base::nrow(ov_full)) .coords_left(ov_full) |> .collapse_unique_sites() else tfbs_full_bed[0, , drop = FALSE]
-  key_full <- paste0(pred_raw$TFBS_chr, "_", pred_raw$TFBS_start, "_", pred_raw$TFBS_end)
+
+  # BEGIN EDIT: use helper with optional ≥50% rule
+  tfbs_tp_full <- .truth_from_overlap(tfbs_full_bed, chip_peaks, mode)
+  # END EDIT
+
+  key_full <- paste0(pred_raw[[coord_chr_col]], "_",
+                     pred_raw[[coord_start_col]], "_",
+                     pred_raw[[coord_end_col]])
   key_tp_f <- if (base::nrow(tfbs_tp_full)) paste0(tfbs_tp_full$chrom, "_", tfbs_tp_full$start, "_", tfbs_tp_full$end) else character(0)
   pred_raw$ChIP_bound <- base::as.integer(key_full %in% key_tp_f)
+
+  readr::write_csv(pred_raw, sub(".txt", "_with_ChIP.csv", pred_bed))
 
   # ---- subset rows for per-row evaluation -----------------------------------
   keep_idx <- switch(subset,
@@ -148,16 +200,19 @@ benchmark_tfbs_vs_chip <- function(
   pred_sub <- pred_raw[keep_idx, , drop = FALSE]
   pred_bin <- pred_bin_all[keep_idx]
 
-  # build TFBS bed from subset
-  tfbs_bed <- .as_bed3(pred_sub, "TFBS_chr", "TFBS_start", "TFBS_end")
+  # build TFBS/peak bed from subset
+  tfbs_bed <- .as_bed3(pred_sub, coord_chr_col, coord_start_col, coord_end_col)
   tfbs_bed <- .collapse_unique_sites(tfbs_bed)
 
   # truth by overlap (subset)
-  ov <- valr::bed_intersect(tfbs_bed, chip_peaks)
-  tfbs_tp <- if (base::nrow(ov)) .coords_left(ov) |> .collapse_unique_sites() else tfbs_bed[0, , drop = FALSE]
+  # BEGIN EDIT: use same helper for subset
+  tfbs_tp <- .truth_from_overlap(tfbs_bed, chip_peaks, mode)
+  # END EDIT
 
   # map truth back to each ROW in subset
-  key_all <- paste0(pred_sub$TFBS_chr, "_", pred_sub$TFBS_start, "_", pred_sub$TFBS_end)
+  key_all <- paste0(pred_sub[[coord_chr_col]], "_",
+                    pred_sub[[coord_start_col]], "_",
+                    pred_sub[[coord_end_col]])
   key_tp  <- if (base::nrow(tfbs_tp)) paste0(tfbs_tp$chrom, "_", tfbs_tp$start, "_", tfbs_tp$end) else character(0)
   truth   <- base::as.integer(key_all %in% key_tp)
 
@@ -169,9 +224,9 @@ benchmark_tfbs_vs_chip <- function(
 
   # unique coords by class
   pred_coords <- tibble::tibble(
-    chrom = pred_sub$TFBS_chr,
-    start = base::as.integer(pred_sub$TFBS_start),
-    end   = base::as.integer(pred_sub$TFBS_end),
+    chrom = pred_sub[[coord_chr_col]],
+    start = base::as.integer(pred_sub[[coord_start_col]]),
+    end   = base::as.integer(pred_sub[[coord_end_col]]),
     pred  = pred_bin,
     truth = truth
   )
@@ -179,7 +234,7 @@ benchmark_tfbs_vs_chip <- function(
   fp_sites <- .collapse_unique_sites(pred_coords[pred_coords$pred == 1L & pred_coords$truth == 0L, c("chrom", "start", "end"), drop = FALSE])
   fn_sites <- .collapse_unique_sites(pred_coords[pred_coords$pred == 0L & pred_coords$truth == 1L, c("chrom", "start", "end"), drop = FALSE])
 
-  # Jaccard over predicted-positive TFBS in subset
+  # Jaccard over predicted-positive TFBS/peaks in subset
   pred_pos_bed <- .collapse_unique_sites(.as_bed3(pred_coords[pred_coords$pred == 1L, ], "chrom", "start", "end"))
   jac <- valr::bed_jaccard(pred_pos_bed, chip_peaks)
   jaccard_bp <- if (base::nrow(jac)) jac$jaccard[1] else NA_real_
@@ -393,6 +448,55 @@ benchmark_tfbs_vs_chip <- function(
   )
 }
 
+# -- batch runner: save 4 PDF plots per TF -----------------------------------
+save_benchmark_plots <- function(tf, pred_path, chip_path, out_dir,
+                                 subset = "all",
+                                 score_col = "corr_fp_tf_r",
+                                 score_higher_is_better = TRUE,
+                                 width = 6, height = 5,
+                                 mode = c("fp", "atac")  # BEGIN EDIT: new arg
+) {
+  mode <- base::match.arg(mode)  # END EDIT
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  res <- benchmark_tfbs_vs_chip(
+    pred_bed   = pred_path,
+    chip_bed   = chip_path,
+    subset     = subset,
+    score_col  = score_col,
+    score_higher_is_better = score_higher_is_better,
+    mode       = mode    # BEGIN EDIT: pass through
+  )
+
+  # filenames (PDF, include TF)
+  f_bar  <- file.path(out_dir, sprintf("%s_stacked_confusion.pdf", tf))
+  f_pr   <- file.path(out_dir, sprintf("%s_pr_curve.pdf", tf))
+  f_roc  <- file.path(out_dir, sprintf("%s_roc_curve.pdf", tf))
+  f_venn <- file.path(out_dir, sprintf("%s_venn_chowruskey.pdf", tf))
+
+  # 1) stacked confusion
+  if (!is.null(res$plots$bar_counts)) {
+    ggplot2::ggsave(f_bar, res$plots$bar_counts, width = width, height = height, device = "pdf")
+  }
+
+  # 2) PR curve
+  if (!is.null(res$plots$pr)) {
+    ggplot2::ggsave(f_pr, res$plots$pr, width = width, height = height, device = "pdf")
+  }
+
+  # 3) ROC curve
+  if (!is.null(res$plots$roc)) {
+    ggplot2::ggsave(f_roc, res$plots$roc, width = width, height = height, device = "pdf")
+  }
+
+  # 4) Chow–Ruskey Venn (already PDF-capable via out_file)
+  if (!is.null(res$data$venn3_counts)) {
+    plot_venn_chowruskey_counts(res$data$venn3_counts, out_file = f_venn, width = width, height = height)
+  }
+
+  invisible(res)
+}
+
 library(Vennerable)
 # Chow–Ruskey only, using plot(Venn, ...)
 plot_venn_chowruskey_counts <- function(counts_named,
@@ -468,74 +572,75 @@ plot_venn_chowruskey_counts <- function(counts_named,
 
 
 # -- batch runner: save 4 PDF plots per TF -----------------------------------
-save_benchmark_plots <- function(tf, pred_path, chip_path, out_dir,
-                                 subset = "all",
-                                 score_col = "corr_fp_tf_r",
-                                 score_higher_is_better = TRUE,
-                                 width = 6, height = 5) {
-  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  res <- benchmark_tfbs_vs_chip(
-    pred_bed   = pred_path,
-    chip_bed   = chip_path,
-    subset     = subset,
-    score_col  = score_col,
-    score_higher_is_better = score_higher_is_better
-  )
-
-  # filenames (PDF, include TF)
-  f_bar  <- file.path(out_dir, sprintf("%s_stacked_confusion.pdf", tf))
-  f_pr   <- file.path(out_dir, sprintf("%s_pr_curve.pdf", tf))
-  f_roc  <- file.path(out_dir, sprintf("%s_roc_curve.pdf", tf))
-  f_venn <- file.path(out_dir, sprintf("%s_venn_chowruskey.pdf", tf))
-
-  # 1) stacked confusion
-  if (!is.null(res$plots$bar_counts)) {
-    ggplot2::ggsave(f_bar, res$plots$bar_counts, width = width, height = height, device = "pdf")
-  }
-
-  # 2) PR curve
-  if (!is.null(res$plots$pr)) {
-    ggplot2::ggsave(f_pr, res$plots$pr, width = width, height = height, device = "pdf")
-  }
-
-  # 3) ROC curve
-  if (!is.null(res$plots$roc)) {
-    ggplot2::ggsave(f_roc, res$plots$roc, width = width, height = height, device = "pdf")
-  }
-
-  # 4) Chow–Ruskey Venn (already PDF-capable via out_file)
-  if (!is.null(res$data$venn3_counts)) {
-    plot_venn_chowruskey_counts(res$data$venn3_counts, out_file = f_venn, width = width, height = height)
-  }
-
-  invisible(res)
-}
+# save_benchmark_plots <- function(tf, pred_path, chip_path, out_dir,
+#                                  subset = "all",
+#                                  score_col = "corr_fp_tf_r",
+#                                  score_higher_is_better = TRUE,
+#                                  width = 6, height = 5) {
+#   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+#
+#   res <- benchmark_tfbs_vs_chip(
+#     pred_bed   = pred_path,
+#     chip_bed   = chip_path,
+#     subset     = subset,
+#     score_col  = score_col,
+#     score_higher_is_better = score_higher_is_better
+#   )
+#
+#   # filenames (PDF, include TF)
+#   f_bar  <- file.path(out_dir, sprintf("%s_stacked_confusion.pdf", tf))
+#   f_pr   <- file.path(out_dir, sprintf("%s_pr_curve.pdf", tf))
+#   f_roc  <- file.path(out_dir, sprintf("%s_roc_curve.pdf", tf))
+#   f_venn <- file.path(out_dir, sprintf("%s_venn_chowruskey.pdf", tf))
+#
+#   # 1) stacked confusion
+#   if (!is.null(res$plots$bar_counts)) {
+#     ggplot2::ggsave(f_bar, res$plots$bar_counts, width = width, height = height, device = "pdf")
+#   }
+#
+#   # 2) PR curve
+#   if (!is.null(res$plots$pr)) {
+#     ggplot2::ggsave(f_pr, res$plots$pr, width = width, height = height, device = "pdf")
+#   }
+#
+#   # 3) ROC curve
+#   if (!is.null(res$plots$roc)) {
+#     ggplot2::ggsave(f_roc, res$plots$roc, width = width, height = height, device = "pdf")
+#   }
+#
+#   # 4) Chow–Ruskey Venn (already PDF-capable via out_file)
+#   if (!is.null(res$data$venn3_counts)) {
+#     plot_venn_chowruskey_counts(res$data$venn3_counts, out_file = f_venn, width = width, height = height)
+#   }
+#
+#   invisible(res)
+# }
 
 # ---------------------------------------------------------------------------
-# Your three TFs
-base_dir <- "Z:/episcope_test/benchmark_tf_binding_sites_prediction"
+# three TFs
+
+# base_dir <- "Z:/episcope_test/benchmark_tf_binding_sites_prediction"
+base_dir <- "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction"
 
 batch <- list(
   list(tf = "HNF4A",
-       pred = file.path(base_dir, "predicted", "HNF4A_overview.txt"),
+       pred = file.path(base_dir, "predicted_canonical_tfbs", "HNF4A_overview.txt"),
        chip = file.path(base_dir, "cutntag",  "cy83.hg38.rp10m.narrowpeaks.bed")),
   list(tf = "MAFF",
-       pred = file.path(base_dir, "predicted", "MAFF_overview.txt"),
+       pred = file.path(base_dir, "predicted_canonical_tfbs", "MAFF_overview.txt"),
        chip = file.path(base_dir, "cutntag",  "cy84.hg38.rp10m.narrowpeaks.bed")),
   list(tf = "ZEB1",
-       pred = file.path(base_dir, "predicted", "ZEB1_overview.txt"),
+       pred = file.path(base_dir, "predicted_canonical_tfbs", "ZEB1_overview.txt"),
        chip = file.path(base_dir, "cutntag",  "cy76.hg38.rp10m.narrowpeaks.bed"))
 )
-
-out_dir <- file.path(base_dir, "plots_pdf")
-
+out_dir <- file.path(base_dir, "plots_pdf_canonical_tfbs")
 purrr::walk(batch, function(x) {
   save_benchmark_plots(tf = x$tf, pred_path = x$pred, chip_path = x$chip, out_dir = out_dir)
 })
 
 
-base_dir <- "Z:/episcope_test/benchmark_tf_binding_sites_prediction"
+# base_dir <- "Z:/episcope_test/benchmark_tf_binding_sites_prediction"
+base_dir <- "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction"
 
 batch <- list(
   list(tf = "HNF4A",
@@ -553,3 +658,804 @@ out_dir <- file.path(base_dir, "plots_pdf_all_tfbs")
 purrr::walk(batch, function(x) {
   save_benchmark_plots(tf = x$tf, pred_path = x$pred, chip_path = x$chip, out_dir = out_dir)
 })
+
+
+library(readr)
+library(ggplot2)
+
+source("R/utils_ggvolcano.R")
+
+tfs <- c("HNF4A", "MAFF", "ZEB1")
+
+for (tf in tfs) {
+
+  message("Processing: ", tf)
+
+  # ---- Load data ----
+  infile <- file.path(base_dir, "predicted_canonical_tfbs", paste0(tf, "_overview_with_ChIP.csv"))
+  volcano_data <- readr::read_csv(infile)
+
+  # ---- Make base volcano ----
+  p <- ggvolcano(
+    volcano_data,
+    logFC_col  = "corr_fp_tf_r",
+    pval_col   = "corr_fp_tf_p",
+    use_significance = FALSE,
+    highlight_col    = "ChIP_bound",
+    highlight_colors = c("0" = "grey80", "1" = "red"),
+    highlight_labels = c("Not ChIP-bound", "ChIP-bound"),
+    xlab     = bquote(~"Correlation"~italic(r)),
+    x_limits = c(-1, 1),
+    sample_frac        = 0.2,
+    sample_keep_levels = "1",
+    point_aes = list(
+      size  = 0.25,
+      shape = c(16, 16, 16, 16),
+      color = c("grey80", "red"),
+      alpha = 0.6
+    ),
+    title   = paste0(tf, " ChIP-bound TFBS"),
+    caption = paste("Total variables:", nrow(volcano_data)),
+    legend_aes = list(
+      labels     = c("Not ChIP-bound", "ChIP-bound"),
+      position   = "bottom",
+      label_size = 10,
+      icon_size  = 4
+    )
+  )
+
+  # ---- Make jittered volcano ----
+  p_jitter <- ggvolcano(
+    volcano_data,
+    logFC_col  = "corr_fp_tf_r",
+    pval_col   = "corr_fp_tf_p",
+    use_significance = FALSE,
+    highlight_col    = "ChIP_bound",
+    highlight_colors = c("0" = "grey80", "1" = "red"),
+    highlight_labels = c("Not ChIP-bound", "ChIP-bound"),
+    xlab     = bquote(~"Correlation"~italic(r)),
+    x_limits = c(-1, 1),
+    sample_frac        = 0.2,
+    sample_keep_levels = "1",
+    point_aes = list(
+      size  = 0.25,
+      shape = c(16, 16, 16, 16),
+      color = c("grey80", "red"),
+      alpha = 0.6
+    ),
+    title   = paste0(tf, " ChIP-bound TFBS"),
+    caption = paste("Total variables:", nrow(volcano_data)),
+    legend_aes = list(
+      labels     = c("Not ChIP-bound", "ChIP-bound"),
+      position   = "bottom",
+      label_size = 10,
+      icon_size  = 4
+    ),
+    jitter = TRUE
+  )
+
+  # ---- Save Figures ----
+  outfile1 <- file.path(base_dir, "predicted_canonical_tfbs", paste0(tf, "_volcano_with_ChIP.pdf"))
+  outfile2 <- file.path(base_dir, "predicted_canonical_tfbs", paste0(tf, "_volcano_with_ChIP_jitter.pdf"))
+
+  ggsave(outfile1, p, width = 10, height = 8, units = "in", dpi = 300)
+  ggsave(outfile2, p_jitter, width = 10, height = 8, units = "in", dpi = 300)
+}
+
+
+# volcano_data have:
+# - corr_fp_tf_r   (correlation)
+# - corr_fp_tf_p   (p-value)
+# - ChIP_bound     (0/1 ground truth)
+
+optimize_corr_p_cutoffs <- function(dat,
+                                    r_col   = "corr_fp_tf_r",
+                                    p_col   = "corr_fp_tf_p",
+                                    y_col   = "ChIP_bound",
+                                    r_grid  = seq(0, 1, by = 0.02),
+                                    p_grid  = 10^seq(-12, -1, length.out = 20),
+                                    metric  = c("accuracy_overall",
+                                                "precision_ChIP1",
+                                                "recall_ChIP1",
+                                                "f1_ChIP1")) {
+  metric <- match.arg(metric)
+
+  # Precompute
+  abs_r   <- abs(dat[[r_col]])
+  p_val   <- dat[[p_col]]
+  y_true  <- as.integer(dat[[y_col]] == 1L)  # 1 = ChIP_bound, 0 = not
+
+  res_list <- vector("list", length(r_grid) * length(p_grid))
+  k <- 1L
+
+  for (rc in r_grid) {
+    for (pc in p_grid) {
+
+      # classification rule:
+      # predicted bound if |r| >= r_cut AND p <= p_cut
+      pred <- as.integer(abs_r >= rc & p_val <= pc)
+
+      tp <- sum(pred == 1L & y_true == 1L)
+      fp <- sum(pred == 1L & y_true == 0L)
+      fn <- sum(pred == 0L & y_true == 1L)
+      tn <- sum(pred == 0L & y_true == 0L)
+
+      accuracy_overall <- (tp + tn) / (tp + fp + fn + tn)
+      precision_ChIP1  <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+      recall_ChIP1     <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+      f1_ChIP1 <- if (is.na(precision_ChIP1) ||
+                      is.na(recall_ChIP1) ||
+                      (precision_ChIP1 + recall_ChIP1) == 0) {
+        NA_real_
+      } else {
+        2 * precision_ChIP1 * recall_ChIP1 / (precision_ChIP1 + recall_ChIP1)
+      }
+
+      res_list[[k]] <- data.frame(
+        r_cut            = rc,
+        p_cut            = pc,
+        accuracy_overall = accuracy_overall,
+        precision_ChIP1  = precision_ChIP1,
+        recall_ChIP1     = recall_ChIP1,
+        f1_ChIP1         = f1_ChIP1
+      )
+      k <- k + 1L
+    }
+  }
+
+  grid_results <- do.call(rbind, res_list)
+
+  # pick the best according to the chosen metric
+  best_idx <- switch(
+    metric,
+    "accuracy_overall" = which.max(grid_results$accuracy_overall),
+    "precision_ChIP1"  = which.max(grid_results$precision_ChIP1),
+    "recall_ChIP1"     = which.max(grid_results$recall_ChIP1),
+    "f1_ChIP1"         = which.max(grid_results$f1_ChIP1)
+  )
+
+  best_row <- grid_results[best_idx, , drop = FALSE]
+
+  list(
+    grid_results = grid_results,
+    best = best_row
+  )
+}
+
+library(readr)
+
+# TFs want to process
+tfs <- c("HNF4A", "MAFF", "ZEB1")
+
+opt_dir <- file.path(base_dir, "predicted_canonical_tfbs_cutoff_optimization")
+if (!dir.exists(opt_dir)) {
+  dir.create(opt_dir, recursive = TRUE)
+}
+
+target_metrics <- c("accuracy_overall",
+                    "precision_ChIP1",
+                    "recall_ChIP1",
+                    "f1_ChIP1")
+
+for (tf in tfs) {
+  message("Optimizing cutoffs for TF: ", tf)
+
+  # ----- load data for this TF -----
+  infile <- file.path(
+    base_dir, "predicted_canonical_tfbs",
+    paste0(tf, "_overview_with_ChIP.csv")
+  )
+  volcano_data <- readr::read_csv(infile, show_col_types = FALSE)
+
+  # ----- loop over target metrics -----
+  for (metric in target_metrics) {
+    message("  Metric: ", metric)
+
+    res_opt <- optimize_corr_p_cutoffs(
+      dat   = volcano_data,
+      r_col = "corr_fp_tf_r",
+      p_col = "corr_fp_tf_p",
+      y_col = "ChIP_bound",
+      metric = metric
+    )
+
+    grid_file <- file.path(
+      opt_dir,
+      paste0(tf, "_cutoff_grid_", metric, ".csv")
+    )
+    best_file <- file.path(
+      opt_dir,
+      paste0(tf, "_cutoff_best_", metric, ".csv")
+    )
+
+    readr::write_csv(res_opt$grid_results, grid_file)
+    readr::write_csv(res_opt$best,         best_file)
+  }
+}
+
+# assumes optimize_corr_p_cutoffs() is already defined as in previous step
+
+tfs <- c("HNF4A", "MAFF", "ZEB1")
+
+opt_dir <- file.path(base_dir, "predicted_canonical_tfbs_cutoff_optimization")
+if (!dir.exists(opt_dir)) {
+  dir.create(opt_dir, recursive = TRUE)
+}
+
+for (tf in tfs) {
+  message("Optimizing + plotting metrics for TF: ", tf)
+
+  # ----- load data -----
+  infile <- file.path(
+    base_dir, "predicted_canonical_tfbs",
+    paste0(tf, "_overview_with_ChIP.csv")
+  )
+  volcano_data <- readr::read_csv(infile, show_col_types = FALSE)
+
+  # ----- run optimization (as before) -----
+  res_opt <- optimize_corr_p_cutoffs(
+    dat   = volcano_data,
+    r_col = "corr_fp_tf_r",
+    p_col = "corr_fp_tf_p",
+    y_col = "ChIP_bound",
+    metric = "f1_ChIP1"
+  )
+
+  grid <- res_opt$grid_results
+
+  # drop rows with NA F1 (usually extreme cutoffs with no positives)
+  grid <- grid[!is.na(grid$f1_ChIP1), , drop = FALSE]
+
+  # make r_cut a factor so facets are ordered nicely
+  grid$r_cut <- factor(grid$r_cut)
+
+  # ----- long format for 3 metrics -----
+  plot_df <- tidyr::pivot_longer(
+    grid,
+    cols = c("accuracy_overall", "precision_ChIP1", "recall_ChIP1"),
+    names_to  = "metric",
+    values_to = "value"
+  )
+
+  # ----- scatter: x = p_cut, y = metric value, color = metric, facet by r_cut -----
+  p_metrics <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(x = p_cut, y = value, color = metric)
+  ) +
+    ggplot2::geom_point(alpha = 0.6, size = 1) +
+    ggplot2::scale_x_log10() +
+    ggplot2::labs(
+      title = paste0(tf, " cutoff optimization metrics"),
+      x     = "p-value cutoff (log10 scale)",
+      y     = "Metric value"
+    ) +
+    ggplot2::facet_wrap(~ r_cut, ncol = 5) +  # facet by |r| cutoff
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      legend.position = "bottom",
+      strip.background = ggplot2::element_rect(fill = "grey90"),
+      strip.text = ggplot2::element_text(size = 8)
+    )
+
+  out_pdf <- file.path(
+    opt_dir,
+    paste0(tf, "_cutoff_metrics_by_r.pdf")
+  )
+  ggplot2::ggsave(
+    filename = out_pdf,
+    plot     = p_metrics,
+    width    = 10,
+    height   = 18,
+    units    = "in",
+    dpi      = 300
+  )
+}
+
+
+# ATAC peak correlation with TF -------------------------------------------
+
+build_atac_rna_cor_overviews <- function(strict_build_args,
+                                         base_dir,
+                                         tf_names = strict_build_args$tf_list,
+                                         r_cut = 0.3,
+                                         p_cut = 0.01) {
+  atac_score <- strict_build_args$atac_score
+  rna        <- strict_build_args$rna
+
+  # ---------------------------------------------------------------------------
+  # 1) Match samples between ATAC and RNA
+  # ---------------------------------------------------------------------------
+  atac_cols <- colnames(atac_score)
+  rna_cols  <- colnames(rna)
+
+  # Numeric sample IDs are those that appear in both ATAC and RNA tables
+  sample_ids <- intersect(atac_cols, rna_cols)
+  sample_ids <- sample_ids[sample_ids %in% strict_build_args$metadata$id]
+
+  if (length(sample_ids) == 0L) {
+    cli::cli_abort("No shared sample IDs between ATAC and RNA matrices.")
+  }
+
+  if (!is.null(strict_build_args$expected_n)) {
+    if (length(sample_ids) != strict_build_args$expected_n) {
+      cli::cli_warn(
+        c(
+          "!" = "Number of matched samples ({length(sample_ids)})",
+          " " = "does not equal expected_n ({strict_build_args$expected_n})."
+        )
+      )
+    }
+  }
+
+  # Keep only matched samples
+  atac_mat <- as.matrix(atac_score[, sample_ids, drop = FALSE])
+  rna_mat  <- as.data.frame(rna[, c("ensembl_gene_id", "HGNC", sample_ids),
+                                drop = FALSE])
+
+  # ---------------------------------------------------------------------------
+  # 2) Parse peak coordinates once
+  # ---------------------------------------------------------------------------
+  peak_ids <- atac_score[["atac_peak"]]
+
+  peak_chr <- sub(":.*$", "", peak_ids)
+  coord    <- sub("^.*:", "", peak_ids)
+  peak_start <- as.integer(sub("-.*$", "", coord))
+  peak_end   <- as.integer(sub("^.*-", "", coord))
+
+  # ---------------------------------------------------------------------------
+  # 3) Helper: compute correlations for one TF
+  # ---------------------------------------------------------------------------
+  cor_one_tf <- function(tf_symbol) {
+    idx <- which(rna_mat[["HGNC"]] == tf_symbol)
+
+    if (length(idx) == 0L) {
+      cli::cli_warn("No RNA row found for TF {.val {tf_symbol}}; skipping.")
+      return(NULL)
+    }
+    if (length(idx) > 1L) {
+      cli::cli_warn(
+        "Multiple RNA rows for TF {.val {tf_symbol}}; using the first match."
+      )
+      idx <- idx[1L]
+    }
+
+    tf_expr <- as.numeric(rna_mat[idx, sample_ids, drop = TRUE])
+
+    # Center TF expression
+    n <- length(tf_expr)
+    tf_mean <- mean(tf_expr)
+    tf_center <- tf_expr - tf_mean
+    tf_ss <- sum(tf_center^2)
+
+    # Center ATAC rows
+    atac_means  <- rowMeans(atac_mat)
+    atac_center <- atac_mat - atac_means
+
+    # Numerator and denominator for Pearson r (vectorised across peaks)
+    num <- atac_center %*% tf_center
+    den <- sqrt(rowSums(atac_center^2) * tf_ss)
+
+    r_vals <- as.numeric(num / den)
+    r_vals[den == 0] <- NA_real_
+
+    # p-values via t-statistic
+    df <- n - 2
+    # guard against r ~ +/-1
+    denom_p <- pmax(1e-12, 1 - r_vals^2)
+    t_stat <- r_vals * sqrt(df / denom_p)
+    p_vals <- 2 * stats::pt(-abs(t_stat), df = df)
+    p_vals[is.na(r_vals)] <- NA_real_
+
+    p_adj <- stats::p.adjust(p_vals, method = "BH")
+
+    # Bound flag
+    bound_flag <- ifelse(
+      !is.na(r_vals) & (abs(r_vals) >= r_cut) & (p_vals <= p_cut),
+      1L,
+      0L
+    )
+
+    out <- data.frame(
+      peak_chr          = peak_chr,
+      peak_start        = peak_start,
+      peak_end          = peak_end,
+      TF                = tf_symbol,
+      corr_atac_tf_r    = r_vals,
+      corr_atac_tf_p    = p_vals,
+      corr_atac_tf_p_adj = p_adj,
+      `_bound`          = bound_flag,
+      stringsAsFactors  = FALSE
+    )
+
+    out
+  }
+
+  # ---------------------------------------------------------------------------
+  # 4) Loop over TFs, save results
+  # ---------------------------------------------------------------------------
+  out_dir <- file.path(base_dir, "predicted_all_atac")
+  if (!dir.exists(out_dir)) {
+    dir.create(out_dir, recursive = TRUE)
+  }
+
+  res_list <- vector("list", length(tf_names))
+  names(res_list) <- tf_names
+
+  for (i in seq_along(tf_names)) {
+    tf <- tf_names[[i]]
+    cli::cli_inform("Processing TF {.val {tf}} ({i}/{length(tf_names)})")
+
+    df_tf <- cor_one_tf(tf)
+    if (is.null(df_tf)) {
+      next
+    }
+
+    res_list[[i]] <- df_tf
+
+    out_file <- file.path(out_dir, paste0(tf, "_overview.txt"))
+    readr::write_tsv(df_tf, out_file)
+  }
+
+  invisible(res_list)
+}
+
+base_dir <- "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction"
+
+res_atac <- build_atac_rna_cor_overviews(
+  strict_build_args = strict_build_args,
+  base_dir          = base_dir,
+  tf_names          = c("HNF4A", "MAFF", "ZEB1"),
+  r_cut             = 0.3,
+  p_cut             = 0.01
+)
+
+
+batch <- list(
+  list(
+    tf   = "HNF4A",
+    pred = file.path(base_dir, "predicted_all_atac", "HNF4A_overview.txt"),
+    chip = file.path(base_dir, "cutntag", "cy83.hg38.rp10m.narrowpeaks.bed")
+  ),
+  list(
+    tf   = "MAFF",
+    pred = file.path(base_dir, "predicted_all_atac", "MAFF_overview.txt"),
+    chip = file.path(base_dir, "cutntag", "cy84.hg38.rp10m.narrowpeaks.bed")
+  ),
+  list(
+    tf   = "ZEB1",
+    pred = file.path(base_dir, "predicted_all_atac", "ZEB1_overview.txt"),
+    chip = file.path(base_dir, "cutntag", "cy76.hg38.rp10m.narrowpeaks.bed")
+  )
+)
+
+out_dir <- file.path(base_dir, "plots_pdf_all_atac")
+
+purrr::walk(batch, function(x) {
+  save_benchmark_plots(
+    tf        = x$tf,
+    pred_path = x$pred,
+    chip_path = x$chip,
+    out_dir   = out_dir,
+    score_col = "corr_atac_tf_r",
+    mode      = "atac"
+  )
+})
+
+
+
+
+tfs <- c("HNF4A", "MAFF", "ZEB1")
+
+opt_dir <- file.path(base_dir, "predicted_canonical_tfbs_cutoff_optimization")
+if (!dir.exists(opt_dir)) {
+  dir.create(opt_dir, recursive = TRUE)
+}
+
+for (tf in tfs) {
+  message("Optimizing + plotting metrics for TF: ", tf)
+
+  # ----- load data -----
+  infile <- file.path(
+    base_dir, "predicted_canonical_tfbs",
+    paste0(tf, "_overview_with_ChIP.csv")
+  )
+  volcano_data <- readr::read_csv(infile, show_col_types = FALSE)
+
+  # ----- run optimization (as before) -----
+  res_opt <- optimize_corr_p_cutoffs(
+    dat   = volcano_data,
+    r_col = "corr_fp_tf_r",
+    p_col = "corr_fp_tf_p",
+    y_col = "ChIP_bound",
+    metric = "f1_ChIP1"
+  )
+
+  grid <- res_opt$grid_results
+
+  # drop rows with NA F1 (usually extreme cutoffs with no positives)
+  grid <- grid[!is.na(grid$f1_ChIP1), , drop = FALSE]
+
+  # make r_cut a factor so facets are ordered nicely
+  grid$r_cut <- factor(grid$r_cut)
+
+  # ----- long format for 3 metrics -----
+  plot_df <- tidyr::pivot_longer(
+    grid,
+    cols = c("accuracy_overall", "precision_ChIP1", "recall_ChIP1"),
+    names_to  = "metric",
+    values_to = "value"
+  )
+
+  # ----- scatter: x = p_cut, y = metric value, color = metric, facet by r_cut -----
+  p_metrics <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(x = p_cut, y = value, color = metric)
+  ) +
+    ggplot2::geom_point(alpha = 0.6, size = 1) +
+    ggplot2::scale_x_log10() +
+    ggplot2::labs(
+      title = paste0(tf, " cutoff optimization metrics"),
+      x     = "p-value cutoff (log10 scale)",
+      y     = "Metric value"
+    ) +
+    ggplot2::facet_wrap(~ r_cut, ncol = 5) +  # facet by |r| cutoff
+    ggplot2::theme_bw() +
+    ggplot2::theme(
+      legend.position = "bottom",
+      strip.background = ggplot2::element_rect(fill = "grey90"),
+      strip.text = ggplot2::element_text(size = 8)
+    )
+
+  out_pdf <- file.path(
+    opt_dir,
+    paste0(tf, "_cutoff_metrics_by_r.pdf")
+  )
+  ggplot2::ggsave(
+    filename = out_pdf,
+    plot     = p_metrics,
+    width    = 10,
+    height   = 18,
+    units    = "in",
+    dpi      = 300
+  )
+}
+
+
+optimize_corr_p_cutoffs <- function(dat,
+                                    r_col   = "corr_fp_tf_r",
+                                    p_col   = "corr_fp_tf_p",
+                                    y_col   = "ChIP_bound",
+                                    r_grid  = seq(0, 1, by = 0.02),
+                                    p_grid  = 10^seq(-12, -1, length.out = 20),
+                                    metric  = c("accuracy_overall",
+                                                "precision_ChIP1",
+                                                "recall_ChIP1",
+                                                "f1_ChIP1")) {
+  metric <- match.arg(metric)
+
+  # Precompute
+  abs_r  <- abs(dat[[r_col]])
+  p_val  <- dat[[p_col]]
+  y_true <- as.integer(dat[[y_col]] == 1L)  # 1 = ChIP_bound, 0 = not
+  # y_true can contain NA if ChIP_bound is NA
+
+  res_list <- vector("list", length(r_grid) * length(p_grid))
+  k <- 1L
+
+  for (rc in r_grid) {
+    for (pc in p_grid) {
+
+      # predicted bound if |r| >= r_cut AND p <= p_cut
+      pred <- as.integer(abs_r >= rc & p_val <= pc)
+      # pred can be 0/1/NA when abs_r or p_val is NA
+
+      tp <- sum(pred == 1L & y_true == 1L, na.rm = TRUE)
+      fp <- sum(pred == 1L & y_true == 0L, na.rm = TRUE)
+      fn <- sum(pred == 0L & y_true == 1L, na.rm = TRUE)
+      tn <- sum(pred == 0L & y_true == 0L, na.rm = TRUE)
+
+      denom_all <- tp + fp + fn + tn
+      accuracy_overall <- if (denom_all > 0) (tp + tn) / denom_all else NA_real_
+
+      precision_ChIP1  <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+      recall_ChIP1     <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+
+      f1_ChIP1 <- if (is.na(precision_ChIP1) ||
+                      is.na(recall_ChIP1) ||
+                      (precision_ChIP1 + recall_ChIP1) == 0) {
+        NA_real_
+      } else {
+        2 * precision_ChIP1 * recall_ChIP1 / (precision_ChIP1 + recall_ChIP1)
+      }
+
+      res_list[[k]] <- data.frame(
+        r_cut            = rc,
+        p_cut            = pc,
+        accuracy_overall = accuracy_overall,
+        precision_ChIP1  = precision_ChIP1,
+        recall_ChIP1     = recall_ChIP1,
+        f1_ChIP1         = f1_ChIP1
+      )
+      k <- k + 1L
+    }
+  }
+
+  grid_results <- do.call(rbind, res_list)
+
+  # pick the best according to the chosen metric
+  best_idx <- switch(
+    metric,
+    "accuracy_overall" = which.max(grid_results$accuracy_overall),
+    "precision_ChIP1"  = which.max(grid_results$precision_ChIP1),
+    "recall_ChIP1"     = which.max(grid_results$recall_ChIP1),
+    "f1_ChIP1"         = which.max(grid_results$f1_ChIP1)
+  )
+
+  best_row <- grid_results[best_idx, , drop = FALSE]
+
+  list(
+    grid_results = grid_results,
+    best = best_row
+  )
+}
+
+
+library(readr)
+
+# TFs to process
+tfs <- c("HNF4A", "MAFF", "ZEB1")
+
+# -------------------------------------------------------------------
+# 1) GRID SEARCH + SAVE CSVs for both FP and ATAC
+# -------------------------------------------------------------------
+
+target_metrics <- c("accuracy_overall",
+                    "precision_ChIP1",
+                    "recall_ChIP1",
+                    "f1_ChIP1")
+
+for (mode in c("atac")) { # c("fp", "atac")
+  message("=== Mode: ", mode, " ===")
+
+  if (mode == "fp") {
+    pred_subdir <- "predicted_canonical_tfbs"
+    opt_dir     <- file.path(base_dir, "predicted_canonical_tfbs_cutoff_optimization")
+    r_col       <- "corr_fp_tf_r"
+    p_col       <- "corr_fp_tf_p"
+  } else if (mode == "atac") {
+    # ATAC mode: use the ATAC overview-with-ChIP tables and ATAC columns
+    pred_subdir <- "predicted_all_atac"
+    opt_dir     <- file.path(base_dir, "predicted_all_atac_cutoff_optimization")
+    r_col       <- "corr_atac_tf_r"
+    p_col       <- "corr_atac_tf_p"
+  }
+
+  if (!dir.exists(opt_dir)) {
+    dir.create(opt_dir, recursive = TRUE)
+  }
+
+  for (tf in tfs) {
+    message("Optimizing cutoffs for TF: ", tf, " (mode = ", mode, ")")
+
+    infile <- file.path(
+      base_dir, pred_subdir,
+      paste0(tf, "_overview_with_ChIP.csv")
+    )
+    volcano_data <- readr::read_csv(infile, show_col_types = FALSE)
+
+    # loop over target metrics
+    for (metric in target_metrics) {
+      message("  Metric: ", metric)
+
+      res_opt <- optimize_corr_p_cutoffs(
+        dat    = volcano_data,
+        r_col  = r_col,
+        p_col  = p_col,
+        y_col  = "ChIP_bound",
+        metric = metric
+      )
+
+      grid_file <- file.path(
+        opt_dir,
+        paste0(tf, "_cutoff_grid_", metric, ".csv")
+      )
+      best_file <- file.path(
+        opt_dir,
+        paste0(tf, "_cutoff_best_", metric, ".csv")
+      )
+
+      readr::write_csv(res_opt$grid_results, grid_file)
+      readr::write_csv(res_opt$best,         best_file)
+    }
+  }
+}
+
+# -------------------------------------------------------------------
+# 2) PLOTTING METRICS (accuracy/precision/recall) FACETTED BY r_cut
+#    for both FP and ATAC
+# -------------------------------------------------------------------
+
+for (mode in c("atac")) { # c("fp", "atac")
+  message("=== Mode (plots): ", mode, " ===")
+
+  if (mode == "fp") {
+    pred_subdir <- "predicted_canonical_tfbs"
+    opt_dir     <- file.path(base_dir, "predicted_canonical_tfbs_cutoff_optimization")
+    r_col       <- "corr_fp_tf_r"
+    p_col       <- "corr_fp_tf_p"
+  } else if (mode == "atac") {
+    pred_subdir <- "predicted_all_atac"
+    opt_dir     <- file.path(base_dir, "predicted_all_atac_cutoff_optimization")
+    r_col       <- "corr_atac_tf_r"
+    p_col       <- "corr_atac_tf_p"
+  }
+
+  if (!dir.exists(opt_dir)) {
+    dir.create(opt_dir, recursive = TRUE)
+  }
+
+  for (tf in tfs) {
+    message("Optimizing + plotting metrics for TF: ", tf, " (mode = ", mode, ")")
+
+    infile <- file.path(
+      base_dir, pred_subdir,
+      paste0(tf, "_overview_with_ChIP.csv")
+    )
+    volcano_data <- readr::read_csv(infile, show_col_types = FALSE)
+
+    # run optimization once for plotting (e.g. target F1)
+    res_opt <- optimize_corr_p_cutoffs(
+      dat    = volcano_data,
+      r_col  = r_col,
+      p_col  = p_col,
+      y_col  = "ChIP_bound",
+      metric = "f1_ChIP1"
+    )
+
+    grid <- res_opt$grid_results
+    grid <- grid[!is.na(grid$f1_ChIP1), , drop = FALSE]
+    grid$r_cut <- factor(grid$r_cut)
+
+    # long format for accuracy / precision / recall
+    plot_df <- tidyr::pivot_longer(
+      grid,
+      cols = c("accuracy_overall", "precision_ChIP1", "recall_ChIP1"),
+      names_to  = "metric",
+      values_to = "value"
+    )
+
+    p_metrics <- ggplot2::ggplot(
+      plot_df,
+      ggplot2::aes(x = p_cut, y = value, color = metric)
+    ) +
+      ggplot2::geom_point(alpha = 0.6, size = 1) +
+      ggplot2::scale_x_log10() +
+      ggplot2::labs(
+        title = paste0(tf, " cutoff optimization metrics (mode = ", mode, ")"),
+        x     = "p-value cutoff (log10 scale)",
+        y     = "Metric value"
+      ) +
+      ggplot2::facet_wrap(~ r_cut, ncol = 5) +
+      ggplot2::theme_bw() +
+      ggplot2::theme(
+        legend.position   = "bottom",
+        strip.background  = ggplot2::element_rect(fill = "grey90"),
+        strip.text        = ggplot2::element_text(size = 8)
+      )
+
+    out_pdf <- file.path(
+      opt_dir,
+      paste0(tf, "_cutoff_metrics_by_r_", mode, ".pdf")
+    )
+    ggplot2::ggsave(
+      filename = out_pdf,
+      plot     = p_metrics,
+      width    = 10,
+      height   = 18,
+      units    = "in",
+      dpi      = 300
+    )
+  }
+}
+
+

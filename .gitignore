@@ -1,4 +1,7 @@
 .Rproj.user
 inst/doc
+inst/extdata
 /doc/
 /Meta/
+workspace.RData
+inst/extdata/GeneHancer_v5.24_full.csv

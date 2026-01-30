@@ -4,7 +4,7 @@
 #' Validate and normalize a topic-centric GRN links table
 #'
 #' Many \code{episcope} functions expect a "links" table in long format where each
-#' row represents a TF→enhancer→gene candidate relationship (optionally scoped to a
+#' row represents a TFenhancergene candidate relationship (optionally scoped to a
 #' topic and a condition) with one or more scores (e.g., link score, footprint score).
 #'
 #' Required columns:
@@ -75,7 +75,7 @@ grn_topic_validate_links <- function(links,
   out
 }
 
-#' Build a topic-centric TF→gene network by aggregating enhancer links
+#' Build a topic-centric TFgene network by aggregating enhancer links
 #' @param links validated links table
 #' @param topic character or NULL
 #' @param score_col character; numeric score column to aggregate
@@ -471,7 +471,7 @@ grn_topic_plot_static <- function(net,
     ) +
     ggplot2::scale_shape_manual(values = c(TF = 22, gene = 21, topic = 23)) +
     ggplot2::labs(title = if (is.null(title)) {
-      if (!is.null(net$meta$topic)) paste0("Topic network — ", net$meta$topic) else "Topic network"
+      if (!is.null(net$meta$topic)) paste0("Topic network ?", net$meta$topic) else "Topic network"
     } else title,
     x = NULL, y = NULL) +
     ggplot2::theme_minimal(base_size = 12) +

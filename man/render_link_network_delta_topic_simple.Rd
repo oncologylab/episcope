@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_grn_link_delta_loader.R
 \name{render_link_network_delta_topic_simple}
 \alias{render_link_network_delta_topic_simple}
-\title{Render Δ-topic single-panel network (simple; tolerant of suffixed columns)}
+\title{Render -topic single-panel network (simple; tolerant of suffixed columns)}
 \usage{
 render_link_network_delta_topic_simple(
   comp_csv,
@@ -28,7 +28,7 @@ render_link_network_delta_topic_simple(
 
 \item{top_n_tfs_per_topic}{integer whitelist from summary}
 
-\item{edge_filter_min}{numeric; min |Δ| or per-side score to keep}
+\item{edge_filter_min}{numeric; min || or per-side score to keep}
 
 \item{edge_filter_on}{"either","stress","control","both"}
 
@@ -42,5 +42,5 @@ render_link_network_delta_topic_simple(
 out_html invisibly
 }
 \description{
-Render Δ-topic single-panel network (simple; tolerant of suffixed columns)
+Render -topic single-panel network (simple; tolerant of suffixed columns)
 }

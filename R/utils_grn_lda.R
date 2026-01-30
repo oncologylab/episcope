@@ -1,4 +1,4 @@
-#' utils_grn_lda.R — Annotate delta-link tables with LDA topic (episcope)
+#' utils_grn_lda.R ?Annotate delta-link tables with LDA topic (episcope)
 #'
 #' @author Yaoxiang Li
 #' @family episcope-utils
@@ -258,7 +258,7 @@ annotate_links_with_lda_topic <- function(x,
     if (is.null(out_file)) out_file <- .default_lda_out_path(x, K)
     dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
     readr::write_csv(out, out_file)
-    .ldalog("✓ wrote: ", out_file, verbose = verbose)
+    .ldalog("?wrote: ", out_file, verbose = verbose)
   }
 
   out
@@ -377,7 +377,7 @@ annotate_links_with_lda_topic_bulk <- function(filtered_csvs,
     }
     dir.create(dirname(manifest_path), recursive = TRUE, showWarnings = FALSE)
     readr::write_csv(manifest, manifest_path)
-    .ldalog("✓ wrote manifest: ", manifest_path, verbose = verbose)
+    .ldalog("?wrote manifest: ", manifest_path, verbose = verbose)
   }
 
   list(

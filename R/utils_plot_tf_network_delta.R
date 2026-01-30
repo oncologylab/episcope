@@ -1,38 +1,42 @@
-# utils_plot_tf_network_delta.R — Simplified Δ-network plot (all links) w/ crowd controls
-# Author: Yaoxiang Li (episcope) — refined by ChatGPT
-# Updated: 2025-10-31
+# utils_plot_tf_network_delta.R ?Simplified -network plot (all links) w/ crowd controls
+# Author: Yaoxiang Li
+# Updated: 2025-12-05
 
-#' Plot an interactive Δ-network for all TF–peak–gene links
-#' (single-panel Δ = stress − control) with crowd-control options.
+#' Plot an interactive -network for all TFpeakgene links
+#' (single-panel  = case ?control) with crowd-control options.
 #'
-#' The plot draws TFs (boxes), genes (dots), and optional peaks (triangles).
-#' Edge color encodes Δ magnitude/sign (red = gain/activation; blue = loss/repression);
-#' **arrow head styles** encode sign: **arrow** for activation (+), **blunt bar** for repression (−).
+#' The plot draws TFs (rounded boxes), genes (circles), and optional peaks (triangles).
+#' Edge color encodes  magnitude/sign (red = gain/activation; blue = loss/repression);
+#' arrow head styles encode sign: arrow for activation (+), blunt bar for repression (?.
+#' Node fill color encodes expression direction (up / down / neutral).
 #'
-#' @param data Tibble/data.frame or path to CSV/TSV with per-row TF–peak–gene entry.
+#' @param data Tibble/data.frame or path to CSV/TSV with per-row TFpeakgene entry.
 #'   Must contain at least: TF/tf, gene_key/gene, peak_id/peak, and two per-condition
 #'   link scores (e.g., \code{link_score_*}). Signs/expressions are optional.
+#' @param plot_title Title string shown above the network.
 #' @param out_html Optional path to write HTML; if `NULL` returns the htmlwidget.
 #' @param layout_algo One of: "fr","kk","lgl","dh","graphopt","circle","grid","sphere","star","random".
 #' @param physics Logical; if `TRUE`, enables a repulsive physics preset to relieve crowding.
-#' @param add_direct Logical; also draw faint direct TF→gene Δ edges in addition to TF→PEAK→gene.
-#' @param edge_filter_min Keep edges with \code{|score_ctrl|} or \code{|score_str|} ≥ this value (magnitude-only).
-#' @param min_delta_abs Keep edges with \code{|Δ|} ≥ this value (Δ = str − ctrl).
-#' @param keep_top_edges_per_tf Optional integer; per TF keep only the strongest \code{|Δ|} edges.
-#' @param peak_mode One of: "show_all" (default), "shared_only" (hide unique-peak triangles),
-#'   "hide" (draw TF→gene only; collapses multiple peaks to strongest Δ per TF–gene).
-#' @param show_peaks Convenience boolean to show peak triangles (\code{TRUE}, default) or hide them
-#'   entirely (\code{FALSE}). If set to \code{FALSE}, this overrides \code{peak_mode} to "hide".
-#' @param gene_fc_thresh Threshold for node border up/down coloring (reference set by `de_reference`).
-#' @param de_reference "str_over_ctrl" (default) or "ctrl_over_str" for log2FC border coloring.
+#' @param add_direct Logical; also draw faint direct TFgene  edges in addition to TFPEAKgene.
+#' @param edge_filter_min Keep edges with \code{|score_ctrl|} or \code{|score_str|} ?this value.
+#' @param min_delta_abs Keep edges with \code{||} ?this value ( = case ?ctrl).
+#' @param keep_top_edges_per_tf Optional integer; per TF keep only the strongest \code{||} edges.
+#' @param peak_mode One of: "show_all" (default), "shared_only", "hide".
+#' @param show_peaks Convenience boolean; if FALSE, forces \code{peak_mode = "hide"}.
+#' @param gene_fc_thresh Threshold on |log2FC| used to call nodes up/down vs neutral.
+#' @param col_node_up Fill color for up-regulated nodes (TFs/genes).
+#' @param col_node_down Fill color for down-regulated nodes.
+#' @param col_node_neutral Fill color for neutral nodes.
+#' @param font_color Base label color (all nodes).
+#' @param edge_width_min,edge_width_max Minimum and maximum edge thickness for ||.
+#' @param de_reference "str_over_ctrl" (default) or "ctrl_over_str" for log2FC sign.
 #' @param motif_db "jaspar2024" (default) or "hocomocov13" to recognize TF symbols.
 #' @param width,height Dimensions passed to \code{visNetwork}.
-#' @param seed Integer seed for reproducible igraph layouts (ignored when \code{physics=TRUE} and nodes are moved).
+#' @param seed Integer seed for reproducible igraph layouts.
 #' @param verbose Logical; print progress messages.
 #' @param score_ctrl_col,score_str_col Optional explicit column names of per-condition link scores.
-#' @param sign_ctrl_col,sign_str_col Optional explicit column names of per-condition link signs ("+"|"-"|0 or numeric).
-#' @param tf_expr_ctrl_col,tf_expr_str_col,gene_expr_ctrl_col,gene_expr_str_col Optional
-#'   expression columns (used for node tooltips, TF label sizing, and border coloring).
+#' @param sign_ctrl_col,sign_str_col Optional explicit column names of per-condition link signs.
+#' @param tf_expr_ctrl_col,tf_expr_str_col,gene_expr_ctrl_col,gene_expr_str_col Optional expression columns.
 #'
 #' @return A \code{visNetwork} htmlwidget (or, invisibly, \code{out_html} path if saved).
 #'
@@ -41,14 +45,24 @@ plot_tf_network_delta <- function(
     data,
     plot_title,
     out_html       = NULL,
+    html_title     = NULL,
     layout_algo    = c("fr","kk","lgl","dh","graphopt","circle","grid","sphere","star","random"),
     add_direct     = TRUE,
     edge_filter_min = 0,
     min_delta_abs   = 0,
     keep_top_edges_per_tf = NULL,
     peak_mode      = c("show_all","shared_only","hide"),
-    show_peaks     = TRUE,     # NEW: simple on/off for peak triangles
+    show_peaks     = TRUE,
     gene_fc_thresh = 1.5,
+    col_node_up      = "#dfb734",
+    col_node_down    = "#283673",
+    col_node_neutral = "#555555",
+    font_color       = "#FFFFFF",
+    edge_width_min   = 2,
+    edge_width_max   = 8,
+    size_by        = c("log2fc", "expr_max"),
+    label_inside   = TRUE,
+    label_max_chars = 18,
     de_reference   = c("str_over_ctrl","ctrl_over_str"),
     motif_db       = c("jaspar2024","hocomocov13"),
     physics        = FALSE,
@@ -66,29 +80,33 @@ plot_tf_network_delta <- function(
     gene_expr_ctrl_col = NULL,
     gene_expr_str_col  = NULL
 ){
-  layout_algo <- match.arg(layout_algo)
+  layout_algo  <- match.arg(layout_algo)
   de_reference <- match.arg(de_reference)
   motif_db     <- match.arg(motif_db)
   peak_mode    <- match.arg(peak_mode)
-  # Boolean override: if show_peaks == FALSE, force peak_mode = "hide"
+  size_by      <- match.arg(size_by)
   if (identical(show_peaks, FALSE)) peak_mode <- "hide"
   set.seed(as.integer(seed) %% .Machine$integer.max)
 
-  # ── Styling ────────────────────────────────────────────────────────────────
-  col_edge_pos    <- "#df1d16"  # Δ > 0
-  col_edge_neg    <- "#255dae"  # Δ < 0
+  #  Styling 
+  col_edge_pos    <- "#df1d16"  #  > 0
+  col_edge_neg    <- "#255dae"  #  < 0
   col_edge_zero   <- "#C8C8C8"
-  col_gene_fill   <- "#6ad961"  #
-  col_border_none <- "#BFBFBF"
-  col_border_up   <- "#df1d16"
-  col_border_down <- "#255dae"
-  tf_font_range   <- c(22, 44)
-  gene_size_range <- c(1, 5)
+  tf_font_range   <- c(24, 56)
+  tf_box_aspect   <- 1.6
+  gene_size_range <- c(10, 50)
+  tf_size_range   <- gene_size_range
+  gene_font_range <- c(
+    max(10, round(gene_size_range[1] * 0.4)),
+    max(18, round(gene_size_range[2] * 0.6))
+  )
 
   `%||%` <- function(a, b) if (is.null(a)) b else a
   to_rgba <- function(hex, alpha){
     hex <- gsub("^#", "", hex)
-    r <- strtoi(substr(hex,1,2),16L); g <- strtoi(substr(hex,3,4),16L); b <- strtoi(substr(hex,5,6),16L)
+    r <- strtoi(substr(hex,1,2),16L)
+    g <- strtoi(substr(hex,3,4),16L)
+    b <- strtoi(substr(hex,5,6),16L)
     sprintf("rgba(%d,%d,%d,%.3f)", r,g,b, max(0, min(1, alpha)))
   }
   robust_z <- function(x){
@@ -96,7 +114,8 @@ plot_tf_network_delta <- function(
     m <- stats::median(x, na.rm = TRUE)
     madv <- stats::mad(x, constant = 1.4826, na.rm = TRUE)
     if (!is.finite(madv) || madv == 0) {
-      sx <- stats::sd(x, na.rm = TRUE); if (!is.finite(sx) || sx == 0) return(rep(0, length(x)))
+      sx <- stats::sd(x, na.rm = TRUE)
+      if (!is.finite(sx) || sx == 0) return(rep(0, length(x)))
       return((x - m)/(sx + 1e-12))
     }
     (x - m)/(madv + 1e-12)
@@ -111,7 +130,6 @@ plot_tf_network_delta <- function(
                   ifelse(x %in% c("0","zero","0.0","."), 0L, NA_integer_)))
   }
   .make_arrows <- function(sign_vec) {
-    # + or NA → normal arrow; − → T-bar (blunt)
     kinds <- ifelse(is.na(sign_vec) | sign_vec >= 0L, "arrow", "bar")
     I(lapply(kinds, function(tp) list(to = list(enabled = TRUE, type = tp))))
   }
@@ -119,19 +137,44 @@ plot_tf_network_delta <- function(
   # Known TF universe (from installed package files)
   .tf_cache <- new.env(parent = emptyenv())
   get_tf_syms <- function() get0("KNOWN_TF_SYMBOLS", envir = .tf_cache, inherits = FALSE)
-  set_tf_syms <- function(x, db) { assign("KNOWN_TF_SYMBOLS", x, envir = .tf_cache); assign("KNOWN_TF_DB", db, envir = .tf_cache); invisible(TRUE) }
+  set_tf_syms <- function(x, db) {
+    assign("KNOWN_TF_SYMBOLS", x, envir = .tf_cache)
+    assign("KNOWN_TF_DB", x = db, envir = .tf_cache)
+    invisible(TRUE)
+  }
   load_tf_universe <- function(db = motif_db){
     cur_db <- get0("KNOWN_TF_DB", envir = .tf_cache, inherits = FALSE)
     cur    <- get_tf_syms()
     if (!is.null(cur) && identical(cur_db, db)) return(invisible(TRUE))
+    ref_genome <- get0("ref_genome", envir = .GlobalEnv, inherits = FALSE)
+    if (is.null(ref_genome) || !nzchar(ref_genome)) ref_genome <- "hg38"
+    ref_genome <- tolower(as.character(ref_genome))
     path <- if (db == "jaspar2024") {
-      system.file("extdata","genome","JASPAR2024.txt", package = "episcope")
+      if (ref_genome == "mm10") {
+        system.file("extdata","genome","JASPAR2024_mm10.txt", package = "episcope")
+      } else {
+        system.file("extdata","genome","JASPAR2024_hg38.txt", package = "episcope")
+      }
     } else {
-      system.file("extdata","genome","HOCOMOCO_v13_motif_cluster_definition_with_sub_cluster.txt", package = "episcope")
+      system.file("extdata","genome","HOCOMOCOv13.txt", package = "episcope")
     }
-    if (!nzchar(path) || !file.exists(path)) cli::cli_abort("Motif cluster definition not found for motif_db='{db}'.")
+    if (!nzchar(path) || !file.exists(path)) {
+      # Fallbacks for legacy filenames
+      if (db == "jaspar2024") {
+        path <- system.file("extdata","genome","JASPAR2024.txt", package = "episcope")
+      }
+    }
+    if (!nzchar(path) || !file.exists(path)) {
+      .log_abort("Motif cluster definition not found for motif_db='{db}'.")
+    }
     df <- readr::read_tsv(path, show_col_types = FALSE, progress = FALSE)
-    syms <- unique(trimws(unlist(strsplit(df$HGNC, "::", fixed = TRUE), use.names = FALSE)))
+    if ("HGNC" %in% names(df) && !("gene_symbol" %in% names(df))) {
+      df <- dplyr::rename(df, gene_symbol = HGNC)
+    }
+    if (!"gene_symbol" %in% names(df)) {
+      .log_abort("Motif DB file missing gene_symbol column: {path}")
+    }
+    syms <- unique(trimws(unlist(strsplit(df$gene_symbol, "::", fixed = TRUE), use.names = FALSE)))
     set_tf_syms(syms, db); invisible(TRUE)
   }
   is_known_tf <- function(x){
@@ -140,23 +183,33 @@ plot_tf_network_delta <- function(
     x %in% (get_tf_syms() %||% character(0))
   }
 
-  # ── Load & map data ───────────────────────────────────────────────────────
+  #  Load & map data 
   if (is.character(data) && length(data) == 1L && file.exists(data)) {
-    if (verbose) message("[Δnet] Reading: ", data)
+    if (verbose) message("[net] Reading: ", data)
     ext <- tolower(tools::file_ext(data))
-    DF <- if (ext %in% c("tsv","txt")) readr::read_tsv(data, show_col_types = FALSE) else readr::read_csv(data, show_col_types = FALSE)
+    DF <- if (ext %in% c("tsv","txt")) {
+      readr::read_tsv(data, show_col_types = FALSE)
+    } else {
+      readr::read_csv(data, show_col_types = FALSE)
+    }
   } else if (is.data.frame(data)) {
     DF <- tibble::as_tibble(data)
-  } else cli::cli_abort("`data` must be a data.frame/tibble or an existing CSV/TSV path.")
+  } else {
+    .log_abort("`data` must be a data.frame/tibble or an existing CSV/TSV path.")
+  }
 
   ns <- names(DF)
 
   # Auto-detect per-condition link scores if not provided
   if (is.null(score_ctrl_col) || is.null(score_str_col)) {
     score_cols <- ns[grepl("^link_score_", ns)]
-    score_cols <- score_cols[vapply(score_cols, function(cn) is.numeric(DF[[cn]]) || is.integer(DF[[cn]]), logical(1))]
+    score_cols <- score_cols[vapply(
+      score_cols,
+      function(cn) is.numeric(DF[[cn]]) || is.integer(DF[[cn]]),
+      logical(1)
+    )]
     if (length(score_cols) < 2L) {
-      cli::cli_abort(c(
+      .log_abort(c(
         "Could not auto-detect two per-condition score columns starting with 'link_score_'.",
         "x" = "Pass `score_ctrl_col` and `score_str_col` explicitly."
       ))
@@ -169,9 +222,11 @@ plot_tf_network_delta <- function(
     } else {
       score_ctrl_col <- score_cols[1]
       score_str_col  <- score_cols[2]
-      if (verbose) message("[Δnet] Using first two score columns as (ctrl,str): ",
-                           score_ctrl_col, " | ", score_str_col,
-                           " (override via score_ctrl_col/score_str_col if needed)")
+      if (verbose) {
+        message("[net] Using first two score columns as (ctrl,case): ",
+                score_ctrl_col, " | ", score_str_col,
+                " (override via score_ctrl_col/score_str_col if needed)")
+      }
     }
   }
 
@@ -179,7 +234,9 @@ plot_tf_network_delta <- function(
   suf_str  <- sub("^link_score_", "", score_str_col)
   guess <- function(prefix, suf) {
     cand <- paste0(prefix, suf)
-    if (cand %in% ns) cand else {
+    if (cand %in% ns) {
+      cand
+    } else {
       rx <- paste0("^", gsub("([.*+?^${}()|[\\]\\/])", "\\\\\\1", prefix))
       hits <- ns[grepl(rx, ns)]
       norm <- function(x) gsub("[^A-Za-z0-9]+","_", x)
@@ -200,10 +257,10 @@ plot_tf_network_delta <- function(
   gene_col <- if ("gene_key" %in% ns) "gene_key" else if ("gene" %in% ns) "gene" else "gene_key"
   peak_col <- if ("peak_id" %in% ns) "peak_id" else if ("peak" %in% ns) "peak" else "peak_id"
   if (!tf_col %in% ns || !gene_col %in% ns || !peak_col %in% ns) {
-    cli::cli_abort("Missing required columns: need TF/tf, gene_key/gene, and peak_id/peak.")
+    .log_abort("Missing required columns: need TF/tf, gene_key/gene, and peak_id/peak.")
   }
   if (!score_ctrl_col %in% ns || !score_str_col %in% ns) {
-    cli::cli_abort("Missing score columns: {score_ctrl_col} / {score_str_col}. Provide correct values via score_ctrl_col / score_str_col.")
+    .log_abort("Missing score columns: {score_ctrl_col} / {score_str_col}. Provide correct values via score_ctrl_col / score_str_col.")
   }
 
   take <- unique(na.omit(c(
@@ -219,12 +276,24 @@ plot_tf_network_delta <- function(
   names(ed)[match(peak_col, names(ed))] <- "peak_id"
   names(ed)[match(score_ctrl_col, names(ed))] <- "score_ctrl"
   names(ed)[match(score_str_col,  names(ed))] <- "score_str"
-  if (!is.na(sign_ctrl_col)   && sign_ctrl_col   %in% names(ed)) names(ed)[match(sign_ctrl_col,   names(ed))] <- "sign_ctrl"
-  if (!is.na(sign_str_col)    && sign_str_col    %in% names(ed)) names(ed)[match(sign_str_col,    names(ed))] <- "sign_str"
-  if (!is.na(tf_expr_ctrl_col)   && tf_expr_ctrl_col   %in% names(ed)) names(ed)[match(tf_expr_ctrl_col,   names(ed))] <- "tf_expr_ctrl"
-  if (!is.na(tf_expr_str_col)    && tf_expr_str_col    %in% names(ed)) names(ed)[match(tf_expr_str_col,    names(ed))] <- "tf_expr_str"
-  if (!is.na(gene_expr_ctrl_col) && gene_expr_ctrl_col %in% names(ed)) names(ed)[match(gene_expr_ctrl_col, names(ed))] <- "gene_expr_ctrl"
-  if (!is.na(gene_expr_str_col)  && gene_expr_str_col  %in% names(ed)) names(ed)[match(gene_expr_str_col,  names(ed))] <- "gene_expr_str"
+  if (!is.na(sign_ctrl_col)   && sign_ctrl_col   %in% names(ed)) {
+    names(ed)[match(sign_ctrl_col,   names(ed))] <- "sign_ctrl"
+  }
+  if (!is.na(sign_str_col)    && sign_str_col    %in% names(ed)) {
+    names(ed)[match(sign_str_col,    names(ed))] <- "sign_str"
+  }
+  if (!is.na(tf_expr_ctrl_col)   && tf_expr_ctrl_col   %in% names(ed)) {
+    names(ed)[match(tf_expr_ctrl_col,   names(ed))] <- "tf_expr_ctrl"
+  }
+  if (!is.na(tf_expr_str_col)    && tf_expr_str_col    %in% names(ed)) {
+    names(ed)[match(tf_expr_str_col,    names(ed))] <- "tf_expr_str"
+  }
+  if (!is.na(gene_expr_ctrl_col) && gene_expr_ctrl_col %in% names(ed)) {
+    names(ed)[match(gene_expr_ctrl_col, names(ed))] <- "gene_expr_ctrl"
+  }
+  if (!is.na(gene_expr_str_col)  && gene_expr_str_col  %in% names(ed)) {
+    names(ed)[match(gene_expr_str_col,  names(ed))] <- "gene_expr_str"
+  }
 
   ed$TF        <- trimws(as.character(ed$TF))
   ed$gene_key  <- trimws(as.character(ed$gene_key))
@@ -248,7 +317,7 @@ plot_tf_network_delta <- function(
   pass_str_mag  <- ifelse(is.finite(ed$score_str)  & abs(ed$score_str)  >= edge_filter_min, TRUE, FALSE)
   ed$any_pass   <- pass_ctrl_mag | pass_str_mag
 
-  # Δ score and filters
+  #  score and filters
   delta <- suppressWarnings(as.numeric(ed$score_str) - as.numeric(ed$score_ctrl))
   delta[!is.finite(delta)] <- 0
   ed$.delta <- delta
@@ -263,7 +332,7 @@ plot_tf_network_delta <- function(
       dplyr::ungroup()
   }
 
-  if (!nrow(ed)) cli::cli_abort("No edges left after filtering (try lowering thresholds).")
+  if (!nrow(ed)) .log_abort("No edges left after filtering (try lowering thresholds).")
 
   # Optional peak handling
   if (peak_mode != "show_all") {
@@ -289,9 +358,9 @@ plot_tf_network_delta <- function(
     if (!is.finite(q) || q <= 0) 1 else q
   }
 
-  # ── Nodes (TF/gene/peak) ──────────────────────────────────────────────────
+  #  Nodes (TF/gene/peak) 
   load_tf_universe(motif_db)
-  node_ids <- unique(c(ed$TF, ed$gene_key))
+  node_ids   <- unique(c(ed$TF, ed$gene_key))
   node_types <- ifelse(is_known_tf(node_ids), "TF", "gene")
   nodes <- tibble::tibble(id = node_ids, type = node_types)
 
@@ -300,11 +369,18 @@ plot_tf_network_delta <- function(
     nodes <- dplyr::bind_rows(nodes, peak_nodes)
   }
 
-  # expression summaries for styling
-  tf_ctrl <- dplyr::summarise(dplyr::group_by(ed, TF), tf_expr_ctrl = stats::median(tf_expr_ctrl, na.rm = TRUE)); names(tf_ctrl)[1] <- "id"
-  tf_str  <- dplyr::summarise(dplyr::group_by(ed, TF), tf_expr_str  = stats::median(tf_expr_str,  na.rm = TRUE)); names(tf_str)[1] <- "id"
-  g_ctrl  <- dplyr::summarise(dplyr::group_by(ed, gene_key), gene_expr_ctrl = stats::median(gene_expr_ctrl, na.rm = TRUE)); names(g_ctrl)[1] <- "id"
-  g_str   <- dplyr::summarise(dplyr::group_by(ed, gene_key), gene_expr_str  = stats::median(gene_expr_str,  na.rm = TRUE)); names(g_str)[1] <- "id"
+  tf_ctrl <- dplyr::summarise(dplyr::group_by(ed, TF),
+                              tf_expr_ctrl = stats::median(tf_expr_ctrl, na.rm = TRUE))
+  names(tf_ctrl)[1] <- "id"
+  tf_str  <- dplyr::summarise(dplyr::group_by(ed, TF),
+                              tf_expr_str  = stats::median(tf_expr_str,  na.rm = TRUE))
+  names(tf_str)[1] <- "id"
+  g_ctrl  <- dplyr::summarise(dplyr::group_by(ed, gene_key),
+                              gene_expr_ctrl = stats::median(gene_expr_ctrl, na.rm = TRUE))
+  names(g_ctrl)[1] <- "id"
+  g_str   <- dplyr::summarise(dplyr::group_by(ed, gene_key),
+                              gene_expr_str  = stats::median(gene_expr_str,  na.rm = TRUE))
+  names(g_str)[1] <- "id"
 
   nodes <- nodes |>
     dplyr::left_join(tf_ctrl, by = "id") |>
@@ -312,11 +388,24 @@ plot_tf_network_delta <- function(
     dplyr::left_join(g_ctrl,  by = "id") |>
     dplyr::left_join(g_str,   by = "id") |>
     dplyr::mutate(
+      # For nodes classified as TF by motif_db but never used as TF in `ed$TF`,
+      # borrow gene_expr_* as TF expression so we don't end up with NA.
+      tf_expr_ctrl = dplyr::if_else(
+        type == "TF" & is.na(tf_expr_ctrl) & !is.na(gene_expr_ctrl),
+        gene_expr_ctrl,
+        tf_expr_ctrl
+      ),
+      tf_expr_str = dplyr::if_else(
+        type == "TF" & is.na(tf_expr_str) & !is.na(gene_expr_str),
+        gene_expr_str,
+        tf_expr_str
+      ),
       node_raw_ctrl = dplyr::if_else(type == "TF", tf_expr_ctrl, gene_expr_ctrl),
       node_raw_str  = dplyr::if_else(type == "TF", tf_expr_str,  gene_expr_str),
-      node_z_ctrl = robust_z(node_raw_ctrl),
-      node_z_str  = robust_z(node_raw_str)
+      node_z_ctrl   = robust_z(node_raw_ctrl),
+      node_z_str    = robust_z(node_raw_str)
     )
+
 
   eps <- 1e-9
   if (de_reference == "ctrl_over_str") {
@@ -328,103 +417,211 @@ plot_tf_network_delta <- function(
   }
   nodes$l2fc <- ifelse(nodes$type == "TF", l2fc_tf, l2fc_gene)
 
+  # TF font size based on |log2FC| ---------------------------------
+
   tf_idx_nodes <- nodes$type == "TF"
-  max_abs_tf <- suppressWarnings(max(abs(nodes$l2fc[tf_idx_nodes]), na.rm = TRUE)); if (!is.finite(max_abs_tf) || max_abs_tf <= 0) max_abs_tf <- 1
-  tf_signed_all <- rep(NA_real_, nrow(nodes))
-  tf_signed_all[tf_idx_nodes] <- clamp01(0.5 + 0.5 * (nodes$l2fc[tf_idx_nodes] / max_abs_tf))
-  ramp_div <- function(w){ w[!is.finite(w)] <- 0.5; rgb <- grDevices::colorRamp(c(col_edge_neg, "#FFFFFF", col_edge_pos))(w)/255; grDevices::rgb(rgb[,1], rgb[,2], rgb[,3]) }
+  tf_fc_mag    <- abs(nodes$l2fc[tf_idx_nodes])
 
-  gene_z_joint <- pmax(abs(nodes$node_z_ctrl), abs(nodes$node_z_str), na.rm = TRUE)
-  if (!any(is.finite(gene_z_joint))) gene_size <- rep(mean(gene_size_range), nrow(nodes)) else {
-    s <- (gene_z_joint / max(gene_z_joint, na.rm = TRUE))^0.9
-    gene_size <- gene_size_range[1] + s * (gene_size_range[2] - gene_size_range[1])
-  }
-  thr <- log2(gene_fc_thresh)
-  border_col <- ifelse(!is.finite(nodes$l2fc) | abs(nodes$l2fc) < thr, col_border_none,
-                       ifelse(nodes$l2fc > 0, col_border_up, col_border_down))
-  border_width <- ifelse(nodes$type == "TF", 1,
-                         ifelse(nodes$type == "peak", 0.5,
-                                dplyr::case_when(
-                                  is.finite(abs(nodes$l2fc)) & (2^abs(nodes$l2fc)) > 8 ~ 4,
-                                  is.finite(abs(nodes$l2fc)) & (2^abs(nodes$l2fc)) > 4 ~ 3,
-                                  is.finite(abs(nodes$l2fc)) & (2^abs(nodes$l2fc)) > 2 ~ 2,
-                                  TRUE ~ 1
-                                )))
-
-  tf_median_expr <- pmax(nodes$tf_expr_ctrl %||% 0, nodes$tf_expr_str %||% 0, na.rm = TRUE)
-  tf_median_expr <- tf_median_expr[tf_idx_nodes]
   tf_font <- {
-    if (!length(tf_median_expr) || !any(is.finite(tf_median_expr)) || max(tf_median_expr, na.rm = TRUE) == 0) {
+    if (!length(tf_fc_mag) || !any(is.finite(tf_fc_mag)) ||
+        max(tf_fc_mag, na.rm = TRUE) == 0) {
       rep(mean(tf_font_range), sum(tf_idx_nodes))
     } else {
-      s <- (tf_median_expr / max(tf_median_expr, na.rm = TRUE))^1
+      s <- tf_fc_mag / max(tf_fc_mag, na.rm = TRUE)
       tf_font_range[1] + s * (tf_font_range[2] - tf_font_range[1])
     }
   }
 
+
+  # node size based on log2FC or expression -------------------------
+
+  expr_ctrl <- nodes$node_raw_ctrl
+  expr_str  <- nodes$node_raw_str
+  expr_max  <- pmax(expr_ctrl, expr_str)
+  if (size_by == "log2fc") {
+    size_signal <- abs(nodes$l2fc)
+  } else {
+    size_signal <- log1p(pmax(expr_max, 0))
+  }
+
+  scale_range <- function(signal, range) {
+    if (!length(signal) || !any(is.finite(signal)) || max(signal, na.rm = TRUE) == 0) {
+      return(rep(mean(range), length(signal)))
+    }
+    s <- signal / max(signal, na.rm = TRUE)
+    range[1] + s * (range[2] - range[1])
+  }
+
+  gene_idx <- nodes$type == "gene"
+  tf_idx   <- nodes$type == "TF"
+
+  gene_size <- rep(NA_real_, nrow(nodes))
+  tf_value  <- rep(NA_real_, nrow(nodes))
+  gene_size[gene_idx] <- scale_range(size_signal[gene_idx], gene_size_range)
+  tf_value[tf_idx]    <- scale_range(size_signal[tf_idx], tf_size_range)
+  size_scaled <- rep(NA_real_, nrow(nodes))
+  size_scaled[gene_idx] <- gene_size[gene_idx]
+  size_scaled[tf_idx]   <- tf_value[tf_idx]
+
+
+  thr <- log2(gene_fc_thresh)
+  node_state <- ifelse(
+    !is.finite(nodes$l2fc) | abs(nodes$l2fc) < thr, "neutral",
+    ifelse(nodes$l2fc > 0, "up", "down")
+  )
+  fill_col <- ifelse(
+    node_state == "up",   col_node_up,
+    ifelse(node_state == "down", col_node_down, col_node_neutral)
+  )
+
+  border_width <- ifelse(nodes$type == "peak", 0.5, 0)
+
+  label_text <- nodes$id
+  if (isTRUE(label_inside) && is.finite(label_max_chars) && label_max_chars > 0) {
+    label_text <- ifelse(
+      nchar(label_text) > label_max_chars,
+      paste0(substr(label_text, 1, label_max_chars - 3), "..."),
+      label_text
+    )
+  }
+
   vn_nodes <- data.frame(
     id    = nodes$id,
-    # show labels for TFs; keep genes unlabeled (or set to nodes$id if you want labels)
-    label = ifelse(nodes$type %in% c("TF","gene"), nodes$id, ""),
+    label = ifelse(nodes$type %in% c("TF","gene"), label_text, ""),
     group = nodes$type,
-    color.background = ifelse(nodes$type == "TF", ramp_div(tf_signed_all), col_gene_fill),
-    color.border     = border_col,
+    color.background = fill_col,
+    color.border     = fill_col,
     borderWidth      = border_width,
-    value = ifelse(nodes$type == "gene", gene_size, NA),
+    value = ifelse(nodes$type == "gene", gene_size,
+                   ifelse(nodes$type == "TF", tf_value, NA)),
     size  = ifelse(nodes$type == "peak", 6, NA),
-    # make both TF and gene nodes boxes; peaks remain triangles
-    shape = ifelse(nodes$type == "peak", "triangle", "box"),
+    # Shapes: label-inside vs label-outside based on label_inside
+    shape = ifelse(
+      nodes$type == "peak", "triangle",
+      ifelse(
+        nodes$type == "TF",
+        if (isTRUE(label_inside)) "box" else "square",
+        if (isTRUE(label_inside)) "circle" else "dot"
+      )
+    ),
     physics = FALSE,
     stringsAsFactors = FALSE
   )
-
-  # (optional) slightly round box corners globally
-  # widget <- widget |> visNetwork::visNodes(shapeProperties = list(borderRadius = 6))
 
   vn_nodes[is.na(vn_nodes$label), "label"] <- ""
   vn_nodes[is.na(vn_nodes$value), "value"] <- 1
 
   vn_nodes$title <- ifelse(
     nodes$type == "TF",
-    sprintf("TF %s<br>log2FC(TF RNA): %s<br>expr_ctrl=%s<br>expr_str=%s",
+    sprintf("TF %s<br>log2FC(TF RNA, case/ctrl): %s<br>expr_ctrl=%s<br>expr_case=%s<br>expr_max=%s<br>size_signal=%s<br>size_scaled=%s",
             nodes$id,
             ifelse(is.finite(nodes$l2fc), sprintf("%.3f", nodes$l2fc), "NA"),
             ifelse(is.finite(nodes$tf_expr_ctrl), sprintf("%.3f", nodes$tf_expr_ctrl), "NA"),
-            ifelse(is.finite(nodes$tf_expr_str),  sprintf("%.3f", nodes$tf_expr_str),  "NA")),
+            ifelse(is.finite(nodes$tf_expr_str),  sprintf("%.3f", nodes$tf_expr_str),  "NA"),
+            ifelse(is.finite(pmax(nodes$tf_expr_ctrl, nodes$tf_expr_str)),
+                   sprintf("%.3f", pmax(nodes$tf_expr_ctrl, nodes$tf_expr_str)), "NA"),
+            ifelse(is.finite(size_signal), sprintf("%.3f", size_signal), "NA"),
+            ifelse(is.finite(size_scaled), sprintf("%.3f", size_scaled), "NA")),
     ifelse(
       nodes$type == "peak",
       sprintf("Peak %s", gsub("^PEAK:","", nodes$id)),
-      sprintf("Gene %s<br>expr_ctrl=%s<br>expr_str=%s",
+      sprintf("Gene %s<br>expr_ctrl=%s<br>expr_case=%s<br>expr_max=%s<br>size_signal=%s<br>size_scaled=%s",
               nodes$id,
               ifelse(is.finite(nodes$gene_expr_ctrl), sprintf("%.3f", nodes$gene_expr_ctrl), "NA"),
-              ifelse(is.finite(nodes$gene_expr_str),  sprintf("%.3f", nodes$gene_expr_str),  "NA"))
+              ifelse(is.finite(nodes$gene_expr_str),  sprintf("%.3f", nodes$gene_expr_str),  "NA"),
+              ifelse(is.finite(pmax(nodes$gene_expr_ctrl, nodes$gene_expr_str)),
+                     sprintf("%.3f", pmax(nodes$gene_expr_ctrl, nodes$gene_expr_str)), "NA"),
+              ifelse(is.finite(size_signal), sprintf("%.3f", size_signal), "NA"),
+              ifelse(is.finite(size_scaled), sprintf("%.3f", size_scaled), "NA"))
     )
   )
-  # ---- Adjust TF label color for dark backgrounds ----
-  is_dark <- function(hex) {
-    rgb <- grDevices::col2rgb(hex) / 255
-    lum <- 0.299 * rgb[1, ] + 0.587 * rgb[2, ] + 0.114 * rgb[3, ]  # perceptual brightness
-    lum < 0.45  # threshold: lower = darker
-  }
 
-  tf_rows <- vn_nodes$group == "TF"
-  if (any(tf_rows)) {
-    bg_col <- vn_nodes$color.background[tf_rows]
-    dark_mask <- is_dark(bg_col)
-    vn_nodes$`font.color`[tf_rows] <- ifelse(dark_mask, "#FFFFFF", "#000000")
-  }
-  # ---- Make gene labels bold ----
+  node_sizes <- data.frame(
+    id = nodes$id,
+    type = nodes$type,
+    expr_ctrl = expr_ctrl,
+    expr_case = expr_str,
+    expr_max = expr_max,
+    size_signal = size_signal,
+    size_scaled = size_scaled,
+    stringsAsFactors = FALSE
+  )
+
+  tf_rows   <- vn_nodes$group == "TF"
   gene_rows <- vn_nodes$group == "gene"
+
+  vn_nodes$`font.size`        <- 20
+  vn_nodes$`font.bold`        <- FALSE
+  vn_nodes$`font.color`       <- font_color
+  vn_nodes$`font.strokeWidth` <- 2
+  vn_nodes$`font.strokeColor` <- vn_nodes$color.background
+
+  if (any(tf_rows)) {
+    vn_nodes$`font.bold`[tf_rows]  <- TRUE
+    if (isTRUE(label_inside)) {
+      tf_sizes <- size_scaled[tf_rows]
+      tf_sizes[!is.finite(tf_sizes)] <- NA_real_
+      tf_labels <- label_text[tf_rows]
+      label_chars <- pmax(1, nchar(tf_labels))
+      tf_font <- tf_font * 1.15
+      max_font_by_label <- (tf_sizes * 2) / (0.5 * label_chars)
+      tf_font <- pmin(tf_font, max_font_by_label)
+      tf_font <- pmax(tf_font, 10)
+    }
+    vn_nodes$`font.size`[tf_rows]  <- tf_font
+  }
   if (any(gene_rows)) {
     vn_nodes$`font.bold`[gene_rows] <- TRUE
+    if (isTRUE(label_inside)) {
+      gene_sizes <- size_scaled[gene_rows]
+      gene_sizes[!is.finite(gene_sizes)] <- NA_real_
+      if (any(is.finite(gene_sizes))) {
+        min_s <- min(gene_sizes, na.rm = TRUE)
+        max_s <- max(gene_sizes, na.rm = TRUE)
+        if (max_s <= min_s) {
+          gene_font <- rep(12, sum(gene_rows))
+        } else {
+          s <- (gene_sizes - min_s) / (max_s - min_s)
+          gene_font <- gene_font_range[1] + s * (gene_font_range[2] - gene_font_range[1])
+        }
+      } else {
+        gene_font <- rep(12, sum(gene_rows))
+      }
+      gene_labels <- label_text[gene_rows]
+      label_chars <- pmax(1, nchar(gene_labels))
+      max_font_by_label <- (gene_sizes * 2) / (0.5 * label_chars)
+      gene_font <- pmin(gene_font, max_font_by_label)
+      gene_font <- pmax(gene_font, 8)
+      vn_nodes$`font.size`[gene_rows] <- gene_font
+    } else {
+      vn_nodes$`font.size`[gene_rows] <- 22
+    }
   }
 
+  if (isTRUE(label_inside)) {
+    size_px <- ifelse(is.finite(size_scaled), round(size_scaled * 2), NA_integer_)
+    vn_nodes$widthConstraint <- rep(NA_integer_, nrow(vn_nodes))
+    vn_nodes$heightConstraint <- rep(NA_integer_, nrow(vn_nodes))
+    gene_rows <- vn_nodes$group == "gene"
+    tf_rows <- vn_nodes$group == "TF"
+    if (any(gene_rows)) {
+      vn_nodes$widthConstraint[gene_rows] <- size_px[gene_rows]
+      vn_nodes$heightConstraint[gene_rows] <- size_px[gene_rows]
+    }
+    if (any(tf_rows)) {
+      tf_height <- size_px[tf_rows]
+      tf_width <- round(tf_height * tf_box_aspect)
+      vn_nodes$widthConstraint[tf_rows] <- tf_width
+      vn_nodes$heightConstraint[tf_rows] <- tf_height
+    }
+  }
 
-  # ── Edges ──────────────────────────────────────────────────────────────────
+  #  Edges 
   mag <- pmin(abs(ed$.delta), cap) / max(cap, 1e-9)
-  alpha <- 0.10 + mag * (0.78 - 0.10)  # lower max alpha to reduce overpaint
-  width_bin <- dplyr::case_when(abs(ed$.delta) > 8 ~ 4, abs(ed$.delta) > 4 ~ 3,
-                                abs(ed$.delta) > 2 ~ 2, abs(ed$.delta) > 0 ~ 1, TRUE ~ 1)
+  alpha <- 0.10 + mag * (0.78 - 0.10)
+
+  edge_width <- edge_width_min + mag * (edge_width_max - edge_width_min)
+
   base_hex <- ifelse(ed$.delta >= 0, col_edge_pos, col_edge_neg)
   col_rgba <- mapply(to_rgba, base_hex, alpha, USE.NAMES = FALSE)
 
@@ -438,11 +635,11 @@ plot_tf_network_delta <- function(
     e_tf_gene <- tibble::tibble(
       from  = ed$TF,
       to    = ed$gene_key,
-      width = width_bin,
+      width = edge_width,
       color = col_rgba_dir,
       dashes = FALSE,
       arrows = .make_arrows(link_sign),
-      title  = sprintf("%s → %s (direct)<br>Δ (str − ctrl) = %.3f<br>ctrl=%.3f, str=%.3f",
+      title  = sprintf("%s ?%s (direct)<br> (case ?ctrl) = %.3f<br>ctrl=%.3f, case=%.3f",
                        ed$TF, ed$gene_key, ed$.delta, ed$score_ctrl, ed$score_str)
     )
   }
@@ -450,7 +647,6 @@ plot_tf_network_delta <- function(
   if (peak_mode == "hide") {
     vn_edges <- e_tf_gene
   } else {
-    # TF→PEAK connectors: solid, pale (no dotted lines)
     e_tf_pk <- tibble::tibble(
       from  = ed$TF,
       to    = paste0("PEAK:", ed$peak_id),
@@ -458,34 +654,38 @@ plot_tf_network_delta <- function(
       color = to_rgba(col_edge_zero, 0.35),
       dashes = FALSE,
       arrows = "",
-      title  = sprintf("%s → peak %s", ed$TF, ed$peak_id)
+      title  = sprintf("%s ?peak %s", ed$TF, ed$peak_id)
     )
-    # PEAK→gene carries Δ & the sign-based head (arrow for + ; blunt bar for −)
     e_pk_gene <- tibble::tibble(
       from  = paste0("PEAK:", ed$peak_id),
       to    = ed$gene_key,
-      width = width_bin,
+      width = edge_width,
       color = col_rgba,
       dashes = FALSE,
-      arrows = .make_arrows(link_sign),   # <-- HERE
-      title  = sprintf("peak %s → %s<br>Δ (str − ctrl) = %.3f<br>ctrl=%.3f, str=%.3f",
+      arrows = .make_arrows(link_sign),
+      title  = sprintf("peak %s ?%s<br> (case ?ctrl) = %.3f<br>ctrl=%.3f, case=%.3f",
                        ed$peak_id, ed$gene_key, ed$.delta, ed$score_ctrl, ed$score_str)
     )
     vn_edges <- dplyr::bind_rows(
       e_tf_pk,
       e_pk_gene,
       e_tf_gene %||% tibble::tibble(
-        from=character(0), to=character(0), width=numeric(0), color=character(0),
-        dashes=logical(0), arrows=character(0), title=character(0)
+        from   = character(0), to = character(0),
+        width  = numeric(0),  color = character(0),
+        dashes = logical(0),  arrows = character(0),
+        title  = character(0)
       )
     )
   }
 
   vn_edges$dashes <- as.logical(vn_edges$dashes)
 
-  # ── Layout via igraph ─────────────────────────────────────────────────────
-  g <- igraph::graph_from_data_frame(d = vn_edges[, c("from","to")], directed = TRUE,
-                                     vertices = vn_nodes[, c("id","group"), drop = FALSE])
+  #  Layout via igraph 
+  g <- igraph::graph_from_data_frame(
+    d = vn_edges[, c("from","to")],
+    directed = TRUE,
+    vertices = vn_nodes[, c("id","group"), drop = FALSE]
+  )
   layout_fun <- switch(
     layout_algo,
     fr       = igraph::layout_with_fr,
@@ -499,21 +699,44 @@ plot_tf_network_delta <- function(
     star     = igraph::layout_as_star,
     random   = igraph::layout_randomly
   )
-  xy <- layout_fun(g); xy <- as.data.frame(xy); names(xy) <- c("x","y"); xy$id <- igraph::V(g)$name
+  xy <- layout_fun(g)
+  xy <- as.data.frame(xy)
+  names(xy) <- c("x","y")
+  xy$id <- igraph::V(g)$name
   vn_nodes$x <- xy$x[match(vn_nodes$id, xy$id)]
   vn_nodes$y <- xy$y[match(vn_nodes$id, xy$id)]
   vn_nodes$physics <- isTRUE(physics)
 
   title_txt <- if (is.character(plot_title) && length(plot_title) == 1L) {
-    sprintf("%s | Δ-network ", plot_title)
-  } else "Δ-network"
+    sprintf("%s | -network ", plot_title)
+  } else {
+    "-network"
+  }
 
-  widget <- visNetwork::visNetwork(vn_nodes, vn_edges, width = width, height = height, main = title_txt) |>
-    visNetwork::visOptions(highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
-                           nodesIdSelection = FALSE) |>
+  tf_ids <- sort(nodes$id[nodes$type == "TF"])
+  gene_ids <- sort(nodes$id[nodes$type == "gene"])
+  select_ids <- c(tf_ids, gene_ids)
+
+  widget <- visNetwork::visNetwork(
+    vn_nodes, vn_edges,
+    width = width, height = height, main = title_txt
+  ) |>
+    visNetwork::visLayout(randomSeed = as.integer(seed)) |>
+    visNetwork::visOptions(
+      highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
+      nodesIdSelection = list(enabled = TRUE, values = select_ids),
+      manipulation = TRUE
+    ) |>
     visNetwork::visEdges(smooth = FALSE) |>
-    visNetwork::visNodes(borderWidth = 1, font = list(bold = TRUE),
-                         margin = list(top=6,right=10,bottom=6,left=10))
+    visNetwork::visNodes(
+      font = list(bold = TRUE),
+      margin = list(top = 6, right = 10, bottom = 6, left = 10),
+      scaling = list(
+        min = min(gene_size_range[1], tf_size_range[1]),
+        max = max(gene_size_range[2], tf_size_range[2])
+      ),
+      shapeProperties = list(borderRadius = 8)
+    )
 
   if (isTRUE(physics)) {
     widget <- widget |>
@@ -521,22 +744,29 @@ plot_tf_network_delta <- function(
         enabled = TRUE,
         solver = "forceAtlas2Based",
         forceAtlas2Based = list(
-          gravitationalConstant = -50,
+          gravitationalConstant = -55,
           centralGravity = 0.01,
-          springLength = 120,
-          springConstant = 0.06,
-          avoidOverlap = 0.6
+          springLength = 160,
+          springConstant = 0.07,
+          avoidOverlap = 0.8
         ),
-        stabilization = list(enabled = TRUE, iterations = 800)
+        stabilization = list(enabled = TRUE, iterations = 1500)
       ) |>
-      # Freeze physics right after stabilization so nodes stop moving
       visNetwork::visEvents(
-        stabilizationIterationsDone = "function () { this.setOptions({ physics: false }); }"
+        stabilizationIterationsDone =
+          "function () { this.setOptions({ physics: false }); }"
       )
   } else {
     widget <- widget |>
       visNetwork::visPhysics(enabled = FALSE) |>
-      visNetwork::visInteraction(dragNodes = TRUE, dragView = TRUE, zoomView = TRUE)
+      visNetwork::visInteraction(dragNodes = TRUE, dragView = TRUE, zoomView = TRUE, navigationButtons = TRUE)
+  }
+
+  attr(widget, "node_sizes") <- node_sizes
+  attr(widget, "node_size_by") <- size_by
+
+  if (is.null(html_title) || !nzchar(html_title)) {
+    html_title <- plot_title
   }
 
   if (is.null(out_html)) {
@@ -544,7 +774,19 @@ plot_tf_network_delta <- function(
   } else {
     dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
     htmlwidgets::saveWidget(widget, file = out_html, selfcontained = FALSE)
-    if (verbose) message("[Δnet] \u2713 wrote: ", normalizePath(out_html, mustWork = FALSE))
+    .set_html_title(out_html, html_title)
+    if (verbose) message("[net] ?wrote: ", normalizePath(out_html, mustWork = FALSE))
     invisible(out_html)
   }
 }
+
+.set_html_title <- function(html_path, title_text) {
+  if (is.null(title_text) || !nzchar(title_text)) return(invisible(FALSE))
+  if (!file.exists(html_path)) return(invisible(FALSE))
+  html_txt <- readLines(html_path, warn = FALSE)
+  if (!any(grepl("<title>", html_txt, fixed = TRUE))) return(invisible(FALSE))
+  html_txt <- sub("<title>.*</title>", paste0("<title>", title_text, "</title>"), html_txt)
+  writeLines(html_txt, html_path)
+  invisible(TRUE)
+}
+

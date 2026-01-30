@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_grn_link_network_topic.R
 \name{grn_topic_build_network}
 \alias{grn_topic_build_network}
-\title{Build a topic-centric TF→gene network by aggregating enhancer links}
+\title{Build a topic-centric TFgene network by aggregating enhancer links}
 \usage{
 grn_topic_build_network(
   links,
@@ -39,5 +39,5 @@ grn_topic_build_network(
 list(nodes, edges, meta)
 }
 \description{
-Build a topic-centric TF→gene network by aggregating enhancer links
+Build a topic-centric TFgene network by aggregating enhancer links
 }

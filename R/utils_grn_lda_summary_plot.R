@@ -1,10 +1,10 @@
-#' utils_grn_lda_summary_plot.R — Plot from LDA summary tables (episcope)
+#' utils_grn_lda_summary_plot.R ?Plot from LDA summary tables (episcope)
 #'
 #' @author Yaoxiang Li
 #' @family episcope-plots
 #'
 #' @description
-#' Plot TF–topic bubble panels and TF hub scatterplots from
+#' Plot TFtopic bubble panels and TF hub scatterplots from
 #' \code{*_filtered_lda_K{K}_summary.csv} files produced by
 #' \code{summarize_lda_annotations_bulk()}.
 #'

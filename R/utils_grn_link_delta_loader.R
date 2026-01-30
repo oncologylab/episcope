@@ -4,8 +4,8 @@
 # ------------------------------ Constants ------------------------------------
 .col_tf_fill_low   <- "#4575b4"  # blue
 .col_tf_fill_high  <- "#d73027"  # red
-.col_edge_neg      <- "#6f9ed4"  # Δ < 0 (blue-ish)
-.col_edge_pos      <- "#d86b5e"  # Δ > 0 (red-ish)
+.col_edge_neg      <- "#6f9ed4"  #  < 0 (blue-ish)
+.col_edge_pos      <- "#d86b5e"  #  > 0 (red-ish)
 
 .gene_size_range   <- c(8, 24)   # visNetwork node value for genes
 .gene_size_gamma   <- 0.7
@@ -205,13 +205,13 @@ robust_z <- function(x) {
 }
 
 # ------------------------------ Public Entry (Simple) ------------------------
-#' Render Δ-topic single-panel network (simple; tolerant of suffixed columns)
+#' Render -topic single-panel network (simple; tolerant of suffixed columns)
 #' @param comp_csv path to annotated comparison CSV
 #' @param summary_csv path to matching topic summary CSV
 #' @param topic_id integer topic
 #' @param out_html optional html path; auto if NULL
 #' @param top_n_tfs_per_topic integer whitelist from summary
-#' @param edge_filter_min numeric; min |Δ| or per-side score to keep
+#' @param edge_filter_min numeric; min || or per-side score to keep
 #' @param edge_filter_on "either","stress","control","both"
 #' @param gene_fc_thresh numeric (fold-change)
 #' @param de_reference "str_over_ctrl" or "ctrl_over_str"
@@ -232,15 +232,15 @@ render_link_network_delta_topic_simple <- function(
   de_reference   <- match.arg(de_reference)
   stopifnot(file.exists(comp_csv), file.exists(summary_csv))
 
-  .llog("[tfhubΔ] Reading: ", comp_csv,  verbose = verbose)
+  .llog("[tfhub] Reading: ", comp_csv,  verbose = verbose)
   C <- readr::read_csv(comp_csv, show_col_types = FALSE)
-  .llog("[tfhubΔ] Reading: ", summary_csv, verbose = verbose)
+  .llog("[tfhub] Reading: ", summary_csv, verbose = verbose)
   S <- readr::read_csv(summary_csv, show_col_types = FALSE)
 
   tags <- .guess_pair_from_path(comp_csv)
   stress_tag <- tags$stress_tag
   ctrl_tag   <- tags$ctrl_tag
-  .llog(sprintf("[tfhubΔ] Δ-topic: stress='%s', control='%s' (Δ = stress − control).",
+  .llog(sprintf("[tfhub] -topic: stress='%s', control='%s' ( = stress ?control).",
                 stress_tag, ctrl_tag), verbose = verbose)
 
   comp_topic_col <- .find_topic_col(C)
@@ -257,7 +257,7 @@ render_link_network_delta_topic_simple <- function(
   if (is.na(tf_col_sum)) stop("Summary lacks TF column ('TF' or 'tf').")
   tf_keep <- unique(S_sub[[tf_col_sum]])
   if (length(tf_keep) > top_n_tfs_per_topic) tf_keep <- tf_keep[seq_len(top_n_tfs_per_topic)]
-  .llog(sprintf("[tfhubΔ] Topic %s: keeping up to %d TF(s).", topic_id, length(tf_keep)), verbose = verbose)
+  .llog(sprintf("[tfhub] Topic %s: keeping up to %d TF(s).", topic_id, length(tf_keep)), verbose = verbose)
 
   # Subset comparison to topic + TF whitelist
   Csub <- C[C$topic == as.integer(topic_id), , drop = FALSE]
@@ -265,7 +265,7 @@ render_link_network_delta_topic_simple <- function(
   if (is.na(tf_col_comp)) stop("Comparison lacks TF column ('tf' or 'TF').")
   Csub <- Csub[Csub[[tf_col_comp]] %in% tf_keep, , drop = FALSE]
 
-  # |Δ link| (if absent, compute from suffixed cols)
+  # | link| (if absent, compute from suffixed cols)
   if ("delta_link_score" %in% names(Csub)) {
     abs_d <- abs(suppressWarnings(as.numeric(Csub$delta_link_score)))
   } else {
@@ -601,7 +601,7 @@ render_link_network_delta_topic_simple <- function(
   df
 }
 
-# Topic Δ direct edges TF→gene
+# Topic  direct edges TFgene
 .style_edges_delta_topic <- function(ed, cap_abs = 1) {
   if (!nrow(ed)) return(data.frame())
   d <- suppressWarnings(as.numeric(ed$score_str) - as.numeric(ed$score_ctrl))
@@ -615,12 +615,12 @@ render_link_network_delta_topic_simple <- function(
     from = ed$TF, to = ed$gene_key,
     arrows = "to", color = col, width = w,
     dashes = FALSE, smooth = FALSE,
-    title = paste0("Δ=", round(d, 3)),
+    title = paste0("=", round(d, 3)),
     stringsAsFactors = FALSE
   )
 }
 
-# TF→PEAK gray dual (ctrl/str) collapsed to a single dotted gray hint
+# TFPEAK gray dual (ctrl/str) collapsed to a single dotted gray hint
 .style_tf_peak_edges_gray_dual <- function(ed) {
   if (!nrow(ed)) return(data.frame())
   data.frame(
@@ -628,7 +628,7 @@ render_link_network_delta_topic_simple <- function(
     from = ed$TF, to = paste0("PEAK:", ed$peak_id),
     arrows = "to", color = "#9E9E9E", width = 1,
     dashes = TRUE, smooth = FALSE,
-    title = "TF→peak (dual)",
+    title = "TFpeak (dual)",
     stringsAsFactors = FALSE
   )
 }
@@ -640,13 +640,13 @@ render_link_network_delta_topic_simple <- function(
     from = ed$TF, to = paste0("UPEAK:", ed$peak_id),
     arrows = "to", color = "#B0B0B0", width = 1,
     dashes = TRUE, smooth = FALSE,
-    title = "TF→unique peak (dual)",
+    title = "TFunique peak (dual)",
     stringsAsFactors = FALSE
   )
 }
 
-# Aggregate peak→gene per side, then return Δ edges
-# BEGIN EDIT: robust peak→gene aggregator used by Δ-topic plot
+# Aggregate peakgene per side, then return  edges
+# BEGIN EDIT: robust peakgene aggregator used by -topic plot
 .aggregate_peak_gene <- function(ed) {
   # Expect columns: peak_id, gene_key, score_ctrl, score_str, sign_ctrl, sign_str,
   # and (now) pass_ctrl, pass_str. Be tolerant if sign/flags are missing.
@@ -678,7 +678,7 @@ render_link_network_delta_topic_simple <- function(
     stringsAsFactors = FALSE
   )
 
-  # Aggregate per peak→gene (sum of signed, counts of passing edges)
+  # Aggregate per peakgene (sum of signed, counts of passing edges)
   agg <- df |>
     dplyr::group_by(.data$peak_id, .data$gene_key) |>
     dplyr::summarise(
@@ -708,7 +708,7 @@ render_link_network_delta_topic_simple <- function(
     to    = pg_df$gene_key,
     arrows = "to", color = col, width = w,
     dashes = FALSE, smooth = FALSE,
-    title = paste0("Δ=", round(d, 3)),
+    title = paste0("=", round(d, 3)),
     stringsAsFactors = FALSE
   )
 }
@@ -727,7 +727,7 @@ render_link_network_delta_topic_simple <- function(
     to    = pg_df$gene_key,
     arrows = "to", color = col, width = w,
     dashes = FALSE, smooth = FALSE,
-    title = paste0("Δ=", round(d, 3)),
+    title = paste0("=", round(d, 3)),
     stringsAsFactors = FALSE
   )
 }
@@ -758,7 +758,7 @@ render_link_network_delta_topic_simple <- function(
 .attach_constrain_peak_ring <- function(widget, r_ring) widget
 
 # ------------------------------ Main Renderer --------------------------------
-#' Δ-topic (stress − control) single-panel network
+#' -topic (stress ?control) single-panel network
 #' See long description in the source code header.
 #' @inheritParams render_link_network_delta_topic_simple
 #' @param topic_rank optional integer rank to include in title
@@ -789,16 +789,16 @@ render_link_network_delta_topic <- function(
   bits <- strsplit(hdr, "_vs_", fixed = TRUE)[[1]]
   stress_tag <- bits[[1]] %||% "stress"
   ctrl_tag   <- bits[[2]] %||% "control"
-  .llog("Δ-topic: STRESS_vs_CONTROL: stress='", stress_tag,
-        "', control='", ctrl_tag, "'. Δ = stress − control.", verbose = verbose)
+  .llog("-topic: STRESS_vs_CONTROL: stress='", stress_tag,
+        "', control='", ctrl_tag, "'.  = stress ?control.", verbose = verbose)
 
   core <- .build_nodes_edges_from_comp(
     comp_df = C, summary_df = S, topic_id = topic_id,
     top_n_tfs_per_topic = top_n_tfs_per_topic,
     edge_filter_min = edge_filter_min,
     edge_filter_on  = edge_filter_on,
-    cond1_tag = ctrl_tag,   # CONTROL → 'ctrl'
-    cond2_tag = stress_tag, # STRESS  → 'str'
+    cond1_tag = ctrl_tag,   # CONTROL ?'ctrl'
+    cond2_tag = stress_tag, # STRESS  ?'str'
     de_reference = de_reference,
     verbose = verbose
   )
@@ -813,7 +813,7 @@ render_link_network_delta_topic <- function(
   nodes  <- upk$nodes; coords <- upk$coords
   coords <- .bump_peak_nodes_radially(coords, nodes, push_px = 22)
 
-  # Node styling → visNetwork nodes data.frame
+  # Node styling ?visNetwork nodes data.frame
   tf_idx  <- nodes$type == "TF"
   tf_l2fc <- nodes$l2fc[tf_idx]
   max_abs <- suppressWarnings(max(abs(tf_l2fc), na.rm = TRUE)); if (!is.finite(max_abs) || max_abs <= 0) max_abs <- 1
@@ -940,7 +940,7 @@ render_link_network_delta_topic <- function(
   edv <- .fan_multi_edges(edv)
 
   main_hdr <- sprintf(
-    "%s | Topic %d%s – Δ network (%s − %s; edges per TF–gene–peak)",
+    "%s | Topic %d%s ? network (%s ?%s; edges per TFgenepeak)",
     hdr, as.integer(topic_id),
     if (!is.null(topic_rank) && is.finite(topic_rank)) sprintf(" [rank %d]", as.integer(topic_rank)) else "",
     stress_tag, ctrl_tag
@@ -979,10 +979,10 @@ render_link_network_delta_topic <- function(
       class = "grn-legend",
       htmltools::HTML(paste0(
         "<span>Legend:</span>",
-        "<span><span class='grad'></span>TF (box) fill by signed log2FC(TF RNA) (ref=", de_reference, "): blue (−) → white (0) → red (+)</span>",
-        "<span><span class='dot'></span>Gene (dot) size ∝ max |Z(expr)| across sides</span>",
-        "<span>Edge color: red if Δ&gt;0, blue if Δ&lt;0 (Δ = ", stress_tag, " − ", ctrl_tag, ")</span>",
-        "<span>Edge width ∝ |Δ link_score| (bins: &gt;8⇒4, &gt;4⇒3, &gt;2⇒2, &gt;0⇒1)</span>",
+        "<span><span class='grad'></span>TF (box) fill by signed log2FC(TF RNA) (ref=", de_reference, "): blue (? ?white (0) ?red (+)</span>",
+        "<span><span class='dot'></span>Gene (dot) size ?max |Z(expr)| across sides</span>",
+        "<span>Edge color: red if &gt;0, blue if &lt;0 ( = ", stress_tag, " ?", ctrl_tag, ")</span>",
+        "<span>Edge width ?| link_score| (bins: &gt;8?, &gt;4?, &gt;2?, &gt;0?)</span>",
         "<span>Triangle = peak pseudonode (shared PEAK: or unique UPEAK:)</span>",
         "<span>Arrow tip: pointed = activation; blunt bar = repression (if sign provided)</span>"
       ))
@@ -1017,7 +1017,7 @@ render_link_network_delta_topic <- function(
       libdir = paste0(tools::file_path_sans_ext(basename(out_html)), "_files")
     )
   }
-  .llog("✓ wrote: ", normalizePath(out_html, mustWork = FALSE), verbose = verbose)
+  .llog("?wrote: ", normalizePath(out_html, mustWork = FALSE), verbose = verbose)
   # END EDIT
 
   invisible(out_html)

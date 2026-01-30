@@ -1,0 +1,29 @@
+# TFBS DB
+db: JASPAR2024  # one of: JASPAR2024, HOCOMOCOv13
+ref_genome: hg38  # one of: hg38, mm10
+
+# Basal network thresholds
+threshold_tf_expr: 10
+threshold_gene_expr: 4
+threshold_fp_score: 2
+threshold_link_score: 2
+
+threshold_fp_tf_corr_p: 0.05
+threshold_fp_tf_corr_r: 0.3          # positive only
+threshold_fp_gene_corr_p: 0.05
+threshold_fp_gene_corr_abs_r: 0.3    # positive & negative
+threshold_rna_gene_corr_p: 0.05
+threshold_rna_gene_corr_abs_r: 0.3    # positive
+
+threshold_atac_gene_corr_p: 0.05
+threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
+
+# Lighting filters
+link_score_threshold: 0.001
+fp_score_threshold: 0.001
+
+# Pipeline paths
+base_dir: /data/homes/yl814/episcope_test/nutrient_stress_test
+fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
+benchmark_tfbs_dir: /data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction
+pathway_dir: /data/homes/cy232/RNAseq/Nutrient_Stress/Enrichment_of_nutrient_stress_signatures

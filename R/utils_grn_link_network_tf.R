@@ -1,4 +1,4 @@
-# utils_grn_link_network_tf_delta.R — TF-centric Δ subnetwork (single panel)
+# utils_grn_link_network_tf_delta.R ?TF-centric  subnetwork (single panel)
 # Author: Yaoxiang Li (cleaned & packaged)
 # Updated: 2025-10-30
 #
@@ -8,27 +8,27 @@
 # - Behavior and visuals are preserved to match your original script exactly.
 # - No library() calls; explicit namespacing used throughout.
 
-#' TF-hub Δ subnetwork (single panel)
+#' TF-hub  subnetwork (single panel)
 #'
 #' Build and save an interactive, TF-centric **delta-links** network from a single
-#' “comparison filtered clustered” CSV where per-condition measures already live side-by-side
-#' (columns like `*_ctrl` and `*_str`). The visualization encodes **Δ = stress − control**
+#' comparison filtered clustered?CSV where per-condition measures already live side-by-side
+#' (columns like `*_ctrl` and `*_str`). The visualization encodes ** = stress ?control**
 #' on edges and preserves your legacy styling and HTML structure (node shapes, colors,
 #' widths, legends, and jump menus).
 #'
 #' Conceptually, the plot places the **root TF** at the center, arranges a ring of TFs around it,
 #' and shows how regulatory links fan out to target genes through shared or unique enhancer
-#' “peak” pseudonodes. TF box fill reflects signed TF RNA log2FC, gene dot size reflects the
+#' peak?pseudonodes. TF box fill reflects signed TF RNA log2FC, gene dot size reflects the
 #' maximum absolute Z-score of expression across sides, and edge hue/width convey the sign and
-#' magnitude of Δ link strength. Dashed gray segments correspond to TF→peak, thin gray bridges
-#' connect peak→gene, and direct TF→gene Δ edges are drawn faintly when also covered by peaks.
+#' magnitude of  link strength. Dashed gray segments correspond to TFpeak, thin gray bridges
+#' connect peakgene, and direct TFgene  edges are drawn faintly when also covered by peaks.
 #'
 #' @param comp_csv Path to the comparison CSV (e.g., `*_delta_links_filtered_lda_K20.csv`).
 #' @param input_tf Root TF symbol to visualize at the center.
 #' @param out_html Optional output HTML path (default: alongside \code{comp_csv},
 #'   named `\{file\}_tfhub_delta_\{TF\}.html`).
 #' @param edge_filter_min Numeric minimum absolute `link_score_*` required for an edge to be
-#'   considered (filtering uses score magnitude only; “active” flags still affect styling).
+#'   considered (filtering uses score magnitude only; active?flags still affect styling).
 #' @param edge_filter_on One of \code{"either"}, \code{"stress"}, \code{"control"}, \code{"both"},
 #'   indicating on which side(s) the magnitude threshold must pass.
 #' @param gene_fc_thresh Fold-change threshold used for up/down border coloring (default `1.5`).
@@ -38,7 +38,7 @@
 #'   Controls how **ring TFs** (non-root TFs) contribute outgoing edges:
 #'   \itemize{
 #'     \item \strong{context}: only show edges needed to explain co-regulated genes with the root TF,
-#'           plus TF↔TF context.
+#'           plus TFTF context.
 #'     \item \strong{full}: include all outgoing edges from ring TFs within the TF set.
 #'     \item \strong{full_topk}: like \emph{full} but per-TF keep only the top-K strongest edges.
 #'   }
@@ -48,7 +48,7 @@
 #'   No additional TFs are pulled in merely because they co-regulate the same gene(s). When
 #'   \code{FALSE} (default), behavior matches the current implementation (direct TFs plus those
 #'   second-order TFs brought in by co-regulation context).
-#' @param motif_db Character; \code{"hocomocov13"} (default) or \code{"jaspar2024"}—used to establish
+#' @param motif_db Character; \code{"hocomocov13"} (default) or \code{"jaspar2024"}used to establish
 #'   the TF symbol universe for TF vs. gene typing.
 #' @param verbose Logical; print progress messages.
 #'
@@ -65,12 +65,12 @@
 #'
 #' @section Visual encodings:
 #' \itemize{
-#'   \item \strong{TF nodes}: box fill = signed TF RNA log2FC (blue→white→red);
-#'         label font size ∝ max(TF RNA).
-#'   \item \strong{Gene nodes}: dot size ∝ max absolute Z(expr) across sides; border color reflects
+#'   \item \strong{TF nodes}: box fill = signed TF RNA log2FC (bluewhitered);
+#'         label font size ?max(TF RNA).
+#'   \item \strong{Gene nodes}: dot size ?max absolute Z(expr) across sides; border color reflects
 #'         up/down per \code{gene_fc_thresh} under \code{de_reference}.
-#'   \item \strong{Edges}: color = red (Δ>0) or blue (Δ<0); width = fixed bins by |Δ|;
-#'         TF→peak dashed gray; peak→gene neutral gray bridges; direct TF→gene Δ drawn faint.
+#'   \item \strong{Edges}: color = red (>0) or blue (<0); width = fixed bins by ||;
+#'         TFpeak dashed gray; peakgene neutral gray bridges; direct TFgene  drawn faint.
 #' }
 #'
 #' @seealso \code{render_link_network_delta_topic()}, \code{render_link_network_for_topic()}
@@ -167,7 +167,7 @@ render_tf_hub_delta_network <- function(
   edv <- built$edges
 
   main_hdr <- sprintf(
-    "%s | TF hub Δ-links: %s  (Δ = %s − %s; TF→PEAK; bridges)",
+    "%s | TF hub -links: %s  ( = %s ?%s; TFPEAK; bridges)",
     hdr, input_tf, stress_tag, ctrl_tag
   )
 
@@ -219,12 +219,12 @@ render_tf_hub_delta_network <- function(
         class="grn-legend",
         htmltools::HTML(paste0(
           "<span>Legend:</span>",
-          "<span><span class='grad'></span>TF (box) fill by signed log2FC(TF RNA): blue (−) → white (0) → red (+); TF label size ∝ max(TF RNA)</span>",
-          "<span><span class='dot'></span>Gene (dot) size ∝ max |Z(expr)| across sides</span>",
+          "<span><span class='grad'></span>TF (box) fill by signed log2FC(TF RNA): blue (? ?white (0) ?red (+); TF label size ?max(TF RNA)</span>",
+          "<span><span class='dot'></span>Gene (dot) size ?max |Z(expr)| across sides</span>",
           "<span>Triangle = peak pseudonode (shared enhancer)</span>",
-          "<span><em>Dashed</em> edges = TF→peak; bridges (peak→gene) are thin solid gray; direct Δ TF→gene are solid but slightly faded</span>",
-          "<span>Edge color: red if Δ&gt;0, blue if Δ&lt;0 (Δ = ", stress_tag, " − ", ctrl_tag, ")</span>",
-          "<span>Edge width binned by |Δ link_score|; arrow tip: pointed for link_sign = + (activation), blunt bar for link_sign = − (repression)</span>",
+          "<span><em>Dashed</em> edges = TFpeak; bridges (peakgene) are thin solid gray; direct  TFgene are solid but slightly faded</span>",
+          "<span>Edge color: red if &gt;0, blue if &lt;0 ( = ", stress_tag, " ?", ctrl_tag, ")</span>",
+          "<span>Edge width binned by | link_score|; arrow tip: pointed for link_sign = + (activation), blunt bar for link_sign = ?(repression)</span>",
           "<span>Reserved pie slice shows genes uniquely regulated by the center TF</span>"
         ))
       )
@@ -244,13 +244,13 @@ render_tf_hub_delta_network <- function(
     file   = out_html,
     libdir = paste0(tools::file_path_sans_ext(basename(out_html)), "_files")
   )
-  .llog("✓ wrote: ", normalizePath(out_html, mustWork = FALSE), verbose = verbose)
+  .llog("?wrote: ", normalizePath(out_html, mustWork = FALSE), verbose = verbose)
   invisible(out_html)
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# INTERNALS (helpers, constants) — do not export
-# ─────────────────────────────────────────────────────────────────────────────
+# 
+# INTERNALS (helpers, constants) ?do not export
+# 
 
 # Colors / knobs
 .col_edge_pos   <- "#D86B5E"
@@ -281,7 +281,7 @@ render_tf_hub_delta_network <- function(
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 .safe <- function(x) gsub("[^A-Za-z0-9_.-]+","_", x)
-.llog <- function(..., verbose = TRUE){ if (isTRUE(verbose)) message("[tfhubΔ] ", paste0(..., collapse = "")) }
+.llog <- function(..., verbose = TRUE){ if (isTRUE(verbose)) message("[tfhub] ", paste0(..., collapse = "")) }
 
 robust_z <- function(x){
   x <- as.numeric(x)
@@ -318,7 +318,17 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
 .get_motif_cluster_tsv <- function(motif_db = c("hocomocov13","jaspar2024")){
   motif_db <- match.arg(motif_db)
   if (motif_db == "jaspar2024") {
-    p <- system.file("extdata","genome","JASPAR2024.txt", package = "episcope")
+    ref_genome <- get0("ref_genome", envir = .GlobalEnv, inherits = FALSE)
+    if (is.null(ref_genome) || !nzchar(ref_genome)) ref_genome <- "hg38"
+    ref_genome <- tolower(as.character(ref_genome))
+    if (ref_genome == "mm10") {
+      p <- system.file("extdata","genome","JASPAR2024_mm10.txt", package = "episcope")
+    } else {
+      p <- system.file("extdata","genome","JASPAR2024_hg38.txt", package = "episcope")
+    }
+    if (!nzchar(p) || !file.exists(p)) {
+      p <- system.file("extdata","genome","JASPAR2024.txt", package = "episcope")
+    }
   } else {
     p <- system.file("extdata","genome","HOCOMOCO_v13_motif_cluster_definition_with_sub_cluster.txt",
                      package = "episcope")
@@ -332,8 +342,11 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
 
 .load_known_tf_symbols <- function(path){
   df <- readr::read_tsv(path, show_col_types = FALSE, progress = FALSE)
-  if (!"HGNC" %in% names(df)) stop("HGNC column not found in: ", path)
-  syms <- df$HGNC
+  if ("HGNC" %in% names(df) && !("gene_symbol" %in% names(df))) {
+    df <- dplyr::rename(df, gene_symbol = HGNC)
+  }
+  if (!"gene_symbol" %in% names(df)) stop("gene_symbol column not found in: ", path)
+  syms <- df$gene_symbol
   syms <- unlist(strsplit(syms, "::", fixed = TRUE), use.names = FALSE)
   syms <- trimws(as.character(syms))
   syms <- syms[nzchar(syms)]
@@ -455,7 +468,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
   )
 }
 
-# Aggregate per-peak→gene (TF-independent)
+# Aggregate per-peakgene (TF-independent)
 .aggregate_peak_gene <- function(ed){
   ed |>
     dplyr::group_by(peak_id, gene_key) |>
@@ -568,10 +581,10 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     width = w,
     color = col,
     dashes = ifelse(pass, FALSE, zero_dashes),
-    title = sprintf("%s → %s<br>peak: %s<br>%s: score=%s sign=%s",
+    title = sprintf("%s -> %s<br>peak: %s<br>%s: score=%s sign=%s",
                     ed$TF, ed$gene_key, ed$peak_id, side,
                     ifelse(is.finite(s), sprintf("%.3f", s), "NA"),
-                    ifelse(is.finite(signv), ifelse(signv>0, "+", "−"), "NA"))
+                    ifelse(is.finite(signv), ifelse(signv > 0, "+", "-"), "NA"))
   )
 }
 .style_edges_delta_topic <- function(ed, alpha_range = .edge_alpha_range,
@@ -609,11 +622,11 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     .link_sign = link_sign,
     .delta     = delta,
     title = sprintf(
-      "%s → %s<br>peak: %s<br>Δ score (str − ctrl) = %.3f<br>ctrl: %.3f (sign %s), str: %.3f (sign %s)",
+      "%s -> %s<br>peak: %s<br> score (str - ctrl) = %.3f<br>ctrl: %.3f (sign %s), str: %.3f (sign %s)",
       ed$TF, ed$gene_key, ed$peak_id,
       delta,
-      ed$score_ctrl, ifelse(is.na(ed$sign_ctrl), "NA", ifelse(ed$sign_ctrl>0, "+", "−")),
-      ed$score_str,  ifelse(is.na(ed$sign_str),  "NA", ifelse(ed$sign_str >0, "+", "−"))
+      ed$score_ctrl, ifelse(is.na(ed$sign_ctrl), "NA", ifelse(ed$sign_ctrl > 0, "+", "-")),
+      ed$score_str,  ifelse(is.na(ed$sign_str),  "NA", ifelse(ed$sign_str > 0, "+", "-"))
     )
   )
   fanned <- .fan_multi_edges(out[, c("id","from","to","width","color","dashes","title")])
@@ -799,7 +812,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     width = w,
     color = col,
     dashes = FALSE,
-    title  = sprintf("peak %s → %s", gsub("^PEAK:","", bridge_pairs$peak_node), bridge_pairs$gene_key),
+    title  = sprintf("peak %s ?%s", gsub("^PEAK:","", bridge_pairs$peak_node), bridge_pairs$gene_key),
     arrows = I(replicate(nrow(bridge_pairs), list(to = list(enabled = FALSE)), simplify = FALSE))
   )
 }
@@ -827,7 +840,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     width = width,
     color = .to_rgba(gray_hex, 0.85),
     dashes = FALSE,
-    title  = sprintf("%s → peak %s<br>r_tf_%s = %s",
+    title  = sprintf("%s ?peak %s<br>r_tf_%s = %s",
                      df$TF, df$peak_id, side,
                      ifelse(is.finite(df$r), sprintf('%.3f', df$r), 'NA')),
     arrows = I(replicate(nrow(df), list(to = list(enabled = FALSE)), simplify = FALSE))
@@ -863,7 +876,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     width = width,
     color = .to_rgba(gray_hex, 0.85),
     dashes = FALSE,
-    title  = sprintf("%s → peak %s (unique)<br>r_tf_%s = %s",
+    title  = sprintf("%s ?peak %s (unique)<br>r_tf_%s = %s",
                      df$TF, df$peak_id, side,
                      ifelse(is.finite(df$r), sprintf('%.3f', df$r), 'NA')),
     arrows = I(replicate(nrow(df), list(to = list(enabled = FALSE)), simplify = FALSE))
@@ -910,10 +923,10 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     width = w,
     color = col,
     dashes = zero_dashes,
-    title = sprintf("peak %s → %s<br>%s: score=%s sign=%s",
+    title = sprintf("peak %s -> %s<br>%s: score=%s sign=%s",
                     pg$peak_id, pg$gene_key, side,
                     ifelse(is.finite(s), sprintf("%.3f", s), "NA"),
-                    ifelse(is.finite(sg), ifelse(sg>0, "+", "−"), "NA")),
+                    ifelse(is.finite(sg), ifelse(sg > 0, "+", "-"), "NA")),
     arrows = I(replicate(nrow(pg), list(to = list(enabled = FALSE)), simplify = FALSE))
   )
 }
@@ -951,15 +964,15 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
     dashes = FALSE,
     arrows = ifelse(is.na(link_sign) | link_sign >= 0, "to", "to;bar"),
     title = sprintf(
-      "peak %s → %s<br>Δ score (str − ctrl) = %.3f<br>ctrl: %.3f (sign %s), str: %.3f (sign %s)",
+      "peak %s -> %s<br> score (str - ctrl) = %.3f<br>ctrl: %.3f (sign %s), str: %.3f (sign %s)",
       pg$peak_id, pg$gene_key,
       delta,
-      pg$score_ctrl, ifelse(is.na(pg$sign_ctrl), "NA", ifelse(pg$sign_ctrl>0, "+", "−")),
-      pg$score_str,  ifelse(is.na(pg$sign_str),  "NA", ifelse(pg$sign_str >0, "+", "−"))
+      pg$score_ctrl, ifelse(is.na(pg$sign_ctrl), "NA", ifelse(pg$sign_ctrl > 0, "+", "-")),
+      pg$score_str,  ifelse(is.na(pg$sign_str),  "NA", ifelse(pg$sign_str > 0, "+", "-"))
     )
   )
 }
-# Reuse the same styling as shared peak→gene Δ edges
+# Reuse the same styling as shared peakgene  edges
 .style_edges_delta_upg <- function(pg, alpha_range = .edge_alpha_range,
                                    width_range = .edge_width_range, width_gamma = 1,
                                    cap_abs = NULL){
@@ -992,7 +1005,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
   coords
 }
 
-# (Large) layout routine — preserved from your script with identical math/ordering.
+# (Large) layout routine ?preserved from your script with identical math/ordering.
 .layout_root_tf_circles <- function(
     nodes,
     child_tfs,
@@ -1768,7 +1781,7 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
 }
 
 # UI helpers
-.attach_vis_jumpers <- function(widget, tf_label = "Jump to TF…", gene_label = "Jump to gene…"){
+.attach_vis_jumpers <- function(widget, tf_label = "Jump to TF", gene_label = "Jump to gene"){
   if (is.null(widget$elementId) || !nzchar(widget$elementId)) {
     widget$elementId <- paste0("vis-", paste(sample(c(letters, 0:9), 8, TRUE), collapse = ""))
   }
@@ -1930,3 +1943,4 @@ clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
   }"
   htmlwidgets::onRender(widget, js)
 }
+

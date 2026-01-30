@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_grn_lda_summary.R
 \name{summarize_lda_annotations}
 \alias{summarize_lda_annotations}
-\title{Summarize one LDA-annotated delta-links table (TF × topic)}
+\title{Summarize one LDA-annotated delta-links table (TF  topic)}
 \usage{
 summarize_lda_annotations(
   x,
@@ -41,5 +41,5 @@ auto-detects.}
 Tibble with per-(TF, topic) rows and topic-level ranks.
 }
 \description{
-Summarize one LDA-annotated delta-links table (TF × topic)
+Summarize one LDA-annotated delta-links table (TF  topic)
 }
