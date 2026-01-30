@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #2c3e50;
+        font-size: 14px;
+      }
+
+      .cls-1, .cls-2, .cls-3, .cls-4, .cls-5, .cls-6, .cls-7, .cls-8, .cls-9, .cls-10, .cls-11, .cls-12, .cls-13 {
+        font-family: Arial-BoldMT, Arial;
+        font-weight: 700;
+      }
+
+      .cls-1, .cls-2, .cls-14, .cls-4, .cls-15, .cls-5, .cls-6, .cls-7, .cls-16, .cls-8, .cls-17, .cls-9, .cls-10, .cls-18, .cls-11, .cls-12, .cls-13, .cls-19, .cls-20 {
+        isolation: isolate;
+      }
+
+      .cls-2, .cls-4 {
+        font-size: 8px;
+      }
+
+      .cls-2, .cls-15, .cls-5, .cls-17 {
+        fill: #e74c3c;
+      }
+
+      .cls-21 {
+        fill: #e64b35;
+        stroke: #b33a29;
+      }
+
+      .cls-21, .cls-22, .cls-23, .cls-24 {
+        stroke-width: 3px;
+      }
+
+      .cls-25 {
+        fill: rgba(22, 160, 133, .3);
+        stroke: #16a085;
+      }
+
+      .cls-25, .cls-26, .cls-27 {
+        stroke-width: 2.5px;
+      }
+
+      .cls-28 {
+        fill: #e67e22;
+      }
+
+      .cls-3 {
+        font-size: 12px;
+      }
+
+      .cls-14 {
+        opacity: .5;
+        stroke-dasharray: 1.57 1.57;
+        stroke-width: .78px;
+      }
+
+      .cls-14, .cls-29, .cls-30, .cls-22, .cls-26, .cls-23, .cls-31, .cls-32, .cls-24, .cls-33, .cls-27, .cls-34 {
+        fill: none;
+      }
+
+      .cls-14, .cls-30 {
+        stroke: #bdc3c7;
+      }
+
+      .cls-29 {
+        stroke-width: 1.24px;
+      }
+
+      .cls-29, .cls-33 {
+        stroke: #395259;
+      }
+
+      .cls-4, .cls-18, .cls-13, .cls-20 {
+        fill: #27ae60;
+      }
+
+      .cls-35 {
+        fill: #395259;
+      }
+
+      .cls-15, .cls-26 {
+        stroke: #e74c3c;
+      }
+
+      .cls-15, .cls-31, .cls-32, .cls-36, .cls-20 {
+        stroke-width: 2px;
+      }
+
+      .cls-15, .cls-20 {
+        opacity: .2;
+      }
+
+      .cls-5, .cls-13 {
+        font-size: 11px;
+      }
+
+      .cls-6 {
+        fill: #5d6868;
+      }
+
+      .cls-6, .cls-7, .cls-9, .cls-10, .cls-12 {
+        font-size: 9px;
+      }
+
+      .cls-22 {
+        stroke: #3498db;
+      }
+
+      .cls-7, .cls-10 {
+        fill: #7f8c8d;
+      }
+
+      .cls-7, .cls-37 {
+        letter-spacing: -.04em;
+      }
+
+      .cls-38 {
+        letter-spacing: -.07em;
+      }
+
+      .cls-23, .cls-31, .cls-36 {
+        stroke: #2c3e50;
+      }
+
+      .cls-16 {
+        fill: #9b59b6;
+      }
+
+      .cls-16, .cls-18 {
+        opacity: .8;
+      }
+
+      .cls-8 {
+        font-size: 10px;
+      }
+
+      .cls-8, .cls-11 {
+        fill: #fff;
+      }
+
+      .cls-32 {
+        stroke: #000305;
+      }
+
+      .cls-17 {
+        opacity: .6;
+      }
+
+      .cls-24 {
+        stroke: #9b59b6;
+      }
+
+      .cls-9 {
+        fill: #555b5b;
+      }
+
+      .cls-39 {
+        fill: #000305;
+      }
+
+      .cls-11 {
+        font-size: 24px;
+      }
+
+      .cls-12 {
+        fill: #16a085;
+      }
+
+      .cls-27, .cls-20 {
+        stroke: #27ae60;
+      }
+
+      .cls-19 {
+        fill: #95a5a6;
+        opacity: .3;
+      }
+
+      .cls-34 {
+        stroke: #fff;
+        stroke-width: 1.5px;
+      }
+    </style>
+  </defs>
+  <g>
+    <circle class="cls-21" cx="83.54" cy="113.79" r="35"/>
+    <text class="cls-11" transform="translate(70.87 122.79)"><tspan x="0" y="0">1a</tspan></text>
+  </g>
+  <line class="cls-23" x1="163.54" y1="123.79" x2="443.54" y2="123.79"/>
+  <text class="cls-12" transform="translate(282.46 48.79)"><tspan class="cls-38" x="0" y="0">AT</tspan><tspan x="10.66" y="0">AC-seq</tspan></text>
+  <line class="cls-30" x1="163.54" y1="123.79" x2="443.54" y2="123.79"/>
+  <path class="cls-25" d="M193.54,123.79l20-5,20-10,20-20,20-15,20-8,10-4,10,4,20,8,20,15,20,20,20,10,20,5h-220Z"/>
+  <ellipse class="cls-17" cx="273.54" cy="140.37" rx="22" ry="5.54"/>
+  <ellipse class="cls-17" cx="333.54" cy="140.37" rx="18" ry="4.92"/>
+  <ellipse class="cls-17" cx="278.54" cy="147.75" rx="24" ry="5.54"/>
+  <ellipse class="cls-17" cx="338.54" cy="147.75" rx="20" ry="5.54"/>
+  <ellipse class="cls-17" cx="271.54" cy="155.14" rx="23" ry="5.54"/>
+  <ellipse class="cls-17" cx="331.54" cy="155.14" rx="21" ry="5.54"/>
+  <ellipse class="cls-17" cx="276.54" cy="162.52" rx="20" ry="4.92"/>
+  <ellipse class="cls-17" cx="335.54" cy="162.52" rx="19" ry="4.92"/>
+  <line class="cls-14" x1="273.54" y1="129.29" x2="273.54" y2="169.29"/>
+  <line class="cls-14" x1="333.54" y1="129.29" x2="333.54" y2="169.29"/>
+  <line class="cls-23" x1="563.54" y1="123.79" x2="843.54" y2="123.79"/>
+  <text class="cls-12" transform="translate(682.46 48.79)"><tspan class="cls-38" x="0" y="0">AT</tspan><tspan x="10.66" y="0">AC-seq</tspan></text>
+  <line class="cls-30" x1="563.54" y1="123.79" x2="843.54" y2="123.79"/>
+  <path class="cls-25" d="M593.54,123.79l20-5,20-10,20-20,20-15,20-8,10-4,10,4,20,8,20,15,20,20,20,10,20,5h-220Z"/>
+  <ellipse class="cls-16" cx="674.54" cy="144.79" rx="30" ry="13"/>
+  <text class="cls-8" transform="translate(653.15 149.79)"><tspan x="0" y="0">Cluster 1</tspan></text>
+  <text class="cls-9" transform="translate(663.87 168.79)"><tspan x="0" y="0">4 → 1</tspan></text>
+  <ellipse class="cls-16" cx="734.54" cy="144.79" rx="27" ry="13"/>
+  <text class="cls-8" transform="translate(713.15 149.79)"><tspan x="0" y="0">Cluster 2</tspan></text>
+  <text class="cls-9" transform="translate(723.87 168.79)"><tspan x="0" y="0">4 → 1</tspan></text>
+  <g>
+    <circle class="cls-21" cx="83.54" cy="286.59" r="35"/>
+    <text class="cls-11" transform="translate(70.87 295.59)"><tspan x="0" y="0">1b</tspan></text>
+  </g>
+  <text class="cls-1" transform="translate(177.54 247.79)"><tspan x="0" y="0">TF Expression</tspan></text>
+  <text class="cls-7" transform="translate(155.54 267.79)"><tspan x="0" y="0">A</tspan></text>
+  <text class="cls-10" transform="translate(175.54 267.79)"><tspan x="0" y="0">B</tspan></text>
+  <text class="cls-10" transform="translate(195.54 267.79)"><tspan x="0" y="0">C</tspan></text>
+  <text class="cls-10" transform="translate(215.54 267.79)"><tspan x="0" y="0">D</tspan></text>
+  <text class="cls-10" transform="translate(235.54 267.79)"><tspan x="0" y="0">E</tspan></text>
+  <text class="cls-10" transform="translate(255.54 267.79)"><tspan x="0" y="0">F</tspan></text>
+  <text class="cls-10" transform="translate(275.54 267.79)"><tspan x="0" y="0">G</tspan></text>
+  <rect class="cls-28" x="150.54" y="272.79" width="15" height="45"/>
+  <rect class="cls-28" x="170.54" y="277.79" width="15" height="40"/>
+  <rect class="cls-28" x="190.54" y="285.79" width="15" height="32"/>
+  <rect class="cls-28" x="210.54" y="295.79" width="15" height="22"/>
+  <rect class="cls-28" x="230.54" y="302.79" width="15" height="15"/>
+  <rect class="cls-28" x="250.54" y="307.79" width="15" height="10"/>
+  <rect class="cls-28" x="270.54" y="310.79" width="15" height="7"/>
+  <line class="cls-31" x1="150.54" y1="322.79" x2="290.54" y2="322.79"/>
+  <circle class="cls-20" cx="327.54" cy="262.79" r="20"/>
+  <path class="cls-27" d="M317.54,257.79h20M333.54,253.79l4,4-4,4"/>
+  <path class="cls-27" d="M337.54,267.79h-20M321.54,263.79l-4,4,4,4"/>
+  <text class="cls-4" transform="translate(315.87 236.79)"><tspan x="0" y="0">r=0.95</tspan></text>
+  <text class="cls-7" transform="translate(402.54 231.79)"><tspan x="0" y="0">A</tspan></text>
+  <text class="cls-10" transform="translate(422.54 231.79)"><tspan x="0" y="0">B</tspan></text>
+  <text class="cls-10" transform="translate(442.54 231.79)"><tspan x="0" y="0">C</tspan></text>
+  <text class="cls-10" transform="translate(462.54 231.79)"><tspan x="0" y="0">D</tspan></text>
+  <text class="cls-10" transform="translate(482.54 231.79)"><tspan x="0" y="0">E</tspan></text>
+  <text class="cls-10" transform="translate(502.54 231.79)"><tspan x="0" y="0">F</tspan></text>
+  <text class="cls-10" transform="translate(522.54 231.79)"><tspan x="0" y="0">G</tspan></text>
+  <path class="cls-24" d="M405.04,241.79l20,5,20,8,20,10,20,7,20,5,20,3"/>
+  <path class="cls-36" d="M397.54,286.79h140"/>
+  <ellipse class="cls-17" cx="405.04" cy="241.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="425.04" cy="246.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="445.04" cy="254.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="465.04" cy="264.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="485.04" cy="271.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="505.04" cy="276.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="525.04" cy="279.79" rx="6" ry="4"/>
+  <circle class="cls-15" cx="327.54" cy="314.79" r="20"/>
+  <path class="cls-26" d="M317.54,309.79h20M333.54,305.79l4,4-4,4"/>
+  <path class="cls-26" d="M337.54,319.79h-20M321.54,315.79l-4,4,4,4"/>
+  <text class="cls-2" transform="translate(315.87 344.79)"><tspan x="0" y="0">r=0.12</tspan></text>
+  <path class="cls-24" d="M405.04,310.79l20,20,20-25,20,20,20-10,20,18,20-13"/>
+  <path class="cls-36" d="M397.54,340.79h140"/>
+  <ellipse class="cls-17" cx="405.04" cy="310.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="425.04" cy="330.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="445.04" cy="305.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="465.04" cy="325.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="485.04" cy="315.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="505.04" cy="333.79" rx="6" ry="4"/>
+  <ellipse class="cls-17" cx="525.04" cy="320.79" rx="6" ry="4"/>
+  <text class="cls-13" transform="translate(690.25 330.79)"><tspan x="0" y="0">Active TFBS</tspan></text>
+  <text class="cls-6" transform="translate(645.04 264.79)"><tspan x="0" y="0">Condition</tspan><tspan class="cls-37" x="41.99" y="0"> </tspan><tspan x="44.15" y="0">A:</tspan></text>
+  <path class="cls-22" d="M701.54,262.79c16.67-5.33,33.33-5.33,50,0"/>
+  <path class="cls-22" d="M701.54,262.79c16.67,5.33,33.33,5.33,50,0"/>
+  <ellipse class="cls-18" cx="726.54" cy="262.79" rx="12" ry="7"/>
+  <path class="cls-34" d="M723.54,262.79l2,2,4-4"/>
+  <path class="cls-22" d="M701.54,284.79c16.67-5.33,33.33-5.33,50,0"/>
+  <path class="cls-22" d="M701.54,284.79c16.67,5.33,33.33,5.33,50,0"/>
+  <ellipse class="cls-18" cx="726.54" cy="284.79" rx="12" ry="7"/>
+  <path class="cls-34" d="M723.54,284.79l2,2,4-4"/>
+  <path class="cls-22" d="M701.54,306.79c16.67-5.33,33.33-5.33,50,0"/>
+  <path class="cls-22" d="M701.54,306.79c16.67,5.33,33.33,5.33,50,0"/>
+  <ellipse class="cls-19" cx="726.54" cy="306.79" rx="12" ry="7"/>
+  <text class="cls-5" transform="translate(722.42 308.79)"><tspan x="0" y="0">X</tspan></text>
+  <text class="cls-5" transform="translate(786.54 330.65)"><tspan x="0" y="0">Rejected</tspan></text>
+  <g>
+    <path class="cls-22" d="M779.54,262.07c16.67-5.33,33.33-5.33,50,0"/>
+    <path class="cls-22" d="M779.54,262.07c16.67,5.33,33.33,5.33,50,0"/>
+    <ellipse class="cls-19" cx="804.54" cy="262.07" rx="12" ry="7"/>
+    <text class="cls-5" transform="translate(801.49 265.07)"><tspan x="0" y="0">X</tspan></text>
+    <path class="cls-22" d="M779.54,284.07c16.67-5.33,33.33-5.33,50,0"/>
+    <path class="cls-22" d="M779.54,284.07c16.67,5.33,33.33,5.33,50,0"/>
+    <ellipse class="cls-19" cx="804.54" cy="284.07" rx="12" ry="7"/>
+    <text class="cls-5" transform="translate(801.49 287.07)"><tspan x="0" y="0">X</tspan></text>
+    <path class="cls-22" d="M779.54,306.07c16.67-5.33,33.33-5.33,50,0"/>
+    <path class="cls-22" d="M779.54,306.07c16.67,5.33,33.33,5.33,50,0"/>
+    <ellipse class="cls-19" cx="804.54" cy="306.07" rx="12" ry="7"/>
+    <text class="cls-5" transform="translate(801.49 309.07)"><tspan x="0" y="0">X</tspan></text>
+  </g>
+  <text class="cls-3" transform="translate(145.2 147.96)"><tspan x="0" y="0">Overlapping, </tspan><tspan x="-10.66" y="14.4">redundant motifs</tspan></text>
+  <text class="cls-3" transform="translate(780.55 146.78)"><tspan x="0" y="0">Non-redundant</tspan><tspan x="-6.34" y="14.4">footprint clusters</tspan></text>
+  <text class="cls-3" transform="translate(476.62 160.08)"><tspan x="0" y="0">Collapse</tspan></text>
+  <text/>
+  <text class="cls-1" transform="translate(363.54 266.79)"><tspan x="0" y="0">FP1</tspan></text>
+  <text class="cls-1" transform="translate(363.54 326.79)"><tspan x="0" y="0">FP2</tspan></text>
+  <text class="cls-1" transform="translate(715.54 240.53)"><tspan x="0" y="0">FP1</tspan></text>
+  <text class="cls-1" transform="translate(791.54 240.53)"><tspan x="0" y="0">FP2</tspan></text>
+  <text class="cls-6" transform="translate(644.7 288.07)"><tspan x="0" y="0">Condition B:</tspan></text>
+  <text class="cls-6" transform="translate(644.2 310.79)"><tspan x="0" y="0">Condition G:</tspan></text>
+  <g>
+    <line class="cls-32" x1="83.54" y1="167.69" x2="83.54" y2="214.97"/>
+    <polygon class="cls-39" points="77.73 211.01 83.54 232.69 89.35 211.01 77.73 211.01"/>
+  </g>
+  <g>
+    <line class="cls-32" x1="472.54" y1="136.61" x2="519.83" y2="136.61"/>
+    <polygon class="cls-39" points="515.86 142.42 537.54 136.61 515.86 130.8 515.86 142.42"/>
+  </g>
+  <g>
+    <path class="cls-29" d="M550.57,258.28c0-10.71,60.34-19.44,136.34-19.97"/>
+    <polygon class="cls-35" points="683.5 243.02 685.38 238.4 683.37 233.84 694.31 238.28 683.5 243.02"/>
+  </g>
+  <g>
+    <path class="cls-33" d="M795.93,346.16c-19.23,20.89-121.72,15.24-240.62-14.4"/>
+    <polygon class="cls-35" points="791.11 346.52 795.09 347.1 797.44 350.37 798.84 340.95 791.11 346.52"/>
+  </g>
+</svg>
