@@ -44,17 +44,6 @@ if (do_load_footprints_preprocess == TRUE) {
 
   # readr::write_csv(fp_manifest, file.path(fp_cache_dir, sprintf("fp_%s_manifest.csv", db)))
 
-  if (db == "HOCOMOCOv13" && !isTRUE(attr(fp_manifest, "from_cache"))) {
-    # (Optional, when using HOCOMOCO database)
-    fp_manifest <- fp_manifest_trim(fp_manifest) # renames files on disk by default
-    # Overwrite every annotation CSV referenced by the manifest:
-    summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TRUE)
-
-    # Inspect what changed:
-    dplyr::count(summary_tbl, status)
-    sum(summary_tbl$n_fixed, na.rm = TRUE)
-  }
-
   # options(future.globals.maxSize = 32 * 1024^3)
   # Collapse overlapping footprints and align peaks across samples
   fp_aligned <- align_footprints(fp_manifest, mid_slop = 10L, round_digits = 1L, score_match_pct = 0.8, cache_dir = fp_cache_dir, cache_tag = db, output_mode = "distinct")
