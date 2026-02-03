@@ -31,13 +31,9 @@ do_tf_to_target_genes_prediction <- FALSE
 verbose <- TRUE
 
 
-# Module 1: Predict TF binding sites --------------------------------------
-# Step 0. Load footprint data and preprocess ------------------------------
+# Predict TF binding sites -------------------------------------------------
+# Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  if (isTRUE(verbose)) {
-    .log_inform("Module 1: Predict TF binding sites.")
-    .log_inform("2.1 Collapse overlapping/redundant TF motif footprints into non-redundant, merged footprints and assign TF motifs to consensus motif clusters.")
-  }
   fp_cache_dir <- file.path(base_dir, "cache")
   fp_manifest <- load_footprints(
     root_dir = fp_root_dir,
@@ -114,16 +110,13 @@ if (do_load_footprints_preprocess == TRUE) {
     threshold_gene_expr = threshold_gene_expr,
     verbose = TRUE
   )
-  if (isTRUE(verbose)) {
-    .log_inform("Output: Collapsed raw footprint scores + merge QC PDF; normalized footprint matrices + QC PDF; gene expression flag matrix + QC PDF.")
-  }
 }
 
 
-# Step 1. Predict TF binding sites ----------------------------------------
+# Predict TF binding sites -------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
   if (!exists("omics_data") || !is.list(omics_data)) {
-    .log_abort("`omics_data` not found. Run Step 0 before Step 1.")
+    .log_abort("`omics_data` not found. Run footprint preprocessing before TF binding site prediction.")
   }
 
   step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
@@ -143,26 +136,17 @@ if (do_tf_binding_sites_prediction == TRUE) {
     qc = TRUE,
     write_bed = FALSE
   )
-  if (isTRUE(verbose)) {
-    .log_inform("Output: TF binding probability overviews, TF binding site counts, and correlation stats PDF.")
-  }
 }
 
 
-# Module 2: Connect TFs to Target Genes -----------------------------------
-# Step 2. Connect TF-occupied enhancers to target genes -------------------
+# Connect TFs to target genes ---------------------------------------------
+# Connect TF-occupied enhancers to target genes ---------------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
-  if (isTRUE(verbose)) {
-    .log_inform("Module 2: Connect TFs to Target Genes.")
-  }
   step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
   dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
   link_mode <- if (exists("tf_target_link_mode")) tf_target_link_mode else "genehancer"
   link_mode <- match.arg(link_mode, c("genehancer", "window", "loops"))
-  if (isTRUE(verbose)) {
-    .log_inform("1.1 Link TF binding sites to candidate target genes using {link_mode} mappings.")
-  }
 
   gh_std <- NULL
   atac_gene_pairs <- NULL
@@ -207,10 +191,6 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     atac_gene_pairs <- loop_tbl |>
       dplyr::transmute(atac_peak = .data$atac_peak, gene_key = .data[[gene_col]]) |>
       dplyr::distinct()
-  }
-
-  if (isTRUE(verbose)) {
-    .log_inform("1.3 Compute TF->gene and TFBS->gene correlations across conditions; filter links by configured thresholds.")
   }
 
   options(future.globals.maxSize = 64 * 1024^3)

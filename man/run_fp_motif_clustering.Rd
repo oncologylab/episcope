@@ -19,10 +19,13 @@ run_fp_motif_clustering(
   target_clusters = NULL,
   k_grid = NULL,
   run_mode = c("full", "pre"),
-  qc_mode = c("fast", "full"),
+  qc_mode = c("none", "fast", "full"),
   motif_db = NULL,
   cluster_source = c("hybrid", "data"),
   cores = NULL,
+  save_motif_db = FALSE,
+  motif_db_out_dir = NULL,
+  motif_db_prefix = "motif_db",
   weight_by_group_size = TRUE,
   verbose = TRUE
 )

@@ -47,8 +47,6 @@ build_link_status_matrix(
 
 \item{return_keep}{Logical; if TRUE return per-link keep flags (any condition).}
 
-\item{filter_any}{Logical; if TRUE filter links with no active conditions.}
-
 \item{verbose}{Verbosity.}
 
 \item{fp_score_tbl}{Optional footprint score table (peak_ID + condition columns).}
@@ -59,7 +57,7 @@ build_link_status_matrix(
 
 \item{atac_score_threshold}{Numeric threshold on atac_score.}
 
-\item{atac_peak_col}{Column in \code{links} containing atac_peak.}
+\item{atac_peak_col}{Column in `links` containing atac_peak (default "atac_peak").}
 
 \item{require_fp_bound}{If TRUE, require fp_bound > 0.}
 
@@ -72,8 +70,8 @@ build_link_status_matrix(
 \item{return_tbl}{If TRUE, return the status table in memory.}
 }
 \value{
-List with out_file, keep flags, and optional status_tbl.
+List with out_file and keep flags (if requested).
 }
 \description{
-Build TF->gene link status matrix (per condition) using FP bound and RNA flags.
+Build TF->gene link status matrix (per condition) using FP bound and RNA flags
 }

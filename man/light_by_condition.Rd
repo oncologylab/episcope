@@ -58,9 +58,9 @@ c("strict_match_rna","cell_stress_type") for backward-compatibility.}
 
 \item{atac_score_threshold}{Numeric threshold on atac_score.}
 
-\item{require_atac_score}{If TRUE, require atac_score >= atac_score_threshold.}
+\item{require_atac_score}{If TRUE, require atac_score >= atac_score_threshold to mark links active.}
 
-\item{fp_annotation_tbl}{Optional fp_annotation table to map peak_ID -> atac_peak.}
+\item{fp_annotation_tbl}{Optional fp_annotation table to map peak_ID -> atac_peak when needed.}
 
 \item{require_fp_bound}{If TRUE, require fp_bound > 0 to mark links active.}
 

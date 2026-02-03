@@ -7,7 +7,7 @@
 load_omics_data(file, verbose = TRUE)
 }
 \arguments{
-\item{file}{Path to an RDS file produced by \code{save_omics_data()}.}
+\item{file}{Path to an RDS file produced by save_omics_data().}
 
 \item{verbose}{Emit status messages.}
 }
@@ -15,5 +15,5 @@ load_omics_data(file, verbose = TRUE)
 The loaded multi-omic data list.
 }
 \description{
-Load a multi-omic data object from disk.
+Load a multi-omic data object from disk
 }

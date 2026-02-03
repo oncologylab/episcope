@@ -7,7 +7,7 @@
 plot_fp_merge_summary(fp_aligned, out_dir, db, verbose = TRUE)
 }
 \arguments{
-\item{fp_aligned}{List returned by \code{align_footprints()}.}
+\item{fp_aligned}{List returned by `align_footprints()`.}
 
 \item{out_dir}{Output directory for the PDF.}
 
@@ -19,5 +19,5 @@ plot_fp_merge_summary(fp_aligned, out_dir, db, verbose = TRUE)
 Path to the written PDF (invisible).
 }
 \description{
-Generate QC plots summarizing footprint merging and save as a PDF.
+Footprint merge summary PDF
 }

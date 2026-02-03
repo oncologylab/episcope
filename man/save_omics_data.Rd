@@ -15,7 +15,7 @@ save_omics_data(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list (e.g., output of \code{load_multiomic_data()}).}
+\item{omics_data}{A multi-omic data list (e.g., output of load_multiomic_data()).}
 
 \item{file}{Optional full path to an RDS file. If NULL, uses out_dir/db/prefix.}
 
@@ -25,7 +25,7 @@ save_omics_data(
 
 \item{prefix}{Filename prefix used when file is NULL.}
 
-\item{compress}{Compression passed to \code{saveRDS()}.}
+\item{compress}{Compression passed to saveRDS().}
 
 \item{verbose}{Emit status messages.}
 }
@@ -33,5 +33,5 @@ save_omics_data(
 Path to the written file (invisible).
 }
 \description{
-Save a multi-omic data object to disk.
+Save a multi-omic data object to disk
 }

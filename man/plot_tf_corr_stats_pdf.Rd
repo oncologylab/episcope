@@ -33,10 +33,6 @@ plot_tf_corr_stats_pdf(
 
 \item{p_thr}{Optional FDR threshold for caption.}
 
-\item{ann_pearson_all}{Optional unfiltered Pearson annotation table for overlay.}
-
-\item{ann_spearman_all}{Optional unfiltered Spearman annotation table for overlay.}
-
 \item{max_tfs}{Optional cap for number of TFs plotted.}
 
 \item{verbose}{Emit status messages.}
@@ -45,6 +41,5 @@ plot_tf_corr_stats_pdf(
 Path to the written PDF (invisible).
 }
 \description{
-Generate a multi-page PDF with overall and per-TF correlation
-histograms/densities for Pearson and Spearman.
+TF correlation statistics PDF
 }

@@ -1778,8 +1778,14 @@ add_tf_rna_corr_cols <- function(fp_tbl,
     data.frame(tfs=tf, gene_key=genes, r_rna=r_out, p_rna=p_out, stringsAsFactors=FALSE)
   }
 
-  if (verbose) message(sprintf("TF->RNA corr unique pairs: %d; TFs: %d; cores=%d",
-                               nrow(pairs_df), length(tf_list), cores))
+  if (isTRUE(verbose)) {
+    .log_inform(
+      "TF->RNA correlations: {n_pairs} unique pairs; {n_tfs} TFs; cores={cores}.",
+      n_pairs = nrow(pairs_df),
+      n_tfs = length(tf_list),
+      cores = cores
+    )
+  }
 
   use_mclapply <- (.Platform$OS.type != "windows") && cores > 1L
   if (use_mclapply) {
@@ -2375,10 +2381,15 @@ build_link_status_matrix <- function(
     status_tbl <- dplyr::bind_rows(status_chunks)
   }
 
-  if (verbose) {
-    message("Built link status matrix for ", format(n, big.mark = ","), " links across ",
-            length(cond_cols), " condition(s).")
-    if (!is.null(out_file)) message("Wrote: ", out_file)
+  if (isTRUE(verbose)) {
+    .log_inform(
+      "Built link status matrix for {n_links} links across {n_cond} condition(s).",
+      n_links = format(n, big.mark = ","),
+      n_cond = length(cond_cols)
+    )
+    if (!is.null(out_file)) {
+      .log_inform("Wrote link status matrix: {out_file}")
+    }
   }
 
   invisible(list(out_file = out_file, keep = keep_any, status_tbl = status_tbl))

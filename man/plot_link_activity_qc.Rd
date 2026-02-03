@@ -2,12 +2,18 @@
 % Please edit documentation in R/utils_step2_qc.R
 \name{plot_link_activity_qc}
 \alias{plot_link_activity_qc}
-\title{Plot link activity QC}
+\title{Plot total active links per condition}
 \usage{
-plot_link_activity_qc(summary_total, out_dir, db, prefix = "step2", verbose = TRUE)
+plot_link_activity_qc(
+  summary_total,
+  out_dir,
+  db,
+  prefix = "step2",
+  verbose = TRUE
+)
 }
 \arguments{
-\item{summary_total}{Data.frame with condition and n_links_active columns.}
+\item{summary_total}{A data.frame with columns condition and n_links_active.}
 
 \item{out_dir}{Output directory for the PDF.}
 
@@ -21,5 +27,5 @@ plot_link_activity_qc(summary_total, out_dir, db, prefix = "step2", verbose = TR
 Path to the written PDF (invisible).
 }
 \description{
-Create a PDF barplot of total active links per condition.
+Plot total active links per condition
 }

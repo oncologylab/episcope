@@ -14,9 +14,9 @@ plot_gene_expr_qc(
 )
 }
 \arguments{
-\item{omics_data}{Multi-omic data list containing \code{rna_expressed}.}
+\item{omics_data}{Multi-omic data list containing rna_expressed.}
 
-\item{grn_set}{(Deprecated) Use \code{omics_data}.}
+\item{grn_set}{(Deprecated) Use `omics_data`.}
 
 \item{out_dir}{Output directory for the PDF.}
 
@@ -30,5 +30,5 @@ plot_gene_expr_qc(
 Path to the written PDF (invisible).
 }
 \description{
-Generate QC plots comparing total expressed genes per condition.
+Gene expression QC PDF
 }

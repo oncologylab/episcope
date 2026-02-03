@@ -51,7 +51,7 @@ load_multiomic_data <- function(
     verbose = TRUE
 ) {
   if (isTRUE(verbose)) {
-    .log_inform("Process: Load input data and create a combined multiomic data object.")
+    .log_inform("Loading input data and creating a combined multi-omic data object.")
   }
 
   get_cfg <- function(name) {
@@ -117,7 +117,7 @@ load_multiomic_data <- function(
   )
 
   if (isTRUE(verbose)) {
-    .log_inform("2.2 Generate a binary, condition-specific footprint binding flag matrix (bound=1; unbound=0).")
+    .log_inform("Generating condition-specific footprint bound matrix.")
   }
   grn_set <- grn_add_fp_score_condition(grn_set, label_col = label_col)
   grn_set <- grn_add_fp_bound_condition(
@@ -131,11 +131,11 @@ load_multiomic_data <- function(
     use_parallel = use_parallel
   )
   if (isTRUE(verbose)) {
-    .log_inform("2.3 Perform cross-condition quantile normalization on bound footprints.")
+    .log_inform("Quantile-normalizing footprint scores across conditions.")
   }
   grn_set <- grn_add_fp_score_qn(grn_set, id_col = "peak_ID")
   if (isTRUE(verbose)) {
-    .log_inform("2.4 Generate a binary, condition-specific gene expression flag matrix.")
+    .log_inform("Generating condition-specific gene expression flags.")
   }
   grn_set <- grn_add_rna_expressed(
     grn_set,
@@ -143,7 +143,7 @@ load_multiomic_data <- function(
     threshold_gene_expr = threshold_gene_expr
   )
   if (isTRUE(verbose)) {
-    .log_inform("Output: Combined multi-omic data object ready for downstream analysis.")
+    .log_inform("Combined multi-omic data object ready for downstream analysis.")
   }
 
   grn_set

@@ -20,7 +20,7 @@ write_tf_tfbs_overviews(
 \arguments{
 \item{omics_data}{A multi-omic data list containing fp_bound_condition and rna_expressed.}
 
-\item{grn_set}{(Deprecated) Use \code{omics_data}.}
+\item{grn_set}{(Deprecated) Use `omics_data`.}
 
 \item{ann_pearson}{Annotation table with Pearson correlations (full).}
 

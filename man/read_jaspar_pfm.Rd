@@ -4,7 +4,7 @@
 \alias{read_jaspar_pfm}
 \title{Read a JASPAR PFM file into PPMs}
 \usage{
-read_jaspar_pfm(file_path)
+read_jaspar_pfm(file_path, strict = TRUE)
 }
 \arguments{
 \item{file_path}{Path to a JASPAR PFM file.}

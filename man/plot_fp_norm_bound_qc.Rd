@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step1_qc.R
 \name{plot_fp_norm_bound_qc}
 \alias{plot_fp_norm_bound_qc}
-\title{Footprint normalization and bound QC PDF}
+\title{Footprint normalization/bound QC PDF}
 \usage{
 plot_fp_norm_bound_qc(
   omics_data = NULL,
@@ -10,15 +10,15 @@ plot_fp_norm_bound_qc(
   out_dir,
   db,
   threshold_fp_score,
-  max_points = 1e+05,
+  max_points = 100000L,
   verbose = TRUE
 )
 }
 \arguments{
-\item{omics_data}{Multi-omic data list containing \code{fp_score_condition},
-\code{fp_score_condition_qn}, and \code{fp_bound_condition}.}
+\item{omics_data}{Multi-omic data list containing fp_score_condition,
+fp_score_condition_qn, and fp_bound_condition.}
 
-\item{grn_set}{(Deprecated) Use \code{omics_data}.}
+\item{grn_set}{(Deprecated) Use `omics_data`.}
 
 \item{out_dir}{Output directory for the PDF.}
 
@@ -34,6 +34,5 @@ plot_fp_norm_bound_qc(
 Path to the written PDF (invisible).
 }
 \description{
-Generate QC plots for raw vs quantile-normalized footprint scores and
-per-condition bound counts.
+Footprint normalization/bound QC PDF
 }

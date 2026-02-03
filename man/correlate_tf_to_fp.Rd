@@ -27,9 +27,9 @@ correlate_tf_to_fp(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list from \code{build_grn_set()}.}
+\item{omics_data}{A multi-omic data list from [build_grn_set()].}
 
-\item{grn_set}{(Deprecated) Use \code{omics_data}.}
+\item{grn_set}{(Deprecated) Use `omics_data`.}
 
 \item{mode}{Correlation mode: "canonical" or "all".}
 
@@ -57,8 +57,6 @@ correlate_tf_to_fp(
 
 \item{write_bed}{If TRUE, emit per-TF BEDs (off by default).}
 
-\item{write_outputs}{If TRUE, write filtered fp_score/fp_bound/fp_annotation outputs.}
-
 \item{use_cache}{If TRUE, reuse cached correlation tables.}
 
 \item{cache_dir}{Optional cache directory (defaults under out_dir).}
@@ -66,9 +64,10 @@ correlate_tf_to_fp(
 \item{verbose}{Emit status messages.}
 }
 \value{
-Updated omics_data with Pearson + Spearman annotations.
+Updated grn_set with Pearson + Spearman annotations.
 }
 \description{
 Runs Pearson and Spearman correlations, applies filters, and optionally
-produces QC and per-TF overview outputs.
+generates QC outputs and per-TF overview tables. Designed as a simple
+user-facing wrapper for Module 1.
 }

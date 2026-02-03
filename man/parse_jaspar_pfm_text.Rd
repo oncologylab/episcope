@@ -2,18 +2,22 @@
 % Please edit documentation in R/utils_step1_motif_clustering.R
 \name{parse_jaspar_pfm_text}
 \alias{parse_jaspar_pfm_text}
-\title{Parse JASPAR Position Frequency Matrix (PFM; counts) text into PPMs}
+\title{Parse JASPAR-like Position Frequency Matrix (PFM; counts) text into PPMs}
 \usage{
-parse_jaspar_pfm_text(jaspar_text)
+parse_jaspar_pfm_text(jaspar_text, strict = TRUE)
 }
 \arguments{
 \item{jaspar_text}{Character scalar: full text with one or more motifs in
-JASPAR PFM format.}
+JASPAR PFM format. Also supports JASPAR-like blocks with four unlabeled
+numeric rows (assumed A,C,G,T order), as seen in HOCOMOCO exports.}
+
+\item{strict}{Logical; if TRUE, stop on malformed motifs. If FALSE, skip
+malformed motifs with a warning.}
 }
 \value{
 Named list. Each element is a 4 x L numeric matrix of probabilities
   with rows A,C,G,T.
 }
 \description{
-Parse JASPAR Position Frequency Matrix (PFM; counts) text into PPMs
+Parse JASPAR-like Position Frequency Matrix (PFM; counts) text into PPMs
 }

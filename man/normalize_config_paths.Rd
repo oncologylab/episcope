@@ -5,7 +5,13 @@
 \title{Normalize configured path variables}
 \usage{
 normalize_config_paths(
-  keys = c("base_dir", "fp_root_dir", "benchmark_tfbs_dir", "pathway_dir"),
+  keys = c("base_dir", "fp_root_dir", "fp_manifest_path", "benchmark_tfbs_dir",
+    "pathway_dir", "genehancer_path", "loop_path", "preprocess_dir", "sample_metadata",
+    "metadata_path", "sample_metadata_path", "atac_master", "atac_data_path",
+    "atac_master_path", "rna_mapped", "rna_mapped_path", "rna_path", "basal_links_dir",
+    "data_dir", "sample_metadata_out", "strict_metadata_out", "lenient_metadata_out",
+    "atac_master_out", "rna_filtered_out", "strict_rna_out", "lenient_rna_out",
+    "rna_mapped_out"),
   env = .GlobalEnv
 )
 }

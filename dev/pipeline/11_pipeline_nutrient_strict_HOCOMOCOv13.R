@@ -27,7 +27,7 @@ do_tf_binding_sites_prediction   <- TRUE
 do_tf_to_target_genes_prediction <- TRUE
 
 
-# Step 0. Load footprint data and preprocess ------------------------------
+# Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
   fp_cache_dir <- file.path(base_dir, "cache")
   fp_manifest <- load_footprints(
@@ -143,10 +143,10 @@ if (do_load_footprints_preprocess == TRUE) {
 }
 
 
-# Step 1. Predict TF binding sites ----------------------------------------
+# Predict TF binding sites -------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
   if (!exists("grn_set") || !is.list(grn_set)) {
-    .log_abort("`grn_set` not found. Run Step 0 before Step 1.")
+    .log_abort("`grn_set` not found. Run footprint preprocessing before TF binding site prediction.")
   }
 
   grn_set <- grn_add_rna_condition(grn_set, label_col = "strict_match_rna")
@@ -178,7 +178,7 @@ if (do_tf_binding_sites_prediction == TRUE) {
 }
 
 
-# Step 2. Connect TF-occupied enhancers to target genes -------------------
+# Connect TF-occupied enhancers to target genes ---------------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
 
 
@@ -340,10 +340,10 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 }
 
 
-# Step 3. diff networks, and topic analysis -------------------------------
+# Diff networks and topic analysis ----------------------------------------
 step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
 
-# Step 3/4 from Step 2 per-condition tables (per-cell vs 10_FBS)
+# Per-condition tables (per-cell vs 10_FBS)
 step2_specs <- build_cellwise_contrasts_from_index(
   index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
   out_dir = step2_out_dir,

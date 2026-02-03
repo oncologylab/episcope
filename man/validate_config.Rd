@@ -6,13 +6,13 @@
 \usage{
 validate_config(
   required = c("db", "ref_genome", "threshold_tf_expr", "threshold_gene_expr",
-    "threshold_fp_score", "threshold_link_score", "threshold_fp_tf_corr_p",
-    "threshold_fp_tf_corr_r", "threshold_fp_gene_corr_p", "threshold_fp_gene_corr_abs_r",
-    "threshold_atac_gene_corr_p", "threshold_atac_gene_corr_abs_r",
-    "link_score_threshold", "fp_score_threshold"),
+    "threshold_fp_score", "threshold_link_score", "atac_score_threshold",
+    "threshold_fp_tf_corr_p", "threshold_fp_tf_corr_r", "threshold_fp_gene_corr_p",
+    "threshold_fp_gene_corr_abs_r", "threshold_atac_gene_corr_p",
+    "threshold_atac_gene_corr_abs_r", "link_score_threshold", "fp_score_threshold"),
   numeric_required = c("threshold_tf_expr", "threshold_gene_expr", "threshold_fp_score",
-    "threshold_link_score", "threshold_fp_tf_corr_p", "threshold_fp_tf_corr_r",
-    "threshold_fp_gene_corr_p", "threshold_fp_gene_corr_abs_r",
+    "threshold_link_score", "atac_score_threshold", "threshold_fp_tf_corr_p",
+    "threshold_fp_tf_corr_r", "threshold_fp_gene_corr_p", "threshold_fp_gene_corr_abs_r",
     "threshold_atac_gene_corr_p", "threshold_atac_gene_corr_abs_r",
     "link_score_threshold", "fp_score_threshold"),
   env = .GlobalEnv

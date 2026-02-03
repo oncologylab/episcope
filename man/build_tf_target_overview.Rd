@@ -2,22 +2,23 @@
 % Please edit documentation in R/utils_step2_qc.R
 \name{build_tf_target_overview}
 \alias{build_tf_target_overview}
-\title{Build TF-target overview table}
+\title{Build TF->target overview table with condition flags}
 \usage{
 build_tf_target_overview(links, link_status, out_file = NULL, verbose = TRUE)
 }
 \arguments{
 \item{links}{Link table with TF/gene/peak keys and correlation statistics.}
 
-\item{link_status}{A data.frame or CSV path produced by \code{build_link_status_matrix()}.}
+\item{link_status}{Either a data.frame or a CSV path produced by
+[build_link_status_matrix()].}
 
 \item{out_file}{Optional CSV path for the merged overview table.}
 
 \item{verbose}{Emit status messages.}
 }
 \value{
-Merged tibble (invisible).
+Merged tibble (invisibly).
 }
 \description{
-Merge TF->target correlation statistics with condition-specific link status flags.
+Build TF->target overview table with condition flags
 }

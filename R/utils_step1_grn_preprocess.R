@@ -1491,7 +1491,7 @@ correlate_tf_to_fp <- function(
 
   grn_set <- omics_data
   if (isTRUE(verbose)) {
-    .log_inform("2.5 Compute Pearson (linear) and Spearman (rank-based) correlations between expressed TFs and normalized footprint scores.")
+    .log_inform("Computing TF expression vs footprint score correlations (Pearson + Spearman).")
   }
   grn_set <- grn_add_rna_condition(grn_set, label_col = label_col, verbose = verbose)
   grn_set <- grn_add_fp_tfs(grn_set, verbose = verbose)

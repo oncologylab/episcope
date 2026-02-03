@@ -72,6 +72,8 @@ grn_add_fp_tfs(grn_set, force = FALSE, verbose = TRUE)
 grn_add_fp_tf_corr(
   grn_set,
   method = c("pearson", "spearman", "kendall"),
+  mode = c("canonical", "all"),
+  tf_subset = NULL,
   cores = 10L,
   chunk_size = 5000L,
   min_non_na = 5L,
@@ -82,6 +84,7 @@ grn_add_fp_tf_corr(
 grn_filter_fp_tf_corr(
   grn_set,
   method = c("pearson", "spearman", "kendall"),
+  mode = c("canonical", "all"),
   r_thr = 0.3,
   p_thr = 0.05,
   set_active = TRUE,

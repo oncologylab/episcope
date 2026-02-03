@@ -2,12 +2,19 @@
 % Please edit documentation in R/utils_step2_qc.R
 \name{summarize_link_activity}
 \alias{summarize_link_activity}
-\title{Summarize link activity}
+\title{Summarize link activity per condition and per TF}
 \usage{
-summarize_link_activity(link_status, out_dir, db, prefix = "step2", verbose = TRUE)
+summarize_link_activity(
+  link_status,
+  out_dir,
+  db,
+  prefix = "step2",
+  verbose = TRUE
+)
 }
 \arguments{
-\item{link_status}{A data.frame or CSV path produced by \code{build_link_status_matrix()}.}
+\item{link_status}{Either a data.frame or a CSV path produced by
+[build_link_status_matrix()].}
 
 \item{out_dir}{Output directory for summary CSVs.}
 
@@ -21,5 +28,5 @@ summarize_link_activity(link_status, out_dir, db, prefix = "step2", verbose = TR
 List with summary_total and summary_by_tf (invisible).
 }
 \description{
-Summarize active links per condition and per TF.
+Summarize link activity per condition and per TF
 }
