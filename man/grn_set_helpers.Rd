@@ -4,6 +4,7 @@
 \alias{grn_add_rna_expressed}
 \alias{grn_add_rna_condition}
 \alias{grn_add_fp_score_condition}
+\alias{grn_add_atac_score_condition}
 \alias{grn_add_fp_bound_condition}
 \alias{grn_filter_fp_bound_condition}
 \alias{grn_add_fp_score_qn}
@@ -32,6 +33,14 @@ grn_add_rna_condition(
 )
 
 grn_add_fp_score_condition(
+  grn_set,
+  label_col,
+  agg_fun = c("mean", "median"),
+  force = FALSE,
+  verbose = TRUE
+)
+
+grn_add_atac_score_condition(
   grn_set,
   label_col,
   agg_fun = c("mean", "median"),

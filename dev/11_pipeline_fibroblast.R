@@ -1,7 +1,26 @@
 library(episcope)
-load_config("episcope_grn.yaml")
-# source("R/utils_connect_tf_enhancers_to_target_genes.R")
-# source("R/utils_load_footprints_process.R")
+
+source("R/utils_config.R")
+source("R/utils_logging.R")
+
+source("R/utils_step1_footprints.R")
+source("R/utils_step1_align_footprints.R")
+source("R/utils_step1_grn_preprocess.R")
+source("R/utils_step1_pipeline_helpers.R")
+source("R/utils_step1_motif_clustering.R")
+source("R/utils_step1_qc.R")
+
+source("R/utils_step2_connect_tf_genes.R")
+source("R/utils_step2_grn_pipeline.R")
+source("R/utils_step2_qc.R")
+
+source("R/utils_step3_grn_filter.R")
+source("R/utils_step3_grn_diff.R")
+source("R/utils_step3_topic_warplda.R")
+
+load_config("GSE192390_fibroblast_jaspar2024.yaml")
+
+expected_n <- if (exists("expected_n")) expected_n else NULL
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Turn modules ON/OFF
@@ -9,610 +28,365 @@ load_config("episcope_grn.yaml")
 do_load_footprints_preprocess    <- TRUE
 do_tf_binding_sites_prediction   <- TRUE
 do_tf_to_target_genes_prediction <- FALSE
-do_build_grn                     <- FALSE
-do_differential_grn              <- FALSE
-do_topic_subplot_single          <- FALSE
-do_topic_subplot_bulk            <- FALSE
-do_tf_centric_subplot_single     <- FALSE
-do_tf_centric_subplot_bulk       <- FALSE
+verbose <- TRUE
 
-base_dir <- "/data/homes/yl814/episcope_test/GSE192390_Fibroblasts"
 
-# Step 0. Load footprint data and preprocess------------------------------------
-## load_footprints
-## fp_manifest_trim
-## fp_manifest_trim_annots
-## align_footprints
-## qn_footprints
-## save_footprints
+# Module 1: Predict TF binding sites --------------------------------------
+# Step 0. Load footprint data and preprocess ------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  sample_metadata <- readr::read_tsv(file.path(base_dir, "GSE192390_NIH3T3_samples.txt"), na = "NA") # required to have a column id with unique ids
-  sample_metadata$id <- sample_metadata$ID
-
+  if (isTRUE(verbose)) {
+    .log_inform("Module 1: Predict TF binding sites.")
+    .log_inform("2.1 Collapse overlapping/redundant TF motif footprints into non-redundant, merged footprints and assign TF motifs to consensus motif clusters.")
+  }
+  fp_cache_dir <- file.path(base_dir, "cache")
   fp_manifest <- load_footprints(
-    "/data/homes/yl814/tbio_cy232/GSE192390_TOBIAS",
-    "JASPAR2024",
-    file.path(base_dir, "cache", sprintf("fp_%s", db)),
-    sample_metadata$ID
-    )
-    
-  # fp_manifest <- readr::read_csv(file.path(base_dir, "cache", sprintf("fp_%s_manifest.csv", db)))
+    root_dir = fp_root_dir,
+    db_name = db,
+    out_dir = file.path(fp_cache_dir, paste0("fp_", db))
+  )
 
-  # (Optional, when using HOCOMOCO database)
-  if (db == "hocomocov13"){
-    fp_manifest <- fp_manifest_trim(fp_manifest) # rename files on disk by default
-    # Overwrite every annotation CSV referenced by the manifest:
+  if (db == "HOCOMOCOv13" && !isTRUE(attr(fp_manifest, "from_cache"))) {
+    fp_manifest <- fp_manifest_trim(fp_manifest)
     summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TRUE)
-
-    # Inspect what changed:
     dplyr::count(summary_tbl, status)
     sum(summary_tbl$n_fixed, na.rm = TRUE)
   }
 
-  options(future.globals.maxSize = 32 * 1024^3)
-  # Align the peaks based on the peak similarity
-  fp_aligned <- align_footprints(fp_manifest,
-                                 mid_slop        = 10L, # midpoint tolerance (bp)
-                                 round_digits    = 1L, # round scores before comparing vectors
-                                 score_match_pct = 0.8) # fraction of samples that must match (<=1, >=0)
+  fp_aligned <- align_footprints(
+    fp_manifest,
+    mid_slop = 10L,
+    round_digits = 1L,
+    score_match_pct = 0.8,
+    cache_dir = fp_cache_dir,
+    cache_tag = db,
+    output_mode = "distinct"
+  )
+  plot_fp_merge_summary(fp_aligned, out_dir = file.path(base_dir, "predict_tf_binding_sites"), db = db, verbose = TRUE)
 
-  readr::write_csv(fp_aligned$fp_bound, file.path(base_dir, "predict_tf_binding_sites", sprintf("fp_bounds_%s.csv", db)))
-  readr::write_csv(fp_aligned$fp_score, file.path(base_dir, "predict_tf_binding_sites", sprintf("fp_scores_%s.csv", db)))
-  readr::write_csv(fp_aligned$fp_annotation, file.path(base_dir, "predict_tf_binding_sites", sprintf("fp_annotation_%s.csv", db)))
+  run_fp_motif_clustering_pre_if_needed(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
+  fp_motif_clust_data <- run_fp_motif_clustering(
+    fp_aligned = fp_aligned,
+    base_dir = base_dir,
+    ref_db = db,
+    motif_db = motif_db,
+    mode = "data",
+    target_clusters = 220,
+    qc_mode = "fast",
+    save_motif_db = TRUE
+  )
+  fp_motif_clust_hybrid <- run_fp_motif_clustering(
+    fp_aligned = fp_aligned,
+    base_dir = base_dir,
+    ref_db = db,
+    motif_db = motif_db,
+    mode = "hybrid",
+    target_clusters = 165,
+    qc_mode = "fast",
+    save_motif_db = TRUE
+  )
 
+  omics_data <- load_multiomic_data(
+    fp_aligned = fp_aligned,
+    label_col = "Sample",
+    expected_n = expected_n,
+    tf_list = tf_list,
+    motif_db = motif_db,
+    threshold_gene_expr = threshold_gene_expr,
+    threshold_fp_score = threshold_fp_score,
+    use_parallel = TRUE,
+    verbose = verbose
+  )
 
-  fp_score_raw <- fp_aligned$fp_score
-  fp_aligned_normalized <- fp_aligned
-  fp_aligned_normalized$fp_score <- qn_footprints(fp_aligned_normalized$fp_score, id_col = "peak_ID")
-  readr::write_csv(fp_aligned_normalized$fp_score, file.path(base_dir, "predict_tf_binding_sites", sprintf("fp_scores_qn_%s.csv", db)))
-
-  fp_aligned_normalized_manifest <- save_footprints(fp_aligned_normalized, out_dir = file.path(base_dir, "cache", sprintf("fp_aligned_normalized_%s", db)))
-  readr::write_csv(fp_aligned_normalized_manifest, file.path(base_dir, "cache", sprintf("fp_aligned_normalized_manifest_%s.csv", db)))
-  fp_aligned_normalized_manifest <- readr::read_csv(file.path(base_dir, "cache", sprintf("fp_aligned_normalized_manifest_%s.csv", db)))
-
-  if (db == "jaspar2024") {
-    motif_db <- readr::read_tsv("inst/extdata/genome/JASPAR2024_mm.txt") |> dplyr::filter(!is.na(HGNC)) # mouse
-  } else if (db == "hocomocov13") {
-    motif_db <- readr::read_tsv("inst/extdata/genome/HOCOMOCOv13.txt")
+  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
+  write_grn_outputs(omics_data, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
+  plot_fp_norm_bound_qc(
+    omics_data = omics_data,
+    out_dir = step1_out_dir,
+    db = db,
+    threshold_fp_score = threshold_fp_score,
+    max_points = 100000L,
+    verbose = TRUE
+  )
+  plot_gene_expr_qc(
+    omics_data = omics_data,
+    out_dir = step1_out_dir,
+    db = db,
+    threshold_gene_expr = threshold_gene_expr,
+    verbose = TRUE
+  )
+  if (isTRUE(verbose)) {
+    .log_inform("Output: Collapsed raw footprint scores + merge QC PDF; normalized footprint matrices + QC PDF; gene expression flag matrix + QC PDF.")
   }
-
-  tf_list <- motif_db |>
-    tidyr::separate_rows(HGNC, sep = "::") |>
-    dplyr::filter(!is.na(HGNC), HGNC != "") |>
-    dplyr::distinct(HGNC) |>
-    dplyr::pull(HGNC)
-
-  # Load RNA data and ATAC data
-  atac_data <- readr::read_tsv(file.path(base_dir, "GSE192390_NIH3T3_ATAC.master_table.narrowpeaks.10mil.txt"))
-
-  atac_out <- load_atac(atac_data, sort_peaks = TRUE)
-  atac_score <- atac_out$score
-  atac_overlap <- atac_out$overlap
-
-  rna <- readr::read_tsv(file.path(base_dir, "GSE192389_Fibroblast_Normalized_Counts.tsv"))
-  rna <- clean_hgnc(rna) # clean "HGNC" column
-  # Filter rna expression genes/tfs needs to reach the threshold in at least 1 sample (group size)
-  rna <- filter_rna_expr(rna, tf_list, hgnc_col = "HGNC", gene_min = threshold_gene_expr, tf_min = threshold_tf_expr, min_samples = 1L)
-
-  # Build RNA and ATAC data list
-  rna_atac_build_args <- list(
-    atac_score    = atac_score,
-    atac_overlap  = atac_overlap,
-    rna           = rna,
-    metadata      = sample_metadata,
-    tf_list       = tf_list,
-    motif_db      = motif_db, # tibble
-    label_col     = "Sample",
-    expected_n    = 64
-  )
-
-  # ATAC peak and/or RNA expression based, footprint filtering
-  fp_aligned_normalized_filtered_manifest <- filter_footprints(
-    fp_manifest         = fp_aligned_normalized_manifest,
-    out_dir             = file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_%s", db)),
-    build_args          = rna_atac_build_args,
-    n_workers           = 10,
-    skip_existing       = TRUE,
-    tf_expr_filter      = FALSE,
-    verbose             = TRUE
-  )
-
-  readr::write_csv(fp_aligned_normalized_filtered_manifest, file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_manifest_%s.csv", db)))
-  fp_aligned_normalized_filtered_manifest <-  readr::read_csv(file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_manifest_%s.csv", db)))
 }
 
 
 # Step 1. Predict TF binding sites ----------------------------------------
-
 if (do_tf_binding_sites_prediction == TRUE) {
+  if (!exists("omics_data") || !is.list(omics_data)) {
+    .log_abort("`omics_data` not found. Run Step 0 before Step 1.")
+  }
 
-  # correlate with all TFBS
-  tfs <- tf_list[tf_list %in% unique(rna$HGNC)]
+  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
 
-  # Build a *named list* of TF expression vectors
-  tf_expr_list <- lapply(tfs, function(tf) {
-    rna |>
-      dplyr::filter(HGNC == tf) |>
-      dplyr::select(-ensembl_gene_id, -HGNC) |>
-      simplify2array()
-  })
-  names(tf_expr_list) <- tfs
-
-  progressr::handlers("progress", global = TRUE)
-
-  res_list <- tf_corr_footprints_all_tfbs_multi(
-    fp_manifest = fp_aligned_normalized_filtered_manifest,
-    tf_expr_list = tf_expr_list,
-    out_dir   = file.path(base_dir,
-                          "predict_tf_binding_sites",
-                          "binding_probability_overviews"),
-    motif_db  = motif_db,
-    cor_method = "pearson",
+  omics_data <- correlate_tf_to_fp(
+    omics_data = omics_data,
+    mode = "canonical",
+    out_dir = step1_out_dir,
+    label_col = "Sample",
+    r_thr = threshold_fp_tf_corr_r,
+    p_thr = threshold_fp_tf_corr_p,
+    db = db,
+    cores_pearson = 20L,
+    cores_spearman = 36L,
+    chunk_size = 5000L,
     min_non_na = 5L,
-    r_thr      = 0.30,
-    fdr_thr    = 0.05,
-    threads    = 4L,            # data.table threads per worker
-    write_bed  = FALSE,         # TRUE for *_all/_bound/_unbound.bed
-    n_workers  = 36L,            # number of TFs processed in parallel
-    set_plan   = TRUE,
-    verbose    = TRUE
+    qc = TRUE,
+    write_bed = FALSE
   )
-
-
-  qc_res <- tf_corr_qc(
-    overview_dir      = file.path(base_dir, "predict_tf_binding_sites", "binding_probability_overviews"),
-    qc_dir            = file.path(base_dir, "predict_tf_binding_sites", "binding_probability_overviews_qc"),
-    overall_plot      = TRUE,
-    per_tf_pdf        = FALSE,  # skip multi-page file
-    per_tf_individual = TRUE,   # keep per-TF PDFs
-    workers           = 36L
-  )
-
-
-  # option 2: correlate with canonical TFBS only
-  # TF expr to footprints
-  # fp_corr_manifest <- tf_corr_footprints(
-  #   fp_manifest = fp_aligned_normalized_filtered_manifest,
-  #   out_dir     = file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_corr_%s", db)),
-  #   build_args  = rna_atac_build_args,
-  #   n_workers   = 15,
-  #   cor_method  = "pearson",
-  #   min_non_na  = 5L
-  # )
-  #
-  #
-  # readr::write_csv(fp_corr_manifest, file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_corr_manifest_%s.csv", db)))
-  # fp_corr_manifest <- readr::read_csv(file.path(base_dir, "cache", sprintf("fp_aligned_normalized_filtered_corr_manifest_%s.csv", db)))
-
-  # tf_corr_qc(fp_corr_manifest)
-  # threshold_fp_tf_corr_p <- 0.3
-  # combined <- tf_corr_footprints_filter(fp_corr_manifest, p_thr = threshold_fp_tf_corr_p, r_thr = threshold_fp_tf_corr_r, output_bed = file.path(base_dir, sprintf("fp_predicted_tfbs_%s", db)))
-
-  # fp_score <- combined$fp_score
-  # fp_bound <- combined$fp_bound
-  # fp_annotation <- combined$fp_annotation
-
-  # readr::write_csv(fp_score, paste0("/data/homes/yl814/episcope_test/GSE87218_ATAC/fp_score_strict_tf_filtered_corr_", db, ".csv"))
-  # readr::write_csv(fp_bound, paste0("/data/homes/yl814/episcope_test/GSE87218_ATAC/fp_bound_strict_tf_filtered_corr_", db, ".csv"))
-  # readr::write_csv(fp_annotation, paste0("/data/homes/yl814/episcope_test/GSE87218_ATAC/fp_annotation_strict_tf_filtered_corr_", db, ".csv"))
-
-  # unique(fp_annotation$fp_peak)
-
-  # fp_score <- readr::read_csv(file.path(base_dir, sprintf("fp_score_strict_tf_filtered_corr_%s.csv", db)))
-  # fp_bound <- readr::read_csv(file.path(base_dir, sprintf("fp_bound_strict_tf_filtered_corr_%s.csv", db)))
-  # fp_annotation <- readr::read_csv(file.path(base_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s.csv", db)))
-
-
-  # grn_set
-  # grn_set <- build_grn_set(
-  #   fp_score      = fp_score,
-  #   fp_bound      = fp_bound,
-  #   fp_annotation = fp_annotation,
-  #   atac_score    = atac_score,
-  #   atac_overlap  = atac_overlap,
-  #   rna           = rna,
-  #   metadata      = sample_metadata,
-  #   tf_list       = tf_list,
-  #   motif_db      = motif_db,
-  #   label_col     = "Sample",
-  #   expected_n    = 13
-  # )
-  # grn_set <- filter_by_min_bound(grn_set, min_bound = 1L)
+  if (isTRUE(verbose)) {
+    .log_inform("Output: TF binding probability overviews, TF binding site counts, and correlation stats PDF.")
+  }
 }
 
-# (Optional correlate with all tfbs, not only canonical tfbs)
-# tf_vec <- strict_rna |> dplyr::filter(HGNC == "ZEB1") |> dplyr::select(-ensembl_gene_id, -HGNC) |> simplify2array()
-# res <- tf_corr_footprints_all_tfbs(
-#   fp_manifest = fp_aligned_normalized_filtered_manifest,
-#   tf_name  = "ZEB1",
-#   tf_expr  = tf_vec,
-#   out_dir  = "/data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction/predicted_all_tfbs"
-# )
-# res$files
 
-
-
+# Module 2: Connect TFs to Target Genes -----------------------------------
 # Step 2. Connect TF-occupied enhancers to target genes -------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
-  gene_annot_ref_hg38 <- episcope_build_gene_annot("hg38")
-  # gene_annot_ref_mm10 <- episcope_build_gene_annot("mm10")
+  if (isTRUE(verbose)) {
+    .log_inform("Module 2: Connect TFs to Target Genes.")
+  }
+  step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
+  dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
+  link_mode <- if (exists("tf_target_link_mode")) tf_target_link_mode else "genehancer"
+  link_mode <- match.arg(link_mode, c("genehancer", "window", "loops"))
+  if (isTRUE(verbose)) {
+    .log_inform("1.1 Link TF binding sites to candidate target genes using {link_mode} mappings.")
+  }
 
-  # atac_peak to target gene corr
+  gh_std <- NULL
+  atac_gene_pairs <- NULL
 
-  # GeneHancer based
-  # gh_std   <- load_genehancer_panc(file.path("inst","extdata","GeneHancer_v5.24_full.csv")) # GeneHancer_v5.24_elite_panc.csv
+  if (link_mode == "genehancer") {
+    gh_path <- if (exists("genehancer_path")) genehancer_path else file.path("inst", "extdata", "GeneHancer_v5.24_elite_panc.csv")
+    gh_std <- load_genehancer_panc(gh_path)
+  } else if (link_mode == "window") {
+    flank_bp <- if (exists("link_window_bp")) link_window_bp else 30000L
+    gene_annot_ref <- if (exists("gene_annot_ref")) gene_annot_ref else episcope::episcope_build_gene_annot(ref_genome)
+    id_col <- if (exists("link_gene_id_col")) link_gene_id_col else "HGNC"
+    gh_std <- episcope_make_windowed_gh(
+      peaks      = omics_data$atac_score,
+      genes      = unique(c(omics_data$rna$HGNC, omics_data$rna$ensembl_gene_id)),
+      flank_bp   = flank_bp,
+      mode       = "TSS",
+      gene_annot = gene_annot_ref,
+      id_col     = id_col
+    )
+  } else if (link_mode == "loops") {
+    loop_tbl <- if (exists("loop_tbl")) loop_tbl else NULL
+    if (is.null(loop_tbl) && exists("loop_path") && file.exists(loop_path)) {
+      loop_tbl <- if (grepl("\\.tsv$", loop_path)) {
+        readr::read_tsv(loop_path, show_col_types = FALSE)
+      } else {
+        readr::read_csv(loop_path, show_col_types = FALSE)
+      }
+    }
+    if (is.null(loop_tbl)) .log_abort("Loop mode requires `loop_tbl` or `loop_path`.")
 
-  # 30kb/25kb/20kb based
-  gh_std <- episcope_make_windowed_gh(
-    peaks      = grn_set$atac_score,
-    genes      = unique(c(grn_set$rna$HGNC, grn_set$rna$ensembl_gene_id)),
-    flank_bp   = 100000, # 100kb
-    mode       = "TSS",
-    gene_annot = gene_annot_ref_hg38,
-    id_col     = "HGNC" # or "ensembl_gene_id"
-  )
+    if (!"atac_peak" %in% names(loop_tbl)) {
+      if (all(c("chrom", "start", "end") %in% names(loop_tbl))) {
+        loop_tbl$atac_peak <- paste0(loop_tbl$chrom, ":", loop_tbl$start, "-", loop_tbl$end)
+      } else if ("peak_ID" %in% names(loop_tbl)) {
+        loop_tbl$atac_peak <- loop_tbl$peak_ID
+      }
+    }
+    gene_col <- intersect(c("gene_key", "connected_gene", "gene", "target_gene", "HGNC", "ensembl_gene_id"), names(loop_tbl))[1]
+    if (is.na(gene_col) || !"atac_peak" %in% names(loop_tbl)) {
+      .log_abort("Loop table must contain atac_peak and a gene column (gene_key/connected_gene/gene/target_gene/HGNC/ensembl_gene_id).")
+    }
+    atac_gene_pairs <- loop_tbl |>
+      dplyr::transmute(atac_peak = .data$atac_peak, gene_key = .data[[gene_col]]) |>
+      dplyr::distinct()
+  }
+
+  if (isTRUE(verbose)) {
+    .log_inform("1.3 Compute TF->gene and TFBS->gene correlations across conditions; filter links by configured thresholds.")
+  }
 
   options(future.globals.maxSize = 64 * 1024^3)
-
-  # Run atac gene correlations (adjusted p-value < 0.05, |r| >= 0.3)
-  threshold_atac_gene_corr_p <- 0.3
-  # atac_res <- correlate_atac_to_genes(grn_set = grn_set, gh_tbl = gh_std, gene_mode = "both", fdr = threshold_atac_gene_corr_p, r_abs_min = threshold_atac_gene_corr_abs_r)
-
-  # shrink to only correlated peaks
-  # grn_set_filtered <- filter_grn_by_corr(grn_set, atac_res$atac_gene_corr_kept)
-
-  # Run fp gene correlations (adjusted p-value < 0.05, |r| >= 0.3)
-  threshold_fp_gene_corr_p <- 0.3
-  # fp_res <- correlate_fp_to_genes(
-  #   grn_set              = grn_set_filtered,
-  #   atac_gene_corr_kept  = atac_res$atac_gene_corr_kept,
-  #   fdr                  = threshold_fp_gene_corr_p,
-  #   r_abs_min            = threshold_fp_gene_corr_abs_r,
-  #   workers              = 15
-  # )
-
-
-  atac_res <- correlate_atac_to_genes(
-    grn_set  = grn_set,
-    gh_tbl   = gh_std,
-    gene_mode = "both",
-    fdr       = threshold_atac_gene_corr_p,
-    r_abs_min = threshold_atac_gene_corr_abs_r,
-    cache_dir = "/data/homes/yl814/episcope_cache/atac_gene_corr",
-    cache_tag = "GSE87218_100kb",
-    workers   = 15,
-    cache_verbose = TRUE
-  )
-  fp_res <- correlate_fp_to_genes(
-    grn_set             = grn_set,
-    atac_gene_corr_kept = atac_res$atac_gene_corr_full,
-    fdr                 = threshold_fp_gene_corr_p,
-    r_abs_min           = threshold_fp_gene_corr_abs_r,
-    method              = "pearson",
-    workers             = 20,
-    cache_dir           = "/data/homes/yl814/episcope_cache/fp_gene_corr",
-    cache_tag           = "GSE87218_100kb",
-    cache_chunk_size    = 5000L,
-    cache_verbose       = TRUE
+  fp_res_full_pearson <- correlate_fp_to_genes(
+    grn_set          = omics_data,
+    atac_gene_corr_kept = atac_gene_pairs,
+    gh_tbl           = gh_std,
+    gene_mode        = "both",
+    fp_score_tbl     = omics_data$fp_score_condition_qn,
+    rna_tbl          = omics_data$rna_condition,
+    fdr              = threshold_fp_gene_corr_p,
+    r_abs_min        = threshold_fp_gene_corr_abs_r,
+    method           = "pearson",
+    workers          = 20,
+    cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
+    cache_tag        = paste0("fibroblast_", link_mode, "_pearson"),
+    cache_chunk_size = 5000L,
+    cache_verbose    = TRUE
   )
 
-  fp_res <- correlate_rna_tf_to_genes(
-    grn_set             = grn_set,
-    atac_gene_corr_kept = atac_res$atac_gene_corr_full,
-    fdr                 = threshold_fp_gene_corr_p,
-    r_abs_min           = threshold_fp_gene_corr_abs_r,
-    method              = "pearson",
-    workers             = 20,
-    cache_dir           = "/data/homes/yl814/episcope_cache/rna_tf_to_gene_corr",
-    cache_tag           = "GSE87218_100kb",
-    cache_chunk_size    = 5000L,
-    cache_verbose       = TRUE
+  fp_res_full_spearman <- correlate_fp_to_genes(
+    grn_set          = omics_data,
+    atac_gene_corr_kept = atac_gene_pairs,
+    gh_tbl           = gh_std,
+    gene_mode        = "both",
+    fp_score_tbl     = omics_data$fp_score_condition_qn,
+    rna_tbl          = omics_data$rna_condition,
+    fdr              = threshold_fp_gene_corr_p,
+    r_abs_min        = threshold_fp_gene_corr_abs_r,
+    method           = "spearman",
+    workers          = 30,
+    cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
+    cache_tag        = paste0("fibroblast_", link_mode, "_spearman"),
+    cache_chunk_size = 5000L,
+    cache_verbose    = TRUE
   )
 
-  fp_res <- compute_lmm_tf_to_genes(
-    grn_set             = grn_set,
-    atac_gene_corr_kept = atac_res$atac_gene_corr_full,
-    fdr                 = threshold_fp_gene_corr_p,
-    r_abs_min           = threshold_fp_gene_corr_abs_r,
-    method              = "pearson",
-    workers             = 20,
-    cache_dir           = "/data/homes/yl814/episcope_cache/lmm_tf_to_gene",
-    cache_tag           = "GSE87218_100kb",
-    cache_chunk_size    = 5000L,
-    cache_verbose       = TRUE
-  )
-  readr::write_csv(atac_res$atac_gene_corr_full, file.path(base_dir, sprintf("atac_gene_corr_full_100kb_%s.csv", db)))
-  readr::write_csv(fp_res$fp_gene_corr_full, file.path(base_dir, sprintf("fp_gene_corr_full_100kb_%s.csv", db)))
-}
-
-
-if (FALSE) {
-  # match_mode <- "strict"  # strict lenient
-  regulated_genes <- 1.5 # 1.5 2
-  delta_link <- 1 # 2 1
-  regulation_priors <- "300kb" # "genehancer"
-  lighting_folder <- file.path(base_dir, paste("lighting", "fp_tf_corr_FDR", threshold_fp_tf_corr_p, regulation_priors, db, "regulated_genes", regulated_genes, "delta_link", delta_link, sep = "_"))
-  print(lighting_folder)
-
-
-  # Step 3. Build basal GRN & identify active regulatory edges per c --------
-  # basal
-  basal <- make_basal_links(
-    fp_gene_corr_kept = fp_res$fp_gene_corr_kept,
-    fp_annotation     = grn_set$fp_annotation,
-    out_dir           = lighting_folder,
-    prefix            = "lighting"
+  fp_gene_corr_pearson_filt <- filter_fp_gene_corr_by_tf_annotation(
+    fp_gene_corr_full = fp_res_full_pearson$fp_gene_corr_full,
+    fp_annotation = omics_data$fp_annotation,
+    r_thr = threshold_fp_gene_corr_abs_r,
+    p_adj_thr = threshold_fp_gene_corr_p
   )
 
+  fp_gene_corr_spearman_filt <- filter_fp_gene_corr_by_tf_annotation(
+    fp_gene_corr_full = fp_res_full_spearman$fp_gene_corr_full,
+    fp_annotation = omics_data$fp_annotation,
+    r_thr = threshold_fp_gene_corr_abs_r,
+    p_adj_thr = threshold_fp_gene_corr_p
+  )
+
+  fp_links_combined <- combine_fp_gene_corr_methods(
+    fp_pearson  = fp_gene_corr_pearson_filt,
+    fp_spearman = fp_gene_corr_spearman_filt,
+    rna_tbl     = omics_data$rna_condition,
+    rna_method  = "pearson",
+    rna_cores   = 20
+  )
+
+  fp_links_filtered <- filter_links_by_fp_rna_criteria(
+    fp_links_combined,
+    fp_p_adj_thr = threshold_fp_gene_corr_p,
+    fp_r_thr = threshold_fp_gene_corr_abs_r,
+    require_pos_rna = TRUE
+  )
+
+  fp_score_thr <- if (exists("fp_score_threshold")) fp_score_threshold else threshold_fp_score
+  atac_score_thr <- if (exists("atac_score_threshold")) atac_score_threshold else 0
+  require_atac_score <- isTRUE(atac_score_thr > 0)
+
+  status_res <- build_link_status_matrix(
+    links = fp_links_filtered$links,
+    fp_bound = omics_data$fp_bound_condition,
+    rna_expressed = omics_data$rna_expressed,
+    tf_col = "TF",
+    gene_col = "gene_key",
+    peak_col = "peak_ID",
+    out_file = file.path(step2_out_dir, sprintf("tf_gene_link_status_matrix_%s.csv", db)),
+    chunk_size = 50000L,
+    return_keep = TRUE,
+    filter_any = TRUE,
+    verbose = TRUE,
+    fp_score_tbl = omics_data$fp_score_condition_qn,
+    fp_score_threshold = fp_score_thr,
+    atac_score_tbl = omics_data$atac_score,
+    atac_score_threshold = atac_score_thr,
+    require_fp_bound = TRUE,
+    require_gene_expr = TRUE,
+    require_fp_score = TRUE,
+    require_atac_score = require_atac_score,
+    return_tbl = TRUE
+  )
+
+  fp_links_kept <- fp_links_filtered$links[status_res$keep, , drop = FALSE]
+  readr::write_csv(fp_links_kept, file.path(step2_out_dir, sprintf("tf_gene_links_filtered_%s.csv", db)))
+
+  build_tf_target_overview(
+    links = fp_links_kept,
+    link_status = status_res$status_tbl,
+    out_file = file.path(step2_out_dir, sprintf("tf_target_link_overview_%s.csv", db)),
+    verbose = TRUE
+  )
+
+  link_summary <- summarize_link_activity(
+    link_status = status_res$status_tbl,
+    out_dir = step2_out_dir,
+    db = db,
+    prefix = "step2",
+    verbose = TRUE
+  )
+  plot_link_activity_qc(
+    summary_total = link_summary$summary_total,
+    out_dir = step2_out_dir,
+    db = db,
+    prefix = "step2",
+    verbose = TRUE
+  )
+
+  fp_gene_corr_use <- fp_res_full_pearson$fp_gene_corr_full |>
+    dplyr::semi_join(
+      fp_links_kept |> dplyr::select(peak_ID, gene_key),
+      by = c("fp_peak" = "peak_ID", "gene_key" = "gene_key")
+    )
+
+  if (is.null(omics_data$fp_variance) || is.null(omics_data$rna_variance)) {
+    hv_variance <- precompute_hvf_hvg_variance(omics_data, cores = 20, chunk_size = 50000L)
+    omics_data$fp_variance <- hv_variance$fp_variance
+    omics_data$rna_variance <- hv_variance$rna_variance
+  }
+
+  basal_links_step2 <- make_basal_links(
+    fp_gene_corr_kept = fp_gene_corr_use,
+    fp_annotation     = omics_data$fp_annotation,
+    out_dir           = file.path(step2_out_dir, "basal_links_tmp"),
+    prefix            = "step2",
+    rna_tbl           = omics_data$rna_condition,
+    rna_method        = "pearson",
+    rna_cores         = 20,
+    fp_variance       = omics_data$fp_variance,
+    rna_variance      = omics_data$rna_variance
+  )
+
+  omics_data_cond <- prepare_grn_set_for_light_by_condition(
+    omics_data,
+    label_col = "Sample"
+  )
 
   light_by_condition(
-    ds = grn_set,
-    basal_links = basal,
-    out_dir = lighting_folder,
-    prefix = "lighting",
+    ds = omics_data_cond,
+    basal_links = basal_links_step2,
+    out_dir = step2_out_dir,
+    prefix = "step2",
     label_col = "Sample",
     link_score_threshold = link_score_threshold,
-    fp_score_threshold = fp_score_threshold,
+    fp_score_threshold = fp_score_thr,
     tf_expr_threshold = threshold_tf_expr,
+    fp_bound_tbl = omics_data$fp_bound_condition,
+    rna_expressed_tbl = omics_data$rna_expressed,
+    atac_score_tbl = omics_data$atac_score,
+    atac_score_threshold = atac_score_thr,
+    require_atac_score = require_atac_score,
+    fp_annotation_tbl = omics_data$fp_annotation,
+    require_fp_bound = TRUE,
+    require_gene_expr = TRUE,
+    gene_expr_threshold = 1L,
+    filter_active = FALSE,
     use_parallel = TRUE,
-    workers = 4
+    workers = 8,
+    fp_variance_tbl = omics_data$fp_variance,
+    rna_variance_tbl = omics_data$rna_variance
   )
 
-  # Step 4. Perform differential GRN analysis & identify master TFs ---------
-
-  specs <- build_cellwise_contrasts_from_index(
-    index_csv = file.path(lighting_folder, "lighting_per_condition_index.csv"),
-    out_dir = lighting_folder,
-    prefix = "lighting",
-    ctrl_tag = "Ctrl",
-    clean_names = FALSE
-  )
-  str(specs)
-
-
-  # Adding comparisons vs. culture:
-  # --- Add treatment-vs-culture matched-time contrasts -------------------------
-
-  # map the time token in names like "BG_1h_post" -> target culture name
-  time_to_culture <- c(
-    "1h_post"        = "culture_1h_post",
-    "4h_post"        = "culture_4h_post",
-    "24h_post"       = "culture_24h_post",
-    "24h_culture_5d" = "culture_6d"
-  )
-
-  # lookup: condition name -> its per-condition source path (from existing specs)
-  src_lookup <- setNames(specs$cond1_source, specs$cond1_name)
-
-  # base output folder (reuse what specs already uses)
-  out_base <- dirname(specs$out_file[1])
-
-  # pick treatments that need culture controls
-  treat_rows <- specs[grepl("^(BG|LPS)_", specs$cond1_name) & specs$cond2_name == "Ctrl", , drop = FALSE]
-
-  # derive the matched culture name for each treatment
-  time_token <- sub("^[^_]+_", "", treat_rows$cond1_name) # e.g., "1h_post", "24h_culture_5d"
-  matched_culture <- unname(time_to_culture[time_token])
-
-  # keep only rows that have a valid mapping and available culture sources
-  ok <- !is.na(matched_culture) & matched_culture %in% names(src_lookup) & treat_rows$cond1_name %in% names(src_lookup)
-
-  new_specs <- tibble::tibble(
-    cond1_label  = treat_rows$cond1_label[ok],
-    cond2_label  = matched_culture[ok],
-    cond1_source = unname(src_lookup[treat_rows$cond1_name[ok]]),
-    cond2_source = unname(src_lookup[matched_culture[ok]]),
-    cond1_name   = treat_rows$cond1_name[ok],
-    cond2_name   = matched_culture[ok],
-    out_file     = file.path(out_base, paste0(treat_rows$cond1_name[ok], "_vs_", matched_culture[ok], "_delta_links.csv"))
-  )
-
-  # append, de-duplicate if needed
-  specs2 <- rbind(specs, new_specs)
-  specs2 <- specs2[!duplicated(specs2[, c("cond1_name", "cond2_name")]), , drop = FALSE]
-
-  specs <- specs2
-  rm(specs2, new_specs, treat_rows, time_token, matched_culture, ok, src_lookup, out_base, time_to_culture)
-
-  # quick check
-  specs[, c("cond1_name", "cond2_name", "out_file")]
-
-
-  # run_links_deltas_driver(
-  #   out_dir = lighting_folder,
-  #   prefix  = "lighting",
-  #   index_csv = file.path(lighting_folder, "lighting_per_condition_index.csv"),
-  #   ctrl_tag = "Ctrl",
-  #   clean_names = FALSE,
-  #   parallel = TRUE
-  # )
-
-  run_links_deltas_driver(
-    specs       = specs,
-    clean_names = FALSE,
-    parallel    = TRUE
-  )
-
-  delta_csvs <- list.files(lighting_folder, "_delta_links.csv", full.names = TRUE)
-  de_gene_log2_abs_min <- if (regulated_genes == 1.5) 0.585 else if (regulated_genes == 2) 1 else NA_real_
-
-  bulk <- episcope::filter_links_deltas_bulk(
-    delta_csvs,
-    gene_expr_min = threshold_gene_expr,
-    tf_expr_min = threshold_tf_expr,
-    fp_min = threshold_fp_score,
-    link_min = threshold_link_score,
-    abs_delta_min = delta_link,
-    apply_de_gene = TRUE,
-    de_gene_log2_abs_min = de_gene_log2_abs_min,
-    enforce_link_expr_sign = TRUE,
-    expr_dir_col = "log2FC_gene_expr",
-    workers = 20
-  )
-
-  bulk$filtered_paths
-  bulk$filtered_dirs
-  bulk$manifest_path
-
-  # LDA across all filtered CSVs produced above
-  filtered_csvs <- bulk$filtered_paths
-
-  lda_out <- episcope::annotate_links_with_lda_topic_bulk(
-    filtered_csvs,
-    K = 20, # topics
-    which = "abs", # |delta_link_score|
-    min_df = 2, # drop ultra-rare terms
-    gamma_cutoff = 0.2, # keep all topics with gamma >= 0.2 per TF
-    parallel = TRUE, workers = 20, plan = "multisession", seed = 1
-  )
-
-  lda_out$assigned_paths # vector of "*_filtered_lda_K20.csv"
-  lda_out$assigned_dirs # unique directories
-  lda_out$manifest_path # CSV mapping filtered -> annotated
-
-  # Summarize all annotated CSVs produced by LDA
-  annotated_csvs <- lda_out$assigned_paths
-
-  sum_out <- episcope::summarize_lda_annotations_bulk(
-    annotated_csvs,
-    edge_filter_min = delta_link, # keep edges used to call delta links
-    parallel = TRUE, plan = "multisession", workers = 20,
-    use_tf_r_weight = TRUE # optional: weight deltas by TF r column if present
-  )
-
-  sum_out$summary_paths # "*_filtered_lda_K20_summary.csv"
-  sum_out$summary_dirs
-  sum_out$manifest_path
-
-
-  # Using outputs from summarize_lda_annotations_bulk():
-  summary_csvs <- sum_out$summary_paths
-
-  # Generate all bubble & hub PDFs (overall / activate / repress + no-cancel variants)
-  episcope::plot_from_summary_bulk(
-    summary_csvs,
-    top_tf_per_topic = 20,
-    parallel = TRUE,
-    workers = 20,
-    plan = "multisession",
-    color_sigma = 2
-  )
-
-
-  # TODO TF HITS score summary plot (waterfall)
-
-  # Step 5. Generate interactive Topic & TF regulatory hub subnetwork
-  # ---- Step 5A. Single Δ-topic from a known pair ----
-
-  comp_csv <- file.path(lighting_folder, "AsPC1_10_Gln.Arg_vs_AsPC1_10_FBS_delta_links_filtered_lda_K20.csv")
-  summary_csv <- file.path(lighting_folder, "AsPC1_10_Gln.Arg_vs_AsPC1_10_FBS_delta_links_filtered_lda_K20_summary.csv")
-
-  # Render Topic 7 with visual rules (Δ = stress − control)
-  episcope::render_link_network_delta_topic_simple(
-    comp_csv = comp_csv,
-    summary_csv = summary_csv,
-    topic_id = 7,
-    edge_filter_min = 1,
-    gene_fc_thresh = 1.5,
-    de_reference = "str_over_ctrl",
-    top_n_tfs_per_topic = 20,
-    out_html = file.path(
-      dirname(comp_csv),
-      sprintf(
-        "%s_topic-%d_subnetwork_delta.html",
-        tools::file_path_sans_ext(basename(comp_csv)), 7
-      )
-    ),
+  extract_link_info_by_condition(
+    out_dir = step2_out_dir,
+    prefix = "step2",
+    read_tables = FALSE,
     verbose = TRUE
   )
-
-
-  # ---- Step 5B. Bulk Δ-topic across many summaries (auto-pairs) ----
-  summary_csvs <- list.files(
-    lighting_folder,
-    pattern = "_filtered_lda_K20_summary\\.csv$",
-    full.names = TRUE
-  )
-
-  for (sum_path in summary_csvs) {
-    # Try to find the matching annotated comparison file
-    cand1 <- sub("_summary\\.csv$", ".csv", sum_path)
-    cand2 <- sub("_filtered_lda_K\\d+_summary\\.csv$", "_delta_links.csv", sum_path)
-    comp_csv <- if (file.exists(cand1)) cand1 else if (file.exists(cand2)) cand2 else NA_character_
-    if (!isTRUE(file.exists(comp_csv))) {
-      cli::cli_inform("Skip (no comp CSV found for): {sum_path}")
-      next
-    }
-
-    S <- readr::read_csv(sum_path, show_col_types = FALSE)
-    topic_col <- if ("topic" %in% names(S)) "topic" else if ("main_topic" %in% names(S)) "main_topic" else NA_character_
-    if (!isTRUE(topic_col %in% names(S))) next
-    if ("topic_rank" %in% names(S)) S <- S[order(S$topic_rank), , drop = FALSE]
-    topics <- head(unique(as.integer(S[[topic_col]])), 20)
-
-    for (t in topics) {
-      episcope::render_link_network_delta_topic_simple(
-        comp_csv = comp_csv,
-        summary_csv = sum_path,
-        topic_id = t,
-        edge_filter_min = 1,
-        gene_fc_thresh = 1.5,
-        de_reference = "str_over_ctrl",
-        top_n_tfs_per_topic = 20,
-        out_html = NULL,
-        verbose = TRUE
-      )
-    }
-  }
-
-  # 5C TF centric plots
-  render_tf_hub_delta_network(
-    comp_csv = file.path(
-      lighting_folder,
-      "BG_24h_culture_5d_vs_culture_6d_delta_links_filtered_lda_K20.csv"
-    ),
-    input_tf = "TBX21",
-    edge_filter_min = 1,
-    edge_filter_on = "either",
-    gene_fc_thresh = 1.5,
-    de_reference = "str_over_ctrl",
-    # ring_tf_direct_only = TRUE,   # only direct TFs form the ring
-    motif_db = "jaspar2024",
-    verbose = TRUE
-  )
-
-  comp_csvs <- list.files(lighting_folder, pattern = "_delta_links_filtered_lda_K20\\.csv$", full.names = TRUE)
-  tf_list <- c(
-    "TBX21", "TCF3", "ZNF610", "SOX4", "ZNF85", "SP4", "REL", "MTF1", "STAT4", "JUNB",
-    "MITF", "IRF1", "IRF8", "NRF1", "NFKB1", "NFKB2", "USF2", "STAT2", "STAT5A", "EGR2", "KLF6"
-  )
-
-  for (f in comp_csvs) {
-    for (tf in tf_list) {
-      res <- try(
-        {
-          render_tf_hub_delta_network(
-            comp_csv = f,
-            input_tf = tf,
-            edge_filter_min = 1,
-            edge_filter_on = "either",
-            gene_fc_thresh = 1.5,
-            de_reference = "str_over_ctrl",
-            motif_db = "jaspar2024",
-            verbose = TRUE
-          )
-          TRUE
-        },
-        silent = TRUE
-      )
-    }
-  }
-
 }
-
-
-
-
-
-

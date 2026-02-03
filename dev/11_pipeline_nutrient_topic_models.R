@@ -2,7 +2,7 @@ library(enrichR)
 library(episcope)
 
 base_dir <- "/data/homes/yl814/episcope_test/nutrient_stress"
-utils_path <- file.path("R", "utils_grn_topic_tf_docs_warplda.R")
+utils_path <- file.path("R", "utils_step3_topic_warplda.R")
 if (!file.exists(utils_path)) cli::cli_abort("Missing utils file: {utils_path}")
 utils_path <- normalizePath(utils_path, winslash = "/", mustWork = TRUE)
 source(utils_path)
@@ -16,8 +16,14 @@ topic_root <- file.path(base_dir, "benchmark_topic_vae_model_5_rna_fp_combined")
 K_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
 
 motif_path <- resolve_motif_db_path("JASPAR2024", ref_genome = ref_genome)
-motif_path <- "inst/extdata/genome/JASPAR2024.txt"  # for now
-motif_info <- build_tf_cluster_map_from_motif(motif_path)
+motif_path <- "inst/extdata/genome/JASPAR2024.txt"  # fallback only
+# Prefer JASPAR auto-CTF db with sub_cluster info if available
+motif_db_jaspar_auto <- file.path(base_dir, "tf_motif_clustering", "motif_db_JASPAR2024_data_K220.csv")
+if (file.exists(motif_db_jaspar_auto)) {
+  motif_info <- build_tf_cluster_map_from_motif(motif_db_jaspar_auto)
+} else {
+  motif_info <- build_tf_cluster_map_from_motif(motif_path)
+}
 tf_cluster_map <- motif_info$tf_cluster_map
 tf_exclude <- motif_info$tf_exclude
 
@@ -285,6 +291,7 @@ if (run_custom) {
 
 run_mira_vae <- FALSE
 run_mira_vae_extra_only <- TRUE
+run_mira_vae_auto_ctf_hpa_only <- TRUE
 if (isTRUE(run_mira_vae_extra_only)) {
   run_mira_vae <- TRUE
 }
@@ -335,6 +342,32 @@ if (run_mira_vae) {
       )
     )
   )
+
+  auto_ctf_data_path <- file.path(base_dir, "tf_motif_clustering", "motif_db_JASPAR2024_data_K220.csv")
+  auto_ctf_hybrid_path <- file.path(base_dir, "tf_motif_clustering", "motif_db_JASPAR2024_hybrid_K165.csv")
+  auto_ctf_data_map <- NULL
+  auto_ctf_hybrid_map <- NULL
+  if (file.exists(auto_ctf_data_path)) {
+    auto_ctf_data_map <- build_tf_cluster_map_from_motif(auto_ctf_data_path)$tf_cluster_map
+  } else {
+    cli::cli_inform("auto_ctf_data file not found: {auto_ctf_data_path}")
+  }
+  if (file.exists(auto_ctf_hybrid_path)) {
+    auto_ctf_hybrid_map <- build_tf_cluster_map_from_motif(auto_ctf_hybrid_path)$tf_cluster_map
+  } else {
+    cli::cli_inform("auto_ctf_hybrid file not found: {auto_ctf_hybrid_path}")
+  }
+
+  if (isTRUE(run_mira_vae_auto_ctf_hpa_only)) {
+    vae_variants <- c("multivi_encoder")
+    vae_run_extra_k_only <- TRUE
+    vae_extra_k_map <- list(
+      HPAFII = list(
+        auto_ctf_data = list(multivi_encoder = c(12L)),
+        auto_ctf_hybrid = list(multivi_encoder = c(12L))
+      )
+    )
+  }
 
   # Link -> topic membership (baseline + optional hard confirmation gate)
   vae_link_topic_scores <- TRUE
@@ -519,6 +552,19 @@ if (run_mira_vae) {
       list(tag = "tf", doc_mode = "tf", tf_cluster_map = NULL),
       list(tag = "ctf", doc_mode = "tf_cluster", tf_cluster_map = tf_cluster_map)
     )
+    if (!is.null(auto_ctf_data_map)) {
+      doc_modes <- append(doc_modes, list(
+        list(tag = "auto_ctf_data", doc_mode = "tf_cluster", tf_cluster_map = auto_ctf_data_map)
+      ))
+    }
+    if (!is.null(auto_ctf_hybrid_map)) {
+      doc_modes <- append(doc_modes, list(
+        list(tag = "auto_ctf_hybrid", doc_mode = "tf_cluster", tf_cluster_map = auto_ctf_hybrid_map)
+      ))
+    }
+    if (isTRUE(run_mira_vae_auto_ctf_hpa_only)) {
+      doc_modes <- Filter(function(x) x$tag %in% c("auto_ctf_data", "auto_ctf_hybrid"), doc_modes)
+    }
 
     for (mode in doc_modes) {
       edges_docs_joint <- add_tf_docs(
@@ -611,11 +657,15 @@ if (run_mira_vae) {
   }
   }
 
-  mc_cores <- min(20L, length(celllines))
+  vae_cells <- celllines
+  if (isTRUE(run_mira_vae_auto_ctf_hpa_only)) {
+    vae_cells <- "HPAFII"
+  }
+  mc_cores <- min(20L, length(vae_cells))
   if (.Platform$OS.type == "windows" || mc_cores < 2L) {
-    lapply(celllines, run_vae_cell)
+    lapply(vae_cells, run_vae_cell)
   } else {
-    parallel::mclapply(celllines, run_vae_cell, mc.cores = mc_cores)
+    parallel::mclapply(vae_cells, run_vae_cell, mc.cores = mc_cores)
   }
 }
 
@@ -877,7 +927,7 @@ if (run_vae_topic_delta_network_plots) {
       target_model_dirs <- vae_target_model_dirs_override
     } else {
       target_model_dirs <- list.dirs(vae_root, recursive = FALSE, full.names = TRUE)
-      target_model_dirs <- target_model_dirs[grepl("_ctf_docs_", basename(target_model_dirs))]
+      target_model_dirs <- target_model_dirs[grepl("(_ctf_docs_|_auto_ctf_)", basename(target_model_dirs))]
     }
     target_model_dirs <- sort(target_model_dirs)
     if (!length(target_model_dirs)) {
@@ -1160,7 +1210,7 @@ if (run_vae_topic_delta_network_pathway) {
       target_model_dirs <- vae_target_model_dirs_override
     } else {
       target_model_dirs <- list.dirs(vae_root, recursive = FALSE, full.names = TRUE)
-      target_model_dirs <- target_model_dirs[grepl("_ctf_docs_", basename(target_model_dirs))]
+      target_model_dirs <- target_model_dirs[grepl("(_ctf_docs_|_auto_ctf_)", basename(target_model_dirs))]
     }
     target_model_dirs <- sort(target_model_dirs)
     if (!length(target_model_dirs)) {

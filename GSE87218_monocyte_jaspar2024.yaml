@@ -1,0 +1,43 @@
+# TFBS DB
+db: JASPAR2024
+ref_genome: hg38
+
+# Basal network thresholds
+threshold_tf_expr: 10
+threshold_gene_expr: 4
+threshold_fp_score: 2
+threshold_link_score: 2
+atac_score_threshold: 0
+
+threshold_fp_tf_corr_p: 0.3
+threshold_fp_tf_corr_r: 0.3          # positive only
+threshold_fp_gene_corr_p: 0.3
+threshold_fp_gene_corr_abs_r: 0.3    # positive & negative
+threshold_rna_gene_corr_p: 0.05
+threshold_rna_gene_corr_abs_r: 0.3    # positive
+
+threshold_atac_gene_corr_p: 0.3
+threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
+
+# Lighting filters
+link_score_threshold: 0.001
+fp_score_threshold: 0.001
+
+# Module 2 linking mode (genehancer | window | loops)
+tf_target_link_mode: window
+link_window_bp: 30000
+link_gene_id_col: HGNC
+# genehancer_path: /data/homes/yl814/package/episcope/inst/extdata/GeneHancer_v5.24_elite_panc.csv
+# loop_path: /path/to/loops.tsv
+
+# Preprocessed inputs
+sample_metadata: /data/homes/yl814/episcope_test/GSE87218_Monocyte_JASPAR2024/data/sample_metadata.csv
+atac_master: /data/homes/yl814/episcope_test/GSE87218_Monocyte_JASPAR2024/data/atac_master.csv
+rna_mapped: /data/homes/yl814/episcope_test/GSE87218_Monocyte_JASPAR2024/data/rna_mapped.csv
+
+# Pipeline paths
+base_dir: /data/homes/yl814/episcope_test/GSE87218_Monocyte_JASPAR2024
+fp_root_dir: /data/homes/yl814/fptools_test/GSE87218_ATAC
+force_rebuild_fp_manifest: true
+
+expected_n: 13

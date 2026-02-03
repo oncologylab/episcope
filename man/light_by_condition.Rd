@@ -15,6 +15,10 @@ light_by_condition(
   tf_expr_threshold = 10,
   fp_bound_tbl = NULL,
   rna_expressed_tbl = NULL,
+  atac_score_tbl = NULL,
+  atac_score_threshold = 0,
+  require_atac_score = FALSE,
+  fp_annotation_tbl = NULL,
   require_fp_bound = FALSE,
   require_gene_expr = FALSE,
   gene_expr_threshold = 1L,
@@ -49,6 +53,14 @@ c("strict_match_rna","cell_stress_type") for backward-compatibility.}
 \item{fp_bound_tbl}{Optional fp_bound matrix (peak_ID + condition columns; 0/1).}
 
 \item{rna_expressed_tbl}{Optional gene expression flag matrix (HGNC/ensembl + condition columns; 0/1).}
+
+\item{atac_score_tbl}{Optional ATAC score table (atac_peak + condition columns).}
+
+\item{atac_score_threshold}{Numeric threshold on atac_score.}
+
+\item{require_atac_score}{If TRUE, require atac_score >= atac_score_threshold.}
+
+\item{fp_annotation_tbl}{Optional fp_annotation table to map peak_ID -> atac_peak.}
 
 \item{require_fp_bound}{If TRUE, require fp_bound > 0 to mark links active.}
 

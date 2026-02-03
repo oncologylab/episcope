@@ -26,16 +26,11 @@ load_config("pdac_nutrient_stress_jaspar2024.yaml")
 do_load_footprints_preprocess    <- TRUE
 do_tf_binding_sites_prediction   <- TRUE
 do_tf_to_target_genes_prediction <- TRUE
-verbose <- TRUE
 
 
 # Module 1: Predict TF binding sites --------------------------------------
 # Step 0. Load footprint data and preprocess ------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  if (isTRUE(verbose)) {
-    .log_inform("Module 1: Predict TF binding sites.")
-    .log_inform("2.1 Collapse overlapping/redundant TF motif footprints into non-redundant, merged footprints and assign TF motifs to consensus motif clusters.")
-  }
   # Inputs (from YAML): fp_root_dir, base_dir, db, ref_genome, thresholds, etc.
   fp_cache_dir <- file.path(base_dir, "cache")
   fp_manifest <- load_footprints(
@@ -70,7 +65,7 @@ if (do_load_footprints_preprocess == TRUE) {
   length(unique(fp_aligned$id_map$peak_ID))
   length(unique(fp_aligned$id_map$fp_peak_bak))
 
-  # Load inputs needed to build omics_data.
+  # Load inputs needed to build grn_set.
   sample_metadata <- readxl::read_excel(file.path(base_dir, "sample_metadata.xlsx"), na = "NA")
   strict_metadata <- sample_metadata |> dplyr::filter(!is.na(strict_match_rna))
   lenient_metadata <- sample_metadata |> dplyr::filter(run_grn)
@@ -106,7 +101,7 @@ if (do_load_footprints_preprocess == TRUE) {
   lenient_rna <- lenient_rna |> `names<-`(nm) |> dplyr::as_tibble()
 
   # Build combined multi-omic data object
-  omics_data <- load_multiomic_data(
+  grn_set <- load_multiomic_data(
     fp_aligned = fp_aligned,
     atac_data = atac_data,
     rna_tbl = strict_rna,
@@ -117,13 +112,12 @@ if (do_load_footprints_preprocess == TRUE) {
     motif_db = motif_db,
     threshold_gene_expr = threshold_gene_expr,
     threshold_fp_score = threshold_fp_score,
-    use_parallel = TRUE,
-    verbose = verbose
+    use_parallel = TRUE
   )
 
 
 
-  # omics_data <- build_grn_set(
+  # grn_set <- build_grn_set(
   #   fp_score      = fp_aligned$fp_score,
   #   fp_bound      = fp_aligned$fp_bound,
   #   fp_annotation = fp_aligned$fp_annotation,
@@ -138,9 +132,9 @@ if (do_load_footprints_preprocess == TRUE) {
   # )
 
   step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-  write_grn_outputs(omics_data, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
+  write_grn_outputs(grn_set, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
   plot_fp_norm_bound_qc(
-    omics_data = omics_data,
+    grn_set = grn_set,
     out_dir = step1_out_dir,
     db = db,
     threshold_fp_score = threshold_fp_score,
@@ -148,30 +142,27 @@ if (do_load_footprints_preprocess == TRUE) {
     verbose = TRUE
   )
   plot_gene_expr_qc(
-    omics_data = omics_data,
+    grn_set = grn_set,
     out_dir = step1_out_dir,
     db = db,
     threshold_gene_expr = threshold_gene_expr,
     verbose = TRUE
   )
-  if (isTRUE(verbose)) {
-    .log_inform("Output: Collapsed raw footprint scores + merge QC PDF; normalized footprint matrices + QC PDF; gene expression flag matrix + QC PDF.")
-  }
 
 }
 
 
 # Step 1. Predict TF binding sites ----------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
-  if (!exists("omics_data") || !is.list(omics_data)) {
-    .log_abort("`omics_data` not found. Run Step 0 before Step 1.")
+  if (!exists("grn_set") || !is.list(grn_set)) {
+    .log_abort("`grn_set` not found. Run Step 0 before Step 1.")
   }
 
   # 2.5 Correlate TF expression vs footprint scores (canonical + all modes)
   step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
 
-  omics_data <- correlate_tf_to_fp(
-    omics_data = omics_data,
+  grn_set <- correlate_tf_to_fp(
+    grn_set = grn_set,
     mode = "canonical",
     out_dir = step1_out_dir,
     label_col = "strict_match_rna",
@@ -185,9 +176,6 @@ if (do_tf_binding_sites_prediction == TRUE) {
     qc = TRUE,
     write_bed = FALSE
   )
-  if (isTRUE(verbose)) {
-    .log_inform("Output: TF binding probability overviews, TF binding site counts, and correlation stats PDF.")
-  }
 
 
 }
@@ -198,18 +186,12 @@ if (do_tf_binding_sites_prediction == TRUE) {
 # Module 2: Connect TFs to Target Genes -----------------------------------
 # Step 2. Connect TF-occupied enhancers to target genes -------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
-  if (isTRUE(verbose)) {
-    .log_inform("Module 2: Connect TFs to Target Genes.")
-  }
   step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
   dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
   # 1.1 Link TFBS to candidate target genes (GeneHancer / window / loops)
   link_mode <- if (exists("tf_target_link_mode")) tf_target_link_mode else "genehancer"
   link_mode <- match.arg(link_mode, c("genehancer", "window", "loops"))
-  if (isTRUE(verbose)) {
-    .log_inform("1.1 Link TF binding sites to candidate target genes using {link_mode} mappings.")
-  }
 
   gh_std <- NULL
   atac_gene_pairs <- NULL
@@ -222,8 +204,8 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     gene_annot_ref <- if (exists("gene_annot_ref")) gene_annot_ref else episcope::episcope_build_gene_annot(ref_genome)
     id_col <- if (exists("link_gene_id_col")) link_gene_id_col else "HGNC"
     gh_std <- episcope_make_windowed_gh(
-      peaks      = omics_data$atac_score,
-      genes      = unique(c(omics_data$rna$HGNC, omics_data$rna$ensembl_gene_id)),
+      peaks      = grn_set$atac_score,
+      genes      = unique(c(grn_set$rna$HGNC, grn_set$rna$ensembl_gene_id)),
       flank_bp   = flank_bp,
       mode       = "TSS",
       gene_annot = gene_annot_ref,
@@ -257,17 +239,14 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   }
 
   # 1.3 Correlate TF->gene and FP->gene (Spearman then Pearson)
-  if (isTRUE(verbose)) {
-    .log_inform("1.3 Compute TF->gene and TFBS->gene correlations across conditions; filter links by configured thresholds.")
-  }
   options(future.globals.maxSize = 64 * 1024^3)
   fp_res_full_pearson <- correlate_fp_to_genes(
-    grn_set          = omics_data,
+    grn_set          = grn_set,
     atac_gene_corr_kept = atac_gene_pairs,
     gh_tbl           = gh_std,
     gene_mode        = "both",
-    fp_score_tbl     = omics_data$fp_score_condition_qn,
-    rna_tbl          = omics_data$rna_condition,
+    fp_score_tbl     = grn_set$fp_score_condition_qn,
+    rna_tbl          = grn_set$rna_condition,
     fdr              = threshold_fp_gene_corr_p,
     r_abs_min        = threshold_fp_gene_corr_abs_r,
     method           = "pearson",
@@ -279,12 +258,12 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   )
 
   fp_res_full_spearman <- correlate_fp_to_genes(
-    grn_set          = omics_data,
+    grn_set          = grn_set,
     atac_gene_corr_kept = atac_gene_pairs,
     gh_tbl           = gh_std,
     gene_mode        = "both",
-    fp_score_tbl     = omics_data$fp_score_condition_qn,
-    rna_tbl          = omics_data$rna_condition,
+    fp_score_tbl     = grn_set$fp_score_condition_qn,
+    rna_tbl          = grn_set$rna_condition,
     fdr              = threshold_fp_gene_corr_p,
     r_abs_min        = threshold_fp_gene_corr_abs_r,
     method           = "spearman",
@@ -297,14 +276,14 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 
   fp_gene_corr_pearson_filt <- filter_fp_gene_corr_by_tf_annotation(
     fp_gene_corr_full = fp_res_full_pearson$fp_gene_corr_full,
-    fp_annotation = omics_data$fp_annotation,
+    fp_annotation = grn_set$fp_annotation,
     r_thr = threshold_fp_gene_corr_abs_r,
     p_adj_thr = threshold_fp_gene_corr_p
   )
 
   fp_gene_corr_spearman_filt <- filter_fp_gene_corr_by_tf_annotation(
     fp_gene_corr_full = fp_res_full_spearman$fp_gene_corr_full,
-    fp_annotation = omics_data$fp_annotation,
+    fp_annotation = grn_set$fp_annotation,
     r_thr = threshold_fp_gene_corr_abs_r,
     p_adj_thr = threshold_fp_gene_corr_p
   )
@@ -312,7 +291,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   fp_links_combined <- combine_fp_gene_corr_methods(
     fp_pearson  = fp_gene_corr_pearson_filt,
     fp_spearman = fp_gene_corr_spearman_filt,
-    rna_tbl     = omics_data$rna_condition,
+    rna_tbl     = grn_set$rna_condition,
     rna_method  = "pearson",
     rna_cores   = 20
   )
@@ -329,19 +308,16 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   require_atac_score <- isTRUE(atac_score_thr > 0)
   atac_score_tbl_use <- NULL
   if (isTRUE(require_atac_score)) {
-    if (is.null(omics_data$atac_score_condition)) {
-      omics_data <- grn_add_atac_score_condition(omics_data, label_col = "strict_match_rna")
+    if (is.null(grn_set$atac_score_condition)) {
+      grn_set <- grn_add_atac_score_condition(grn_set, label_col = "strict_match_rna")
     }
-    atac_score_tbl_use <- omics_data$atac_score_condition
+    atac_score_tbl_use <- grn_set$atac_score_condition
   }
 
-  if (isTRUE(verbose)) {
-    .log_inform("1.2 Generate a binary, condition-specific TF->TFBS->target link status matrix.")
-  }
   status_res <- build_link_status_matrix(
     links = fp_links_filtered$links,
-    fp_bound = omics_data$fp_bound_condition,
-    rna_expressed = omics_data$rna_expressed,
+    fp_bound = grn_set$fp_bound_condition,
+    rna_expressed = grn_set$rna_expressed,
     tf_col = "TF",
     gene_col = "gene_key",
     peak_col = "peak_ID",
@@ -350,7 +326,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     return_keep = TRUE,
     filter_any = TRUE,
     verbose = TRUE,
-    fp_score_tbl = omics_data$fp_score_condition_qn,
+    fp_score_tbl = grn_set$fp_score_condition_qn,
     fp_score_threshold = fp_score_thr,
     atac_score_tbl = atac_score_tbl_use,
     atac_score_threshold = atac_score_thr,
@@ -392,31 +368,31 @@ if (do_tf_to_target_genes_prediction == TRUE) {
       by = c("fp_peak" = "peak_ID", "gene_key" = "gene_key")
     )
 
-  if (is.null(omics_data$fp_variance) || is.null(omics_data$rna_variance)) {
-    hv_variance <- precompute_hvf_hvg_variance(omics_data, cores = 20, chunk_size = 50000L)
-    omics_data$fp_variance <- hv_variance$fp_variance
-    omics_data$rna_variance <- hv_variance$rna_variance
+  if (is.null(grn_set$fp_variance) || is.null(grn_set$rna_variance)) {
+    hv_variance <- precompute_hvf_hvg_variance(grn_set, cores = 20, chunk_size = 50000L)
+    grn_set$fp_variance <- hv_variance$fp_variance
+    grn_set$rna_variance <- hv_variance$rna_variance
   }
 
   basal_links_step2 <- make_basal_links(
     fp_gene_corr_kept = fp_gene_corr_use,
-    fp_annotation     = omics_data$fp_annotation,
+    fp_annotation     = grn_set$fp_annotation,
     out_dir           = file.path(step2_out_dir, "basal_links_tmp"),
     prefix            = "step2",
-    rna_tbl           = omics_data$rna_condition,
+    rna_tbl           = grn_set$rna_condition,
     rna_method        = "pearson",
     rna_cores         = 20,
-    fp_variance       = omics_data$fp_variance,
-    rna_variance      = omics_data$rna_variance
+    fp_variance       = grn_set$fp_variance,
+    rna_variance      = grn_set$rna_variance
   )
 
-  omics_data_cond <- prepare_grn_set_for_light_by_condition(
-    omics_data,
+  grn_set_cond <- prepare_grn_set_for_light_by_condition(
+    grn_set,
     label_col = "strict_match_rna"
   )
 
   light_by_condition(
-    ds = omics_data_cond,
+    ds = grn_set_cond,
     basal_links = basal_links_step2,
     out_dir = step2_out_dir,
     prefix = "step2",
@@ -424,20 +400,20 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     link_score_threshold = link_score_threshold,
     fp_score_threshold = fp_score_thr,
     tf_expr_threshold = threshold_tf_expr,
-    fp_bound_tbl = omics_data$fp_bound_condition,
-    rna_expressed_tbl = omics_data$rna_expressed,
+    fp_bound_tbl = grn_set$fp_bound_condition,
+    rna_expressed_tbl = grn_set$rna_expressed,
     atac_score_tbl = atac_score_tbl_use,
     atac_score_threshold = atac_score_thr,
     require_atac_score = require_atac_score,
-    fp_annotation_tbl = omics_data$fp_annotation,
+    fp_annotation_tbl = grn_set$fp_annotation,
     require_fp_bound = TRUE,
     require_gene_expr = TRUE,
     gene_expr_threshold = 1L,
     filter_active = FALSE,
     use_parallel = TRUE,
     workers = 8,
-    fp_variance_tbl = omics_data$fp_variance,
-    rna_variance_tbl = omics_data$rna_variance
+    fp_variance_tbl = grn_set$fp_variance,
+    rna_variance_tbl = grn_set$rna_variance
   )
 
   extract_link_info_by_condition(
@@ -446,9 +422,6 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     read_tables = FALSE,
     verbose = TRUE
   )
-  if (isTRUE(verbose)) {
-    .log_inform("Output: TF->TFBS->target link overview table, link activity summary, and per-condition link matrices.")
-  }
 }
 
 # lenient -----------------------------------------------------------------
@@ -457,22 +430,22 @@ basal_links_step2 <- readr::read_csv(file.path(step2_out_dir, "basal_links_tmp/s
 
 step2_out_dir <- file.path(base_dir, "connect_tf_target_genes_lenient")
 
-omics_data_lenient <- grn_add_rna_expressed(omics_data_lenient, label_col = "cell_stress_type", threshold_gene_expr = threshold_gene_expr)
-omics_data_lenient <- grn_add_fp_score_condition(omics_data_lenient, label_col = "cell_stress_type")
-omics_data_lenient <- grn_add_fp_bound_condition(omics_data_lenient, label_col = "cell_stress_type", threshold_fp_score = threshold_fp_score)
-if (is.null(omics_data_lenient$fp_variance) || is.null(omics_data_lenient$rna_variance)) {
-  hv_variance <- precompute_hvf_hvg_variance(omics_data, cores = 20, chunk_size = 50000L)
-  omics_data_lenient$fp_variance <- hv_variance$fp_variance
-  omics_data_lenient$rna_variance <- hv_variance$rna_variance
+grn_set_lenient <- grn_add_rna_expressed(grn_set_lenient, label_col = "cell_stress_type", threshold_gene_expr = threshold_gene_expr)
+grn_set_lenient <- grn_add_fp_score_condition(grn_set_lenient, label_col = "cell_stress_type")
+grn_set_lenient <- grn_add_fp_bound_condition(grn_set_lenient, label_col = "cell_stress_type", threshold_fp_score = threshold_fp_score)
+if (is.null(grn_set_lenient$fp_variance) || is.null(grn_set_lenient$rna_variance)) {
+  hv_variance <- precompute_hvf_hvg_variance(grn_set, cores = 20, chunk_size = 50000L)
+  grn_set_lenient$fp_variance <- hv_variance$fp_variance
+  grn_set_lenient$rna_variance <- hv_variance$rna_variance
 }
 
-omics_data_cond <- prepare_grn_set_for_light_by_condition(
-  omics_data_lenient,
+grn_set_cond <- prepare_grn_set_for_light_by_condition(
+  grn_set_lenient,
   label_col = "cell_stress_type"
 )
 
 light_by_condition(
-  ds = omics_data_cond,
+  ds = grn_set_cond,
   basal_links = basal_links_step2,
   out_dir = step2_out_dir,
   prefix = "step2",
@@ -480,16 +453,16 @@ light_by_condition(
   link_score_threshold = 0,
   fp_score_threshold = 0,
   tf_expr_threshold = 0,
-  fp_bound_tbl = omics_data_lenient$fp_bound_condition,
-  rna_expressed_tbl = omics_data_lenient$rna_expressed,
+  fp_bound_tbl = grn_set_lenient$fp_bound_condition,
+  rna_expressed_tbl = grn_set_lenient$rna_expressed,
   require_fp_bound = TRUE,
   require_gene_expr = TRUE,
   gene_expr_threshold = 1L,
   filter_active = FALSE,
   use_parallel = TRUE,
   workers = 8,
-  fp_variance_tbl = omics_data_lenient$fp_variance,
-  rna_variance_tbl = omics_data_lenient$rna_variance
+  fp_variance_tbl = grn_set_lenient$fp_variance,
+  rna_variance_tbl = grn_set_lenient$rna_variance
 )
 step3_out_dir <- file.path(base_dir, "diff_grn_lenient")
 

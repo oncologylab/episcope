@@ -249,7 +249,14 @@ resolve_motif_db_path <- function(db, ref_genome = NULL) {
     }
     path <- cand[file.exists(cand)][1]
   } else if (db == "HOCOMOCOv13") {
-    path <- "inst/extdata/genome/HOCOMOCOv13.txt"
+    if (ref_genome == "mm10") {
+      cand <- c("inst/extdata/genome/HOCOMOCOv13_mm10.txt",
+                "inst/extdata/genome/HOCOMOCOv13.txt")
+    } else {
+      cand <- c("inst/extdata/genome/HOCOMOCOv13_hg38.txt",
+                "inst/extdata/genome/HOCOMOCOv13.txt")
+    }
+    path <- cand[file.exists(cand)][1]
   } else {
     .log_abort("Unsupported db {.val {db}}. Expected 'JASPAR2024' or 'HOCOMOCOv13'.")
   }
@@ -473,6 +480,34 @@ make_fp_score_condition <- function(
     }
   }
   out
+}
+
+#' Aggregate ATAC score by condition
+#'
+#' @param atac_score_tbl Tibble with atac_peak + sample columns.
+#' @param metadata Tibble with id and label_col.
+#' @param label_col Metadata column holding condition labels.
+#' @param agg_fun Aggregate function: "mean" or "median".
+#' @return Tibble with atac_peak + condition columns.
+#'   If each condition has a single sample, values are taken directly
+#'   from that sample (no aggregation).
+#' @export
+make_atac_score_condition <- function(
+    atac_score_tbl,
+    metadata,
+    label_col,
+    agg_fun = c("mean", "median")
+) {
+  if (!is.data.frame(atac_score_tbl)) .log_abort("`atac_score_tbl` must be a data.frame.")
+  if (!"atac_peak" %in% names(atac_score_tbl)) .log_abort("`atac_score_tbl` needs an atac_peak column.")
+  atac_tmp <- dplyr::rename(atac_score_tbl, peak_ID = atac_peak)
+  out <- make_fp_score_condition(
+    fp_score_tbl = atac_tmp,
+    metadata = metadata,
+    label_col = label_col,
+    agg_fun = agg_fun
+  )
+  dplyr::rename(out, atac_peak = peak_ID)
 }
 
 #' Build per-condition FP bound flags (1/0) with score and ATAC overlap gating
@@ -792,6 +827,32 @@ grn_add_fp_score_condition <- function(
 
 #' @rdname grn_set_helpers
 #' @export
+grn_add_atac_score_condition <- function(
+    grn_set,
+    label_col,
+    agg_fun = c("mean", "median"),
+    force = FALSE,
+    verbose = TRUE
+) {
+  grn_set <- grn_status_init(grn_set)
+  if (grn_status_is(grn_set, "atac_score_condition") && !isTRUE(force)) return(grn_set)
+  if (!is.data.frame(grn_set$atac_score)) .log_abort("`grn_set$atac_score` is missing or invalid.")
+  grn_set$atac_score_condition <- make_atac_score_condition(
+    atac_score_tbl = grn_set$atac_score,
+    metadata = grn_set$sample_metadata_used,
+    label_col = label_col,
+    agg_fun = agg_fun
+  )
+  if (isTRUE(verbose)) {
+    n_peaks <- nrow(grn_set$atac_score_condition)
+    n_cond <- max(ncol(grn_set$atac_score_condition) - 1L, 0L)
+    .log_inform("ATAC score by condition: {n_peaks} peaks × {n_cond} conditions.")
+  }
+  grn_status_set(grn_set, "atac_score_condition")
+}
+
+#' @rdname grn_set_helpers
+#' @export
 grn_add_fp_bound_condition <- function(
     grn_set,
     label_col,
@@ -988,6 +1049,8 @@ grn_add_fp_tfs <- function(grn_set, force = FALSE, verbose = TRUE) {
 grn_add_fp_tf_corr <- function(
     grn_set,
     method = c("pearson", "spearman", "kendall"),
+    mode = c("canonical", "all"),
+    tf_subset = NULL,
     cores = 10L,
     chunk_size = 5000L,
     min_non_na = 5L,
@@ -995,8 +1058,9 @@ grn_add_fp_tf_corr <- function(
     verbose = TRUE
 ) {
   method <- match.arg(method)
+  mode <- match.arg(mode)
   grn_set <- grn_status_init(grn_set)
-  status_key <- paste0("fp_tf_corr_", method)
+  status_key <- paste0("fp_tf_corr_", method, "_", mode)
   if (grn_status_is(grn_set, status_key) && !isTRUE(force)) return(grn_set)
 
   if (!is.data.frame(grn_set$fp_score_condition_qn)) {
@@ -1013,7 +1077,39 @@ grn_add_fp_tf_corr <- function(
     grn_set <- grn_add_fp_tfs(grn_set, force = TRUE, verbose = verbose)
   }
 
-  ann_exp <- .expand_fp_annotation_tfs(grn_set$fp_annotation, tfs_col = "tfs")
+  tf_subset <- if (is.null(tf_subset)) NULL else unique(as.character(tf_subset))
+  if (identical(mode, "canonical")) {
+    ann_exp <- .expand_fp_annotation_tfs(grn_set$fp_annotation, tfs_col = "tfs")
+    if (!is.null(tf_subset) && length(tf_subset)) {
+      ann_exp <- ann_exp[ann_exp$tfs %in% tf_subset, , drop = FALSE]
+    }
+  } else {
+    rna_cond <- grn_set$rna_condition
+    tf_all <- unique(rna_cond$HGNC)
+    tf_all <- tf_all[!is.na(tf_all) & nzchar(tf_all)]
+    if (!is.null(tf_subset) && length(tf_subset)) {
+      tf_all <- intersect(tf_all, tf_subset)
+    }
+    if (!length(tf_all)) {
+      ann_name <- paste0("fp_annotation_", method)
+      ann_exp <- grn_set$fp_annotation[0, , drop = FALSE]
+      if (!"tfs" %in% names(ann_exp)) ann_exp$tfs <- character(0)
+      grn_set[[ann_name]] <- ann_exp
+      grn_status_set(grn_set, status_key)
+      return(grn_set)
+    }
+    base <- grn_set$fp_annotation[, c("fp_peak", "atac_peak", "motifs"), drop = FALSE]
+    base <- base[!duplicated(base[, c("fp_peak", "motifs")]), , drop = FALSE]
+    base <- base[!is.na(base$motifs) & nzchar(base$motifs), , drop = FALSE]
+    n_peaks <- nrow(base)
+    ann_exp <- data.frame(
+      fp_peak = rep(base$fp_peak, each = length(tf_all)),
+      atac_peak = rep(base$atac_peak, each = length(tf_all)),
+      tfs = rep(tf_all, times = n_peaks),
+      motifs = rep(base$motifs, each = length(tf_all)),
+      stringsAsFactors = FALSE
+    )
+  }
   if (!nrow(ann_exp)) {
     ann_name <- paste0("fp_annotation_", method)
     grn_set[[ann_name]] <- ann_exp
@@ -1065,6 +1161,7 @@ grn_add_fp_tf_corr <- function(
 grn_filter_fp_tf_corr <- function(
     grn_set,
     method = c("pearson", "spearman", "kendall"),
+    mode = c("canonical", "all"),
     r_thr = 0.3,
     p_thr = 0.05,
     set_active = TRUE,
@@ -1074,6 +1171,7 @@ grn_filter_fp_tf_corr <- function(
     verbose = TRUE
 ) {
   method <- match.arg(method)
+  mode <- match.arg(mode)
   ann_name <- paste0("fp_annotation_", method)
   if (!is.data.frame(grn_set[[ann_name]])) {
     .log_abort("`grn_set` is missing {ann_name}; run grn_add_fp_tf_corr() first.")
@@ -1158,6 +1256,7 @@ grn_filter_fp_tf_corr <- function(
       fp_s <- data.table::tstrsplit(dt2[[fp_col]], "[:-]", perl = TRUE)
       at_s <- data.table::tstrsplit(dt2[["atac_peak"]], "[:-]", perl = TRUE)
       data.table::data.table(
+        fp_key          = dt2[[fp_col]],
         TFBS_chr         = fp_s[[1]],
         TFBS_start       = suppressWarnings(as.integer(fp_s[[2]])),
         TFBS_end         = suppressWarnings(as.integer(fp_s[[3]])),
@@ -1183,6 +1282,33 @@ grn_filter_fp_tf_corr <- function(
     if (nrow(all_dt)) all_dt[, .id := paste(TF, TFBS_chr, TFBS_start, TFBS_end, sep = ";")]
     if (nrow(bound_dt)) bound_dt[, .id := paste(TF, TFBS_chr, TFBS_start, TFBS_end, sep = ";")]
 
+    cond_cols <- character(0)
+    fp_bound_mat <- NULL
+    tf_expr_mat <- NULL
+    if (!is.null(label_col) &&
+        is.data.frame(grn_set$fp_bound_condition) &&
+        is.data.frame(grn_set$rna_expressed)) {
+      cond_cols <- intersect(
+        setdiff(names(grn_set$fp_bound_condition), "peak_ID"),
+        setdiff(names(grn_set$rna_expressed), c("ensembl_gene_id", "HGNC"))
+      )
+      if (length(cond_cols)) {
+        fp_bound_tbl <- grn_set$fp_bound_condition[, c("peak_ID", cond_cols), drop = FALSE]
+        fp_bound_tbl$peak_ID <- as.character(fp_bound_tbl$peak_ID)
+        fp_bound_mat <- as.matrix(fp_bound_tbl[, cond_cols, drop = FALSE])
+        storage.mode(fp_bound_mat) <- "integer"
+        rownames(fp_bound_mat) <- fp_bound_tbl$peak_ID
+
+        tf_expr_tbl <- grn_set$rna_expressed[, c("HGNC", cond_cols), drop = FALSE]
+        tf_expr_tbl$HGNC <- toupper(tf_expr_tbl$HGNC)
+        tf_expr_tbl <- tf_expr_tbl[!is.na(tf_expr_tbl$HGNC) & tf_expr_tbl$HGNC != "", , drop = FALSE]
+        tf_expr_tbl <- tf_expr_tbl[!duplicated(tf_expr_tbl$HGNC), , drop = FALSE]
+        tf_expr_mat <- as.matrix(tf_expr_tbl[, cond_cols, drop = FALSE])
+        storage.mode(tf_expr_mat) <- "integer"
+        rownames(tf_expr_mat) <- tf_expr_tbl$HGNC
+      }
+    }
+
     tfs_vec <- sort(unique(all_dt$TF))
     for (tf in tfs_vec) {
       tf_slug <- .slug(tf)
@@ -1197,17 +1323,40 @@ grn_filter_fp_tf_corr <- function(
       ids_bound <- if (nrow(sub_bound)) sub_bound$.id else character(0)
       sub_unbound <- sub_all[!(.id %in% ids_bound)]
 
-      data.table::fwrite(sub_all[, !c(".id","atac_peak"), with = FALSE], f_all, sep = "\t", col.names = FALSE, quote = FALSE)
-      data.table::fwrite(sub_bound[, !c(".id","atac_peak"), with = FALSE], f_bound, sep = "\t", col.names = FALSE, quote = FALSE)
-      data.table::fwrite(sub_unbound[, !c(".id","atac_peak"), with = FALSE], f_unbound, sep = "\t", col.names = FALSE, quote = FALSE)
+      data.table::fwrite(sub_all[, !c(".id","atac_peak","fp_key"), with = FALSE], f_all, sep = "\t", col.names = FALSE, quote = FALSE)
+      data.table::fwrite(sub_bound[, !c(".id","atac_peak","fp_key"), with = FALSE], f_bound, sep = "\t", col.names = FALSE, quote = FALSE)
+      data.table::fwrite(sub_unbound[, !c(".id","atac_peak","fp_key"), with = FALSE], f_unbound, sep = "\t", col.names = FALSE, quote = FALSE)
 
       if (nrow(sub_all)) {
         sub_all[, `_bound` := as.integer(.id %in% ids_bound)]
-        data.table::fwrite(sub_all[, !c(".id","atac_peak"), with = FALSE], f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
+        if (length(cond_cols) && !is.null(fp_bound_mat) && !is.null(tf_expr_mat)) {
+          tf_key <- toupper(tf)
+          tf_idx <- match(tf_key, rownames(tf_expr_mat))
+          if (is.na(tf_idx)) {
+            tf_ok <- rep(0L, length(cond_cols))
+          } else {
+            tf_ok <- as.integer(tf_expr_mat[tf_idx, ] > 0L)
+          }
+          fp_idx <- match(sub_all$fp_key, rownames(fp_bound_mat))
+          fp_ok <- matrix(0L, nrow = nrow(sub_all), ncol = length(cond_cols))
+          ok_idx <- !is.na(fp_idx)
+          if (any(ok_idx)) {
+            fp_ok[ok_idx, ] <- fp_bound_mat[fp_idx[ok_idx], , drop = FALSE]
+          }
+          bound_vec <- as.integer(sub_all$`_bound` > 0L)
+          fp_ok <- fp_ok * bound_vec
+          fp_ok <- sweep(fp_ok, 2, tf_ok, `*`)
+          colnames(fp_ok) <- paste0(cond_cols, "_bound")
+          sub_all[, (colnames(fp_ok)) := data.table::as.data.table(fp_ok)]
+        }
+        data.table::fwrite(sub_all[, !c(".id","atac_peak","fp_key"), with = FALSE], f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
       } else {
         hdr <- c("TFBS_chr","TFBS_start","TFBS_end","TFBS_name",
                  "peak_chr","peak_start","peak_end","TF",
                  "corr_fp_tf_r","corr_fp_tf_p","corr_fp_tf_p_adj","_bound")
+        if (length(cond_cols)) {
+          hdr <- c(hdr, paste0(cond_cols, "_bound"))
+        }
         empty_dt <- data.table::as.data.table(setNames(rep(list(vector(mode = "character", length = 0)), length(hdr)), hdr))
         data.table::fwrite(empty_dt, f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
       }
@@ -1255,7 +1404,6 @@ grn_filter_fp_tf_corr <- function(
         f_all <- file.path(cond_dir, paste0(tf_slug, "_all.bed"))
         f_bound <- file.path(cond_dir, paste0(tf_slug, "_bound.bed"))
         f_unbound <- file.path(cond_dir, paste0(tf_slug, "_unbound.bed"))
-        f_overview <- file.path(cond_dir, paste0(tf_slug, "_overview.txt"))
 
         sub_all <- all_cond[TF == tf]
         sub_bound <- bound_cond[TF == tf]
@@ -1263,23 +1411,203 @@ grn_filter_fp_tf_corr <- function(
         ids_bound <- if (nrow(sub_bound)) sub_bound$.id else character(0)
         sub_unbound <- sub_all[!(.id %in% ids_bound)]
 
-        data.table::fwrite(sub_all[, !c(".id","atac_peak"), with = FALSE], f_all, sep = "\t", col.names = FALSE, quote = FALSE)
-        data.table::fwrite(sub_bound[, !c(".id","atac_peak"), with = FALSE], f_bound, sep = "\t", col.names = FALSE, quote = FALSE)
-        data.table::fwrite(sub_unbound[, !c(".id","atac_peak"), with = FALSE], f_unbound, sep = "\t", col.names = FALSE, quote = FALSE)
-
-        if (nrow(sub_all)) {
-          sub_all[, `_bound` := as.integer(.id %in% ids_bound)]
-          data.table::fwrite(sub_all[, !c(".id","atac_peak"), with = FALSE], f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
-        } else {
-          hdr <- c("TFBS_chr","TFBS_start","TFBS_end","TFBS_name",
-                   "peak_chr","peak_start","peak_end","TF",
-                   "corr_fp_tf_r","corr_fp_tf_p","corr_fp_tf_p_adj","_bound")
-          empty_dt <- data.table::as.data.table(setNames(rep(list(vector(mode = "character", length = 0)), length(hdr)), hdr))
-          data.table::fwrite(empty_dt, f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
-        }
+        data.table::fwrite(sub_all[, !c(".id","atac_peak","fp_key"), with = FALSE], f_all, sep = "\t", col.names = FALSE, quote = FALSE)
+        data.table::fwrite(sub_bound[, !c(".id","atac_peak","fp_key"), with = FALSE], f_bound, sep = "\t", col.names = FALSE, quote = FALSE)
+        data.table::fwrite(sub_unbound[, !c(".id","atac_peak","fp_key"), with = FALSE], f_unbound, sep = "\t", col.names = FALSE, quote = FALSE)
       }
     }
     if (isTRUE(verbose)) .log_inform("Per-condition TF BED exports written to: {output_bed_condition}")
+  }
+
+  grn_set
+}
+
+#' Correlate TF expression to footprint scores (Pearson + Spearman)
+#'
+#' Runs Pearson and Spearman correlations, applies filters, and optionally
+#' generates QC outputs and per-TF overview tables. Designed as a simple
+#' user-facing wrapper for Module 1.
+#'
+#' @param omics_data A multi-omic data list from [build_grn_set()].
+#' @param grn_set (Deprecated) Use `omics_data`.
+#' @param mode Correlation mode: "canonical" or "all".
+#' @param label_col Metadata label column used for conditions.
+#' @param out_dir Output directory for QC and overviews.
+#' @param db Database tag used in output filenames.
+#' @param r_thr Correlation threshold.
+#' @param p_thr Adjusted P-value threshold.
+#' @param tf_subset Optional TF subset.
+#' @param cores_pearson Cores for Pearson correlation.
+#' @param cores_spearman Cores for Spearman correlation.
+#' @param chunk_size Chunk size for correlation.
+#' @param min_non_na Minimum non-NA values.
+#' @param qc If TRUE, generate QC PDF and overview tables.
+#' @param write_bed If TRUE, emit per-TF BEDs (off by default).
+#' @param use_cache If TRUE, reuse cached correlation tables.
+#' @param cache_dir Optional cache directory (defaults under out_dir).
+#' @param verbose Emit status messages.
+#'
+#' @return Updated grn_set with Pearson + Spearman annotations.
+#' @export
+correlate_tf_to_fp <- function(
+    omics_data = NULL,
+    grn_set = NULL,
+    mode = c("canonical", "all"),
+    label_col,
+    out_dir,
+    db,
+    r_thr = 0.3,
+    p_thr = 0.05,
+    tf_subset = NULL,
+    cores_pearson = 20L,
+    cores_spearman = 36L,
+    chunk_size = 5000L,
+    min_non_na = 5L,
+    qc = TRUE,
+    write_bed = FALSE,
+    write_outputs = TRUE,
+    use_cache = TRUE,
+    cache_dir = NULL,
+    verbose = TRUE
+) {
+  mode <- match.arg(mode)
+  if (is.null(omics_data)) omics_data <- grn_set
+  if (!is.list(omics_data)) .log_abort("`omics_data` must be a list.")
+  if (!is.character(label_col) || !nzchar(label_col)) {
+    .log_abort("`label_col` must be a non-empty string.")
+  }
+  if (!is.character(out_dir) || !nzchar(out_dir)) {
+    .log_abort("`out_dir` must be a non-empty path.")
+  }
+  if (!is.character(db) || !nzchar(db)) {
+    .log_abort("`db` must be a non-empty string.")
+  }
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  if (is.null(cache_dir)) {
+    cache_dir <- file.path(out_dir, "cache", "fp_tf_corr")
+  }
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+
+  grn_set <- omics_data
+  if (isTRUE(verbose)) {
+    .log_inform("2.5 Compute Pearson (linear) and Spearman (rank-based) correlations between expressed TFs and normalized footprint scores.")
+  }
+  grn_set <- grn_add_rna_condition(grn_set, label_col = label_col, verbose = verbose)
+  grn_set <- grn_add_fp_tfs(grn_set, verbose = verbose)
+  grn_set <- grn_add_fp_score_qn(grn_set, id_col = "peak_ID", verbose = verbose)
+
+  .load_cache <- function(method) {
+    cache_path <- file.path(cache_dir, sprintf("fp_tf_corr_%s_%s.rds", method, mode))
+    if (isTRUE(use_cache) && file.exists(cache_path)) {
+      if (isTRUE(verbose)) .log_inform("Using cached {method} TF correlations: {cache_path}")
+      readRDS(cache_path)
+    } else {
+      NULL
+    }
+  }
+  .save_cache <- function(method, tbl) {
+    cache_path <- file.path(cache_dir, sprintf("fp_tf_corr_%s_%s.rds", method, mode))
+    if (isTRUE(use_cache) && is.data.frame(tbl)) {
+      saveRDS(tbl, cache_path)
+    }
+  }
+
+  grn_set_base <- grn_set
+
+  # Pearson (set_active = TRUE)
+  ann_p <- .load_cache("pearson")
+  if (is.data.frame(ann_p)) {
+    grn_set$fp_annotation_pearson <- ann_p
+    grn_status_set(grn_set, paste0("fp_tf_corr_pearson_", mode))
+  } else {
+    grn_set <- grn_add_fp_tf_corr(
+      grn_set,
+      method = "pearson",
+      mode = mode,
+      tf_subset = tf_subset,
+      cores = cores_pearson,
+      chunk_size = chunk_size,
+      min_non_na = min_non_na,
+      verbose = verbose
+    )
+    .save_cache("pearson", grn_set$fp_annotation_pearson)
+  }
+  out_bed <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s", db)) else NULL
+  out_bed_cond <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s_by_condition", db)) else NULL
+  grn_set <- grn_filter_fp_tf_corr(
+    grn_set,
+    method = "pearson",
+    mode = mode,
+    r_thr = r_thr,
+    p_thr = p_thr,
+    set_active = TRUE,
+    output_bed = out_bed,
+    output_bed_condition = out_bed_cond,
+    label_col = label_col,
+    verbose = verbose
+  )
+  if (isTRUE(write_outputs)) {
+    write_grn_tf_corr_outputs(grn_set, out_dir = out_dir, db = db)
+  }
+
+  # Spearman on full (unfiltered) set; preserve pearson-filtered fp_annotation in grn_set
+  grn_set_spearman <- grn_set_base
+  ann_s <- .load_cache("spearman")
+  if (is.data.frame(ann_s)) {
+    grn_set_spearman$fp_annotation_spearman <- ann_s
+    grn_status_set(grn_set_spearman, paste0("fp_tf_corr_spearman_", mode))
+  } else {
+    grn_set_spearman <- grn_add_fp_tf_corr(
+      grn_set_spearman,
+      method = "spearman",
+      mode = mode,
+      tf_subset = tf_subset,
+      cores = cores_spearman,
+      chunk_size = chunk_size,
+      min_non_na = min_non_na,
+      verbose = verbose
+    )
+    .save_cache("spearman", grn_set_spearman$fp_annotation_spearman)
+  }
+  grn_set_spearman <- grn_filter_fp_tf_corr(
+    grn_set_spearman,
+    method = "spearman",
+    mode = mode,
+    r_thr = r_thr,
+    p_thr = p_thr,
+    set_active = FALSE,
+    verbose = verbose
+  )
+
+  grn_set$fp_annotation_spearman <- grn_set_spearman$fp_annotation_spearman
+  grn_set$fp_annotation_spearman_filtered <- grn_set_spearman$fp_annotation_spearman_filtered
+
+  if (isTRUE(qc)) {
+    plot_tf_corr_stats_pdf(
+      ann_pearson = grn_set$fp_annotation_pearson_filtered,
+      ann_spearman = grn_set$fp_annotation_spearman_filtered,
+      out_dir = out_dir,
+      db = db,
+      mode = mode,
+      r_thr = r_thr,
+      p_thr = p_thr,
+      ann_pearson_all = grn_set$fp_annotation_pearson,
+      ann_spearman_all = grn_set$fp_annotation_spearman,
+      verbose = verbose
+    )
+    overview_dir <- file.path(out_dir, sprintf("fp_predicted_tfbs_%s_%s", db, mode))
+    write_tf_tfbs_overviews(
+      omics_data = grn_set,
+      ann_pearson = grn_set$fp_annotation_pearson,
+      ann_spearman = grn_set$fp_annotation_spearman,
+      out_dir = overview_dir,
+      db = db,
+      label_col = label_col,
+      r_thr = r_thr,
+      p_thr = p_thr,
+      verbose = verbose
+    )
   }
 
   grn_set
@@ -1311,6 +1639,214 @@ write_grn_tf_corr_outputs <- function(grn_set, out_dir, db) {
     file.path(out_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s.csv", db))
   )
 
+  invisible(out_dir)
+}
+
+#' Write per-TF overview tables with Pearson + Spearman correlations
+#'
+#' Generates per-TF `<TF>_overview.txt` files and a summary table of
+#' predicted binding site counts per TF per condition. By default, bound
+#' calls are flagged when either Pearson or Spearman passes the thresholds.
+#'
+#' @param omics_data A multi-omic data list containing fp_bound_condition and rna_expressed.
+#' @param grn_set (Deprecated) Use `omics_data`.
+#' @param ann_pearson Annotation table with Pearson correlations (full).
+#' @param ann_spearman Annotation table with Spearman correlations (full).
+#' @param out_dir Directory to write per-TF overview files.
+#' @param db Database tag used in the summary filename.
+#' @param label_col Label column (used for condition names if needed).
+#' @param r_thr Correlation threshold.
+#' @param p_thr Adjusted P-value threshold.
+#' @param verbose Emit status messages.
+#'
+#' @return Invisibly returns the output directory.
+#' @export
+write_tf_tfbs_overviews <- function(
+    omics_data = NULL,
+    grn_set = NULL,
+    ann_pearson,
+    ann_spearman,
+    out_dir,
+    db,
+    label_col = NULL,
+    r_thr = 0.3,
+    p_thr = 0.05,
+    verbose = TRUE
+) {
+  if (is.null(omics_data)) omics_data <- grn_set
+  if (!is.list(omics_data)) .log_abort("`omics_data` must be a list.")
+  if (!is.data.frame(ann_pearson) && !is.data.frame(ann_spearman)) {
+    .log_abort("Both Pearson and Spearman annotation tables are missing.")
+  }
+  if (!is.character(out_dir) || !nzchar(out_dir)) .log_abort("`out_dir` must be a non-empty path.")
+  if (!is.character(db) || !nzchar(db)) .log_abort("`db` must be a non-empty string.")
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  grn_set <- omics_data
+  if (!is.data.frame(grn_set$fp_bound_condition)) {
+    .log_abort("`omics_data$fp_bound_condition` is missing; run grn_add_fp_bound_condition() first.")
+  }
+  if (!is.data.frame(grn_set$rna_expressed)) {
+    .log_abort("`omics_data$rna_expressed` is missing; run grn_add_rna_expressed() first.")
+  }
+
+  r_thr_use <- if (is.finite(r_thr)) r_thr else -Inf
+  p_thr_use <- if (is.finite(p_thr)) p_thr else 1
+
+  normalize_ann <- function(dt, prefix) {
+    if (!is.data.frame(dt) || !nrow(dt)) {
+      return(data.table::data.table())
+    }
+    if (!"corr_fp_tf_p_adj" %in% names(dt)) {
+      dt <- .fp_tf_corr_add_p_adj(dt, p_col = "corr_fp_tf_p")
+    }
+    fp_col <- if ("fp_peak" %in% names(dt)) "fp_peak" else if ("peak_ID" %in% names(dt)) "peak_ID" else NA_character_
+    if (is.na(fp_col)) .log_abort("Annotation table missing fp_peak/peak_ID.")
+    tf_col <- if ("tfs" %in% names(dt)) "tfs" else if ("TF" %in% names(dt)) "TF" else NA_character_
+    if (is.na(tf_col)) .log_abort("Annotation table missing tfs/TF.")
+    if (!"atac_peak" %in% names(dt)) .log_abort("Annotation table missing atac_peak.")
+    if (!"motifs" %in% names(dt)) .log_abort("Annotation table missing motifs.")
+
+    dt <- data.table::as.data.table(dt)
+    out <- dt[, .(
+      fp_peak = as.character(get(fp_col)),
+      atac_peak = as.character(atac_peak),
+      motifs = as.character(motifs),
+      tfs = as.character(get(tf_col)),
+      corr_fp_tf_r = corr_fp_tf_r,
+      corr_fp_tf_p = corr_fp_tf_p,
+      corr_fp_tf_p_adj = corr_fp_tf_p_adj
+    )]
+    data.table::setnames(
+      out,
+      c("corr_fp_tf_r", "corr_fp_tf_p", "corr_fp_tf_p_adj"),
+      paste0(prefix, c("corr_fp_tf_r", "corr_fp_tf_p", "corr_fp_tf_p_adj"))
+    )
+    out
+  }
+
+  ann_p <- normalize_ann(ann_pearson, "pearson_")
+  ann_s <- normalize_ann(ann_spearman, "spearman_")
+  if (!nrow(ann_p) && !nrow(ann_s)) {
+    .log_abort("No rows in Pearson or Spearman annotations.")
+  }
+
+  all_dt <- if (nrow(ann_p) && nrow(ann_s)) {
+    data.table::as.data.table(
+      base::merge(
+        ann_p,
+        ann_s,
+        by = c("fp_peak", "atac_peak", "motifs", "tfs"),
+        all = TRUE
+      )
+    )
+  } else if (nrow(ann_p)) {
+    ann_p
+  } else {
+    ann_s
+  }
+
+  # overall bound flag (either method passes)
+  pearson_ok <- with(all_dt, is.finite(pearson_corr_fp_tf_r) &
+                       is.finite(pearson_corr_fp_tf_p_adj) &
+                       pearson_corr_fp_tf_r > r_thr_use &
+                       pearson_corr_fp_tf_p_adj < p_thr_use)
+  spearman_ok <- with(all_dt, is.finite(spearman_corr_fp_tf_r) &
+                        is.finite(spearman_corr_fp_tf_p_adj) &
+                        spearman_corr_fp_tf_r > r_thr_use &
+                        spearman_corr_fp_tf_p_adj < p_thr_use)
+  all_dt[, `_bound` := as.integer(pearson_ok | spearman_ok)]
+
+  fp_s <- data.table::tstrsplit(all_dt[["fp_peak"]], "[:-]", perl = TRUE)
+  at_s <- data.table::tstrsplit(all_dt[["atac_peak"]], "[:-]", perl = TRUE)
+  all_dt[, `:=`(
+    TFBS_chr = fp_s[[1]],
+    TFBS_start = suppressWarnings(as.integer(fp_s[[2]])),
+    TFBS_end = suppressWarnings(as.integer(fp_s[[3]])),
+    TFBS_name = motifs,
+    peak_chr = at_s[[1]],
+    peak_start = suppressWarnings(as.integer(at_s[[2]])),
+    peak_end = suppressWarnings(as.integer(at_s[[3]])),
+    TF = tfs
+  )]
+
+  cond_cols <- intersect(
+    setdiff(names(grn_set$fp_bound_condition), "peak_ID"),
+    setdiff(names(grn_set$rna_expressed), c("ensembl_gene_id", "HGNC"))
+  )
+  if (length(cond_cols)) {
+    fp_bound_tbl <- grn_set$fp_bound_condition[, c("peak_ID", cond_cols), drop = FALSE]
+    fp_bound_tbl$peak_ID <- as.character(fp_bound_tbl$peak_ID)
+    fp_bound_mat <- as.matrix(fp_bound_tbl[, cond_cols, drop = FALSE])
+    storage.mode(fp_bound_mat) <- "integer"
+    rownames(fp_bound_mat) <- fp_bound_tbl$peak_ID
+
+    tf_expr_tbl <- grn_set$rna_expressed[, c("HGNC", cond_cols), drop = FALSE]
+    tf_expr_tbl$HGNC <- toupper(tf_expr_tbl$HGNC)
+    tf_expr_tbl <- tf_expr_tbl[!is.na(tf_expr_tbl$HGNC) & tf_expr_tbl$HGNC != "", , drop = FALSE]
+    tf_expr_tbl <- tf_expr_tbl[!duplicated(tf_expr_tbl$HGNC), , drop = FALSE]
+    tf_expr_mat <- as.matrix(tf_expr_tbl[, cond_cols, drop = FALSE])
+    storage.mode(tf_expr_mat) <- "integer"
+    rownames(tf_expr_mat) <- tf_expr_tbl$HGNC
+
+    fp_idx <- match(all_dt$fp_peak, rownames(fp_bound_mat))
+    fp_ok <- matrix(0L, nrow = nrow(all_dt), ncol = length(cond_cols))
+    ok_idx <- !is.na(fp_idx)
+    if (any(ok_idx)) {
+      fp_ok[ok_idx, ] <- fp_bound_mat[fp_idx[ok_idx], , drop = FALSE]
+    }
+    tf_key <- toupper(all_dt$TF)
+    tf_idx <- match(tf_key, rownames(tf_expr_mat))
+    tf_ok <- matrix(0L, nrow = nrow(all_dt), ncol = length(cond_cols))
+    ok_tf <- !is.na(tf_idx)
+    if (any(ok_tf)) {
+      tf_ok[ok_tf, ] <- tf_expr_mat[tf_idx[ok_tf], , drop = FALSE]
+    }
+    bound_vec <- as.integer(all_dt$`_bound` > 0L)
+    fp_ok <- fp_ok * bound_vec
+    fp_ok <- fp_ok * tf_ok
+    colnames(fp_ok) <- paste0(cond_cols, "_bound")
+    all_dt[, (colnames(fp_ok)) := data.table::as.data.table(fp_ok)]
+  }
+
+  keep_cols <- c(
+    "TFBS_chr", "TFBS_start", "TFBS_end", "TFBS_name",
+    "peak_chr", "peak_start", "peak_end", "TF",
+    "pearson_corr_fp_tf_r", "pearson_corr_fp_tf_p", "pearson_corr_fp_tf_p_adj",
+    "spearman_corr_fp_tf_r", "spearman_corr_fp_tf_p", "spearman_corr_fp_tf_p_adj",
+    "_bound"
+  )
+  if (length(cond_cols)) {
+    keep_cols <- c(keep_cols, paste0(cond_cols, "_bound"))
+  }
+
+  .slug <- function(x) gsub("[^A-Za-z0-9]+", "_", as.character(x))
+  tfs_vec <- sort(unique(all_dt$TF))
+  for (tf in tfs_vec) {
+    tf_slug <- .slug(tf)
+    f_overview <- file.path(out_dir, paste0(tf_slug, "_overview.txt"))
+    sub_all <- all_dt[TF == tf]
+    if (nrow(sub_all)) {
+      data.table::fwrite(sub_all[, ..keep_cols], f_overview, sep = "\t", col.names = TRUE, quote = FALSE, na = "NA")
+    } else {
+      empty_dt <- data.table::as.data.table(setNames(rep(list(vector(mode = "character", length = 0)), length(keep_cols)), keep_cols))
+      data.table::fwrite(empty_dt, f_overview, sep = "\t", col.names = TRUE, quote = FALSE)
+    }
+  }
+
+  if (length(cond_cols)) {
+    bound_cols <- paste0(cond_cols, "_bound")
+    summary_tbl <- all_dt[, lapply(.SD, function(x) sum(as.integer(x) > 0L, na.rm = TRUE)),
+                          by = TF, .SDcols = bound_cols]
+    data.table::setnames(summary_tbl, bound_cols, cond_cols)
+    summary_path <- file.path(dirname(out_dir), sprintf("tf_binding_site_counts_%s.csv", db))
+    data.table::fwrite(summary_tbl, summary_path, sep = ",", col.names = TRUE)
+  }
+
+  if (isTRUE(verbose)) {
+    .log_inform("Per-TF overviews written to: {out_dir}")
+  }
   invisible(out_dir)
 }
 

@@ -25,14 +25,17 @@ NULL
 # Parsing JASPAR PFM text
 # -----------------------------
 
-#' Parse JASPAR Position Frequency Matrix (PFM; counts) text into PPMs
+#' Parse JASPAR-like Position Frequency Matrix (PFM; counts) text into PPMs
 #'
 #' @param jaspar_text Character scalar: full text with one or more motifs in
-#'   JASPAR PFM format.
+#'   JASPAR PFM format. Also supports JASPAR-like blocks with four unlabeled
+#'   numeric rows (assumed A,C,G,T order), as seen in HOCOMOCO exports.
+#' @param strict Logical; if TRUE, stop on malformed motifs. If FALSE, skip
+#'   malformed motifs with a warning.
 #' @return Named list. Each element is a 4 x L numeric matrix of probabilities
 #'   with rows A,C,G,T.
 #' @export
-parse_jaspar_pfm_text <- function(jaspar_text) {
+parse_jaspar_pfm_text <- function(jaspar_text, strict = TRUE) {
   stopifnot(is.character(jaspar_text), length(jaspar_text) == 1L)
 
   lines <- unlist(strsplit(jaspar_text, "\n", fixed = TRUE), use.names = FALSE)
@@ -62,22 +65,73 @@ parse_jaspar_pfm_text <- function(jaspar_text) {
     if (length(block) < 4L) next
 
     bases <- c("A", "C", "G", "T")
-    mat_counts <- lapply(bases, function(b) {
-      row_line <- block[startsWith(block, paste0(b, " "))]
-      if (length(row_line) == 0L) row_line <- block[startsWith(block, paste0(b, "\t"))]
-      if (length(row_line) == 0L) stop(sprintf("Missing base row '%s' for motif %s", b, motif_key))
-      row_line <- row_line[1]
+    parse_nums <- function(x) {
+      nums <- regmatches(
+        x,
+        gregexpr("[-+]?[0-9]*\\.?[0-9]+(?:[eE][-+]?[0-9]+)?", x)
+      )[[1]]
+      if (!length(nums)) return(numeric(0))
+      as.numeric(nums)
+    }
 
-      inside <- sub(".*\\[", "", row_line)
-      inside <- sub("\\].*$", "", inside)
-      nums <- trimws(inside)
-      nums <- nums[nzchar(nums)]
-      as.numeric(strsplit(nums, "\\s+", perl = TRUE)[[1]])
-    })
+    labeled_present <- vapply(
+      bases,
+      function(b) any(grepl(paste0("^", b, "\\b"), block, ignore.case = TRUE)),
+      logical(1)
+    )
+
+    bad <- FALSE
+    mat_counts <- NULL
+
+    if (all(labeled_present)) {
+      mat_counts <- lapply(bases, function(b) {
+        row_line <- block[grepl(paste0("^", b, "\\b"), block, ignore.case = TRUE)][1]
+        nums <- parse_nums(row_line)
+        if (!length(nums)) {
+          if (isTRUE(strict)) {
+            stop(sprintf("Missing numeric values for motif %s row %s", motif_key, b))
+          }
+          warning(sprintf("Skipping motif %s: missing numeric values for row %s", motif_key, b), call. = FALSE)
+          bad <<- TRUE
+          return(numeric(0))
+        }
+        nums
+      })
+    } else if (any(labeled_present)) {
+      # Mixed labeled/unlabeled rows: treat as malformed.
+      missing_bases <- bases[!labeled_present]
+      if (isTRUE(strict)) {
+        stop(sprintf("Missing base row(s) '%s' for motif %s", paste(missing_bases, collapse = ","), motif_key))
+      }
+      warning(
+        sprintf("Skipping motif %s: missing base row(s) '%s'", motif_key, paste(missing_bases, collapse = ",")),
+        call. = FALSE
+      )
+      bad <- TRUE
+    } else {
+      # Unlabeled 4-row format (e.g., HOCOMOCO exports).
+      numeric_rows <- lapply(block, parse_nums)
+      numeric_rows <- numeric_rows[vapply(numeric_rows, length, integer(1)) > 0L]
+      if (length(numeric_rows) < 4L) {
+        if (isTRUE(strict)) {
+          stop(sprintf("Missing numeric rows for motif %s", motif_key))
+        }
+        warning(sprintf("Skipping motif %s: missing numeric rows", motif_key), call. = FALSE)
+        bad <- TRUE
+      } else {
+        mat_counts <- numeric_rows[1:4]
+      }
+    }
+    if (isTRUE(bad)) next
 
     lens <- vapply(mat_counts, length, integer(1))
     if (length(unique(lens)) != 1L) {
-      stop(sprintf("Inconsistent row lengths for motif %s: %s", motif_key, paste(lens, collapse = ",")))
+      if (isTRUE(strict)) {
+        stop(sprintf("Inconsistent row lengths for motif %s: %s", motif_key, paste(lens, collapse = ",")))
+      }
+      warning(sprintf("Skipping motif %s: inconsistent row lengths (%s)", motif_key, paste(lens, collapse = ",")),
+              call. = FALSE)
+      next
     }
 
     counts <- do.call(rbind, mat_counts)
@@ -94,12 +148,12 @@ parse_jaspar_pfm_text <- function(jaspar_text) {
 #' @param file_path Path to a JASPAR PFM file.
 #' @return Named list of 4 x L probability matrices (PPMs).
 #' @export
-read_jaspar_pfm <- function(file_path) {
+read_jaspar_pfm <- function(file_path, strict = TRUE) {
   if (!grepl("^https?://", file_path) && !file.exists(file_path)) {
     stop(sprintf("File not found: %s", file_path))
   }
   jaspar_text <- paste(readLines(file_path, warn = FALSE), collapse = "\n")
-  parse_jaspar_pfm_text(jaspar_text)
+  parse_jaspar_pfm_text(jaspar_text, strict = strict)
 }
 
 #' Load PFMs for a known motif database (converted to PPMs)
@@ -115,7 +169,8 @@ load_motif_pfms <- function(db) {
     "HOCOMOCOv13" = "https://raw.githubusercontent.com/oncologylab/episcope-data/refs/heads/main/TFBS_db/H13CORE_jaspar_format.txt",
     stop("Unsupported db: ", db)
   )
-  read_jaspar_pfm(url)
+  strict <- !identical(db, "HOCOMOCOv13")
+  read_jaspar_pfm(url, strict = strict)
 }
 
 #' @rdname load_motif_pfms
@@ -734,9 +789,24 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
 }
 
 .extract_jaspar_id <- function(x) {
-  out <- regmatches(x, regexpr("MA[0-9]+\\.[0-9]+", x))
-  out[out == ""] <- NA_character_
+  m <- regexpr("MA[0-9]+\\.[0-9]+", x)
+  out <- ifelse(m == -1L, NA_character_, regmatches(x, m))
   out
+}
+
+.extract_motif_key <- function(x, db = NULL) {
+  if (!is.character(x) || !length(x)) return(x)
+  db <- if (!is.null(db) && nzchar(db)) toupper(as.character(db)) else NA_character_
+  if (identical(db, "JASPAR2024")) {
+    return(.extract_jaspar_id(x))
+  }
+  if (identical(db, "HOCOMOCOv13")) {
+    return(x)
+  }
+  # Fallback: if JASPAR-style IDs are present, use them; otherwise keep raw IDs.
+  jaspar_ids <- .extract_jaspar_id(x)
+  if (any(!is.na(jaspar_ids))) return(jaspar_ids)
+  x
 }
 
 .make_tf_map_from_ids <- function(ids) {
@@ -922,7 +992,7 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
   name_raw
 }
 
-.apply_cluster_to_motif_db <- function(motif_db, cluster_df) {
+.apply_cluster_to_motif_db <- function(motif_db, cluster_df, db = NULL) {
   if (is.null(motif_db) || !is.data.frame(motif_db)) return(motif_db)
   if (is.null(cluster_df) || !nrow(cluster_df)) return(motif_db)
   if (!"motif" %in% names(motif_db)) return(motif_db)
@@ -934,13 +1004,17 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
   cluster_id <- rep(cluster_df$cluster_id, lengths(split_ids))
   cluster_name <- rep(cluster_df$cluster_name, lengths(split_ids))
   map <- data.frame(
-    motif = motif_vec,
+    motif_key = motif_vec,
     sub_cluster = as.integer(cluster_id),
     sub_cluster_name = as.character(cluster_name),
     stringsAsFactors = FALSE
   )
-  map <- map[!duplicated(map$motif), , drop = FALSE]
-  out <- dplyr::left_join(motif_db, map, by = "motif")
+  map <- map[!duplicated(map$motif_key), , drop = FALSE]
+  motif_key <- .extract_motif_key(motif_db$motif, db = db)
+  motif_key[is.na(motif_key)] <- motif_db$motif[is.na(motif_key)]
+  motif_db$motif_key <- motif_key
+  out <- dplyr::left_join(motif_db, map, by = "motif_key")
+  out$motif_key <- NULL
   out
 }
 
@@ -978,6 +1052,37 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
     grDevices::dev.off()
   }
   invisible(TRUE)
+}
+
+.cluster_similarity_matrix <- function(sim_mat, clusters, cluster_labels = NULL) {
+  if (is.null(sim_mat) || !is.matrix(sim_mat)) return(NULL)
+  if (is.null(rownames(sim_mat)) || is.null(names(clusters))) return(NULL)
+  common <- intersect(rownames(sim_mat), names(clusters))
+  if (!length(common)) return(NULL)
+  sim_mat <- sim_mat[common, common, drop = FALSE]
+  cl <- clusters[common]
+  cl_ids <- sort(unique(cl))
+  n <- length(cl_ids)
+  out <- matrix(NA_real_, nrow = n, ncol = n)
+  for (i in seq_len(n)) {
+    idx_i <- common[cl == cl_ids[i]]
+    for (j in i:n) {
+      idx_j <- common[cl == cl_ids[j]]
+      val <- mean(sim_mat[idx_i, idx_j, drop = FALSE], na.rm = TRUE)
+      out[i, j] <- val
+      out[j, i] <- val
+    }
+  }
+  labels <- if (!is.null(cluster_labels)) {
+    cluster_labels[as.character(cl_ids)]
+  } else {
+    paste0("cluster_", cl_ids)
+  }
+  missing <- is.na(labels) | labels == ""
+  if (any(missing)) labels[missing] <- paste0("cluster_", cl_ids[missing])
+  rownames(out) <- labels
+  colnames(out) <- labels
+  out
 }
 
 .save_silhouette_plot <- function(dist_obj, clusters, out_path, title) {
@@ -1229,10 +1334,13 @@ run_fp_motif_clustering <- function(
   target_clusters = NULL,
   k_grid = NULL,
   run_mode = c("full", "pre"),
-  qc_mode = c("fast", "full"),
+  qc_mode = c("none", "fast", "full"),
   motif_db = NULL,
   cluster_source = c("hybrid", "data"),
   cores = NULL,
+  save_motif_db = FALSE,
+  motif_db_out_dir = NULL,
+  motif_db_prefix = "motif_db",
   weight_by_group_size = TRUE,
   verbose = TRUE
 ) {
@@ -1240,6 +1348,7 @@ run_fp_motif_clustering <- function(
   mode <- match.arg(mode)
   run_mode <- match.arg(run_mode)
   qc_mode <- match.arg(qc_mode)
+  do_qc <- !identical(qc_mode, "none")
   cluster_source <- match.arg(cluster_source)
   if (is.null(out_dir)) {
     if (is.null(base_dir) || !nzchar(base_dir)) {
@@ -1285,6 +1394,7 @@ run_fp_motif_clustering <- function(
   total_peaks_raw <- length(unique(fp_annotation$fp_peak))
 
   tf_map <- NULL
+  tf_map_db <- NULL
   if (mode %in% c("hybrid", "both")) {
     if (is.null(ref_similarity) && !is.null(ref_db)) {
       if (isTRUE(verbose)) .log_inform("Reference similarity: start ({ref_db}).")
@@ -1297,7 +1407,7 @@ run_fp_motif_clustering <- function(
     norm <- .normalize_similarity_ids(ref_similarity)
     ref_similarity <- norm$sim
     tf_map <- norm$tf_map
-    norm_ids <- .extract_jaspar_id(fp_annotation$motifs)
+    norm_ids <- .extract_motif_key(fp_annotation$motifs, db = ref_db)
     if (sum(!is.na(norm_ids)) > 0) {
       changed <- sum(!is.na(norm_ids) & norm_ids != fp_annotation$motifs)
       if (isTRUE(verbose) && changed > 0) {
@@ -1307,14 +1417,70 @@ run_fp_motif_clustering <- function(
     }
   }
 
-  stats <- build_motif_peak_stats(
-    fp_annotation = fp_annotation,
-    id_map = id_map,
-    min_peak_support = min_peak_support,
-    weight_by_group_size = weight_by_group_size,
-    verbose = verbose
+  motif_id_tag <- if (!is.null(ref_similarity) && mode %in% c("hybrid", "both")) "norm" else "raw"
+  stats_cache_path <- file.path(
+    cache_dir,
+    sprintf(
+      "motif_stats_%s_minp%s_w%s_m%s_p%s.rds",
+      motif_id_tag,
+      min_peak_support,
+      if (isTRUE(weight_by_group_size)) "TRUE" else "FALSE",
+      format(length(unique(fp_annotation$motifs)), scientific = FALSE),
+      format(length(unique(fp_annotation$fp_peak)), scientific = FALSE)
+    )
   )
+  stats <- NULL
+  if (file.exists(stats_cache_path)) {
+    stats <- tryCatch(readRDS(stats_cache_path), error = function(e) NULL)
+    if (isTRUE(verbose) && !is.null(stats)) {
+      .log_inform("Using cached motif stats: {stats_cache_path}")
+    }
+  }
+  if (is.null(stats) || !is.list(stats) || is.null(stats$motif_counts) || is.null(stats$motifs_keep)) {
+    stats <- build_motif_peak_stats(
+      fp_annotation = fp_annotation,
+      id_map = id_map,
+      min_peak_support = min_peak_support,
+      weight_by_group_size = weight_by_group_size,
+      verbose = verbose
+    )
+    if (!is.null(stats) && is.list(stats)) {
+      saveRDS(stats, stats_cache_path)
+      if (isTRUE(verbose)) {
+        .log_inform("Saved motif stats cache: {stats_cache_path}")
+      }
+    }
+  }
   motif_ids <- stats$motifs_keep
+  if (is.data.frame(motif_db) && "motif" %in% names(motif_db)) {
+    gene_col <- NULL
+    if ("gene_symbol" %in% names(motif_db)) gene_col <- "gene_symbol"
+    if (is.null(gene_col) && "HGNC" %in% names(motif_db)) gene_col <- "HGNC"
+    if (!is.null(gene_col)) {
+      motif_ids_db <- .extract_motif_key(motif_db$motif, db = ref_db)
+      motif_ids_db[is.na(motif_ids_db)] <- motif_db$motif[is.na(motif_ids_db)]
+      gene_vals <- motif_db[[gene_col]]
+      ok <- !is.na(motif_ids_db) & nzchar(motif_ids_db) & !is.na(gene_vals) & nzchar(gene_vals)
+      if (any(ok)) {
+        motif_ids_ok <- motif_ids_db[ok]
+        gene_ok <- gene_vals[ok]
+        keep <- !duplicated(motif_ids_ok)
+        tf_map_db <- stats::setNames(gene_ok[keep], motif_ids_ok[keep])
+      }
+    }
+  }
+  resolve_tf_names <- function(ids) {
+    nm <- rep(NA_character_, length(ids))
+    if (!is.null(tf_map_db)) {
+      nm <- tf_map_db[ids]
+    }
+    if (!is.null(tf_map)) {
+      nm2 <- tf_map[ids]
+      nm[is.na(nm)] <- nm2[is.na(nm)]
+    }
+    nm[is.na(nm)] <- ids[is.na(nm)]
+    nm
+  }
   k_df <- NULL
   k_info <- NULL
   k_df_h <- NULL
@@ -1363,13 +1529,15 @@ run_fp_motif_clustering <- function(
       }
       if (!is.null(k_df)) {
         readr::write_csv(k_df, file.path(out_dir, "qc_best_k_scores_data.csv"))
-        .plot_best_k_curve(
-          k_df = k_info$curve,
-          d2_df = k_info$d2,
-          out_path = file.path(out_dir, "qc_best_k_curve_data.pdf"),
-          title = "Best K selection curve (data-only)",
-          line_color = "#2b8cbe"
-        )
+        if (do_qc) {
+          .plot_best_k_curve(
+            k_df = k_info$curve,
+            d2_df = k_info$d2,
+            out_path = file.path(out_dir, "qc_best_k_curve_data.pdf"),
+            title = "Best K selection curve (data-only)",
+            line_color = "#2b8cbe"
+          )
+        }
       }
       if (isTRUE(verbose)) {
         .log_inform("Best K (data-only) selected: {target_clusters}.")
@@ -1390,9 +1558,7 @@ run_fp_motif_clustering <- function(
       cluster_id = as.integer(names(cluster_ids)),
       id = vapply(cluster_ids, function(x) paste(x, collapse = ","), character(1)),
       tf_name = vapply(cluster_ids, function(x) {
-        if (is.null(tf_map)) return(paste(unique(x), collapse = ","))
-        nm <- tf_map[x]
-        nm[is.na(nm)] <- x[is.na(nm)]
+        nm <- resolve_tf_names(x)
         paste(unique(nm), collapse = ",")
       }, character(1)),
       n_motifs = vapply(cluster_ids, length, integer(1)),
@@ -1423,8 +1589,11 @@ run_fp_motif_clustering <- function(
     )
     if (anyDuplicated(cluster_df$cluster_name)) {
       dup_ids <- which(duplicated(cluster_df$cluster_name) | duplicated(cluster_df$cluster_name, fromLast = TRUE))
-      idx <- ave(seq_along(cluster_df$cluster_name), cluster_df$cluster_name, FUN = seq_along)
-      cluster_df$cluster_name[dup_ids] <- paste0(cluster_df$cluster_name[dup_ids], "_", idx[dup_ids])
+      cluster_df$cluster_name[dup_ids] <- paste0(
+        cluster_df$cluster_name[dup_ids],
+        "_",
+        cluster_df$cluster_id[dup_ids]
+      )
     }
     cluster_df <- cluster_df[order(-cluster_df$n_motifs, -cluster_df$peak_support), , drop = FALSE]
   } else {
@@ -1434,23 +1603,46 @@ run_fp_motif_clustering <- function(
 
   if (run_mode == "full") {
     motif_counts_out <- stats$motif_counts
-    if (!is.null(tf_map)) {
-      motif_counts_out$tf_name <- tf_map[motif_counts_out$motif]
-      motif_counts_out$tf_name[is.na(motif_counts_out$tf_name)] <- motif_counts_out$motif[is.na(motif_counts_out$tf_name)]
-    }
+    motif_counts_out$tf_name <- resolve_tf_names(motif_counts_out$motif)
     readr::write_csv(motif_counts_out, file.path(out_dir, "motif_peak_support.csv"))
     if (!is.null(peak_summary)) {
       readr::write_csv(peak_summary, file.path(out_dir, "cluster_peak_summary_data.csv"))
     }
-    if (mode %in% c("data", "both")) {
+    if (do_qc && mode %in% c("data", "both")) {
       if (isTRUE(verbose)) .log_inform("QC plots (data-only): start.")
-      .save_similarity_heatmap(
-        sim_mat = sim_data,
-        clusters = cl_data,
-        out_path = file.path(out_dir, "qc_similarity_heatmap_data.pdf"),
-        title = "Motif similarity heatmap (footprint co-occurrence)",
-        show_labels = FALSE
-      )
+      k_tag <- if (!is.null(target_clusters)) paste0("_K", target_clusters) else ""
+      heatmap_data_path <- file.path(out_dir, sprintf("qc_similarity_heatmap_data%s.pdf", k_tag))
+      if (!file.exists(heatmap_data_path)) {
+        .save_similarity_heatmap(
+          sim_mat = sim_data,
+          clusters = cl_data,
+          out_path = heatmap_data_path,
+          title = "Motif similarity heatmap (footprint co-occurrence)",
+          show_labels = FALSE
+        )
+      } else if (isTRUE(verbose)) {
+        .log_inform("QC plots (data-only): skipping existing {heatmap_data_path}.")
+      }
+      cluster_labels <- NULL
+      if (!is.null(cluster_df) && all(c("cluster_id", "cluster_name") %in% names(cluster_df))) {
+        cluster_labels <- stats::setNames(cluster_df$cluster_name, cluster_df$cluster_id)
+      }
+      cluster_sim <- .cluster_similarity_matrix(sim_data, cl_data, cluster_labels = cluster_labels)
+      if (!is.null(cluster_sim)) {
+        cluster_annot <- stats::setNames(rep("cluster", nrow(cluster_sim)), rownames(cluster_sim))
+        heatmap_cluster_path <- file.path(out_dir, sprintf("qc_similarity_heatmap_clusters_data%s.pdf", k_tag))
+        if (!file.exists(heatmap_cluster_path)) {
+          .save_similarity_heatmap(
+            sim_mat = cluster_sim,
+            clusters = cluster_annot,
+            out_path = heatmap_cluster_path,
+            title = "Cluster similarity heatmap (footprint co-occurrence)",
+            show_labels = FALSE
+          )
+        } else if (isTRUE(verbose)) {
+          .log_inform("QC plots (data-only): skipping existing {heatmap_cluster_path}.")
+        }
+      }
       .save_silhouette_plot(
         dist_obj = dist_data,
         clusters = cl_data,
@@ -1484,7 +1676,7 @@ run_fp_motif_clustering <- function(
     "   - cluster_id: numeric cluster id from cutree().",
     "   - cluster_name: compact, human-readable label (unique; derived from TF names).",
     "   - id: motif IDs in the cluster (JASPAR matrix IDs).",
-    "   - tf_name: TF names mapped from the reference similarity (falls back to motif ID when missing).",
+    "   - tf_name: TF names mapped from motif_db (or reference similarity); falls back to motif ID when missing.",
     "   - n_motifs: number of motifs in the cluster.",
     "   - pct_motifs / pct_motifs_of_kept: fraction of kept motifs in this cluster.",
     "   - peak_support: total weighted aligned-peak support across motifs in the cluster.",
@@ -1534,13 +1726,15 @@ run_fp_motif_clustering <- function(
     "- qc_cluster_sizes_top20_data.pdf: largest 20 clusters (data-only).",
     "- qc_best_k_curve_data.pdf: silhouette vs K and second derivative; top 5 K highlighted (data-only).",
     "- qc_similarity_ref_vs_data.pdf: PPM reference similarity vs footprint similarity (with Spearman/Pearson/Kendall; qc_mode=full only).",
-    "- qc_similarity_heatmap_data.pdf: heatmap of footprint similarity; clustered by motif similarity.",
+    "- qc_similarity_heatmap_data_K<k>.pdf: heatmap of footprint similarity; clustered by motif similarity.",
+    "- qc_similarity_heatmap_clusters_data_K<k>.pdf: heatmap of cluster-by-cluster footprint similarity.",
     "- qc_silhouette_profile_data.pdf: silhouette profile for the selected K (data-only).",
     "- qc_mds_scatter_data.pdf: 2D MDS scatter of motifs colored by cluster (data-only).",
     "- qc_cluster_sizes_hybrid.pdf: cluster size distribution (hybrid).",
     "- qc_cluster_sizes_top20_hybrid.pdf: largest 20 clusters (hybrid).",
     "- qc_best_k_curve_hybrid.pdf: silhouette vs K and second derivative; top 5 K highlighted (hybrid).",
-    "- qc_similarity_heatmap_hybrid.pdf: heatmap of hybrid similarity; clustered by motif similarity.",
+    "- qc_similarity_heatmap_hybrid_K<k>.pdf: heatmap of hybrid similarity; clustered by motif similarity.",
+    "- qc_similarity_heatmap_clusters_hybrid_K<k>.pdf: heatmap of cluster-by-cluster hybrid similarity.",
     "- qc_silhouette_profile_hybrid.pdf: silhouette profile for the selected K (hybrid).",
     "- qc_mds_scatter_hybrid.pdf: 2D MDS scatter of motifs colored by cluster (hybrid).",
     "",
@@ -1645,13 +1839,15 @@ run_fp_motif_clustering <- function(
       }
       if (!is.null(k_df_h)) {
         readr::write_csv(k_df_h, file.path(out_dir, "qc_best_k_scores_hybrid.csv"))
-        .plot_best_k_curve(
-          k_df = k_info_h$curve,
-          d2_df = k_info_h$d2,
-          out_path = file.path(out_dir, "qc_best_k_curve_hybrid.pdf"),
-          title = "Best K selection curve (hybrid)",
-          line_color = "#e6550d"
-        )
+        if (do_qc) {
+          .plot_best_k_curve(
+            k_df = k_info_h$curve,
+            d2_df = k_info_h$d2,
+            out_path = file.path(out_dir, "qc_best_k_curve_hybrid.pdf"),
+            title = "Best K selection curve (hybrid)",
+            line_color = "#e6550d"
+          )
+        }
       }
       if (isTRUE(verbose)) {
         .log_inform("Best K (hybrid) selected: {target_clusters_h}.")
@@ -1666,13 +1862,11 @@ run_fp_motif_clustering <- function(
       cl_map_h <- data.frame(motif = names(cl_hybrid), cluster_id = as.integer(cl_hybrid), stringsAsFactors = FALSE)
       peak_summary_h <- .cluster_peak_summary(fp_annotation, cl_map_h, top_n = 5L)
       cluster_df_h <- data.frame(
-        cluster = sprintf("cluster_%03d", seq_along(cluster_ids_h)),
-        cluster_id = as.integer(names(cluster_ids_h)),
-        id = vapply(cluster_ids_h, function(x) paste(x, collapse = ","), character(1)),
-        tf_name = vapply(cluster_ids_h, function(x) {
-          if (is.null(tf_map)) return(paste(unique(x), collapse = ","))
-          nm <- tf_map[x]
-          nm[is.na(nm)] <- x[is.na(nm)]
+      cluster = sprintf("cluster_%03d", seq_along(cluster_ids_h)),
+      cluster_id = as.integer(names(cluster_ids_h)),
+      id = vapply(cluster_ids_h, function(x) paste(x, collapse = ","), character(1)),
+      tf_name = vapply(cluster_ids_h, function(x) {
+          nm <- resolve_tf_names(x)
           paste(unique(nm), collapse = ",")
         }, character(1)),
         n_motifs = vapply(cluster_ids_h, length, integer(1)),
@@ -1703,8 +1897,11 @@ run_fp_motif_clustering <- function(
       )
       if (anyDuplicated(cluster_df_h$cluster_name)) {
         dup_ids <- which(duplicated(cluster_df_h$cluster_name) | duplicated(cluster_df_h$cluster_name, fromLast = TRUE))
-        idx <- ave(seq_along(cluster_df_h$cluster_name), cluster_df_h$cluster_name, FUN = seq_along)
-        cluster_df_h$cluster_name[dup_ids] <- paste0(cluster_df_h$cluster_name[dup_ids], "_", idx[dup_ids])
+        cluster_df_h$cluster_name[dup_ids] <- paste0(
+          cluster_df_h$cluster_name[dup_ids],
+          "_",
+          cluster_df_h$cluster_id[dup_ids]
+        )
       }
       cluster_df_h <- cluster_df_h[order(-cluster_df_h$n_motifs, -cluster_df_h$peak_support), , drop = FALSE]
 
@@ -1713,27 +1910,55 @@ run_fp_motif_clustering <- function(
       if (!is.null(peak_summary_h)) {
         readr::write_csv(peak_summary_h, file.path(out_dir, "cluster_peak_summary_hybrid.csv"))
       }
-      if (isTRUE(verbose)) .log_inform("QC plots (hybrid): start.")
-      .save_similarity_heatmap(
-        sim_mat = sim_hybrid,
-        clusters = cl_hybrid,
-        out_path = file.path(out_dir, "qc_similarity_heatmap_hybrid.pdf"),
-        title = "Motif similarity heatmap (hybrid reference + footprint)",
-        show_labels = FALSE
-      )
-      .save_silhouette_plot(
-        dist_obj = dist_hybrid,
-        clusters = cl_hybrid,
-        out_path = file.path(out_dir, "qc_silhouette_profile_hybrid.pdf"),
-        title = paste0("Silhouette profile (hybrid, K=", target_clusters_h, ")")
-      )
-      .save_embedding_plot(
-        dist_obj = dist_hybrid,
-        clusters = cl_hybrid,
-        out_path = file.path(out_dir, "qc_mds_scatter_hybrid.pdf"),
-        title = paste0("MDS scatter (hybrid, K=", target_clusters_h, ")")
-      )
-      if (isTRUE(verbose)) .log_inform("QC plots (hybrid): done.")
+      if (do_qc) {
+        if (isTRUE(verbose)) .log_inform("QC plots (hybrid): start.")
+        k_tag <- if (!is.null(target_clusters_h)) paste0("_K", target_clusters_h) else ""
+        heatmap_hybrid_path <- file.path(out_dir, sprintf("qc_similarity_heatmap_hybrid%s.pdf", k_tag))
+        if (!file.exists(heatmap_hybrid_path)) {
+          .save_similarity_heatmap(
+            sim_mat = sim_hybrid,
+            clusters = cl_hybrid,
+            out_path = heatmap_hybrid_path,
+            title = "Motif similarity heatmap (hybrid reference + footprint)",
+            show_labels = FALSE
+          )
+        } else if (isTRUE(verbose)) {
+          .log_inform("QC plots (hybrid): skipping existing {heatmap_hybrid_path}.")
+        }
+        cluster_labels_h <- NULL
+        if (!is.null(cluster_df_h) && all(c("cluster_id", "cluster_name") %in% names(cluster_df_h))) {
+          cluster_labels_h <- stats::setNames(cluster_df_h$cluster_name, cluster_df_h$cluster_id)
+        }
+        cluster_sim_h <- .cluster_similarity_matrix(sim_hybrid, cl_hybrid, cluster_labels = cluster_labels_h)
+        if (!is.null(cluster_sim_h)) {
+          cluster_annot_h <- stats::setNames(rep("cluster", nrow(cluster_sim_h)), rownames(cluster_sim_h))
+          heatmap_cluster_h_path <- file.path(out_dir, sprintf("qc_similarity_heatmap_clusters_hybrid%s.pdf", k_tag))
+          if (!file.exists(heatmap_cluster_h_path)) {
+            .save_similarity_heatmap(
+              sim_mat = cluster_sim_h,
+              clusters = cluster_annot_h,
+              out_path = heatmap_cluster_h_path,
+              title = "Cluster similarity heatmap (hybrid reference + footprint)",
+              show_labels = FALSE
+            )
+          } else if (isTRUE(verbose)) {
+            .log_inform("QC plots (hybrid): skipping existing {heatmap_cluster_h_path}.")
+          }
+        }
+        .save_silhouette_plot(
+          dist_obj = dist_hybrid,
+          clusters = cl_hybrid,
+          out_path = file.path(out_dir, "qc_silhouette_profile_hybrid.pdf"),
+          title = paste0("Silhouette profile (hybrid, K=", target_clusters_h, ")")
+        )
+        .save_embedding_plot(
+          dist_obj = dist_hybrid,
+          clusters = cl_hybrid,
+          out_path = file.path(out_dir, "qc_mds_scatter_hybrid.pdf"),
+          title = paste0("MDS scatter (hybrid, K=", target_clusters_h, ")")
+        )
+        if (isTRUE(verbose)) .log_inform("QC plots (hybrid): done.")
+      }
       if (isTRUE(verbose)) .log_inform("Hybrid clustering: done.")
       saveRDS(sim_hybrid, file.path(out_dir, "similarity_hybrid.rds"))
       summary_h <- data.frame(
@@ -1773,8 +1998,12 @@ run_fp_motif_clustering <- function(
     ))
   }
 
+  if (!do_qc) {
+    if (isTRUE(verbose)) .log_inform("QC plots disabled (qc_mode = 'none').")
+  }
+
   # QC plots
-  if (isTRUE(verbose)) .log_inform("QC plots (global distributions): start.")
+  if (do_qc && isTRUE(verbose)) .log_inform("QC plots (global distributions): start.")
   motifs_per_peak <- if (requireNamespace("data.table", quietly = TRUE)) {
     dt <- data.table::as.data.table(fp_annotation[, c("fp_peak", "motifs")])
     dt <- unique(dt)
@@ -1783,7 +2012,7 @@ run_fp_motif_clustering <- function(
     tapply(fp_annotation$motifs, fp_annotation$fp_peak, function(x) length(unique(x)))
   }
 
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_motifs_per_peak.pdf"),
     function(ggplot2 = TRUE) {
       if (ggplot2) {
@@ -1805,7 +2034,7 @@ run_fp_motif_clustering <- function(
     }
   )
 
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_motif_support.pdf"),
     function(ggplot2 = TRUE) {
       df <- stats$motif_counts
@@ -1827,7 +2056,7 @@ run_fp_motif_clustering <- function(
     }
   )
 
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_motif_support_cdf.pdf"),
     function(ggplot2 = TRUE) {
       df <- stats$motif_counts
@@ -1850,7 +2079,7 @@ run_fp_motif_clustering <- function(
   )
 
   sim_vals <- sim_data[upper.tri(sim_data)]
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_similarity_distribution.pdf"),
     function(ggplot2 = TRUE) {
       df <- data.frame(sim = sim_vals)
@@ -1873,7 +2102,7 @@ run_fp_motif_clustering <- function(
   )
 
   cluster_sizes <- sort(table(cl_data), decreasing = TRUE)
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_cluster_sizes_data.pdf"),
     function(ggplot2 = TRUE) {
       df <- data.frame(size = as.integer(cluster_sizes))
@@ -1895,7 +2124,7 @@ run_fp_motif_clustering <- function(
     }
   )
 
-  .save_plot_safe(
+  if (do_qc) .save_plot_safe(
     file.path(out_dir, "qc_cluster_sizes_top20_data.pdf"),
     function(ggplot2 = TRUE) {
       top_sizes <- sort(as.integer(cluster_sizes), decreasing = TRUE)[seq_len(min(20L, length(cluster_sizes)))]
@@ -1918,116 +2147,118 @@ run_fp_motif_clustering <- function(
     }
   )
 
-  if (file.exists(file.path(out_dir, "qc_best_k_scores_data.csv"))) {
-    k_df <- readr::read_csv(file.path(out_dir, "qc_best_k_scores_data.csv"), show_col_types = FALSE)
-    k_info <- .k_curve_with_second_derivative(k_df)
-    .plot_best_k_curve(
-      k_df = k_info$curve,
-      d2_df = k_info$d2,
-      out_path = file.path(out_dir, "qc_best_k_curve_data.pdf"),
-      title = "Best K selection curve (data-only)",
-      line_color = "#2b8cbe"
-    )
-  }
-
-  if (!is.null(ref_similarity) && !is.null(sim_hybrid)) {
-    if (qc_mode == "full") {
-      ref_vals <- ref_similarity[upper.tri(ref_similarity)]
-      .save_plot_safe(
-        file.path(out_dir, "qc_similarity_ref_vs_data.pdf"),
-        function(ggplot2 = TRUE) {
-          df <- data.frame(ref = ref_vals, data = sim_vals)
-          corr_s <- stats::cor(df$ref, df$data, method = "spearman", use = "complete.obs")
-          corr_p <- stats::cor(df$ref, df$data, method = "pearson", use = "complete.obs")
-          corr_k <- stats::cor(df$ref, df$data, method = "kendall", use = "complete.obs")
-          if (ggplot2) {
-            ggplot2::ggplot(df, ggplot2::aes(x = ref, y = data)) +
-              ggplot2::geom_point(alpha = 0.06, size = 0.2, color = "#3c3c3c") +
-              ggplot2::labs(
-                title = "Similarity: PPM reference vs footprint co-occurrence",
-                x = "Reference similarity (PPM length-normalized correlation)",
-                y = "Footprint similarity",
-                caption = paste0(
-                  "Hybrid alpha=", alpha, "; similarity method=", sim_method,
-                  "; Spearman r=", sprintf("%.3f", corr_s),
-                  "; Pearson r=", sprintf("%.3f", corr_p),
-                  "; Kendall tau=", sprintf("%.3f", corr_k)
-                )
-              ) +
-              .theme_pub()
-          } else {
-            plot(ref_vals, sim_vals, pch = 16, cex = 0.3,
-                 main = "Similarity: PPM reference vs footprint co-occurrence",
-                 xlab = "Reference similarity (PPM length-normalized correlation)",
-                 ylab = "Footprint similarity")
-            legend("topleft", legend = c(
-              paste0("Spearman r=", sprintf("%.3f", corr_s)),
-              paste0("Pearson r=", sprintf("%.3f", corr_p)),
-              paste0("Kendall tau=", sprintf("%.3f", corr_k))
-            ), bty = "n")
-          }
-        }
-      )
-    } else if (isTRUE(verbose)) {
-      .log_inform("QC plots (hybrid): skipping qc_similarity_ref_vs_data.pdf (qc_mode=fast).")
-    }
-
-    cluster_sizes_h <- sort(table(cl_hybrid), decreasing = TRUE)
-    .save_plot_safe(
-      file.path(out_dir, "qc_cluster_sizes_hybrid.pdf"),
-      function(ggplot2 = TRUE) {
-        df <- data.frame(size = as.integer(cluster_sizes_h))
-        if (ggplot2) {
-          ggplot2::ggplot(df, ggplot2::aes(x = size)) +
-            ggplot2::geom_histogram(bins = 60, fill = "#e6550d", color = "white", linewidth = 0.2) +
-            ggplot2::labs(
-              title = "Cluster size distribution (hybrid reference + footprint)",
-              x = "Motifs per cluster",
-              y = "Cluster count",
-              caption = paste0("Hybrid alpha=", alpha, "; target clusters=", target_clusters)
-            ) +
-            .theme_pub()
-        } else {
-          hist(df$size, breaks = 60,
-               main = "Cluster size distribution (hybrid reference + footprint)",
-               xlab = "Motifs per cluster", ylab = "Cluster count")
-        }
-      }
-    )
-
-    .save_plot_safe(
-      file.path(out_dir, "qc_cluster_sizes_top20_hybrid.pdf"),
-      function(ggplot2 = TRUE) {
-        top_sizes <- sort(as.integer(cluster_sizes_h), decreasing = TRUE)[seq_len(min(20L, length(cluster_sizes_h)))]
-        df <- data.frame(rank = seq_along(top_sizes), size = top_sizes)
-        if (ggplot2) {
-          ggplot2::ggplot(df, ggplot2::aes(x = factor(rank), y = size)) +
-            ggplot2::geom_col(fill = "#e6550d") +
-            ggplot2::labs(
-              title = "Top 20 cluster sizes (hybrid reference + footprint)",
-              x = "Cluster rank (largest to smallest)",
-              y = "Motifs per cluster",
-              caption = paste0("Hybrid alpha=", alpha)
-            ) +
-            .theme_pub()
-        } else {
-          barplot(top_sizes, main = "Top 20 cluster sizes (hybrid reference + footprint)",
-                  xlab = "Cluster rank (largest to smallest)",
-                  ylab = "Motifs per cluster")
-        }
-      }
-    )
-
-    if (file.exists(file.path(out_dir, "qc_best_k_scores_hybrid.csv"))) {
-      k_df <- readr::read_csv(file.path(out_dir, "qc_best_k_scores_hybrid.csv"), show_col_types = FALSE)
+  if (do_qc) {
+    if (file.exists(file.path(out_dir, "qc_best_k_scores_data.csv"))) {
+      k_df <- readr::read_csv(file.path(out_dir, "qc_best_k_scores_data.csv"), show_col_types = FALSE)
       k_info <- .k_curve_with_second_derivative(k_df)
       .plot_best_k_curve(
         k_df = k_info$curve,
         d2_df = k_info$d2,
-        out_path = file.path(out_dir, "qc_best_k_curve_hybrid.pdf"),
-        title = "Best K selection curve (hybrid)",
-        line_color = "#e6550d"
+        out_path = file.path(out_dir, "qc_best_k_curve_data.pdf"),
+        title = "Best K selection curve (data-only)",
+        line_color = "#2b8cbe"
       )
+    }
+
+    if (!is.null(ref_similarity) && !is.null(sim_hybrid)) {
+      if (qc_mode == "full") {
+        ref_vals <- ref_similarity[upper.tri(ref_similarity)]
+        .save_plot_safe(
+          file.path(out_dir, "qc_similarity_ref_vs_data.pdf"),
+          function(ggplot2 = TRUE) {
+            df <- data.frame(ref = ref_vals, data = sim_vals)
+            corr_s <- stats::cor(df$ref, df$data, method = "spearman", use = "complete.obs")
+            corr_p <- stats::cor(df$ref, df$data, method = "pearson", use = "complete.obs")
+            corr_k <- stats::cor(df$ref, df$data, method = "kendall", use = "complete.obs")
+            if (ggplot2) {
+              ggplot2::ggplot(df, ggplot2::aes(x = ref, y = data)) +
+                ggplot2::geom_point(alpha = 0.06, size = 0.2, color = "#3c3c3c") +
+                ggplot2::labs(
+                  title = "Similarity: PPM reference vs footprint co-occurrence",
+                  x = "Reference similarity (PPM length-normalized correlation)",
+                  y = "Footprint similarity",
+                  caption = paste0(
+                    "Hybrid alpha=", alpha, "; similarity method=", sim_method,
+                    "; Spearman r=", sprintf("%.3f", corr_s),
+                    "; Pearson r=", sprintf("%.3f", corr_p),
+                    "; Kendall tau=", sprintf("%.3f", corr_k)
+                  )
+                ) +
+                .theme_pub()
+            } else {
+              plot(ref_vals, sim_vals, pch = 16, cex = 0.3,
+                   main = "Similarity: PPM reference vs footprint co-occurrence",
+                   xlab = "Reference similarity (PPM length-normalized correlation)",
+                   ylab = "Footprint similarity")
+              legend("topleft", legend = c(
+                paste0("Spearman r=", sprintf("%.3f", corr_s)),
+                paste0("Pearson r=", sprintf("%.3f", corr_p)),
+                paste0("Kendall tau=", sprintf("%.3f", corr_k))
+              ), bty = "n")
+            }
+          }
+        )
+      } else if (isTRUE(verbose)) {
+        .log_inform("QC plots (hybrid): skipping qc_similarity_ref_vs_data.pdf (qc_mode=fast).")
+      }
+
+      cluster_sizes_h <- sort(table(cl_hybrid), decreasing = TRUE)
+      .save_plot_safe(
+        file.path(out_dir, "qc_cluster_sizes_hybrid.pdf"),
+        function(ggplot2 = TRUE) {
+          df <- data.frame(size = as.integer(cluster_sizes_h))
+          if (ggplot2) {
+            ggplot2::ggplot(df, ggplot2::aes(x = size)) +
+              ggplot2::geom_histogram(bins = 60, fill = "#e6550d", color = "white", linewidth = 0.2) +
+              ggplot2::labs(
+                title = "Cluster size distribution (hybrid reference + footprint)",
+                x = "Motifs per cluster",
+                y = "Cluster count",
+                caption = paste0("Hybrid alpha=", alpha, "; target clusters=", target_clusters)
+              ) +
+              .theme_pub()
+          } else {
+            hist(df$size, breaks = 60,
+                 main = "Cluster size distribution (hybrid reference + footprint)",
+                 xlab = "Motifs per cluster", ylab = "Cluster count")
+          }
+        }
+      )
+
+      .save_plot_safe(
+        file.path(out_dir, "qc_cluster_sizes_top20_hybrid.pdf"),
+        function(ggplot2 = TRUE) {
+          top_sizes <- sort(as.integer(cluster_sizes_h), decreasing = TRUE)[seq_len(min(20L, length(cluster_sizes_h)))]
+          df <- data.frame(rank = seq_along(top_sizes), size = top_sizes)
+          if (ggplot2) {
+            ggplot2::ggplot(df, ggplot2::aes(x = factor(rank), y = size)) +
+              ggplot2::geom_col(fill = "#e6550d") +
+              ggplot2::labs(
+                title = "Top 20 cluster sizes (hybrid reference + footprint)",
+                x = "Cluster rank (largest to smallest)",
+                y = "Motifs per cluster",
+                caption = paste0("Hybrid alpha=", alpha)
+              ) +
+              .theme_pub()
+          } else {
+            barplot(top_sizes, main = "Top 20 cluster sizes (hybrid reference + footprint)",
+                    xlab = "Cluster rank (largest to smallest)",
+                    ylab = "Motifs per cluster")
+          }
+        }
+      )
+
+      if (file.exists(file.path(out_dir, "qc_best_k_scores_hybrid.csv"))) {
+        k_df <- readr::read_csv(file.path(out_dir, "qc_best_k_scores_hybrid.csv"), show_col_types = FALSE)
+        k_info <- .k_curve_with_second_derivative(k_df)
+        .plot_best_k_curve(
+          k_df = k_info$curve,
+          d2_df = k_info$d2,
+          out_path = file.path(out_dir, "qc_best_k_curve_hybrid.pdf"),
+          title = "Best K selection curve (hybrid)",
+          line_color = "#e6550d"
+        )
+      }
     }
   }
 
@@ -2039,7 +2270,22 @@ run_fp_motif_clustering <- function(
   if (cluster_source == "hybrid" && is.null(cluster_df_use)) {
     cluster_df_use <- cluster_df
   }
-  motif_db_updated <- .apply_cluster_to_motif_db(motif_db, cluster_df_use)
+  motif_db_updated <- .apply_cluster_to_motif_db(motif_db, cluster_df_use, db = ref_db)
+
+  if (isTRUE(save_motif_db) && !is.null(motif_db_updated)) {
+    if (is.null(motif_db_out_dir)) motif_db_out_dir <- out_dir
+    if (!dir.exists(motif_db_out_dir)) {
+      dir.create(motif_db_out_dir, recursive = TRUE, showWarnings = FALSE)
+    }
+    db_tag <- if (!is.null(ref_db)) ref_db else "motifdb"
+    k_tag <- if (!is.null(target_clusters)) target_clusters else "auto"
+    out_path <- file.path(
+      motif_db_out_dir,
+      sprintf("%s_%s_%s_K%s.csv", motif_db_prefix, db_tag, mode, k_tag)
+    )
+    readr::write_csv(motif_db_updated, out_path)
+    if (isTRUE(verbose)) .log_inform("Saved motif DB: {out_path}")
+  }
 
   list(
     motif_stats = stats,

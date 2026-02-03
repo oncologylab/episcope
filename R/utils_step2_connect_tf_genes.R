@@ -2167,6 +2167,16 @@ filter_links_by_fp_rna_criteria <- function(
 #' @param tf_col Column name for TF.
 #' @param gene_col Column name for gene key.
 #' @param peak_col Column name for peak ID.
+#' @param fp_score_tbl Optional footprint score table (peak_ID + condition columns).
+#' @param fp_score_threshold Numeric threshold on fp_score.
+#' @param atac_score_tbl Optional ATAC score table (atac_peak + condition columns).
+#' @param atac_score_threshold Numeric threshold on atac_score.
+#' @param atac_peak_col Column in `links` containing atac_peak (default "atac_peak").
+#' @param require_fp_bound If TRUE, require fp_bound > 0.
+#' @param require_gene_expr If TRUE, require TF and gene expression flags > 0.
+#' @param require_fp_score If TRUE, require fp_score >= fp_score_threshold.
+#' @param require_atac_score If TRUE, require atac_score >= atac_score_threshold.
+#' @param return_tbl If TRUE, return the status table in memory.
 #' @param out_file Optional CSV path to write the matrix (wide).
 #' @param chunk_size Row chunk size for streaming.
 #' @param return_keep Logical; if TRUE return per-link keep flags (any condition).
@@ -2184,7 +2194,17 @@ build_link_status_matrix <- function(
     chunk_size = 50000L,
     return_keep = FALSE,
     filter_any = FALSE,
-    verbose = TRUE
+    verbose = TRUE,
+    fp_score_tbl = NULL,
+    fp_score_threshold = NULL,
+    atac_score_tbl = NULL,
+    atac_score_threshold = NULL,
+    atac_peak_col = "atac_peak",
+    require_fp_bound = TRUE,
+    require_gene_expr = TRUE,
+    require_fp_score = FALSE,
+    require_atac_score = FALSE,
+    return_tbl = FALSE
 ) {
   stopifnot(is.data.frame(links), is.data.frame(fp_bound), is.data.frame(rna_expressed))
   stopifnot(all(c(tf_col, gene_col, peak_col) %in% names(links)))
@@ -2192,11 +2212,33 @@ build_link_status_matrix <- function(
   if (!all(c("ensembl_gene_id", "HGNC") %in% names(rna_expressed))) {
     stop("`rna_expressed` must include ensembl_gene_id and HGNC.")
   }
+  if (isTRUE(require_fp_score) && !is.data.frame(fp_score_tbl)) {
+    stop("require_fp_score=TRUE but `fp_score_tbl` is missing or invalid.")
+  }
+  if (isTRUE(require_atac_score) && !is.data.frame(atac_score_tbl)) {
+    stop("require_atac_score=TRUE but `atac_score_tbl` is missing or invalid.")
+  }
+  if (isTRUE(require_fp_score) && (is.null(fp_score_threshold) || !is.finite(fp_score_threshold))) {
+    stop("require_fp_score=TRUE but `fp_score_threshold` is missing or invalid.")
+  }
+  if (isTRUE(require_atac_score) && (is.null(atac_score_threshold) || !is.finite(atac_score_threshold))) {
+    stop("require_atac_score=TRUE but `atac_score_threshold` is missing or invalid.")
+  }
+  if (isTRUE(require_atac_score) && !atac_peak_col %in% names(links)) {
+    stop("require_atac_score=TRUE but links missing atac_peak column.")
+  }
 
   cond_cols <- intersect(
     setdiff(names(fp_bound), "peak_ID"),
     setdiff(names(rna_expressed), c("ensembl_gene_id", "HGNC"))
   )
+  if (isTRUE(require_fp_score) && is.data.frame(fp_score_tbl)) {
+    cond_cols <- intersect(cond_cols, setdiff(names(fp_score_tbl), "peak_ID"))
+  }
+  if (isTRUE(require_atac_score) && is.data.frame(atac_score_tbl)) {
+    atac_peak_name <- if ("atac_peak" %in% names(atac_score_tbl)) "atac_peak" else "peak_ID"
+    cond_cols <- intersect(cond_cols, setdiff(names(atac_score_tbl), atac_peak_name))
+  }
   if (!length(cond_cols)) stop("No shared condition columns between fp_bound and rna_expressed.")
 
   expr_hgnc <- rna_expressed[!is.na(rna_expressed$HGNC) & rna_expressed$HGNC != "",
@@ -2210,6 +2252,16 @@ build_link_status_matrix <- function(
   idx_tf <- match(links[[tf_col]], expr_hgnc$gene_key)
   idx_gene_hgnc <- match(links[[gene_col]], expr_hgnc$gene_key)
   idx_gene_ensg <- match(links[[gene_col]], expr_ensg$gene_key)
+  idx_fp_score <- NULL
+  if (isTRUE(require_fp_score) && is.data.frame(fp_score_tbl)) {
+    idx_fp_score <- match(links[[peak_col]], fp_score_tbl$peak_ID)
+  }
+  idx_atac_score <- NULL
+  atac_peak_name <- NULL
+  if (isTRUE(require_atac_score) && is.data.frame(atac_score_tbl)) {
+    atac_peak_name <- if ("atac_peak" %in% names(atac_score_tbl)) "atac_peak" else "peak_ID"
+    idx_atac_score <- match(links[[atac_peak_col]], atac_score_tbl[[atac_peak_name]])
+  }
 
   n <- nrow(links)
   keep_any <- if (return_keep) logical(n) else NULL
@@ -2219,8 +2271,8 @@ build_link_status_matrix <- function(
     dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
     if (file.exists(out_file)) file.remove(out_file)
   }
-
   idx_chunks <- split(seq_len(n), ceiling(seq_len(n) / as.integer(chunk_size)))
+  status_chunks <- if (isTRUE(return_tbl)) vector("list", length = length(idx_chunks)) else NULL
   for (k in seq_along(idx_chunks)) {
     ii <- idx_chunks[[k]]
 
@@ -2249,7 +2301,43 @@ build_link_status_matrix <- function(
     }
     gene_mat[is.na(gene_mat)] <- 0L
 
-    active <- (fp_mat > 0L) & (tf_mat > 0L) & (gene_mat > 0L)
+    fp_score_mat <- NULL
+    if (isTRUE(require_fp_score)) {
+      fp_score_mat <- matrix(0, nrow = length(ii), ncol = length(cond_cols))
+      if (!is.null(idx_fp_score)) {
+        ok_fp_score <- !is.na(idx_fp_score[ii])
+        if (any(ok_fp_score)) {
+          fp_score_mat[ok_fp_score, ] <- as.matrix(fp_score_tbl[idx_fp_score[ii][ok_fp_score], cond_cols, drop = FALSE])
+        }
+      }
+      fp_score_mat[is.na(fp_score_mat)] <- 0
+    }
+
+    atac_score_mat <- NULL
+    if (isTRUE(require_atac_score)) {
+      atac_score_mat <- matrix(0, nrow = length(ii), ncol = length(cond_cols))
+      if (!is.null(idx_atac_score)) {
+        ok_atac_score <- !is.na(idx_atac_score[ii])
+        if (any(ok_atac_score)) {
+          atac_score_mat[ok_atac_score, ] <- as.matrix(atac_score_tbl[idx_atac_score[ii][ok_atac_score], cond_cols, drop = FALSE])
+        }
+      }
+      atac_score_mat[is.na(atac_score_mat)] <- 0
+    }
+
+    active <- matrix(TRUE, nrow = length(ii), ncol = length(cond_cols))
+    if (isTRUE(require_fp_bound)) {
+      active <- active & (fp_mat > 0L)
+    }
+    if (isTRUE(require_gene_expr)) {
+      active <- active & (tf_mat > 0L) & (gene_mat > 0L)
+    }
+    if (isTRUE(require_fp_score)) {
+      active <- active & (fp_score_mat >= fp_score_threshold)
+    }
+    if (isTRUE(require_atac_score)) {
+      active <- active & (atac_score_mat >= atac_score_threshold)
+    }
     active_int <- matrix(as.integer(active), nrow = nrow(active), ncol = ncol(active))
     colnames(active_int) <- cond_cols
 
@@ -2277,6 +2365,14 @@ build_link_status_matrix <- function(
       )
       wrote_header <- TRUE
     }
+    if (isTRUE(return_tbl)) {
+      status_chunks[[k]] <- out_chunk
+    }
+  }
+
+  status_tbl <- NULL
+  if (isTRUE(return_tbl)) {
+    status_tbl <- dplyr::bind_rows(status_chunks)
   }
 
   if (verbose) {
@@ -2285,7 +2381,7 @@ build_link_status_matrix <- function(
     if (!is.null(out_file)) message("Wrote: ", out_file)
   }
 
-  invisible(list(out_file = out_file, keep = keep_any))
+  invisible(list(out_file = out_file, keep = keep_any, status_tbl = status_tbl))
 }
 
 
@@ -2352,11 +2448,13 @@ make_basal_links <- function(fp_gene_corr_kept, fp_annotation,
   }
 
   # from fp_gene_corr_kept -> main columns
+  has_atac_peak <- "atac_peak" %in% names(fp_gene_corr_use)
   core <- fp_gene_corr_use |>
     dplyr::transmute(
       TF         = tfs,
       gene_key,
       peak_ID    = fp_peak,
+      atac_peak  = if (has_atac_peak) .data$atac_peak else NA_character_,
       edge_weight = 1,                # constant 1 as requested
       r_gene      = r_fp,
       p_gene      = p_fp,
@@ -2392,7 +2490,7 @@ make_basal_links <- function(fp_gene_corr_kept, fp_annotation,
 
   basal <- basal |>
     dplyr::select(
-      TF, gene_key, peak_ID, edge_weight,
+      TF, gene_key, peak_ID, atac_peak, edge_weight,
       r_gene, p_gene, p_adj_gene,
       n_used_tf, r_tf, p_tf, p_adj_tf, motif,
       r_rna_gene, p_rna_gene, p_rna_adj_gene,
@@ -2422,6 +2520,10 @@ make_basal_links <- function(fp_gene_corr_kept, fp_annotation,
 #' @param tf_expr_threshold Numeric threshold on TF expression.
 #' @param fp_bound_tbl Optional fp_bound matrix (peak_ID + condition columns; 0/1).
 #' @param rna_expressed_tbl Optional gene expression flag matrix (HGNC/ensembl + condition columns; 0/1).
+#' @param atac_score_tbl Optional ATAC score table (atac_peak + condition columns).
+#' @param atac_score_threshold Numeric threshold on atac_score.
+#' @param require_atac_score If TRUE, require atac_score >= atac_score_threshold to mark links active.
+#' @param fp_annotation_tbl Optional fp_annotation table to map peak_ID -> atac_peak when needed.
 #' @param require_fp_bound If TRUE, require fp_bound > 0 to mark links active.
 #' @param require_gene_expr If TRUE, require TF and gene expression flags to mark links active.
 #' @param gene_expr_threshold Threshold for expression flags (default 1).
@@ -2441,6 +2543,10 @@ light_by_condition <- function(ds, basal_links,
                                tf_expr_threshold    = 10,
                                fp_bound_tbl         = NULL,
                                rna_expressed_tbl    = NULL,
+                               atac_score_tbl       = NULL,
+                               atac_score_threshold = 0,
+                               require_atac_score   = FALSE,
+                               fp_annotation_tbl    = NULL,
                                require_fp_bound     = FALSE,
                                require_gene_expr    = FALSE,
                                gene_expr_threshold  = 1L,
@@ -2488,24 +2594,68 @@ light_by_condition <- function(ds, basal_links,
     }
   }
 
-  # Keep only common ids; build a stable label with duplicate disambiguation
-  keep <- meta_src[meta_src$id %in% common_ids, , drop = FALSE]
+  # Match metadata rows to sample columns (id or label_col can map to columns)
+  cond_id <- rep(NA_character_, nrow(meta_src))
+  if (label_col %in% names(meta_src)) {
+    label_vals <- meta_src[[label_col]]
+    hit_label <- label_vals %in% common_ids
+    cond_id[hit_label] <- label_vals[hit_label]
+  }
+  hit_id <- meta_src$id %in% common_ids
+  cond_id[is.na(cond_id) & hit_id] <- meta_src$id[is.na(cond_id) & hit_id]
+
+  keep <- meta_src[!is.na(cond_id), , drop = FALSE]
+  if (!nrow(keep)) {
+    stop(
+      "No sample metadata ids or labels match fp_score/rna column names. ",
+      "Check that sample_metadata_used$id or '", label_col, "' match the column names."
+    )
+  }
+
+  keep$.__cond_id <- cond_id[!is.na(cond_id)]
+  if (isTRUE(verbose)) {
+    n_label <- if (exists("hit_label", inherits = FALSE)) sum(hit_label, na.rm = TRUE) else 0L
+    n_id <- sum(hit_id, na.rm = TRUE)
+    .log_inform(
+      "[light_by_condition] Matched {nrow(keep)} sample{?s} (label_col: {n_label}; id: {n_id})."
+    )
+  }
   base_label <- if (label_col %in% names(keep)) keep[[label_col]] else keep$id
   base_label[is.na(base_label) | base_label == ""] <- keep$id
 
   # Disambiguate duplicate labels: append "_<id>" for duplicates
   dup_idx <- ave(seq_len(nrow(keep)), base_label, FUN = seq_along)
   label <- ifelse(dup_idx > 1L, paste0(base_label, "_", keep$id), base_label)
-  meta <- data.frame(id = keep$id, label = label, stringsAsFactors = FALSE)
+  meta <- data.frame(id = keep$.__cond_id, label = label, stringsAsFactors = FALSE)
 
   have_fp_bound <- is.data.frame(fp_bound_tbl) && "peak_ID" %in% names(fp_bound_tbl)
   have_rna_flags <- is.data.frame(rna_expressed_tbl) &&
     all(c("ensembl_gene_id", "HGNC") %in% names(rna_expressed_tbl))
+  if (is.null(atac_score_tbl) && is.list(ds) && is.data.frame(ds$atac_score)) {
+    atac_score_tbl <- ds$atac_score
+  }
+  have_atac_score <- is.data.frame(atac_score_tbl)
   if (isTRUE(require_fp_bound) && !have_fp_bound) {
     stop("require_fp_bound=TRUE but fp_bound_tbl is missing or invalid.")
   }
   if (isTRUE(require_gene_expr) && !have_rna_flags) {
     stop("require_gene_expr=TRUE but rna_expressed_tbl is missing or invalid.")
+  }
+  if (isTRUE(require_atac_score) && !have_atac_score) {
+    stop("require_atac_score=TRUE but atac_score_tbl is missing or invalid.")
+  }
+
+  if (!"atac_peak" %in% names(basal_links) || all(is.na(basal_links$atac_peak))) {
+    if (is.null(fp_annotation_tbl) && is.list(ds) && is.data.frame(ds$fp_annotation)) {
+      fp_annotation_tbl <- ds$fp_annotation
+    }
+    if (is.data.frame(fp_annotation_tbl) &&
+        all(c("fp_peak", "atac_peak", "tfs") %in% names(fp_annotation_tbl))) {
+      map_atac <- fp_annotation_tbl |>
+        dplyr::transmute(peak_ID = fp_peak, TF = tfs, atac_peak) |>
+        dplyr::distinct()
+      basal_links <- basal_links |> dplyr::left_join(map_atac, by = c("peak_ID", "TF"))
+    }
   }
 
   fp_bound_u <- fp_bound_tbl
@@ -2615,8 +2765,8 @@ light_by_condition <- function(ds, basal_links,
   # ------- one condition -------
   build_one <- function(cond_id, cond_label) {
     # dynamic pulls via base subsetting to avoid NSE/rlang
-    atac_one <- fp_u[, c("peak_ID", cond_id), drop = FALSE]
-    names(atac_one) <- c("peak_ID", "fp_score")
+    fp_score_one <- fp_u[, c("peak_ID", cond_id), drop = FALSE]
+    names(fp_score_one) <- c("peak_ID", "fp_score")
 
     tf_expr_tbl <- rna_hgnc[, c("gene_key", cond_id), drop = FALSE]
     names(tf_expr_tbl) <- c("HGNC", "tf_expr")
@@ -2664,8 +2814,18 @@ light_by_condition <- function(ds, basal_links,
       }
     }
 
+    atac_score_one <- NULL
+    if (have_atac_score) {
+      atac_peak_col <- if ("atac_peak" %in% names(atac_score_tbl)) "atac_peak" else "peak_ID"
+      col_atac <- pick_cond_col(atac_score_tbl, cond_id, cond_label)
+      if (!is.na(col_atac)) {
+        atac_score_one <- atac_score_tbl[, c(atac_peak_col, col_atac), drop = FALSE]
+        names(atac_score_one) <- c("atac_peak", "atac_score")
+      }
+    }
+
     links <- basal_links |>
-      dplyr::left_join(atac_one,      by = "peak_ID") |>
+      dplyr::left_join(fp_score_one,  by = "peak_ID") |>
       dplyr::left_join(tf_expr_tbl,   by = c("TF" = "HGNC")) |>
       dplyr::left_join(gene_expr_tbl, by = "gene_key")
 
@@ -2673,6 +2833,12 @@ light_by_condition <- function(ds, basal_links,
       links <- links |> dplyr::left_join(fp_bound_one, by = "peak_ID")
     } else {
       links <- links |> dplyr::mutate(fp_bound = NA_integer_)
+    }
+
+    if (!is.null(atac_score_one)) {
+      links <- links |> dplyr::left_join(atac_score_one, by = "atac_peak")
+    } else {
+      links <- links |> dplyr::mutate(atac_score = NA_real_)
     }
 
     if (!is.null(tf_flag_tbl)) {
@@ -2713,27 +2879,29 @@ light_by_condition <- function(ds, basal_links,
         gene_expr = tidyr::replace_na(gene_expr, 0),
         fp_bound = tidyr::replace_na(fp_bound, 0L),
         tf_expr_flag = tidyr::replace_na(tf_expr_flag, 0L),
-        gene_expr_flag = tidyr::replace_na(gene_expr_flag, 0L)
+        gene_expr_flag = tidyr::replace_na(gene_expr_flag, 0L),
+        atac_score = tidyr::replace_na(atac_score, 0)
       ) |>
       normalize_edge_wt(floor = 0) |>
       dplyr::mutate(
         link_score  = dplyr::coalesce(r_gene, 0) * dplyr::coalesce(fp_score, 0),
         active_link = is.finite(link_score) &
           fp_score >= fp_score_threshold &
+          (if (isTRUE(require_atac_score)) atac_score >= atac_score_threshold else TRUE) &
           abs(link_score) >= link_score_threshold &
           tf_expr >= tf_expr_threshold &
           (if (isTRUE(require_fp_bound)) fp_bound > 0L else TRUE) &
           (if (isTRUE(require_gene_expr)) (tf_expr_flag >= gene_expr_threshold & gene_expr_flag >= gene_expr_threshold) else TRUE)
       ) |>
       dplyr::select(
-        TF, gene_key, peak_ID,
+        TF, gene_key, peak_ID, atac_peak,
         edge_weight,
         r_gene, p_gene, p_adj_gene,
         n_used_tf, r_tf, p_tf, p_adj_tf, motif,
         dplyr::any_of(c("r_rna_gene", "p_rna_gene", "p_rna_adj_gene")),
         dplyr::any_of(c("fp_mean_raw", "fp_var_raw", "fp_rsd",
                         "gene_mean_raw", "gene_var_raw", "gene_rsd")),
-        fp_score, tf_expr, gene_expr,
+        fp_score, atac_score, tf_expr, gene_expr,
         fp_bound, tf_expr_flag, gene_expr_flag,
         active_link, link_score
       ) |>

@@ -17,6 +17,7 @@ validate_config <- function(
       "threshold_gene_expr",
       "threshold_fp_score",
       "threshold_link_score",
+      "atac_score_threshold",
       "threshold_fp_tf_corr_p",
       "threshold_fp_tf_corr_r",
       "threshold_fp_gene_corr_p",
@@ -31,6 +32,7 @@ validate_config <- function(
       "threshold_gene_expr",
       "threshold_fp_score",
       "threshold_link_score",
+      "atac_score_threshold",
       "threshold_fp_tf_corr_p",
       "threshold_fp_tf_corr_r",
       "threshold_fp_gene_corr_p",
@@ -70,7 +72,35 @@ validate_config <- function(
 #' @return Invisibly returns the updated values (named character vector).
 #' @export
 normalize_config_paths <- function(
-    keys = c("base_dir", "fp_root_dir", "benchmark_tfbs_dir", "pathway_dir"),
+    keys = c(
+      "base_dir",
+      "fp_root_dir",
+      "fp_manifest_path",
+      "benchmark_tfbs_dir",
+      "pathway_dir",
+      "genehancer_path",
+      "loop_path",
+      "preprocess_dir",
+      "sample_metadata",
+      "metadata_path",
+      "sample_metadata_path",
+      "atac_master",
+      "atac_data_path",
+      "atac_master_path",
+      "rna_mapped",
+      "rna_mapped_path",
+      "rna_path",
+      "basal_links_dir",
+      "data_dir",
+      "sample_metadata_out",
+      "strict_metadata_out",
+      "lenient_metadata_out",
+      "atac_master_out",
+      "rna_filtered_out",
+      "strict_rna_out",
+      "lenient_rna_out",
+      "rna_mapped_out"
+    ),
     env = .GlobalEnv
 ) {
   existing <- keys[vapply(keys, function(nm) exists(nm, envir = env, inherits = FALSE), logical(1))]

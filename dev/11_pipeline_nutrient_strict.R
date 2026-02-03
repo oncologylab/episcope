@@ -18,7 +18,7 @@ source("R/utils_step3_grn_filter.R")
 source("R/utils_step3_grn_diff.R")
 source("R/utils_step3_topic_warplda.R")
 
-load_config("GSE87218_monocyte_jaspar2024.yaml")
+load_config("pdac_nutrient_stress_strict_jaspar2024.yaml")
 
 expected_n <- if (exists("expected_n")) expected_n else NULL
 
@@ -38,6 +38,7 @@ if (do_load_footprints_preprocess == TRUE) {
     .log_inform("Module 1: Predict TF binding sites.")
     .log_inform("2.1 Collapse overlapping/redundant TF motif footprints into non-redundant, merged footprints and assign TF motifs to consensus motif clusters.")
   }
+  # Inputs (from YAML): fp_root_dir, base_dir, db, ref_genome, thresholds, etc.
   fp_cache_dir <- file.path(base_dir, "cache")
   fp_manifest <- load_footprints(
     root_dir = fp_root_dir,
@@ -45,43 +46,33 @@ if (do_load_footprints_preprocess == TRUE) {
     out_dir = file.path(fp_cache_dir, paste0("fp_", db))
   )
 
+  # readr::write_csv(fp_manifest, file.path(fp_cache_dir, sprintf("fp_%s_manifest.csv", db)))
 
-  fp_aligned <- align_footprints(
-    fp_manifest,
-    mid_slop = 10L,
-    round_digits = 1L,
-    score_match_pct = 0.8,
-    cache_dir = fp_cache_dir,
-    cache_tag = db,
-    output_mode = "distinct"
-  )
+  if (db == "HOCOMOCOv13" && !isTRUE(attr(fp_manifest, "from_cache"))) {
+    # (Optional, when using HOCOMOCO database)
+    fp_manifest <- fp_manifest_trim(fp_manifest) # renames files on disk by default
+    # Overwrite every annotation CSV referenced by the manifest:
+    summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TRUE)
+
+    # Inspect what changed:
+    dplyr::count(summary_tbl, status)
+    sum(summary_tbl$n_fixed, na.rm = TRUE)
+  }
+
+  # options(future.globals.maxSize = 32 * 1024^3)
+  # 2.1 Collapse overlapping footprints and align peaks across samples
+  fp_aligned <- align_footprints(fp_manifest, mid_slop = 10L, round_digits = 1L, score_match_pct = 0.8, cache_dir = fp_cache_dir, cache_tag = db, output_mode = "distinct")
   plot_fp_merge_summary(fp_aligned, out_dir = file.path(base_dir, "predict_tf_binding_sites"), db = db, verbose = TRUE)
 
+  # 2.1 (continued) Assign TF motifs to consensus motif clusters
   run_fp_motif_clustering_pre_if_needed(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
-  fp_motif_clust_data <- run_fp_motif_clustering(
-    fp_aligned = fp_aligned,
-    base_dir = base_dir,
-    ref_db = db,
-    motif_db = motif_db,
-    mode = "data",
-    target_clusters = 220,
-    qc_mode = "fast",
-    save_motif_db = TRUE
-  )
-  fp_motif_clust_hybrid <- run_fp_motif_clustering(
-    fp_aligned = fp_aligned,
-    base_dir = base_dir,
-    ref_db = db,
-    motif_db = motif_db,
-    mode = "hybrid",
-    target_clusters = 165,
-    qc_mode = "fast",
-    save_motif_db = TRUE
-  )
+  fp_motif_clust_data   <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "data", target_clusters = 220, qc_mode = "fast", save_motif_db = TRUE)
+  fp_motif_clust_hybrid <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "hybrid", target_clusters = 165, qc_mode = "fast", save_motif_db = TRUE)
 
+  # Build combined multi-omic data object
   omics_data <- load_multiomic_data(
     fp_aligned = fp_aligned,
-    label_col = "Sample",
+    label_col = "strict_match_rna",
     expected_n = expected_n,
     tf_list = tf_list,
     motif_db = motif_db,
@@ -111,6 +102,7 @@ if (do_load_footprints_preprocess == TRUE) {
   if (isTRUE(verbose)) {
     .log_inform("Output: Collapsed raw footprint scores + merge QC PDF; normalized footprint matrices + QC PDF; gene expression flag matrix + QC PDF.")
   }
+
 }
 
 
@@ -120,13 +112,14 @@ if (do_tf_binding_sites_prediction == TRUE) {
     .log_abort("`omics_data` not found. Run Step 0 before Step 1.")
   }
 
+  # 2.5 Correlate TF expression vs footprint scores (canonical + all modes)
   step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
 
   omics_data <- correlate_tf_to_fp(
     omics_data = omics_data,
     mode = "canonical",
     out_dir = step1_out_dir,
-    label_col = "Sample",
+    label_col = "strict_match_rna",
     r_thr = threshold_fp_tf_corr_r,
     p_thr = threshold_fp_tf_corr_p,
     db = db,
@@ -140,6 +133,7 @@ if (do_tf_binding_sites_prediction == TRUE) {
   if (isTRUE(verbose)) {
     .log_inform("Output: TF binding probability overviews, TF binding site counts, and correlation stats PDF.")
   }
+
 }
 
 
@@ -152,6 +146,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
   dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
+  # 1.1 Link TFBS to candidate target genes (GeneHancer / window / loops)
   link_mode <- if (exists("tf_target_link_mode")) tf_target_link_mode else "genehancer"
   link_mode <- match.arg(link_mode, c("genehancer", "window", "loops"))
   if (isTRUE(verbose)) {
@@ -203,10 +198,10 @@ if (do_tf_to_target_genes_prediction == TRUE) {
       dplyr::distinct()
   }
 
+  # 1.3 Correlate TF->gene and FP->gene (Spearman then Pearson)
   if (isTRUE(verbose)) {
     .log_inform("1.3 Compute TF->gene and TFBS->gene correlations across conditions; filter links by configured thresholds.")
   }
-
   options(future.globals.maxSize = 64 * 1024^3)
   fp_res_full_pearson <- correlate_fp_to_genes(
     grn_set          = omics_data,
@@ -220,7 +215,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     method           = "pearson",
     workers          = 20,
     cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
-    cache_tag        = paste0("monocyte_", link_mode, "_pearson"),
+    cache_tag        = paste0("nutrient_", link_mode, "_pearson"),
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
@@ -237,7 +232,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     method           = "spearman",
     workers          = 30,
     cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
-    cache_tag        = paste0("monocyte_", link_mode, "_spearman"),
+    cache_tag        = paste0("nutrient_", link_mode, "_spearman"),
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
@@ -274,7 +269,17 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   fp_score_thr <- if (exists("fp_score_threshold")) fp_score_threshold else threshold_fp_score
   atac_score_thr <- if (exists("atac_score_threshold")) atac_score_threshold else 0
   require_atac_score <- isTRUE(atac_score_thr > 0)
+  atac_score_tbl_use <- NULL
+  if (isTRUE(require_atac_score)) {
+    if (is.null(omics_data$atac_score_condition)) {
+      omics_data <- grn_add_atac_score_condition(omics_data, label_col = "strict_match_rna")
+    }
+    atac_score_tbl_use <- omics_data$atac_score_condition
+  }
 
+  if (isTRUE(verbose)) {
+    .log_inform("1.2 Generate a binary, condition-specific TF->TFBS->target link status matrix.")
+  }
   status_res <- build_link_status_matrix(
     links = fp_links_filtered$links,
     fp_bound = omics_data$fp_bound_condition,
@@ -289,7 +294,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     verbose = TRUE,
     fp_score_tbl = omics_data$fp_score_condition_qn,
     fp_score_threshold = fp_score_thr,
-    atac_score_tbl = omics_data$atac_score,
+    atac_score_tbl = atac_score_tbl_use,
     atac_score_threshold = atac_score_thr,
     require_fp_bound = TRUE,
     require_gene_expr = TRUE,
@@ -349,7 +354,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 
   omics_data_cond <- prepare_grn_set_for_light_by_condition(
     omics_data,
-    label_col = "Sample"
+    label_col = "strict_match_rna"
   )
 
   light_by_condition(
@@ -357,13 +362,13 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     basal_links = basal_links_step2,
     out_dir = step2_out_dir,
     prefix = "step2",
-    label_col = "Sample",
+    label_col = "strict_match_rna",
     link_score_threshold = link_score_threshold,
     fp_score_threshold = fp_score_thr,
     tf_expr_threshold = threshold_tf_expr,
     fp_bound_tbl = omics_data$fp_bound_condition,
     rna_expressed_tbl = omics_data$rna_expressed,
-    atac_score_tbl = omics_data$atac_score,
+    atac_score_tbl = atac_score_tbl_use,
     atac_score_threshold = atac_score_thr,
     require_atac_score = require_atac_score,
     fp_annotation_tbl = omics_data$fp_annotation,
@@ -383,4 +388,86 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     read_tables = FALSE,
     verbose = TRUE
   )
+  if (isTRUE(verbose)) {
+    .log_inform("Output: TF->TFBS->target link overview table, link activity summary, and per-condition link matrices.")
+  }
+}
+
+# Step 3. diff networks, and topic analysis -------------------------------
+step2_out_dir <- file.path(base_dir, "example_tf_target_genes")
+
+# Step 3/4 from Step 2 per-condition tables (per-cell vs 10_FBS)
+step2_specs <- build_cellwise_contrasts_from_index(
+  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
+  out_dir = step2_out_dir,
+  prefix = "step2",
+  ctrl_tag = "10_FBS",
+  clean_names = FALSE
+)
+
+delta_link <- 1
+regulated_genes <- 1.5 # 1.5 2
+
+run_links_deltas_driver(
+  specs       = step2_specs,
+  clean_names = FALSE,
+  parallel    = TRUE,
+  restrict_to_active_both = FALSE,
+  edge_change_min = delta_link,
+  keep_all_cols = TRUE
+)
+
+step2_delta_csvs <- list.files(step2_out_dir, "_delta_links.csv", full.names = TRUE)
+step2_de_gene_log2_abs_min <- if (regulated_genes == 1.5) 0.585 else if (regulated_genes == 2) 1 else NA_real_
+
+step2_bulk <- episcope::filter_links_deltas_bulk(
+  step2_delta_csvs,
+  gene_expr_min = threshold_gene_expr,
+  tf_expr_min = threshold_tf_expr,
+  fp_min = threshold_fp_score,
+  link_min = threshold_link_score,
+  abs_delta_min = delta_link,
+  apply_de_gene = TRUE,
+  de_gene_log2_abs_min = step2_de_gene_log2_abs_min,
+  enforce_link_expr_sign = TRUE,
+  expr_dir_col = "log2FC_gene_expr",
+  workers = 20
+)
+
+do_step3_topic_analysis <- TRUE
+if (isTRUE(do_step3_topic_analysis)) {
+  delta_links_csv <- list.files(step2_out_dir, "_delta_links\\.csv$", full.names = TRUE)
+  if (!length(delta_links_csv)) .log_abort("No *_delta_links.csv files found in {step2_out_dir}")
+
+  edges_all <- load_delta_links_many(delta_links_csv, keep_original = TRUE)
+  topic_root <- file.path(base_dir, "topic_models_lenient")
+
+  motif_path <- resolve_motif_db_path("JASPAR2024", ref_genome = ref_genome)
+  motif_db$gene_symbol <- motif_db$HGNC
+  if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% names(motif_db))) {
+    motif_info <- build_tf_cluster_map_from_motif(motif_db)
+  } else {
+    motif_info <- build_tf_cluster_map_from_motif(motif_path)
+  }
+
+  k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
+  k_single_map <- list(Panc1 = c(10L, 14L, 20, 35, 50, 70)) # HPAFII = 12L,  , AsPC1 = 10L
+  celllines <- c("Panc1") # "AsPC1", "HPAFII",
+
+
+  library(enrichR)
+  library(episcope)
+  run_vae_ctf_multivi(
+    edges_all = edges_all,
+    out_root = topic_root,
+    celllines = celllines,
+    tf_cluster_map = motif_info$tf_cluster_map,
+    tf_exclude = motif_info$tf_exclude,
+    k_grid_default = k_grid_default,
+    k_single_map = k_single_map
+  )
+
+  run_vae_doc_topic_heatmaps(topic_root)
+  run_vae_topic_delta_network_plots(topic_root, step2_out_dir = step2_out_dir)
+  run_vae_topic_delta_network_pathway(topic_root)
 }

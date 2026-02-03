@@ -12,6 +12,7 @@ Imports:
     basilisk,
     config,
     dplyr,
+    ggplot2,
     golem,
     htmltools,
     htmlwidgets,

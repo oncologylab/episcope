@@ -15,7 +15,17 @@ build_link_status_matrix(
   chunk_size = 50000L,
   return_keep = FALSE,
   filter_any = FALSE,
-  verbose = TRUE
+  verbose = TRUE,
+  fp_score_tbl = NULL,
+  fp_score_threshold = NULL,
+  atac_score_tbl = NULL,
+  atac_score_threshold = NULL,
+  atac_peak_col = "atac_peak",
+  require_fp_bound = TRUE,
+  require_gene_expr = TRUE,
+  require_fp_score = FALSE,
+  require_atac_score = FALSE,
+  return_tbl = FALSE
 )
 }
 \arguments{
@@ -37,11 +47,33 @@ build_link_status_matrix(
 
 \item{return_keep}{Logical; if TRUE return per-link keep flags (any condition).}
 
+\item{filter_any}{Logical; if TRUE filter links with no active conditions.}
+
 \item{verbose}{Verbosity.}
+
+\item{fp_score_tbl}{Optional footprint score table (peak_ID + condition columns).}
+
+\item{fp_score_threshold}{Numeric threshold on fp_score.}
+
+\item{atac_score_tbl}{Optional ATAC score table (atac_peak + condition columns).}
+
+\item{atac_score_threshold}{Numeric threshold on atac_score.}
+
+\item{atac_peak_col}{Column in \code{links} containing atac_peak.}
+
+\item{require_fp_bound}{If TRUE, require fp_bound > 0.}
+
+\item{require_gene_expr}{If TRUE, require TF and gene expression flags > 0.}
+
+\item{require_fp_score}{If TRUE, require fp_score >= fp_score_threshold.}
+
+\item{require_atac_score}{If TRUE, require atac_score >= atac_score_threshold.}
+
+\item{return_tbl}{If TRUE, return the status table in memory.}
 }
 \value{
-List with out_file and keep flags (if requested).
+List with out_file, keep flags, and optional status_tbl.
 }
 \description{
-Build TF->gene link status matrix (per condition) using FP bound and RNA flags
+Build TF->gene link status matrix (per condition) using FP bound and RNA flags.
 }

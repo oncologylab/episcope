@@ -30,8 +30,15 @@ link_window_bp: 30000
 link_gene_id_col: HGNC
 # loop_path: /path/to/loops.tsv
 
+# Preprocessed inputs
+metadata_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/sample_metadata_strict.csv
+atac_master: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/atac_master.csv
+rna_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/rna_strict.csv
+
 # Pipeline paths
-base_dir: /data/homes/yl814/episcope_test/nutrient_stress_test
+base_dir: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024
 fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
 benchmark_tfbs_dir: /data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction
 pathway_dir: /data/homes/cy232/RNAseq/Nutrient_Stress/Enrichment_of_nutrient_stress_signatures
+
+expected_n: 23
