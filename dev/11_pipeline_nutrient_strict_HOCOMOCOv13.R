@@ -15,7 +15,7 @@ source("R/utils_step3_grn_filter.R")
 source("R/utils_step3_grn_diff.R")
 source("R/utils_step3_topic_warplda.R")
 
-load_config("pdac_nutrient_stress_HOCOMOCOv13.yaml")
+load_config("dev/config/pdac_nutrient_stress_HOCOMOCOv13.yaml")
 
 
 
