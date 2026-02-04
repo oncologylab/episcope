@@ -3464,6 +3464,13 @@ rerun_pathway_from_link_scores <- function(out_dir,
                                            gene_terms_file = NULL,
                                            allow_missing = FALSE,
                                            ...) {
+  resolve_rel <- function(path, base_dir) {
+    if (is.null(path) || !nzchar(path)) return(path)
+    if (grepl("^/", path)) return(path)
+    cand <- file.path(base_dir, path)
+    if (file.exists(cand)) return(cand)
+    path
+  }
   if (is.null(link_scores_file)) {
     cand <- file.path(out_dir, "link_topic_scores_baseline.csv")
     if (file.exists(cand)) {
@@ -3473,6 +3480,7 @@ rerun_pathway_from_link_scores <- function(out_dir,
       if (file.exists(cand)) link_scores_file <- cand
     }
   }
+  link_scores_file <- resolve_rel(link_scores_file, out_dir)
   if (is.null(link_scores_file) || !file.exists(link_scores_file)) {
     if (isTRUE(allow_missing)) {
       .log_inform("Skipping link-score pathway enrichment: link_scores_file not found.")
@@ -3482,10 +3490,12 @@ rerun_pathway_from_link_scores <- function(out_dir,
   }
   link_scores <- data.table::fread(link_scores_file)
   tf_link_scores <- NULL
+  tf_link_scores_file <- resolve_rel(tf_link_scores_file, out_dir)
   if (!is.null(tf_link_scores_file) && file.exists(tf_link_scores_file)) {
     tf_link_scores <- data.table::fread(tf_link_scores_file)
   }
   gene_terms <- NULL
+  gene_terms_file <- resolve_rel(gene_terms_file, out_dir)
   if (!is.null(gene_terms_file) && file.exists(gene_terms_file)) {
     gene_terms <- data.table::fread(gene_terms_file)
   }
@@ -3672,6 +3682,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_use_all_terms = FALSE,
                                               pathway_make_heatmap = TRUE,
                                               pathway_make_dotplot = TRUE,
+                                              pathway_overwrite = FALSE,
                                               top_n_per_topic = 20L,
                                               max_pathways = 200L,
                                               pathway_tf_link_mode = c("theta", "none"),
@@ -3813,6 +3824,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     edges_docs = edges_docs,
     option_label = option_label
   )
+
+  if (isTRUE(pathway_overwrite)) {
+    unlink(list.files(out_dir, pattern = "^topic_pathway_enrichment", full.names = TRUE), recursive = TRUE, force = TRUE)
+    unlink(file.path(out_dir, "per_cmpr_topic_pathway"), recursive = TRUE, force = TRUE)
+  }
 
   if (pathway_source == "link_scores") {
     rerun_pathway_from_link_scores(
@@ -5303,7 +5319,14 @@ extract_regulatory_topics <- function(k,
     out_dir <- file.path(output_dir, base_name)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-    defaults <- list(
+  wrap_comp_label <- function(x) {
+    vapply(x, function(s) {
+      s <- gsub("::", " :: ", s, fixed = TRUE)
+      paste(strwrap(s, width = 50), collapse = "\n")
+    }, character(1))
+  }
+
+  defaults <- list(
       binarize_method = "gammafit",
       thrP = 0.9,
       top_n_terms = 500L,
@@ -5341,10 +5364,12 @@ extract_regulatory_topics <- function(k,
       link_topic_include_tf = FALSE,
       link_topic_chunk_size = 5000L,
       link_topic_n_cores = 1L,
-      link_topic_overwrite = FALSE
+      link_topic_overwrite = FALSE,
+      topic_by_comparison_label_cleaner = wrap_comp_label
     )
     args <- modifyList(defaults, topic_report_args)
     combo_tag <- basename(dirname(d))
+    model_label <- if (backend == "vae") paste("VAE", vae_variant) else "WarpLDA"
     do.call(
       run_tfdocs_report_from_topic_base,
       c(list(
@@ -5355,9 +5380,9 @@ extract_regulatory_topics <- function(k,
         option_label = "joint",
         direction_by = "gene",
         title_prefix = if (backend == "vae") {
-          paste0("Deep VAE ", vae_variant, " | ", combo_tag, " | ", basename(d))
+          paste0(model_label, "\n", combo_tag)
         } else {
-          paste0("WarpLDA | ", combo_tag, " | ", basename(d))
+          paste0(model_label, "\n", combo_tag)
         }
       ), args)
     )

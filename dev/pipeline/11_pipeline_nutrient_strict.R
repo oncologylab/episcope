@@ -378,81 +378,134 @@ if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% nam
 k_grid_default <- c(2:15, 20, 25, 30)
 
 celllines <- c("HPAFII")
-selected_k <- if (exists("topic_k")) topic_k else 12L
+selected_k <- 12L
 
 gene_term_modes <- c("aggregate", "unique")
 include_tf_terms_opts <- c(FALSE, TRUE)
 count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
-backends <- c( "warplda", "vae")
+backends <- c("warplda", "vae")
 vae_variants <- c("multivi_encoder")
 
-combo_grid <- expand.grid(
-  gene_term_mode = gene_term_modes,
-  include_tf_terms = include_tf_terms_opts,
-  count_input = count_inputs,
-  backend = backends,
-  vae_variant = vae_variants,
-  stringsAsFactors = FALSE
-)
-combo_grid <- combo_grid[
-  combo_grid$backend != "warplda" | combo_grid$vae_variant == "multivi_encoder",
-  ,
-  drop = FALSE
-]
+for (gene_term_mode in gene_term_modes) {
+  for (include_tf_terms in include_tf_terms_opts) {
+    for (count_input in count_inputs) {
+      for (backend in backends) {
+        variant_list <- if (backend == "vae") vae_variants else "multivi_encoder"
+        for (vae_variant in variant_list) {
+          combo_tag <- paste0(
+            "gene_", gene_term_mode,
+            "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
+            "_count_", count_input
+          )
+          combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
 
-combo_workers <- if (exists("combo_workers")) combo_workers else 6L
-combo_workers <- max(1L, as.integer(combo_workers))
-combo_workers <- min(combo_workers, parallel::detectCores())
+          topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
+          topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
 
-run_combo <- function(i) {
-  row <- combo_grid[i, ]
-  gene_term_mode <- row$gene_term_mode
-  include_tf_terms <- row$include_tf_terms
-  count_input <- row$count_input
-  backend <- row$backend
-  vae_variant <- row$vae_variant
+          topic_args <- if (backend == "warplda") {
+            list(
+              pathway_source = "topic_terms",
+              thrP = 0.9,
+              pathway_make_heatmap = FALSE,
+              pathway_make_dotplot = TRUE,
+              pathway_overwrite = TRUE,
+              pathway_per_comparison = FALSE,
+              run_pathway_gsea = FALSE,
+              run_link_topic_scores = FALSE
+            )
+          } else {
+            list(
+              pathway_source = "link_scores",
+              thrP = 0.9,
+              pathway_make_heatmap = FALSE,
+              pathway_make_dotplot = TRUE,
+              pathway_overwrite = TRUE,
+              pathway_per_comparison = TRUE,
+              pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+              pathway_split_direction = TRUE,
+              run_pathway_gsea = FALSE,
+              run_link_topic_scores = TRUE,
+              link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
+              link_topic_overwrite = TRUE,
+              pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+              pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+              pathway_link_gene_terms_file = "topic_terms.csv",
+              pathway_link_min_prob = 0,
+              pathway_link_include_tf = TRUE,
+              pathway_link_include_gene = TRUE,
+              pathway_link_gene_min_prob = 0,
+              pathway_link_tf_min_prob = 0.5,
+              pathway_link_tf_max_topics = 5L,
+              pathway_link_tf_top_n_per_topic = 30L
+            )
+          }
 
-  combo_tag <- paste0(
-    "gene_", gene_term_mode,
-    "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
-    "_count_", count_input
-  )
-  combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
+          train_topic_models(
+            Kgrid = k_grid_default,
+            input_dir = diff_res$filtered_dir,
+            output_dir = topic_model_dir,
+            celllines = celllines,
+            tf_cluster_map = motif_info$tf_cluster_map,
+            tf_exclude = motif_info$tf_exclude,
+            gene_term_mode = gene_term_mode,
+            include_tf_terms = include_tf_terms,
+            count_input = count_input,
+            backend = backend,
+            vae_variant = vae_variant,
+            topic_report_args = topic_args
+          )
 
-  topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
-  topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
-
-  train_topic_models(
-    Kgrid = k_grid_default,
-    input_dir = diff_res$filtered_dir,
-    output_dir = topic_model_dir,
-    celllines = celllines,
-    tf_cluster_map = motif_info$tf_cluster_map,
-    tf_exclude = motif_info$tf_exclude,
-    gene_term_mode = gene_term_mode,
-    include_tf_terms = include_tf_terms,
-    count_input = count_input,
-    backend = backend,
-    vae_variant = vae_variant,
-    topic_report_args = list(pathway_make_dotplot = FALSE)
-  )
-
-  extract_regulatory_topics(
-    k = selected_k,
-    model_dir = topic_model_dir,
-    output_dir = topic_final_dir,
-    backend = backend,
-    vae_variant = vae_variant,
-    topic_report_args = list(pathway_make_dotplot = FALSE)
-  )
-  invisible(TRUE)
+          extract_regulatory_topics(
+            k = selected_k,
+            model_dir = topic_model_dir,
+            output_dir = topic_final_dir,
+            backend = backend,
+            vae_variant = vae_variant,
+            topic_report_args = topic_args
+          )
+        }
+      }
+    }
+  }
 }
 
-if (parallelly::supportsMulticore() && combo_workers > 1L) {
-  parallel::mclapply(seq_len(nrow(combo_grid)), function(i) {
-    options(cli.default_handler = function(...) NULL)
-    run_combo(i)
-  }, mc.cores = combo_workers)
-} else {
-  lapply(seq_len(nrow(combo_grid)), run_combo)
+run_single_topic_test <- TRUE
+if (isTRUE(run_single_topic_test)) {
+  single_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
+  single_backend <- "vae"
+  single_variant <- "multivi_encoder"
+  single_k <- 12L
+  single_model_dir <- file.path(step3_root_dir, "topic_models", single_combo_tag)
+  single_final_dir <- file.path(step3_root_dir, "final_topics", single_combo_tag)
+
+  extract_regulatory_topics(
+    k = single_k,
+    model_dir = single_model_dir,
+    output_dir = single_final_dir,
+    backend = single_backend,
+    vae_variant = single_variant,
+    topic_report_args = list(
+      pathway_source = "link_scores",
+      thrP = 0.9,
+      pathway_make_heatmap = FALSE,
+      pathway_make_dotplot = TRUE,
+      pathway_per_comparison = TRUE,
+      pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+      pathway_split_direction = TRUE,
+      run_pathway_gsea = FALSE,
+      run_link_topic_scores = TRUE,
+      link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
+      link_topic_overwrite = TRUE,
+      pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+      pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+      pathway_link_gene_terms_file = "topic_terms.csv",
+      pathway_link_min_prob = 0,
+      pathway_link_include_tf = TRUE,
+      pathway_link_include_gene = TRUE,
+      pathway_link_gene_min_prob = 0,
+      pathway_link_tf_min_prob = 0.5,
+      pathway_link_tf_max_topics = 5L,
+      pathway_link_tf_top_n_per_topic = 30L
+    )
+  )
 }
