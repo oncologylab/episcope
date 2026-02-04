@@ -36,5 +36,3 @@ rna_mapped: /data/homes/yl814/episcope_test/GSE192390_Fibroblasts_JASPAR2024/dat
 # Pipeline paths
 base_dir: /data/homes/yl814/episcope_test/GSE192390_Fibroblasts_JASPAR2024
 fp_root_dir: /data/homes/yl814/fptools_test/GSE192390_ATAC_Fibroblasts/TOBIAS_merged_peaks
-
-expected_n: 64
