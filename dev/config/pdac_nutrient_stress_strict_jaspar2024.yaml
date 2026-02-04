@@ -1,53 +1,46 @@
-# TFBS DB
-db: JASPAR2024  # one of: JASPAR2024, HOCOMOCOv13
+# Shared / global
+base_dir: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024
 ref_genome: hg38  # one of: hg38, mm10
+db: JASPAR2024  # one of: JASPAR2024, HOCOMOCOv13
+expected_n: 23
 
-# Basal network thresholds
+# Module 1: Predict TF binding sites
+fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
+benchmark_tfbs_dir: /data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction
+
+# Module 2: Connect TFs to target genes
+metadata_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/sample_metadata_strict.csv
+atac_master: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/atac_master.csv
+rna_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/rna_strict.csv
+tf_target_link_mode: genehancer  # genehancer | window | loops
+genehancer_path: /data/homes/yl814/package/episcope/inst/extdata/GeneHancer_v5.24_elite_panc.csv
+link_window_bp: 30000
+link_gene_id_col: HGNC
+# loop_path: /path/to/loops.tsv
+
+# Module 2: Basal network thresholds
 threshold_tf_expr: 10
 threshold_gene_expr: 4
 threshold_fp_score: 2
 threshold_link_score: 2
 atac_score_threshold: 0
-
 threshold_fp_tf_corr_p: 0.05
 threshold_fp_tf_corr_r: 0.3          # positive only
 threshold_fp_gene_corr_p: 0.05
 threshold_fp_gene_corr_abs_r: 0.3    # positive & negative
 threshold_rna_gene_corr_p: 0.05
 threshold_rna_gene_corr_abs_r: 0.3   # positive
-
 threshold_atac_gene_corr_p: 0.05
 threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
-
-# Lighting filters
 link_score_threshold: 0.001
 fp_score_threshold: 0.001
 
-# Step 3 (diff) filters
+# Module 3: Differential links
 delta_link: 1
 de_gene_log2_abs_min: 0.5
 de_tf_log2_abs_min: 0.5
 fp_delta_min: 0.5
 
-# Step 3 (topics)
+# Module 3: Topics / reporting
 topic_k: 12
-
-# Module 2 linking mode (genehancer | window | loops)
-tf_target_link_mode: genehancer
-genehancer_path: /data/homes/yl814/package/episcope/inst/extdata/GeneHancer_v5.24_elite_panc.csv
-link_window_bp: 30000
-link_gene_id_col: HGNC
-# loop_path: /path/to/loops.tsv
-
-# Preprocessed inputs
-metadata_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/sample_metadata_strict.csv
-atac_master: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/atac_master.csv
-rna_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/rna_strict.csv
-
-# Pipeline paths
-base_dir: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024
-fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
-benchmark_tfbs_dir: /data/homes/yl814/episcope_test/benchmark_tf_binding_sites_prediction
 pathway_dir: /data/homes/cy232/RNAseq/Nutrient_Stress/Enrichment_of_nutrient_stress_signatures
-
-expected_n: 23
