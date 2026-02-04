@@ -374,48 +374,85 @@ if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% nam
   motif_info <- build_tf_cluster_map_from_motif(motif_path)
 }
 
-k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
+# k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
+k_grid_default <- c(2:15, 20, 25, 30)
+
 celllines <- c("HPAFII")
 selected_k <- if (exists("topic_k")) topic_k else 12L
 
 gene_term_modes <- c("aggregate", "unique")
 include_tf_terms_opts <- c(FALSE, TRUE)
 count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
+backends <- c( "warplda", "vae")
+vae_variants <- c("multivi_encoder")
 
-for (gene_term_mode in gene_term_modes) {
-  for (include_tf_terms in include_tf_terms_opts) {
-    for (count_input in count_inputs) {
-      combo_tag <- paste0(
-        "gene_", gene_term_mode,
-        "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
-        "_count_", count_input
-      )
-      combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
+combo_grid <- expand.grid(
+  gene_term_mode = gene_term_modes,
+  include_tf_terms = include_tf_terms_opts,
+  count_input = count_inputs,
+  backend = backends,
+  vae_variant = vae_variants,
+  stringsAsFactors = FALSE
+)
+combo_grid <- combo_grid[
+  combo_grid$backend != "warplda" | combo_grid$vae_variant == "multivi_encoder",
+  ,
+  drop = FALSE
+]
 
-      topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
-      topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
+combo_workers <- if (exists("combo_workers")) combo_workers else 6L
+combo_workers <- max(1L, as.integer(combo_workers))
+combo_workers <- min(combo_workers, parallel::detectCores())
 
-      # train_topic_models(
-      #   Kgrid = k_grid_default,
-      #   input_dir = diff_res$filtered_dir,
-      #   output_dir = topic_model_dir,
-      #   celllines = celllines,
-      #   tf_cluster_map = motif_info$tf_cluster_map,
-      #   tf_exclude = motif_info$tf_exclude,
-      #   gene_term_mode = gene_term_mode,
-      #   include_tf_terms = include_tf_terms,
-      #   count_input = count_input
-      # )
+run_combo <- function(i) {
+  row <- combo_grid[i, ]
+  gene_term_mode <- row$gene_term_mode
+  include_tf_terms <- row$include_tf_terms
+  count_input <- row$count_input
+  backend <- row$backend
+  vae_variant <- row$vae_variant
 
-      extract_regulatory_topics(
-        k = selected_k,
-        model_dir = topic_model_dir,
-        output_dir = topic_final_dir
-      )
+  combo_tag <- paste0(
+    "gene_", gene_term_mode,
+    "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
+    "_count_", count_input
+  )
+  combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
 
-      run_vae_doc_topic_heatmaps(topic_final_dir)
-      run_vae_topic_delta_network_plots(topic_final_dir, step2_out_dir = diff_res$filtered_dir)
-      run_vae_topic_delta_network_pathway(topic_final_dir)
-    }
-  }
+  topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
+  topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
+
+  train_topic_models(
+    Kgrid = k_grid_default,
+    input_dir = diff_res$filtered_dir,
+    output_dir = topic_model_dir,
+    celllines = celllines,
+    tf_cluster_map = motif_info$tf_cluster_map,
+    tf_exclude = motif_info$tf_exclude,
+    gene_term_mode = gene_term_mode,
+    include_tf_terms = include_tf_terms,
+    count_input = count_input,
+    backend = backend,
+    vae_variant = vae_variant,
+    topic_report_args = list(pathway_make_dotplot = FALSE)
+  )
+
+  extract_regulatory_topics(
+    k = selected_k,
+    model_dir = topic_model_dir,
+    output_dir = topic_final_dir,
+    backend = backend,
+    vae_variant = vae_variant,
+    topic_report_args = list(pathway_make_dotplot = FALSE)
+  )
+  invisible(TRUE)
+}
+
+if (parallelly::supportsMulticore() && combo_workers > 1L) {
+  parallel::mclapply(seq_len(nrow(combo_grid)), function(i) {
+    options(cli.default_handler = function(...) NULL)
+    run_combo(i)
+  }, mc.cores = combo_workers)
+} else {
+  lapply(seq_len(nrow(combo_grid)), run_combo)
 }

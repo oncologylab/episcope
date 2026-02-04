@@ -2740,6 +2740,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   title_prefix = NULL,
                                                   use_all_terms = FALSE,
                                                   make_heatmap = TRUE,
+                                                  make_dotplot = TRUE,
                                                   tf_link_mode = c("theta", "none"),
                                                   tf_theta_top_n = 50L,
                                                   tf_theta_min = NA_real_) {
@@ -2969,7 +2970,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     log_msg("Skipping pathway heatmap: make_heatmap = FALSE.")
   }
 
-  if (requireNamespace("ggplot2", quietly = TRUE)) {
+  if (isTRUE(make_dotplot) && requireNamespace("ggplot2", quietly = TRUE)) {
     dot_path <- file.path(dirname(out_file), "topic_pathway_enrichment_dotplot.pdf")
     plot_dt <- data.table::copy(res_dt)
     plot_dt[, topic_num := as.integer(topic)]
@@ -3041,8 +3042,10 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     )
     log_msg(sprintf("Dot plot table saved to: %s", dot_csv))
     log_msg(sprintf("Dot plot saved to: %s", dot_path))
-  } else {
+  } else if (isTRUE(make_dotplot)) {
     log_msg("Skipping pathway dot plot: ggplot2 not installed.")
+  } else {
+    log_msg("Skipping pathway dot plot: make_dotplot = FALSE.")
   }
 
   invisible(TRUE)
@@ -3074,7 +3077,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            per_comparison = FALSE,
                                                            per_comparison_dir = "per_cmpr_topic_pathway",
                                                            split_direction = TRUE,
-                                                           make_heatmap = TRUE) {
+                                                           make_heatmap = TRUE,
+                                                           make_dotplot = TRUE) {
   .assert_pkg("data.table")
   log_path <- file.path(out_dir, "topic_pathway_enrichment_links_debug.txt")
   log_msg <- function(msg) {
@@ -3362,11 +3366,15 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     log_msg("Skipping heatmap: make_heatmap = FALSE.")
   }
 
-  .write_dotplot(
-    res_dt,
-    dot_prefix = file.path(out_dir, "topic_pathway_enrichment_dotplot"),
-    plot_title = main_title
-  )
+  if (isTRUE(make_dotplot)) {
+    .write_dotplot(
+      res_dt,
+      dot_prefix = file.path(out_dir, "topic_pathway_enrichment_dotplot"),
+      plot_title = main_title
+    )
+  } else {
+    log_msg("Skipping dot plot: make_dotplot = FALSE.")
+  }
 
   if (isTRUE(per_comparison)) {
     doc_info <- .parse_doc_id(dt$doc_id)
@@ -3436,8 +3444,12 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           res_sub[, topic := as.integer(topic)]
           data.table::setorder(res_sub, topic)
           plot_title <- paste(cmp, dir_lab, "Pathway enrichment (link scores)", sep = " | ")
-          prefix <- file.path(cmp_dir, paste0(.safe_filename(cmp), "_", .safe_filename(dir_lab), "_dotplot"))
-          .write_dotplot(res_sub, dot_prefix = prefix, plot_title = plot_title, log_fun = log_local)
+          if (isTRUE(make_dotplot)) {
+            prefix <- file.path(cmp_dir, paste0(.safe_filename(cmp), "_", .safe_filename(dir_lab), "_dotplot"))
+            .write_dotplot(res_sub, dot_prefix = prefix, plot_title = plot_title, log_fun = log_local)
+          } else {
+            log_local("Skipping dot plot: make_dotplot = FALSE.")
+          }
         }
       }
     }
@@ -3659,6 +3671,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               in_set_min_terms = 50L,
                                               pathway_use_all_terms = FALSE,
                                               pathway_make_heatmap = TRUE,
+                                              pathway_make_dotplot = TRUE,
                                               top_n_per_topic = 20L,
                                               max_pathways = 200L,
                                               pathway_tf_link_mode = c("theta", "none"),
@@ -3821,7 +3834,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       per_comparison = pathway_per_comparison,
       per_comparison_dir = pathway_per_comparison_dir,
       split_direction = pathway_split_direction,
-      make_heatmap = pathway_make_heatmap
+      make_heatmap = pathway_make_heatmap,
+      make_dotplot = pathway_make_dotplot
     )
   } else {
     plot_topic_pathway_enrichment_heatmap(
@@ -3832,6 +3846,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       title_prefix = title_prefix,
       use_all_terms = pathway_use_all_terms,
       make_heatmap = pathway_make_heatmap,
+      make_dotplot = pathway_make_dotplot,
       top_n_per_topic = top_n_per_topic,
       max_pathways = max_pathways,
       theta = topic_base$theta,
@@ -4021,6 +4036,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       max_pathways = as.integer(max_pathways),
       use_all_terms = isTRUE(pathway_use_all_terms),
       make_heatmap = isTRUE(pathway_make_heatmap),
+      make_dotplot = isTRUE(pathway_make_dotplot),
       source = pathway_source,
       link_min_prob = as.numeric(pathway_link_min_prob),
       link_include_tf = isTRUE(pathway_link_include_tf),
@@ -4556,6 +4572,7 @@ run_vae_topic_report_py <- function(doc_term,
     in_set_min_terms = 1L,
     pathway_use_all_terms = FALSE,
     pathway_make_heatmap = FALSE,
+    pathway_make_dotplot = TRUE,
     top_n_per_topic = 100L,
     max_pathways = 1000L,
     pathway_tf_link_mode = "theta",
@@ -5055,6 +5072,9 @@ train_topic_models <- function(Kgrid,
                                gene_term_mode = c("aggregate", "unique"),
                                include_tf_terms = FALSE,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
+                               vae_variant = "multivi_encoder",
+                               backend = c("vae", "warplda"),
+                               reuse_if_exists = TRUE,
                                binarize_method = "gammafit",
                                thrP = 0.9,
                                top_n_terms = 500L,
@@ -5066,6 +5086,7 @@ train_topic_models <- function(Kgrid,
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   gene_term_mode <- match.arg(gene_term_mode)
   count_input <- match.arg(count_input)
+  backend <- match.arg(backend)
   delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
   if (!length(delta_files)) {
     delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
@@ -5141,23 +5162,79 @@ train_topic_models <- function(Kgrid,
       in_set_min_terms = in_set_min_terms
     ), topic_report_args)
 
+    model_name <- if (backend == "vae") vae_variant else "warplda"
     out_dir <- file.path(
       output_dir,
-      paste0(cell, "_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_Kgrid")
+      paste0(cell, "_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", model_name, "_Kgrid")
     )
-    run_vae_topic_report_py(
-      doc_term = doc_term,
-      edges_docs = edges_docs,
-      out_dir = out_dir,
-      option_label = "joint",
-      direction_by = "gene",
-      vae_script = vae_script,
-      k_grid = Kgrid,
-      vae_variant = "multivi_encoder",
-      do_report = FALSE,
-      count_input = count_input,
-      topic_report_args = local_topic_args
-    )
+    metrics_path <- file.path(out_dir, "model_metrics.csv")
+    models_dir <- file.path(out_dir, "vae_models")
+    reuse_ok <- isTRUE(reuse_if_exists) &&
+      file.exists(metrics_path) &&
+      dir.exists(models_dir)
+
+    if (reuse_ok) {
+      .log_inform("Reusing existing topic model outputs; skipping training for {out_dir}")
+      next
+    }
+
+    if (backend == "vae") {
+      run_vae_topic_report_py(
+        doc_term = doc_term,
+        edges_docs = edges_docs,
+        out_dir = out_dir,
+        option_label = "joint",
+        direction_by = "gene",
+        vae_script = vae_script,
+        k_grid = Kgrid,
+        vae_variant = vae_variant,
+        do_report = FALSE,
+        count_input = count_input,
+        topic_report_args = local_topic_args
+      )
+    } else {
+      dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+      data.table::fwrite(doc_term, file.path(out_dir, "doc_term.csv"))
+      .save_all(out_dir, "doc_term", doc_term)
+      .save_all(out_dir, "edges_docs", edges_docs)
+      dtm_obj <- build_sparse_dtm(doc_term, count_col = "pseudo_count")
+      dtm <- dtm_obj$dtm
+      .save_all(out_dir, "dtm", dtm)
+      .save_all(out_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
+
+      fits_out <- run_warplda_models(
+        dtm,
+        K_grid = Kgrid,
+        iterations = 2000L,
+        alpha_by_topic = TRUE,
+        alpha = NULL,
+        beta = 0.1,
+        seed = 123,
+        save_tmp_dir = file.path(out_dir, "tmp_models")
+      )
+      metrics_tbl <- fits_out$metrics
+      data.table::fwrite(metrics_tbl, file.path(out_dir, "model_metrics.csv"))
+      .save_all(out_dir, "model_metrics", metrics_tbl)
+
+      dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
+      for (fit in fits_out$fits) {
+        K <- as.integer(fit$K)
+        theta <- fit$theta
+        phi <- fit$phi
+        if (!is.null(theta)) {
+          theta_df <- data.frame(doc_id = rownames(theta), theta, check.names = FALSE)
+          readr::write_csv(theta_df, file.path(models_dir, sprintf("theta_K%d.csv", K)))
+        }
+        if (!is.null(phi)) {
+          phi_df <- data.frame(term_id = rownames(phi), phi, check.names = FALSE)
+          readr::write_csv(phi_df, file.path(models_dir, sprintf("phi_K%d.csv", K)))
+        }
+      }
+
+      title_prefix <- paste0("WarpLDA ", basename(out_dir))
+      sel <- plot_model_selection_cistopic(metrics_tbl, file.path(out_dir, "model_selection.pdf"), title_prefix = title_prefix)
+      .save_all(out_dir, "model_selection", sel)
+    }
   }
 
   invisible(TRUE)
@@ -5176,16 +5253,24 @@ train_topic_models <- function(Kgrid,
 extract_regulatory_topics <- function(k,
                                       model_dir,
                                       output_dir,
+                                      backend = c("vae", "warplda"),
+                                      vae_variant = "multivi_encoder",
                                       topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("readr")
 
   k <- as.integer(k)
   if (!is.finite(k) || k <= 0L) .log_abort("`k` must be a positive integer.")
+  backend <- match.arg(backend)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
   out_dirs <- list.dirs(model_dir, recursive = FALSE, full.names = TRUE)
-  out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_", basename(out_dirs))]
+  if (backend == "vae") {
+    patt <- paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_")
+    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_warplda_", basename(out_dirs))]
+  }
   if (!length(out_dirs)) .log_abort("No trained topic model directories found in {model_dir}")
 
   for (d in out_dirs) {
@@ -5224,7 +5309,8 @@ extract_regulatory_topics <- function(k,
       top_n_terms = 500L,
       in_set_min_terms = 1L,
       pathway_use_all_terms = FALSE,
-      pathway_make_heatmap = FALSE,
+    pathway_make_heatmap = FALSE,
+    pathway_make_dotplot = TRUE,
       top_n_per_topic = 100L,
       max_pathways = 1000L,
       pathway_tf_link_mode = "theta",
@@ -5258,6 +5344,7 @@ extract_regulatory_topics <- function(k,
       link_topic_overwrite = FALSE
     )
     args <- modifyList(defaults, topic_report_args)
+    combo_tag <- basename(dirname(d))
     do.call(
       run_tfdocs_report_from_topic_base,
       c(list(
@@ -5267,7 +5354,11 @@ extract_regulatory_topics <- function(k,
         out_dir = out_dir,
         option_label = "joint",
         direction_by = "gene",
-        title_prefix = paste0("Deep VAE multivi_encoder ", basename(d))
+        title_prefix = if (backend == "vae") {
+          paste0("Deep VAE ", vae_variant, " | ", combo_tag, " | ", basename(d))
+        } else {
+          paste0("WarpLDA | ", combo_tag, " | ", basename(d))
+        }
       ), args)
     )
   }
