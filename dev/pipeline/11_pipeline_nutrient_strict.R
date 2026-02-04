@@ -25,13 +25,13 @@ expected_n <- if (exists("expected_n")) expected_n else NULL
 # ──────────────────────────────────────────────────────────────────────────────
 # Turn modules ON/OFF
 # ──────────────────────────────────────────────────────────────────────────────
-do_load_footprints_preprocess    <- TRUE
-do_tf_binding_sites_prediction   <- TRUE
-do_tf_to_target_genes_prediction <- TRUE
+do_load_footprints_preprocess    <- FALSE
+do_tf_binding_sites_prediction   <- FALSE
+do_tf_to_target_genes_prediction <- FALSE
 verbose <- TRUE
 
 
-# Predict TF binding sites -------------------------------------------------
+# Predict TF binding sites ------------------------------------------------
 # Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
   # Inputs (from YAML): fp_root_dir, base_dir, db, ref_genome, thresholds, etc.
@@ -87,7 +87,7 @@ if (do_load_footprints_preprocess == TRUE) {
 }
 
 
-# Predict TF binding sites -------------------------------------------------
+# Predict TF binding sites ------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
   if (!exists("omics_data") || !is.list(omics_data)) {
     .log_abort("`omics_data` not found. Run footprint preprocessing before TF binding site prediction.")
@@ -358,80 +358,64 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 
 
 # Diff networks and topic analysis ----------------------------------------
-step2_out_dir <- file.path(base_dir, "example_tf_target_genes")
+step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
-# Per-condition tables (per-cell vs 10_FBS)
-step2_specs <- build_cellwise_contrasts_from_index(
-  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
-  out_dir = step2_out_dir,
-  prefix = "step2",
-  ctrl_tag = "10_FBS",
-  clean_names = FALSE
+diff_res <- find_differential_links(
+  config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
+  compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
+  output_dir = step3_root_dir
 )
 
-delta_link <- 1
-regulated_genes <- 1.5 # 1.5 2
+motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")
+motif_db$gene_symbol <- motif_db$HGNC
+if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% names(motif_db))) {
+  motif_info <- build_tf_cluster_map_from_motif(motif_db)
+} else {
+  motif_info <- build_tf_cluster_map_from_motif(motif_path)
+}
 
-run_links_deltas_driver(
-  specs       = step2_specs,
-  clean_names = FALSE,
-  parallel    = TRUE,
-  restrict_to_active_both = FALSE,
-  edge_change_min = delta_link,
-  keep_all_cols = TRUE
-)
+k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
+celllines <- c("HPAFII")
+selected_k <- if (exists("topic_k")) topic_k else 12L
 
-step2_delta_csvs <- list.files(step2_out_dir, "_delta_links.csv", full.names = TRUE)
-step2_de_gene_log2_abs_min <- if (regulated_genes == 1.5) 0.585 else if (regulated_genes == 2) 1 else NA_real_
+gene_term_modes <- c("aggregate", "unique")
+include_tf_terms_opts <- c(FALSE, TRUE)
+count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
 
-step2_bulk <- episcope::filter_links_deltas_bulk(
-  step2_delta_csvs,
-  gene_expr_min = threshold_gene_expr,
-  tf_expr_min = threshold_tf_expr,
-  fp_min = threshold_fp_score,
-  link_min = threshold_link_score,
-  abs_delta_min = delta_link,
-  apply_de_gene = TRUE,
-  de_gene_log2_abs_min = step2_de_gene_log2_abs_min,
-  enforce_link_expr_sign = TRUE,
-  expr_dir_col = "log2FC_gene_expr",
-  workers = 20
-)
+for (gene_term_mode in gene_term_modes) {
+  for (include_tf_terms in include_tf_terms_opts) {
+    for (count_input in count_inputs) {
+      combo_tag <- paste0(
+        "gene_", gene_term_mode,
+        "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
+        "_count_", count_input
+      )
+      combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
 
-do_step3_topic_analysis <- TRUE
-if (isTRUE(do_step3_topic_analysis)) {
-  delta_links_csv <- list.files(step2_out_dir, "_delta_links\\.csv$", full.names = TRUE)
-  if (!length(delta_links_csv)) .log_abort("No *_delta_links.csv files found in {step2_out_dir}")
+      topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
+      topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
 
-  edges_all <- load_delta_links_many(delta_links_csv, keep_original = TRUE)
-  topic_root <- file.path(base_dir, "topic_models_lenient")
+      # train_topic_models(
+      #   Kgrid = k_grid_default,
+      #   input_dir = diff_res$filtered_dir,
+      #   output_dir = topic_model_dir,
+      #   celllines = celllines,
+      #   tf_cluster_map = motif_info$tf_cluster_map,
+      #   tf_exclude = motif_info$tf_exclude,
+      #   gene_term_mode = gene_term_mode,
+      #   include_tf_terms = include_tf_terms,
+      #   count_input = count_input
+      # )
 
-  motif_path <- resolve_motif_db_path("JASPAR2024", ref_genome = ref_genome)
-  motif_db$gene_symbol <- motif_db$HGNC
-  if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% names(motif_db))) {
-    motif_info <- build_tf_cluster_map_from_motif(motif_db)
-  } else {
-    motif_info <- build_tf_cluster_map_from_motif(motif_path)
+      extract_regulatory_topics(
+        k = selected_k,
+        model_dir = topic_model_dir,
+        output_dir = topic_final_dir
+      )
+
+      run_vae_doc_topic_heatmaps(topic_final_dir)
+      run_vae_topic_delta_network_plots(topic_final_dir, step2_out_dir = diff_res$filtered_dir)
+      run_vae_topic_delta_network_pathway(topic_final_dir)
+    }
   }
-
-  k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
-  k_single_map <- list(Panc1 = c(10L, 14L, 20, 35, 50, 70)) # HPAFII = 12L,  , AsPC1 = 10L
-  celllines <- c("Panc1") # "AsPC1", "HPAFII",
-
-
-  library(enrichR)
-  library(episcope)
-  run_vae_ctf_multivi(
-    edges_all = edges_all,
-    out_root = topic_root,
-    celllines = celllines,
-    tf_cluster_map = motif_info$tf_cluster_map,
-    tf_exclude = motif_info$tf_exclude,
-    k_grid_default = k_grid_default,
-    k_single_map = k_single_map
-  )
-
-  run_vae_doc_topic_heatmaps(topic_root)
-  run_vae_topic_delta_network_plots(topic_root, step2_out_dir = step2_out_dir)
-  run_vae_topic_delta_network_pathway(topic_root)
 }

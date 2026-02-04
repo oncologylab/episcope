@@ -14,7 +14,7 @@ threshold_fp_tf_corr_r: 0.3          # positive only
 threshold_fp_gene_corr_p: 0.05
 threshold_fp_gene_corr_abs_r: 0.3    # positive & negative
 threshold_rna_gene_corr_p: 0.05
-threshold_rna_gene_corr_abs_r: 0.3    # positive
+threshold_rna_gene_corr_abs_r: 0.3   # positive
 
 threshold_atac_gene_corr_p: 0.05
 threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
@@ -22,6 +22,15 @@ threshold_atac_gene_corr_abs_r: 0.3  # positive & negative
 # Lighting filters
 link_score_threshold: 0.001
 fp_score_threshold: 0.001
+
+# Step 3 (diff) filters
+delta_link: 1
+de_gene_log2_abs_min: 0.5
+de_tf_log2_abs_min: 0.5
+fp_delta_min: 0.5
+
+# Step 3 (topics)
+topic_k: 12
 
 # Module 2 linking mode (genehancer | window | loops)
 tf_target_link_mode: genehancer

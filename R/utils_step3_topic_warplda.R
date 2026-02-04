@@ -65,16 +65,24 @@ if (!exists(".log_abort", mode = "function")) {
 
 parse_delta_links_filename <- function(file) {
   b <- basename(file)
+  direction <- NULL
+  if (grepl("_delta_links_filtered_up\\.csv$", b, ignore.case = TRUE)) {
+    direction <- "up"
+  } else if (grepl("_delta_links_filtered_down\\.csv$", b, ignore.case = TRUE)) {
+    direction <- "down"
+  }
+  b <- sub("_delta_links_filtered_(up|down)\\.csv$", "", b, ignore.case = TRUE)
+  b <- sub("_delta_links_filtered\\.csv$", "", b, ignore.case = TRUE)
   b <- sub("_delta_links\\.csv$", "", b, ignore.case = TRUE)
   parts <- strsplit(b, "_vs_", fixed = TRUE)[[1]]
   if (length(parts) != 2) {
     .log_abort(c(
       "Cannot parse case/control from filename.",
-      i = "Expected: <CASE>_vs_<CTRL>_delta_links.csv",
+      i = "Expected: <CASE>_vs_<CTRL>_delta_links*.csv",
       i = paste0("Got: ", basename(file))
     ))
   }
-  list(comparison_id = b, case_id = parts[[1]], ctrl_id = parts[[2]])
+  list(comparison_id = b, case_id = parts[[1]], ctrl_id = parts[[2]], direction = direction)
 }
 
 standardize_delta_links_one <- function(file, keep_original = TRUE) {
@@ -110,6 +118,9 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   dt[, comparison_id := ids$comparison_id]
   dt[, case_id := ids$case_id]
   dt[, ctrl_id := ids$ctrl_id]
+  if (!is.null(ids$direction)) {
+    dt[, direction_group := ids$direction]
+  }
 
   # flags/bound (missing -> 0)
   dt[, fp_bound_case := if (has(fp_bound_case_nm)) as.integer(get(fp_bound_case_nm)) else 0L]
@@ -170,6 +181,15 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
     }
   }]
 
+  dt[, log2fc_tf := if (has("log2FC_tf_expr")) .safe_num(log2FC_tf_expr) else {
+    if (has("tf_expr_case") && has("tf_expr_ctrl")) {
+      .safe_log2fc(tf_expr_case, tf_expr_ctrl)
+    } else {
+      NA_real_
+    }
+  }]
+  dt[, fc_mag_tf := .fc_mag_from_log2fc(log2fc_tf)]
+
   if (!isTRUE(keep_original)) {
     keep <- c(
       "comparison_id","case_id","ctrl_id",
@@ -179,7 +199,8 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
       "gene_expr_flag_case","gene_expr_flag_ctrl",
       "tf_expr_case","tf_expr_ctrl","gene_expr_case","gene_expr_ctrl",
       "fp_score_case","fp_score_ctrl",
-      "delta_fp","delta_gene","log2fc_fp","log2fc_gene","fc_mag_fp","fc_mag_gene"
+      "delta_fp","delta_gene","log2fc_fp","log2fc_gene","fc_mag_fp","fc_mag_gene",
+      "log2fc_tf","fc_mag_tf"
     )
     keep <- intersect(keep, names(dt))
     dt <- dt[, ..keep]
@@ -394,7 +415,7 @@ weight_to_count <- function(w,
     if (!is.finite(mx) || mx <= 0) return(rep.int(0L, length(w)))
     cts <- ceiling((w / mx) * as.numeric(scale))
   } else {
-    cts <- ceiling(stats::log1p(w) * as.numeric(scale))
+    cts <- ceiling(base::log1p(w) * as.numeric(scale))
   }
 
   cts[w <= 0] <- 0L
@@ -411,10 +432,15 @@ build_doc_term_from_edges <- function(edges_docs,
                                       count_method = c("bin", "log"),
                                       count_scale = 50,
                                       prefix_terms = TRUE,
-                                      distinct_terms = FALSE) {
+                                      distinct_terms = FALSE,
+                                      gene_term_mode = c("aggregate", "unique"),
+                                      include_tf_terms = FALSE,
+                                      tf_weight_type = c("fc_mag_tf", "log2fc_tf")) {
   term_type <- match.arg(term_type)
   weight_type <- match.arg(weight_type)
   count_method <- match.arg(count_method)
+  gene_term_mode <- match.arg(gene_term_mode)
+  tf_weight_type <- match.arg(tf_weight_type)
 
   .assert_pkg("data.table")
   dt <- data.table::as.data.table(edges_docs)
@@ -440,11 +466,42 @@ build_doc_term_from_edges <- function(edges_docs,
     tmp[, term_id := paste0(ifelse(term_type == "peak", "PEAK:", "GENE:"), term_id)]
   }
 
-  if (isTRUE(distinct_terms)) {
-    tmp <- tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+  if (term_type == "gene") {
+    if (gene_term_mode == "aggregate" && "peak_id" %in% names(tmp)) {
+      tmp <- tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id, peak_id)]
+      out <- tmp[, .(weight = sum(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+    } else {
+      tmp <- tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+      out <- tmp
+    }
+  } else {
+    if (isTRUE(distinct_terms)) {
+      tmp <- tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+    }
+    out <- tmp[, .(weight = sum(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
   }
 
-  out <- tmp[, .(weight = sum(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+  if (isTRUE(include_tf_terms) && term_type == "gene") {
+    tf_tmp <- dt[!is.na(tf) & nzchar(tf)]
+    tf_col <- if (tf_weight_type == "fc_mag_tf") "fc_mag_tf" else "log2fc_tf"
+    if (!tf_col %in% names(tf_tmp)) {
+      .log_warn("TF weight column {tf_col} not found; skipping include_tf_terms.")
+    } else {
+      tf_tmp[, term_id := as.character(tf)]
+      tf_tmp[, weight := abs(.safe_num(get(tf_col)))]
+      tf_tmp <- tf_tmp[is.finite(weight) & weight > 0]
+      if (isTRUE(prefix_terms)) {
+        tf_tmp[, term_id := paste0("GENE:", term_id)]
+      }
+      if (gene_term_mode == "aggregate" && "peak_id" %in% names(tf_tmp)) {
+        tf_tmp <- tf_tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id, peak_id)]
+        tf_out <- tf_tmp[, .(weight = sum(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+      } else {
+        tf_out <- tf_tmp[, .(weight = max(weight, na.rm = TRUE)), by = .(doc_id, term_id)]
+      }
+      out <- data.table::rbindlist(list(out, tf_out), use.names = TRUE, fill = TRUE)
+    }
+  }
 
   if (is.finite(top_terms_per_doc) && top_terms_per_doc > 0) {
     data.table::setorder(out, doc_id, -weight)
@@ -458,8 +515,10 @@ build_doc_term_from_edges <- function(edges_docs,
   out <- out[term_id %in% keep_terms]
   if (!nrow(out)) return(data.table::data.table())
 
-  out[, count := weight_to_count(weight, method = count_method, scale = count_scale)]
-  out <- out[count > 0]
+  out[, pseudo_count_bin := weight_to_count(weight, method = "bin", scale = count_scale)]
+  out[, pseudo_count_log := weight_to_count(weight, method = "log", scale = count_scale)]
+  out[, pseudo_count := if (count_method == "bin") pseudo_count_bin else pseudo_count_log]
+  out <- out[pseudo_count > 0]
   out[]
 }
 
@@ -485,11 +544,16 @@ build_doc_term_joint <- function(edges_docs,
                                  count_method = c("bin", "log"),
                                  count_scale = 50,
                                  distinct_terms = FALSE,
+                                 gene_term_mode = c("aggregate", "unique"),
+                                 include_tf_terms = FALSE,
+                                 tf_weight_type = c("fc_mag_tf", "log2fc_tf"),
                                  balance_mode = c("min", "none"),
                                  prefix_terms = TRUE) {
   weight_type_peak <- match.arg(weight_type_peak)
   weight_type_gene <- match.arg(weight_type_gene)
   count_method <- match.arg(count_method)
+  gene_term_mode <- match.arg(gene_term_mode)
+  tf_weight_type <- match.arg(tf_weight_type)
   balance_mode <- match.arg(balance_mode)
   .assert_pkg("data.table")
 
@@ -514,7 +578,10 @@ build_doc_term_joint <- function(edges_docs,
     count_method = count_method,
     count_scale = count_scale,
     prefix_terms = prefix_terms,
-    distinct_terms = distinct_terms
+    distinct_terms = distinct_terms,
+    gene_term_mode = gene_term_mode,
+    include_tf_terms = include_tf_terms,
+    tf_weight_type = tf_weight_type
   )
   dt_peak <- build_doc_term_from_edges(
     ed_peak,
@@ -534,7 +601,7 @@ build_doc_term_joint <- function(edges_docs,
   if (!nrow(dt)) return(data.table::data.table())
 
   if (balance_mode == "min") {
-    totals <- dt[, .(total = sum(count, na.rm = TRUE)), by = .(doc_id, modality)]
+    totals <- dt[, .(total = sum(pseudo_count, na.rm = TRUE)), by = .(doc_id, modality)]
     totals_w <- data.table::dcast(totals, doc_id ~ modality, value.var = "total", fill = 0)
     totals_w[, min_total := pmin(gene, peak)]
     totals_w[, gene_scale := ifelse(gene > 0, min_total / gene, 0)]
@@ -543,13 +610,18 @@ build_doc_term_joint <- function(edges_docs,
     dt[, scale := ifelse(modality == "gene", gene_scale, peak_scale)]
     dt[!is.finite(scale) | scale < 0, scale := 0]
     dt[, weight := weight * scale]
-    dt[, count := as.integer(round(count * scale))]
-    dt <- dt[count > 0]
+    dt[, pseudo_count := as.integer(round(pseudo_count * scale))]
+    dt[, pseudo_count_bin := as.integer(round(pseudo_count_bin * scale))]
+    dt[, pseudo_count_log := as.integer(round(pseudo_count_log * scale))]
+    dt <- dt[pseudo_count > 0]
   }
 
   if (!nrow(dt)) return(data.table::data.table())
-  dt <- dt[, .(weight = sum(weight, na.rm = TRUE), count = sum(count, na.rm = TRUE)), by = .(doc_id, term_id)]
-  dt <- dt[count > 0]
+  dt <- dt[, .(weight = sum(weight, na.rm = TRUE),
+               pseudo_count = sum(pseudo_count, na.rm = TRUE),
+               pseudo_count_bin = sum(pseudo_count_bin, na.rm = TRUE),
+               pseudo_count_log = sum(pseudo_count_log, na.rm = TRUE)), by = .(doc_id, term_id)]
+  dt <- dt[pseudo_count > 0]
   if (!nrow(dt)) return(data.table::data.table())
 
   df_tbl <- unique(dt[, .(doc_id, term_id)])
@@ -563,14 +635,14 @@ build_doc_term_joint <- function(edges_docs,
 # 5) Step 4: Sparse DTM + WarpLDA-only model fitting across K
 # =============================================================================
 
-build_sparse_dtm <- function(doc_term) {
+build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   .assert_pkg("cli")
   .assert_pkg("Matrix")
   .assert_pkg("data.table")
 
   dt <- data.table::as.data.table(doc_term)
-  .assert_has_cols(dt, c("doc_id","term_id","count"), context = "build_sparse_dtm")
-  dt <- dt[is.finite(count) & count > 0]
+  .assert_has_cols(dt, c("doc_id","term_id", count_col), context = "build_sparse_dtm")
+  dt <- dt[is.finite(get(count_col)) & get(count_col) > 0]
   if (!nrow(dt)) .log_abort("No non-zero entries in doc_term; check filters/weights.")
 
   docs <- unique(dt$doc_id)
@@ -581,7 +653,7 @@ build_sparse_dtm <- function(doc_term) {
 
   i <- unname(doc_index[dt$doc_id])
   j <- unname(term_index[dt$term_id])
-  x <- as.numeric(dt$count)
+  x <- as.numeric(dt[[count_col]])
 
   dtm <- Matrix::sparseMatrix(
     i = i, j = j, x = x,
@@ -1755,7 +1827,7 @@ plot_topic_marker_heatmap <- function(phi,
 
   mat <- t(phi[, rows, drop = FALSE])
   colnames(mat) <- rownames(phi)
-  mat_plot <- log1p(mat * 1000)
+  mat_plot <- base::log1p(mat * 1000)
   main_title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
     paste(title_prefix, "Topic markers (see topic_marker_features.csv)", sep = " | ")
   } else {
@@ -4367,7 +4439,11 @@ run_vae_topic_report_py <- function(doc_term,
                                     vae_seed = 123L,
                                     vae_device = "cpu",
                                     reuse_if_exists = TRUE,
+                                    do_report = TRUE,
+                                    chosen_K = NULL,
+                                    count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                     topic_report_args = list()) {
+  count_input <- match.arg(count_input)
   .assert_pkg("cli")
   .assert_pkg("data.table")
   .assert_pkg("readr")
@@ -4375,10 +4451,23 @@ run_vae_topic_report_py <- function(doc_term,
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (!nrow(doc_term)) .log_abort("doc_term is empty for VAE; relax filters.")
 
+  count_col <- switch(
+    count_input,
+    pseudo_count_bin = "pseudo_count_bin",
+    pseudo_count_log = "pseudo_count_log",
+    weight = "weight"
+  )
+  if (!count_col %in% names(doc_term)) {
+    .log_abort("doc_term missing required column: {count_col}")
+  }
+  doc_term$count <- doc_term[[count_col]]
   data.table::fwrite(doc_term, file.path(out_dir, "doc_term.csv"))
   .save_all(out_dir, "doc_term", doc_term)
-
-  dtm_obj <- build_sparse_dtm(doc_term)
+  if (!is.null(edges_docs) && nrow(edges_docs)) {
+    .save_all(out_dir, "edges_docs", edges_docs)
+  }
+  doc_term$pseudo_count <- doc_term[[count_col]]
+  dtm_obj <- build_sparse_dtm(doc_term, count_col = "pseudo_count")
   dtm <- dtm_obj$dtm
   .save_all(out_dir, "dtm", dtm)
   .save_all(out_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
@@ -4429,13 +4518,19 @@ run_vae_topic_report_py <- function(doc_term,
   sel <- plot_model_selection_cistopic(metrics_tbl, file.path(out_dir, "model_selection.pdf"), title_prefix = title_prefix)
   .save_all(out_dir, "model_selection", sel)
 
+  if (!isTRUE(do_report)) {
+    return(invisible(TRUE))
+  }
+
   m <- sel$table
   idx <- sel$idx
   pick_K <- function(ix) {
     if (!is.finite(ix)) return(NULL)
     m$K[ix]
   }
-  chosen_K <- pick_K(idx$perplexity)
+  if (is.null(chosen_K)) {
+    chosen_K <- pick_K(idx$perplexity)
+  }
   if (is.null(chosen_K)) chosen_K <- pick_K(idx$maximum)
   if (is.null(chosen_K)) chosen_K <- m$K[1]
 
@@ -4618,6 +4713,7 @@ run_vae_ctf_multivi <- function(edges_all,
       vae_script = vae_script,
       k_grid = k_grid_default,
       vae_variant = "multivi_encoder",
+      do_report = TRUE,
       topic_report_args = local_topic_args
     )
 
@@ -4639,6 +4735,7 @@ run_vae_ctf_multivi <- function(edges_all,
           vae_script = vae_script,
           k_grid = c(k_val),
           vae_variant = "multivi_encoder",
+          do_report = TRUE,
           topic_report_args = local_topic_args
         )
       }
@@ -4745,11 +4842,30 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
     cand <- file.path(step2_out_dir, paste0(comp, "_delta_links_filtered.csv"))
     if (!file.exists(cand)) cand <- file.path(step2_out_dir, paste0(comp, "_delta_links.csv"))
     if (!file.exists(cand)) {
-      .log_inform("Missing delta links for comparison: {comp}")
-      assign(comp, NULL, envir = delta_cache)
-      return(NULL)
+      cand_up <- file.path(step2_out_dir, paste0(comp, "_delta_links_filtered_up.csv"))
+      cand_down <- file.path(step2_out_dir, paste0(comp, "_delta_links_filtered_down.csv"))
+      have_up <- file.exists(cand_up)
+      have_down <- file.exists(cand_down)
+      if (!have_up && !have_down) {
+        .log_inform("Missing delta links for comparison: {comp}")
+        assign(comp, NULL, envir = delta_cache)
+        return(NULL)
+      }
+      dfs <- list()
+      if (have_up) {
+        df_up <- readr::read_csv(cand_up, show_col_types = FALSE)
+        df_up$direction_group <- "up"
+        dfs <- c(dfs, list(df_up))
+      }
+      if (have_down) {
+        df_down <- readr::read_csv(cand_down, show_col_types = FALSE)
+        df_down$direction_group <- "down"
+        dfs <- c(dfs, list(df_down))
+      }
+      df <- dplyr::bind_rows(dfs)
+    } else {
+      df <- readr::read_csv(cand, show_col_types = FALSE)
     }
-    df <- readr::read_csv(cand, show_col_types = FALSE)
     if ("active_any" %in% names(df)) {
       df <- df[which(isTRUE(df$active_any) | df$active_any %in% c(1, "1", "TRUE", "true")), , drop = FALSE]
     }
@@ -4883,6 +4999,279 @@ run_vae_topic_delta_network_pathway <- function(topic_root) {
       make_heatmap = FALSE
     )
   }
+  invisible(TRUE)
+}
+
+# =============================================================================
+# Module 3 public APIs
+# =============================================================================
+
+#' Train joint RNA+footprint topic models (Module 3)
+#'
+#' Builds documents from differential links and trains VAE topic models across
+#' a user-supplied K grid. Writes model outputs (vae_models, rds, model_metrics.csv,
+#' model_selection.pdf) without running downstream topic extraction.
+#'
+#' @param Kgrid Integer vector of K values for training.
+#' @param input_dir Directory containing differential links (filtered up/down).
+#' @param output_dir Directory to write topic model outputs.
+#' @param celllines Character vector of cell line prefixes.
+#' @param tf_cluster_map Named vector mapping TFs to motif clusters.
+#' @param tf_exclude Optional TFs to exclude.
+#' @param abs_log2fc_fp_min Minimum |log2FC| footprint change for QC filtering.
+#' @param abs_delta_fp_min Minimum |delta_fp| for QC filtering.
+#' @param abs_log2fc_gene_min Minimum |log2FC| gene expression change for QC filtering.
+#' @param require_fp_bound_either Require fp_bound in either condition.
+#' @param require_tf_expr_either Require TF expression in either condition.
+#' @param require_gene_expr_either Require gene expression in either condition.
+#' @param direction_consistency Direction consistency mode for edge filtering.
+#' @param top_terms_per_doc Max terms per document.
+#' @param min_df Minimum document frequency for terms.
+#' @param count_method Count method ("bin" or "log").
+#' @param count_scale Count scaling factor.
+#' @param binarize_method Topic binarization method.
+#' @param thrP Topic term probability threshold.
+#' @param top_n_terms Number of terms per topic.
+#' @param in_set_min_terms Minimum terms per topic set.
+#' @param topic_report_args Additional args for downstream extraction (saved in calc_params).
+#' @export
+train_topic_models <- function(Kgrid,
+                               input_dir,
+                               output_dir,
+                               celllines = c("AsPC1", "HPAFII", "Panc1"),
+                               tf_cluster_map,
+                               tf_exclude = NULL,
+                               abs_log2fc_fp_min = 0,
+                               abs_delta_fp_min = 1,
+                               abs_log2fc_gene_min = 1,
+                               require_fp_bound_either = TRUE,
+                               require_tf_expr_either = TRUE,
+                               require_gene_expr_either = TRUE,
+                               direction_consistency = "aligned",
+                               top_terms_per_doc = Inf,
+                               min_df = 2,
+                               count_method = "bin",
+                               count_scale = 50,
+                               gene_term_mode = c("aggregate", "unique"),
+                               include_tf_terms = FALSE,
+                               count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
+                               binarize_method = "gammafit",
+                               thrP = 0.9,
+                               top_n_terms = 500L,
+                               in_set_min_terms = 1,
+                               topic_report_args = list()) {
+  .assert_pkg("data.table")
+  .assert_pkg("cli")
+
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  gene_term_mode <- match.arg(gene_term_mode)
+  count_input <- match.arg(count_input)
+  delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
+  if (!length(delta_files)) {
+    delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
+  }
+  if (!length(delta_files)) .log_abort("No delta link files found in {input_dir}")
+
+  edges_all <- load_delta_links_many(delta_files, keep_original = TRUE)
+  edges_dt <- data.table::as.data.table(edges_all)
+  if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
+  if (!("cellline" %in% names(edges_dt))) {
+    edges_dt[, cellline := sub("_.*$", "", comparison_id)]
+  }
+
+  vae_script <- Sys.getenv("VAE_SCRIPT", unset = "")
+  if (!nzchar(vae_script)) {
+    vae_script <- system.file("python", "logistic_normal_vae_topics.py", package = "episcope")
+  }
+  if (!nzchar(vae_script) || !file.exists(vae_script)) {
+    cand <- file.path("dev", "logistic_normal_vae_topics.py")
+    if (file.exists(cand)) vae_script <- cand
+  }
+  if (!file.exists(vae_script)) .log_abort("Missing VAE script: {vae_script}")
+
+  for (cell in celllines) {
+    edges_sub <- edges_dt[cellline == cell]
+    if (!nrow(edges_sub)) next
+    if (!is.null(tf_exclude) && length(tf_exclude)) {
+      edges_sub <- edges_sub[!toupper(tf) %in% tf_exclude]
+    }
+    if (!nrow(edges_sub)) next
+
+    edges_filt <- filter_edges_for_tf_topics(
+      edges_sub,
+      abs_log2fc_fp_min = abs_log2fc_fp_min,
+      abs_delta_fp_min = abs_delta_fp_min,
+      abs_log2fc_gene_min = abs_log2fc_gene_min,
+      require_fp_bound_either = require_fp_bound_either,
+      require_tf_expr_either = require_tf_expr_either,
+      require_gene_expr_either = require_gene_expr_either,
+      direction_consistency = direction_consistency
+    )
+    if (!nrow(edges_filt)) next
+
+    edges_docs <- add_tf_docs(
+      edges_filt,
+      doc_mode = "tf_cluster",
+      direction_by = "gene",
+      tf_cluster_map = tf_cluster_map
+    )
+    doc_term <- build_doc_term_joint(
+      edges_docs,
+      weight_type_peak = "delta_fp",
+      weight_type_gene = "fc_mag_gene",
+      top_terms_per_doc = top_terms_per_doc,
+      min_df = min_df,
+      count_method = count_method,
+      count_scale = count_scale,
+      distinct_terms = TRUE,
+      gene_term_mode = gene_term_mode,
+      include_tf_terms = include_tf_terms,
+      balance_mode = "min",
+      prefix_terms = TRUE
+    )
+    if (!nrow(doc_term)) {
+      .log_inform("Skipping topic training: no doc_term for {cell}")
+      next
+    }
+
+    local_topic_args <- modifyList(list(
+      binarize_method = binarize_method,
+      thrP = thrP,
+      top_n_terms = top_n_terms,
+      in_set_min_terms = in_set_min_terms
+    ), topic_report_args)
+
+    out_dir <- file.path(
+      output_dir,
+      paste0(cell, "_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_Kgrid")
+    )
+    run_vae_topic_report_py(
+      doc_term = doc_term,
+      edges_docs = edges_docs,
+      out_dir = out_dir,
+      option_label = "joint",
+      direction_by = "gene",
+      vae_script = vae_script,
+      k_grid = Kgrid,
+      vae_variant = "multivi_encoder",
+      do_report = FALSE,
+      count_input = count_input,
+      topic_report_args = local_topic_args
+    )
+  }
+
+  invisible(TRUE)
+}
+
+#' Extract regulatory topics from trained models (Module 3)
+#'
+#' Uses precomputed VAE models to compute link-topic scores, topic assignments,
+#' and downstream reports for a user-selected K.
+#'
+#' @param k Integer K selected by the user.
+#' @param model_dir Directory containing trained topic model outputs.
+#' @param output_dir Directory to write final topic reports.
+#' @param topic_report_args Optional list of overrides for report settings.
+#' @export
+extract_regulatory_topics <- function(k,
+                                      model_dir,
+                                      output_dir,
+                                      topic_report_args = list()) {
+  .assert_pkg("data.table")
+  .assert_pkg("readr")
+
+  k <- as.integer(k)
+  if (!is.finite(k) || k <= 0L) .log_abort("`k` must be a positive integer.")
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  out_dirs <- list.dirs(model_dir, recursive = FALSE, full.names = TRUE)
+  out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_", basename(out_dirs))]
+  if (!length(out_dirs)) .log_abort("No trained topic model directories found in {model_dir}")
+
+  for (d in out_dirs) {
+    rds_dir <- file.path(d, "rds")
+    dtm_path <- file.path(rds_dir, "dtm.rds")
+    edges_docs_path <- file.path(rds_dir, "edges_docs.rds")
+    metrics_path <- file.path(d, "model_metrics.csv")
+    theta_path <- file.path(d, "vae_models", sprintf("theta_K%d.csv", k))
+    phi_path <- file.path(d, "vae_models", sprintf("phi_K%d.csv", k))
+    if (!file.exists(dtm_path) || !file.exists(edges_docs_path)) {
+      .log_abort("Missing dtm or edges_docs for {d}")
+    }
+    if (!file.exists(theta_path) || !file.exists(phi_path)) {
+      .log_abort("Missing theta/phi for K={k} in {d}")
+    }
+
+    dtm <- readRDS(dtm_path)
+    edges_docs <- readRDS(edges_docs_path)
+    metrics_tbl <- if (file.exists(metrics_path)) readr::read_csv(metrics_path, show_col_types = FALSE) else NULL
+    theta_df <- readr::read_csv(theta_path, show_col_types = FALSE)
+    phi_df <- readr::read_csv(phi_path, show_col_types = FALSE)
+    theta <- as.matrix(theta_df[, -1, drop = FALSE]); rownames(theta) <- theta_df[[1]]
+    phi <- as.matrix(phi_df[, -1, drop = FALSE]); rownames(phi) <- phi_df[[1]]
+
+    topic_base <- list(K = k, theta = theta, phi = phi,
+                       metrics = if (is.data.frame(metrics_tbl)) metrics_tbl[metrics_tbl$K == k, ] else NULL)
+
+    base_name <- basename(d)
+    base_name <- sub("_Kgrid$", paste0("_K", k), base_name)
+    out_dir <- file.path(output_dir, base_name)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+    defaults <- list(
+      binarize_method = "gammafit",
+      thrP = 0.9,
+      top_n_terms = 500L,
+      in_set_min_terms = 1L,
+      pathway_use_all_terms = FALSE,
+      pathway_make_heatmap = FALSE,
+      top_n_per_topic = 100L,
+      max_pathways = 1000L,
+      pathway_tf_link_mode = "theta",
+      pathway_tf_top_n_docs = 50L,
+      pathway_tf_min_theta = NA_real_,
+      run_pathway_gsea = FALSE,
+      gsea_species = "Homo sapiens",
+      gsea_nperm = 1000L,
+      gsea_peak_gene_agg = "max",
+      pathway_source = "link_scores",
+      pathway_link_scores_file = NULL,
+      pathway_link_scores_file_tf = NULL,
+      pathway_link_gene_terms_file = NULL,
+      pathway_link_min_prob = 0,
+      pathway_link_include_tf = TRUE,
+      pathway_link_include_gene = TRUE,
+      pathway_link_gene_min_prob = 0,
+      pathway_link_tf_min_prob = 0.5,
+      pathway_link_tf_max_topics = 5L,
+      pathway_link_tf_top_n_per_topic = 30L,
+      pathway_per_comparison = TRUE,
+      pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+      pathway_split_direction = TRUE,
+      run_link_topic_scores = TRUE,
+      link_topic_gate_mode = "none",
+      link_topic_top_k = 3L,
+      link_topic_min_prob = 0,
+      link_topic_include_tf = FALSE,
+      link_topic_chunk_size = 5000L,
+      link_topic_n_cores = 1L,
+      link_topic_overwrite = FALSE
+    )
+    args <- modifyList(defaults, topic_report_args)
+    do.call(
+      run_tfdocs_report_from_topic_base,
+      c(list(
+        topic_base = topic_base,
+        dtm = dtm,
+        edges_docs = edges_docs,
+        out_dir = out_dir,
+        option_label = "joint",
+        direction_by = "gene",
+        title_prefix = paste0("Deep VAE multivi_encoder ", basename(d))
+      ), args)
+    )
+  }
+
   invisible(TRUE)
 }
 

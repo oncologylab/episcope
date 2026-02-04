@@ -622,6 +622,11 @@ compare_links_bulk <- function(specs,
                                keep_all_cols = TRUE,
                                verbose = TRUE) {
   if (!is.data.frame(specs) || nrow(specs) == 0L) .log_abort("compare_links_bulk: empty specs.")
+  n_specs <- nrow(specs)
+  if (isTRUE(verbose)) {
+    .log_inform("Computing link deltas for {n_specs} comparison(s).", n_specs = n_specs)
+  }
+  worker_verbose <- if (isTRUE(parallel)) FALSE else verbose
 
   do_one <- function(row) {
     c1 <- row$cond1_source
@@ -639,12 +644,14 @@ compare_links_bulk <- function(specs,
       restrict_to_active_both = restrict_to_active_both,
       edge_change_min    = edge_change_min,
       keep_all_cols      = keep_all_cols,
-      verbose            = verbose
+      verbose            = worker_verbose
     )
     if (!is.null(out) && is.character(out) && nzchar(out)) {
       dir.create(dirname(out), recursive = TRUE, showWarnings = FALSE)
       readr::write_csv(res, out)
-      .log(paste0("?wrote: ", basename(out)), verbose = verbose)
+      if (isTRUE(verbose) && !isTRUE(parallel)) {
+        .log(paste0("?wrote: ", basename(out)), verbose = verbose)
+      }
     }
     res
   }
@@ -652,7 +659,12 @@ compare_links_bulk <- function(specs,
   if (!isTRUE(parallel)) {
     invisible(lapply(split(specs, seq_len(nrow(specs))), do_one))
   } else {
-    if (is.null(workers)) workers <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
+    if (is.null(workers)) {
+      workers <- max(1L, parallel::detectCores(logical = TRUE) - 1L)
+    }
+    if (workers > n_specs) {
+      workers <- n_specs
+    }
     strategy <- if (is.character(plan)) {
       ns <- asNamespace("future")
       if (exists(plan, envir = ns, mode = "function")) get(plan, envir = ns) else future::multisession
@@ -666,7 +678,18 @@ compare_links_bulk <- function(specs,
     on.exit(future::plan(oplan), add = TRUE)
     future::plan(strategy, workers = workers)
 
-    invisible(future.apply::future_lapply(split(specs, seq_len(nrow(specs))), do_one))
+    if (isTRUE(verbose) && requireNamespace("progressr", quietly = TRUE)) {
+      progressr::with_progress({
+        p <- progressr::progressor(along = seq_len(n_specs))
+        do_one_wrap <- function(row) {
+          on.exit(p(), add = TRUE)
+          do_one(row)
+        }
+        invisible(future.apply::future_lapply(split(specs, seq_len(n_specs)), do_one_wrap))
+      })
+    } else {
+      invisible(future.apply::future_lapply(split(specs, seq_len(n_specs)), do_one))
+    }
   }
 }
 
@@ -683,8 +706,11 @@ compare_links_bulk <- function(specs,
 #' form `<cell>_<condition>` and the control is `<cell>_{ctrl_tag}` (e.g., "HPAFII_10_FBS").
 #'
 #' @param index_csv Path to `lighting_per_condition_index.csv` (must contain `label`).
-#' @param out_dir Directory containing per-condition links CSVs.
+#' @param out_dir Directory where delta outputs should be written.
+#' @param input_dir Directory containing per-condition links CSVs. Defaults to
+#'   `out_dir` for backward compatibility.
 #' @param prefix File prefix used by `light_by_condition()` (default `"lighting"`).
+#' @param input_prefix File prefix for input per-condition links (defaults to `prefix`).
 #' @param ctrl_tag Control tag. For global control, this is the **exact label** (e.g., `"Ctrl"`).
 #'   For per-cell control, this is the suffix after `<cell>_` (e.g., `"10_FBS"`).
 #' @param clean_names Logical; sanitize condition names in specs with `janitor::make_clean_names()`.
@@ -698,11 +724,16 @@ compare_links_bulk <- function(specs,
 #' @importFrom tibble tibble as_tibble
 build_cellwise_contrasts_from_index <- function(index_csv,
                                                 out_dir,
+                                                input_dir = out_dir,
                                                 prefix = "lighting",
+                                                input_prefix = prefix,
                                                 ctrl_tag = "10_FBS",
                                                 clean_names = FALSE,
+                                                labels_only = FALSE,
                                                 verbose = TRUE) {
-  .log <- function(msg, verbose = TRUE) if (isTRUE(verbose)) message("[utils_grn_diff] ", msg)
+  .log <- function(msg, verbose = TRUE) {
+    if (isTRUE(verbose)) .log_inform(c(v = paste0("[utils_grn_diff] ", msg)))
+  }
   .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
 
   .log(paste0("Reading index:\n  ", index_csv), verbose = verbose)
@@ -720,26 +751,31 @@ build_cellwise_contrasts_from_index <- function(index_csv,
       return(tibble::tibble())
     }
 
-    mk_path <- function(lab) file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
-                                                        prefix, .safe_label(lab)))
+    mk_path <- function(lab) file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
+                                                        input_prefix, .safe_label(lab)))
     name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
     specs <- data.frame(
       cond1_label  = stress_labels,
       cond2_label  = rep(ctrl_label, length(stress_labels)),
-      cond1_source = vapply(stress_labels, mk_path, character(1)),
-      cond2_source = rep(mk_path(ctrl_label), length(stress_labels)),
-      cond1_name   = vapply(stress_labels, function(z) name_fun(z), character(1)),
-      cond2_name   = rep(name_fun(ctrl_label), length(stress_labels)),
-      out_file     = file.path(out_dir,
-                               sprintf("%s_vs_%s_delta_links.csv",
-                                       .safe_label(stress_labels), .safe_label(ctrl_label))),
       stringsAsFactors = FALSE, check.names = FALSE
     )
 
+    if (!isTRUE(labels_only)) {
+      specs$cond1_source <- vapply(stress_labels, mk_path, character(1))
+      specs$cond2_source <- rep(mk_path(ctrl_label), length(stress_labels))
+      specs$cond1_name   <- vapply(stress_labels, function(z) name_fun(z), character(1))
+      specs$cond2_name   <- rep(name_fun(ctrl_label), length(stress_labels))
+      specs$out_file     <- file.path(out_dir,
+                                      sprintf("%s_vs_%s_delta_links.csv",
+                                              .safe_label(stress_labels), .safe_label(ctrl_label)))
+    }
+
     # warn about missing inputs but still return specs
-    all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
-    for (p in all_paths) if (!file.exists(p)) .log_warn("File not found (will fail when run): {p}")
+    if (!isTRUE(labels_only)) {
+      all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
+      for (p in all_paths) if (!file.exists(p)) .log_warn("File not found (will fail when run): {p}")
+    }
 
     return(tibble::as_tibble(specs))
   }
@@ -763,8 +799,8 @@ build_cellwise_contrasts_from_index <- function(index_csv,
     return(tibble::tibble())
   }
 
-  mk_path <- function(lab) file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
-                                                      prefix, .safe_label(lab)))
+  mk_path <- function(lab) file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
+                                                      input_prefix, .safe_label(lab)))
   name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
   cond1_label <- pairs$stress
@@ -773,18 +809,23 @@ build_cellwise_contrasts_from_index <- function(index_csv,
   specs <- data.frame(
     cond1_label  = cond1_label,
     cond2_label  = cond2_label,
-    cond1_source = vapply(cond1_label, mk_path, character(1)),
-    cond2_source = vapply(cond2_label, mk_path, character(1)),
-    cond1_name   = vapply(cond1_label, function(z) name_fun(z), character(1)),
-    cond2_name   = vapply(cond2_label, function(z) name_fun(z), character(1)),
-    out_file     = file.path(out_dir,
-                             sprintf("%s_vs_%s_delta_links.csv",
-                                     .safe_label(cond1_label), .safe_label(cond2_label))),
     stringsAsFactors = FALSE, check.names = FALSE
   )
 
-  all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
-  for (p in all_paths) if (!file.exists(p)) .log_warn("File not found (will fail when run): {p}")
+  if (!isTRUE(labels_only)) {
+    specs$cond1_source <- vapply(cond1_label, mk_path, character(1))
+    specs$cond2_source <- vapply(cond2_label, mk_path, character(1))
+    specs$cond1_name   <- vapply(cond1_label, function(z) name_fun(z), character(1))
+    specs$cond2_name   <- vapply(cond2_label, function(z) name_fun(z), character(1))
+    specs$out_file     <- file.path(out_dir,
+                                    sprintf("%s_vs_%s_delta_links.csv",
+                                            .safe_label(cond1_label), .safe_label(cond2_label)))
+  }
+
+  if (!isTRUE(labels_only)) {
+    all_paths <- unique(c(specs$cond1_source, specs$cond2_source))
+    for (p in all_paths) if (!file.exists(p)) .log_warn("File not found (will fail when run): {p}")
+  }
 
   tibble::as_tibble(specs)
 }
@@ -821,14 +862,42 @@ run_links_deltas_driver <- function(specs,
                                     restrict_to_active_both = TRUE,
                                     edge_change_min = 0,
                                     keep_all_cols = TRUE,
+                                    input_dir = NULL,
+                                    input_prefix = "lighting",
+                                    out_dir = NULL,
                                     verbose     = TRUE) {
   if (!is.data.frame(specs) || nrow(specs) == 0L) {
     .log_abort("`specs` must be a non-empty data.frame/tibble.")
   }
-  need <- c("cond1_source","cond2_source","cond1_name","cond2_name","out_file")
-  miss <- setdiff(need, names(specs))
-  if (length(miss)) {
-    .log_abort(c("`specs` missing required columns.", i = paste(miss, collapse = ", ")))
+  if (!all(c("cond1_label", "cond2_label") %in% names(specs))) {
+    .log_abort("`specs` must include cond1_label and cond2_label.")
+  }
+
+  .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+  name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
+
+  if (!all(c("cond1_source", "cond2_source", "cond1_name", "cond2_name", "out_file") %in% names(specs))) {
+    if (is.null(input_dir) || is.null(out_dir)) {
+      .log_abort("`specs` is missing path columns; set `input_dir` and `out_dir` to derive them.")
+    }
+    specs$cond1_source <- file.path(
+      input_dir,
+      sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, .safe_label(specs$cond1_label))
+    )
+    specs$cond2_source <- file.path(
+      input_dir,
+      sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, .safe_label(specs$cond2_label))
+    )
+    specs$cond1_name <- vapply(specs$cond1_label, function(z) name_fun(z), character(1))
+    specs$cond2_name <- vapply(specs$cond2_label, function(z) name_fun(z), character(1))
+    specs$out_file <- file.path(
+      out_dir,
+      sprintf(
+        "%s_vs_%s_delta_links.csv",
+        .safe_label(specs$cond1_label),
+        .safe_label(specs$cond2_label)
+      )
+    )
   }
 
   # Optional: warn if any input files are absent (do not stop)
@@ -846,6 +915,117 @@ run_links_deltas_driver <- function(specs,
                      edge_change_min = edge_change_min,
                      keep_all_cols = keep_all_cols,
                      verbose     = verbose)
+}
+
+#' Find differential links (Module 3)
+#'
+#' Runs link-delta comparisons and filtering using a config + comparison list.
+#'
+#' @param config YAML config path or preloaded config (global env).
+#' @param compar Optional CSV path with columns `cond1_label`, `cond2_label`.
+#' @param output_dir Output directory for differential links (will create subfolders).
+#' @param qc Logical; reserved for future QC outputs.
+#' @param input_dir Optional override for step2 link directory (default: base_dir/connect_tf_target_genes).
+#' @param input_prefix File prefix for step2 links (default "step2").
+#' @param ctrl_tag Control tag for per-cell contrasts (default "10_FBS").
+#' @param clean_names Logical; pass-through to comparisons builder.
+#' @param parallel Logical; pass-through to delta computation.
+#' @param workers Integer; pass-through to delta computation.
+#' @export
+find_differential_links <- function(config,
+                                    compar = NULL,
+                                    output_dir = "diff_grn_and_regulatory_topics",
+                                    qc = TRUE,
+                                    input_dir = NULL,
+                                    input_prefix = "step2",
+                                    ctrl_tag = "10_FBS",
+                                    clean_names = FALSE,
+                                    parallel = TRUE,
+                                    workers = NULL) {
+  if (is.character(config) && length(config) == 1L && file.exists(config)) {
+    load_config(config)
+  }
+  if (!exists("base_dir")) {
+    .log_abort("`base_dir` not found. Provide a valid config or load_config() first.")
+  }
+
+  step2_out_dir <- if (!is.null(input_dir)) input_dir else file.path(base_dir, "connect_tf_target_genes")
+  out_root <- if (grepl("^/", output_dir)) output_dir else file.path(base_dir, output_dir)
+  delta_dir <- file.path(out_root, "delta_links")
+  filtered_dir <- file.path(out_root, "filtered_delta_links")
+  dir.create(delta_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(filtered_dir, recursive = TRUE, showWarnings = FALSE)
+
+  if (!is.null(compar)) {
+    if (is.data.frame(compar)) {
+      comp_tbl <- compar
+    } else if (is.character(compar) && length(compar) == 1L) {
+      comp_tbl <- readr::read_csv(compar, show_col_types = FALSE)
+    } else {
+      .log_abort("compar must be a data.frame/tibble or a path to a CSV.")
+    }
+    if (!all(c("cond1_label", "cond2_label") %in% names(comp_tbl))) {
+      .log_abort("compar must include cond1_label and cond2_label.")
+    }
+    specs <- comp_tbl[, c("cond1_label", "cond2_label")]
+  } else {
+    idx_csv <- file.path(step2_out_dir, "step2_per_condition_index.csv")
+    specs <- build_cellwise_contrasts_from_index(
+      index_csv = idx_csv,
+      out_dir = delta_dir,
+      input_dir = step2_out_dir,
+      prefix = "step3",
+      input_prefix = input_prefix,
+      ctrl_tag = ctrl_tag,
+      clean_names = clean_names,
+      labels_only = TRUE
+    )
+  }
+
+  delta_link <- if (exists("delta_link")) delta_link else 1
+  de_gene_log2_abs_min <- if (exists("de_gene_log2_abs_min")) de_gene_log2_abs_min else 0.5
+  de_tf_log2_abs_min <- if (exists("de_tf_log2_abs_min")) de_tf_log2_abs_min else 0.5
+  fp_delta_min <- if (exists("fp_delta_min")) fp_delta_min else 0.5
+
+  run_links_deltas_driver(
+    specs = specs,
+    clean_names = clean_names,
+    parallel = parallel,
+    workers = workers,
+    restrict_to_active_both = FALSE,
+    edge_change_min = delta_link,
+    keep_all_cols = TRUE,
+    input_dir = step2_out_dir,
+    input_prefix = input_prefix,
+    out_dir = delta_dir
+  )
+
+  delta_csvs <- list.files(delta_dir, "_delta_links.csv$", full.names = TRUE)
+  if (!length(delta_csvs)) .log_abort("No *_delta_links.csv files found in {delta_dir}")
+
+  filter_links_deltas_bulk(
+    delta_csvs,
+    gene_expr_min = threshold_gene_expr,
+    tf_expr_min = threshold_tf_expr,
+    fp_min = threshold_fp_score,
+    link_min = threshold_link_score,
+    abs_delta_min = delta_link,
+    apply_de_gene = TRUE,
+    de_gene_log2_abs_min = de_gene_log2_abs_min,
+    de_tf_log2_abs_min = de_tf_log2_abs_min,
+    fp_delta_min = fp_delta_min,
+    split_direction = TRUE,
+    write_combined = FALSE,
+    enforce_link_expr_sign = TRUE,
+    expr_dir_col = "log2FC_gene_expr",
+    workers = workers,
+    filtered_dir = filtered_dir
+  )
+
+  invisible(list(
+    delta_dir = delta_dir,
+    filtered_dir = filtered_dir
+  ))
 }
 
 #' #' Driver: run all cell-wise contrasts and write CSVs

@@ -15,6 +15,9 @@ run_links_deltas_driver(
   restrict_to_active_both = TRUE,
   edge_change_min = 0,
   keep_all_cols = TRUE,
+  input_dir = NULL,
+  input_prefix = "lighting",
+  out_dir = NULL,
   verbose = TRUE
 )
 }

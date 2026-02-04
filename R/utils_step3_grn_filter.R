@@ -12,7 +12,7 @@
 
 # Local logger (kept separate from utils_grn_diff)
 .flog <- function(..., verbose = TRUE) {
-  if (isTRUE(verbose)) message("[utils_grn_filter] ", paste0(..., collapse = ""))
+  if (isTRUE(verbose)) .log_inform(c(v = paste0("[utils_grn_filter] ", paste0(..., collapse = ""))))
 }
 
 # Load a delta-links table from CSV or in-memory tibble/data.frame
@@ -44,6 +44,56 @@
     return(logical(0))
   }
   apply(m, 1L, function(v) any(v > thr, na.rm = TRUE))
+}
+
+# Split links into up/down by gene log2FC and footprint delta, with optional TF opposition filter
+.split_links_by_direction <- function(df,
+                                      gene_log2_col = "log2FC_gene_expr",
+                                      fp_delta_col = "delta_fp_bed_score",
+                                      tf_log2_col = "log2FC_tf_expr",
+                                      gene_log2_abs_min = NULL,
+                                      fp_delta_min = NULL,
+                                      tf_log2_abs_min = NULL,
+                                      verbose = TRUE) {
+  if (!nrow(df)) return(list(up = df, down = df))
+  nms <- names(df)
+  if (!gene_log2_col %in% nms || !fp_delta_col %in% nms) {
+    .log_warn("Missing {gene_log2_col} or {fp_delta_col}; skipping up/down split.")
+    return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
+  }
+  if (is.null(gene_log2_abs_min) || !is.finite(gene_log2_abs_min)) {
+    .log_warn("gene_log2_abs_min not set; skipping up/down split.")
+    return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
+  }
+  if (is.null(fp_delta_min) || !is.finite(fp_delta_min)) {
+    .log_warn("fp_delta_min not set; skipping up/down split.")
+    return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
+  }
+
+  gene_l2 <- suppressWarnings(as.numeric(df[[gene_log2_col]]))
+  fp_del <- suppressWarnings(as.numeric(df[[fp_delta_col]]))
+  tf_l2 <- if (tf_log2_col %in% nms) suppressWarnings(as.numeric(df[[tf_log2_col]])) else NA_real_
+
+  gene_pass <- is.finite(gene_l2) & (abs(gene_l2) >= gene_log2_abs_min)
+
+  if (is.finite(tf_log2_abs_min) && tf_log2_col %in% nms) {
+    tf_pass <- is.finite(tf_l2) & (abs(tf_l2) >= tf_log2_abs_min)
+    opp_dir <- tf_pass & gene_pass & (sign(tf_l2) == -sign(gene_l2))
+    if (any(opp_dir, na.rm = TRUE)) {
+      df <- df[!opp_dir, , drop = FALSE]
+      gene_l2 <- gene_l2[!opp_dir]
+      fp_del <- fp_del[!opp_dir]
+      gene_pass <- gene_pass[!opp_dir]
+    }
+  }
+
+  up <- gene_pass & (gene_l2 > 0) & is.finite(fp_del) & (fp_del >= fp_delta_min)
+  down <- gene_pass & (gene_l2 < 0) & is.finite(fp_del) & (fp_del <= -fp_delta_min)
+
+  list(
+    up = df[which(up), , drop = FALSE],
+    down = df[which(down), , drop = FALSE]
+  )
 }
 
 # Build default output path from an input CSV
@@ -107,8 +157,13 @@
 #' @param verbose logical; default TRUE
 #' @param apply_de_gene logical; require |log2FC_gene_expr| ?de_gene_log2_abs_min
 #' @param apply_de_tf   logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min
-#' @param de_gene_log2_abs_min numeric absolute log2FC threshold (e.g., 0.585 or 1)
-#' @param de_tf_log2_abs_min   numeric absolute log2FC threshold (e.g., 0.585 or 1)
+#' @param de_gene_log2_abs_min numeric absolute log2FC threshold.
+#' @param de_tf_log2_abs_min   numeric absolute log2FC threshold.
+#' @param de_gene_fc_min numeric absolute fold-change threshold (non-log2) for genes.
+#' @param de_tf_fc_min   numeric absolute fold-change threshold (non-log2) for TFs.
+#' @param fp_delta_min numeric absolute delta threshold for footprint scores.
+#' @param fp_delta_min numeric absolute delta threshold for footprint scores
+#'   (column `delta_fp_bed_score`).
 #' @param enforce_link_expr_sign logical; if TRUE, drop rows whose delta_link_score
 #'   direction contradicts expected gene direction given link_sign_* (default TRUE).
 #' @param expr_dir_col character; gene-change column to use for direction; default "log2FC_gene_expr"
@@ -135,6 +190,9 @@ filter_links_deltas <- function(x,
                                 apply_de_tf   = FALSE,
                                 de_gene_log2_abs_min = NULL,
                                 de_tf_log2_abs_min   = NULL,
+                                de_gene_fc_min = NULL,
+                                de_tf_fc_min   = NULL,
+                                fp_delta_min = NULL,
                                 enforce_link_expr_sign = TRUE,
                                 expr_dir_col = "log2FC_gene_expr",
                                 save_csv = FALSE,
@@ -144,6 +202,13 @@ filter_links_deltas <- function(x,
   df <- .load_delta_links(x, verbose = verbose)
   n0 <- nrow(df)
   nms <- names(df)
+
+  if (is.null(de_gene_log2_abs_min) && !is.null(de_gene_fc_min)) {
+    de_gene_log2_abs_min <- log2(as.numeric(de_gene_fc_min))
+  }
+  if (is.null(de_tf_log2_abs_min) && !is.null(de_tf_fc_min)) {
+    de_tf_log2_abs_min <- log2(as.numeric(de_tf_fc_min))
+  }
 
   # Identify column groups by prefix
   cols_gene <- .cols_with_prefix(df, "gene_expr_")
@@ -298,6 +363,8 @@ filter_links_deltas <- function(x,
 #' @param write_manifest Logical; write a manifest CSV mapping source->filtered (default TRUE).
 #' @param manifest_file Optional path for manifest; if NULL, written to the common dir as
 #'        "delta_links_filtered_manifest.csv".
+#' @param split_direction Logical; write up/down filtered links per delta file.
+#' @param write_combined Logical; write combined filtered CSV (default TRUE).
 #' @return A list with fields: results (list of tibbles), filtered_paths, filtered_dirs, manifest (tibble), manifest_path.
 #' @export
 #'
@@ -327,6 +394,11 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      apply_de_tf   = FALSE,
                                      de_gene_log2_abs_min = NULL,
                                      de_tf_log2_abs_min   = NULL,
+                                     de_gene_fc_min = NULL,
+                                     de_tf_fc_min   = NULL,
+                                     fp_delta_min = NULL,
+                                     split_direction = FALSE,
+                                     write_combined = TRUE,
                                      enforce_link_expr_sign = FALSE,
                                      expr_dir_col = "log2FC_gene_expr",
                                      parallel = TRUE,
@@ -335,6 +407,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      save_csv = TRUE,
                                      write_manifest = TRUE,
                                      manifest_file = NULL,
+                                     filtered_dir = NULL,
                                      verbose = TRUE) {
   # sanity
   if (!is.character(delta_csvs) || length(delta_csvs) == 0L) {
@@ -352,8 +425,27 @@ filter_links_deltas_bulk <- function(delta_csvs,
   if (length(delta_csvs) == 0L) cli::cli_abort("No existing delta CSVs to process.")
 
   # expected outputs (for manifest)
-  filtered_paths <- .default_filtered_paths(delta_csvs)
+  if (!is.null(filtered_dir) && nzchar(filtered_dir)) {
+    filtered_paths <- file.path(filtered_dir, basename(.default_filtered_paths(delta_csvs)))
+  } else {
+    filtered_paths <- .default_filtered_paths(delta_csvs)
+  }
   filtered_dirs  <- unique(dirname(filtered_paths))
+
+  if (is.null(de_gene_log2_abs_min) && !is.null(de_gene_fc_min)) {
+    de_gene_log2_abs_min <- log2(as.numeric(de_gene_fc_min))
+  }
+  if (is.null(de_tf_log2_abs_min) && !is.null(de_tf_fc_min)) {
+    de_tf_log2_abs_min <- log2(as.numeric(de_tf_fc_min))
+  }
+
+  n_files <- length(delta_csvs)
+  if (isTRUE(verbose)) {
+    .log_inform("Filtering {n_files} delta-link file{?s}...", n_files = n_files)
+    if (isTRUE(split_direction)) {
+      .log_inform("Writing up/down filtered links per delta file.")
+    }
+  }
 
   # parallel plan
   if (isTRUE(parallel)) {
@@ -371,8 +463,13 @@ filter_links_deltas_bulk <- function(delta_csvs,
     future::plan(strategy, workers = workers)
   }
 
-  run_one <- function(f) {
-    filter_links_deltas(
+  worker_verbose <- if (isTRUE(parallel)) FALSE else verbose
+  run_one <- function(f, out_path) {
+    out_dir_use <- dirname(out_path)
+    if (!is.null(filtered_dir) && nzchar(filtered_dir)) {
+      out_dir_use <- filtered_dir
+    }
+    df <- filter_links_deltas(
       f,
       gene_expr_min = gene_expr_min,
       tf_expr_min   = tf_expr_min,
@@ -383,17 +480,49 @@ filter_links_deltas_bulk <- function(delta_csvs,
       apply_de_tf   = apply_de_tf,
       de_gene_log2_abs_min = de_gene_log2_abs_min,
       de_tf_log2_abs_min   = de_tf_log2_abs_min,
+      de_gene_fc_min = de_gene_fc_min,
+      de_tf_fc_min   = de_tf_fc_min,
+      fp_delta_min = fp_delta_min,
       enforce_link_expr_sign = enforce_link_expr_sign,
       expr_dir_col = expr_dir_col,
-      save_csv = save_csv,
-      verbose = verbose
+      save_csv = isTRUE(save_csv) && isTRUE(write_combined),
+      out_file = out_path,
+      verbose = worker_verbose
     )
+    if (isTRUE(split_direction)) {
+      base <- sub("\\.csv$", "", basename(f), ignore.case = TRUE)
+      up_path <- file.path(out_dir_use, paste0(base, "_filtered_up.csv"))
+      down_path <- file.path(out_dir_use, paste0(base, "_filtered_down.csv"))
+      split <- .split_links_by_direction(
+        df,
+        gene_log2_abs_min = de_gene_log2_abs_min,
+        fp_delta_min = fp_delta_min,
+        tf_log2_abs_min = de_tf_log2_abs_min,
+        verbose = worker_verbose
+      )
+      readr::write_csv(split$up, up_path)
+      readr::write_csv(split$down, down_path)
+      attr(df, "filtered_up_path") <- up_path
+      attr(df, "filtered_down_path") <- down_path
+    }
+    df
   }
 
   results <- if (isTRUE(parallel)) {
-    future.apply::future_lapply(delta_csvs, run_one)
+    if (isTRUE(verbose) && requireNamespace("progressr", quietly = TRUE)) {
+      progressr::with_progress({
+        p <- progressr::progressor(along = seq_len(n_files))
+        do_one_wrap <- function(i) {
+          on.exit(p(), add = TRUE)
+          run_one(delta_csvs[[i]], filtered_paths[[i]])
+        }
+        future.apply::future_lapply(seq_along(delta_csvs), do_one_wrap)
+      })
+    } else {
+      future.apply::future_lapply(seq_along(delta_csvs), function(i) run_one(delta_csvs[[i]], filtered_paths[[i]]))
+    }
   } else {
-    lapply(delta_csvs, run_one)
+    lapply(seq_along(delta_csvs), function(i) run_one(delta_csvs[[i]], filtered_paths[[i]]))
   }
   names(results) <- basename(delta_csvs)
 
@@ -403,12 +532,24 @@ filter_links_deltas_bulk <- function(delta_csvs,
     filtered_csv = filtered_paths,
     exists       = file.exists(filtered_paths)
   )
+  if (isTRUE(split_direction)) {
+    up_paths <- vapply(results, function(x) attr(x, "filtered_up_path"), character(1))
+    down_paths <- vapply(results, function(x) attr(x, "filtered_down_path"), character(1))
+    manifest$filtered_up <- up_paths
+    manifest$filtered_down <- down_paths
+    manifest$up_exists <- file.exists(up_paths)
+    manifest$down_exists <- file.exists(down_paths)
+  }
 
   manifest_path <- NULL
   if (isTRUE(write_manifest)) {
     if (is.null(manifest_file)) {
-      common_dir <- .common_dir(delta_csvs)
-      manifest_path <- file.path(common_dir, "delta_links_filtered_manifest.csv")
+      if (!is.null(filtered_dir) && nzchar(filtered_dir)) {
+        manifest_path <- file.path(filtered_dir, "delta_links_filtered_manifest.csv")
+      } else {
+        common_dir <- .common_dir(delta_csvs)
+        manifest_path <- file.path(common_dir, "delta_links_filtered_manifest.csv")
+      }
     } else {
       manifest_path <- manifest_file
     }

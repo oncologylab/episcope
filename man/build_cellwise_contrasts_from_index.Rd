@@ -7,18 +7,26 @@
 build_cellwise_contrasts_from_index(
   index_csv,
   out_dir,
+  input_dir = out_dir,
   prefix = "lighting",
+  input_prefix = prefix,
   ctrl_tag = "10_FBS",
   clean_names = FALSE,
+  labels_only = FALSE,
   verbose = TRUE
 )
 }
 \arguments{
 \item{index_csv}{Path to `lighting_per_condition_index.csv` (must contain `label`).}
 
-\item{out_dir}{Directory containing per-condition links CSVs.}
+\item{out_dir}{Directory where delta outputs should be written.}
+
+\item{input_dir}{Directory containing per-condition links CSVs. Defaults to
+`out_dir` for backward compatibility.}
 
 \item{prefix}{File prefix used by `light_by_condition()` (default `"lighting"`).}
+
+\item{input_prefix}{File prefix for input per-condition links (defaults to `prefix`).}
 
 \item{ctrl_tag}{Control tag. For global control, this is the **exact label** (e.g., `"Ctrl"`).
 For per-cell control, this is the suffix after `<cell>_` (e.g., `"10_FBS"`).}

@@ -15,6 +15,11 @@ filter_links_deltas_bulk(
   apply_de_tf = FALSE,
   de_gene_log2_abs_min = NULL,
   de_tf_log2_abs_min = NULL,
+  de_gene_fc_min = NULL,
+  de_tf_fc_min = NULL,
+  fp_delta_min = NULL,
+  split_direction = FALSE,
+  write_combined = TRUE,
   enforce_link_expr_sign = FALSE,
   expr_dir_col = "log2FC_gene_expr",
   parallel = TRUE,
@@ -23,6 +28,7 @@ filter_links_deltas_bulk(
   save_csv = TRUE,
   write_manifest = TRUE,
   manifest_file = NULL,
+  filtered_dir = NULL,
   verbose = TRUE
 )
 }
@@ -44,9 +50,20 @@ filter_links_deltas_bulk(
 
 \item{apply_de_tf}{logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min}
 
-\item{de_gene_log2_abs_min}{numeric absolute log2FC threshold (e.g., 0.585 or 1)}
+\item{de_gene_log2_abs_min}{numeric absolute log2FC threshold.}
 
-\item{de_tf_log2_abs_min}{numeric absolute log2FC threshold (e.g., 0.585 or 1)}
+\item{de_tf_log2_abs_min}{numeric absolute log2FC threshold.}
+
+\item{de_gene_fc_min}{numeric absolute fold-change threshold (non-log2) for genes.}
+
+\item{de_tf_fc_min}{numeric absolute fold-change threshold (non-log2) for TFs.}
+
+\item{fp_delta_min}{numeric absolute delta threshold for footprint scores
+(column `delta_fp_bed_score`).}
+
+\item{split_direction}{Logical; write up/down filtered links per delta file.}
+
+\item{write_combined}{Logical; write combined filtered CSV (default TRUE).}
 
 \item{enforce_link_expr_sign}{logical; if TRUE, drop rows whose delta_link_score
 direction contradicts expected gene direction given link_sign_* (default TRUE).}
