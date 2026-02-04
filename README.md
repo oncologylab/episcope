@@ -19,7 +19,7 @@ It enables users to:
 - Infer **condition-specific** canonical and non-canonical TFBS by correlating changes in TF expression with footprint/chromatin accessibility scores across conditions. 
 - Refine **regulatory priors** (e.g., GeneHancer, genomic proximity, or user-supplied 3D chromatin interaction data) by filtering **TF→TFBS→gene** links using concordant correlation between *(i)* TF expression and target expression and *(ii)* footprint/chromatin accessibility scores and target expression.  
 - Extract active **TF→TFBS→gene regulatory links** within each condition and identify **differential** links between conditions.
-- Model dynamic GRNs using **multilayer perception (MLP)** and **variational autoencoder (VAE)**-based topic modeling to learns shared latent topics capturing joint transcriptional and regulatory programs.
+- Model dynamic GRNs using **multilayer perceptron (MLP)** and **variational autoencoder (VAE)**-based topic modeling to learns shared latent topics capturing joint transcriptional and regulatory programs.
 - Generate **interactive** visualizations of **topic- and condition-specific GRNs**, along with cross-topic and cross-condition summary plots of pathway enrichment, TF-target clustering, and top master TFs.
 
 ---
@@ -72,7 +72,7 @@ Episcope runs as a 3-module pipeline and each module contains 2-4 primary functi
 
 #### **Primary functions**
 - [`find_differential_links()`](link) performs pairwise comparisons and extracts differential TF->FP->target links based on a user-supplied comparison metadata table. 
-- [`train_topic_models()`](link) constructs **per–TF-cluster “documents”** containing weighted, condition- and direction-specific differential TF→TFBS→target links combining RNA and footprint (or peak) data, fuses the two representations with a **multilayer perception (MLP)**, and learns shared latent topics that capture joint transcriptional and regulatory programs using **variational autoencoder (VAE)** for a series of user-defined k values. 
+- [`train_topic_models()`](link) constructs **per–TF-cluster “documents”** containing weighted, condition- and direction-specific differential TF→TFBS→target links combining RNA and footprint (or peak) data, fuses the two representations with a **multilayer perceptron (MLP)**, and learns shared latent topics that capture joint transcriptional and regulatory programs using **variational autoencoder (VAE)** for a series of user-defined k values. 
 - [`extract_regulatory_topics()`](link) computes link-topic probabilities and automatically assigns links to topics based on a user-selected k, and generates topic summary plots. 
 - [`build_per_comparison_per_topic_differential_grns()`](link) produces interactive visualizations of differential GRNs per condition and per topic.
 
