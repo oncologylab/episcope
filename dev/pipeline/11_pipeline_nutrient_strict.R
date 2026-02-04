@@ -1,3 +1,11 @@
+# why need fp vs ATAC
+# why fp alignment / CTF is needed
+# why need pearson spearman for TF bind site prediction FP corr RNA
+# why topics models, how the methods were selected, what did we go through.
+# LDA vs. neuronetworks
+# FP+RNA vs. RNA alone
+
+
 library(episcope)
 
 source("R/utils_config.R")
