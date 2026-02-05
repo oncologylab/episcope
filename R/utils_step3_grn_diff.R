@@ -1050,27 +1050,16 @@ find_differential_links <- function(config,
         out_csv <- file.path(tf_hub_dir, paste0(bid, "_", tag, "_summary.csv"))
         readr::write_csv(summary_df, out_csv)
         contrast <- .contrast_from_file(out_csv)
-        hub_args <- list(
-          summary_df,
-          out_pdf   = .path_add_postfix(out_csv, "tf_hubs_fp"),
-          subset_mode = "overall", x_sum_mode = "signed",
-          title_text = paste0("TF hubs (delta fp_score) - ", contrast),
-          cond1_label = cp$cond1, cond2_label = cp$cond2,
-          verbose = TRUE
+        .plot_tf_hubs_fp(
+          summary_df = summary_df,
+          out_pdf = .path_add_postfix(out_csv, "tf_hubs_fp"),
+          title_text = paste0("TF hubs (delta link_score) - ", contrast),
+          cond1_label = cp$cond1,
+          cond2_label = cp$cond2,
+          min_y_for_label = 3,
+          size_min = 1,
+          size_max = 4
         )
-        if ("x_axis_label" %in% names(formals(make_tf_hubs_from_summary))) {
-          hub_args$x_axis_label <- "sum delta link_score per TF (log2-scaled magnitude)"
-        }
-        if ("min_y_for_label" %in% names(formals(make_tf_hubs_from_summary))) {
-          hub_args$min_y_for_label <- 3
-        }
-        if ("size_max" %in% names(formals(make_tf_hubs_from_summary))) {
-          hub_args$size_max <- 4
-        }
-        if ("size_min" %in% names(formals(make_tf_hubs_from_summary))) {
-          hub_args$size_min <- 1
-        }
-        do.call(make_tf_hubs_from_summary, hub_args)
       }
     }
   }
@@ -1113,21 +1102,27 @@ find_differential_links <- function(config,
       ggplot2::geom_point(alpha = 0.6, size = 0.7) +
       ggplot2::scale_color_manual(values = c(Up = "#d73027", Down = "#4575b4")) +
       ggplot2::labs(
-        title = paste0("Delta FP vs Gene Expression: ", contrast),
-        x = "target gene log2FC (cond1 - cond2)",
-        y = "delta fp_bed_score (cond1 - cond2)",
+        title = contrast,
+        x = "gene log2FC",
+        y = "delta FP",
         color = "Direction"
       ) +
-      ggplot2::theme_classic(base_size = 12) +
-      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5),
-                     axis.title.x = ggplot2::element_text(face = "bold"),
-                     axis.title.y = ggplot2::element_text(face = "bold"))
+      ggplot2::theme_classic(base_size = 9) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
+        axis.title.x = ggplot2::element_text(face = "bold", size = 8),
+        axis.title.y = ggplot2::element_text(face = "bold", size = 8),
+        axis.text = ggplot2::element_text(size = 7),
+        legend.position = "none"
+      )
     plot_list[[length(plot_list) + 1L]] <- p
+    out_pdf <- file.path(out_dir, paste0(bid, "_summary_plot.pdf"))
+    ggplot2::ggsave(out_pdf, p, width = 5.5, height = 4.2, dpi = 200)
   }
   if (!length(plot_list)) return(invisible(TRUE))
 
   pdf_path <- file.path(out_dir, "filtered_delta_links_summary_plots.pdf")
-  grDevices::pdf(pdf_path, width = 14, height = 9)
+  grDevices::pdf(pdf_path, width = 16, height = 9.5)
   on.exit(grDevices::dev.off(), add = TRUE)
 
   n_per_page <- 12L
@@ -1256,6 +1251,124 @@ find_differential_links <- function(config,
       topic_n_links = sum(.data$tf_n_links, na.rm = TRUE),
       topic_rank = 1L
     )
+}
+
+.robust_z <- function(x) {
+  x <- as.numeric(x)
+  m <- stats::median(x, na.rm = TRUE)
+  madv <- stats::mad(x, constant = 1.4826, na.rm = TRUE)
+  if (!is.finite(madv) || madv == 0) {
+    sx <- stats::sd(x, na.rm = TRUE)
+    if (!is.finite(sx) || sx == 0) return(rep(0, length(x)))
+    return((x - m) / (sx + 1e-12))
+  }
+  (x - m) / (madv + 1e-12)
+}
+
+.clamp <- function(x, lo, hi) pmax(pmin(x, hi), lo)
+
+.plot_tf_hubs_fp <- function(summary_df,
+                             out_pdf,
+                             title_text = NULL,
+                             cond1_label = NULL,
+                             cond2_label = NULL,
+                             min_y_for_label = 3,
+                             size_min = 1,
+                             size_max = 4,
+                             color_sigma = 2,
+                             base_size = 12,
+                             width_in = 8,
+                             height_in = 5,
+                             dpi = 200) {
+  .assert_pkg("ggplot2")
+  .assert_pkg("ggrepel")
+  .assert_pkg("scales")
+
+  need <- c(
+    "TF","tf_expr_max","tf_log2_fc",
+    "tf_n_links","tf_delta_sum","tf_delta_sum_abs"
+  )
+  if (!all(need %in% names(summary_df))) {
+    .log_abort("TF hub summary missing required columns.")
+  }
+
+  c1 <- if (is.null(cond1_label) || !nzchar(cond1_label)) "cond1" else cond1_label
+  c2 <- if (is.null(cond2_label) || !nzchar(cond2_label)) "cond2" else cond2_label
+
+  TF <- summary_df |>
+    dplyr::group_by(.data$TF) |>
+    dplyr::summarise(
+      tf_links = sum(.data$tf_n_links, na.rm = TRUE),
+      tf_sum_delta = sum(.data$tf_delta_sum, na.rm = TRUE),
+      tf_sum_abs_delta = sum(.data$tf_delta_sum_abs, na.rm = TRUE),
+      tf_expr_max = max(.data$tf_expr_max, na.rm = TRUE),
+      tf_log2_fc_med = stats::median(.data$tf_log2_fc, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      tf_links_plus1 = tf_links + 1L,
+      tf_log2_expr_max = log2(pmax(tf_expr_max, 1e-9))
+    )
+
+  TF$x_sum <- sign(TF$tf_sum_delta) * log2(abs(TF$tf_sum_delta) + 1)
+  TF$log2_fc_z_c <- .clamp(.robust_z(TF$tf_log2_fc_med), -abs(color_sigma), abs(color_sigma))
+
+  lab_df <- TF |>
+    dplyr::filter(tf_links >= min_y_for_label)
+
+  y_breaks <- 2^(0:ceiling(log(max(TF$tf_links_plus1, na.rm = TRUE), base = 2)))
+  y_labels <- pmax(y_breaks - 1, 0)
+
+  if (is.null(title_text)) {
+    title_text <- "TF hubs"
+  }
+
+  caption_text <- paste0(
+    "delta link_score = link_score(", c1, ") - link_score(", c2, ").\n",
+    "Y: log2(1 + #links). Size: log2(max TF RNA across ", c1, " & ", c2, "). Color: TF log2FC z-score."
+  )
+
+  p <- ggplot2::ggplot(TF, ggplot2::aes(x = x_sum, y = tf_links_plus1)) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "grey40", linewidth = 0.6) +
+    ggplot2::geom_point(ggplot2::aes(size = tf_log2_expr_max, color = log2_fc_z_c),
+                        shape = 16, alpha = 0.8) +
+    ggrepel::geom_text_repel(
+      data = lab_df, ggplot2::aes(label = TF),
+      size = 2.2, fontface = "bold",
+      max.overlaps = Inf, box.padding = 0.3, point.padding = 0.3,
+      min.segment.length = 0, segment.alpha = 0.5
+    ) +
+    ggplot2::scale_size_area(max_size = size_max, range = c(size_min, size_max), name = "expr max (log2)") +
+    ggplot2::scale_color_gradient2(
+      low = "#4575b4", mid = "white", high = "#d73027",
+      midpoint = 0, limits = c(-abs(color_sigma), abs(color_sigma)),
+      oob = scales::squish, name = "TF log2FC (z)"
+    ) +
+    ggplot2::labs(
+      title = title_text,
+      x = "sum delta link_score per TF (log2-scaled magnitude)",
+      y = "number of differential links per TF in [log2(1 + count)] scale",
+      caption = caption_text
+    ) +
+    ggplot2::scale_y_continuous(
+      trans = scales::log_trans(base = 2),
+      breaks = y_breaks, labels = y_labels,
+      expand = ggplot2::expansion(mult = c(0.02, 0.06))
+    ) +
+    ggplot2::guides(
+      size = ggplot2::guide_legend(order = 1, override.aes = list(alpha = 1)),
+      color = ggplot2::guide_colorbar(order = 2)
+    ) +
+    ggplot2::theme_classic(base_size = base_size) +
+    ggplot2::theme(
+      legend.position = "right",
+      plot.title = ggplot2::element_text(hjust = 0.5),
+      axis.title.x = ggplot2::element_text(face = "bold"),
+      axis.title.y = ggplot2::element_text(face = "bold")
+    )
+
+  ggplot2::ggsave(out_pdf, p, width = width_in, height = height_in, dpi = dpi, limitsize = FALSE)
+  invisible(out_pdf)
 }
 
 #' #' Driver: run all cell-wise contrasts and write CSVs
