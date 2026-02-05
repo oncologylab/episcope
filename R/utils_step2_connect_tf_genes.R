@@ -2382,13 +2382,13 @@ build_link_status_matrix <- function(
   }
 
   if (isTRUE(verbose)) {
-    .log_inform(
-      "Built link status matrix for {n_links} links across {n_cond} condition(s).",
-      n_links = format(n, big.mark = ","),
-      n_cond = length(cond_cols)
-    )
+    .log_inform(sprintf(
+      "Built link status matrix for %s links across %s condition(s).",
+      format(n, big.mark = ","),
+      length(cond_cols)
+    ))
     if (!is.null(out_file)) {
-      .log_inform("Wrote link status matrix: {out_file}")
+      .log_inform(sprintf("Wrote link status matrix: %s", out_file))
     }
   }
 

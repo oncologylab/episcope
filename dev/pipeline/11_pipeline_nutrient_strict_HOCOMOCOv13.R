@@ -6,6 +6,7 @@ source("R/utils_logging.R")
 source("R/utils_step1_footprints.R")
 source("R/utils_step1_align_footprints.R")
 source("R/utils_step1_grn_preprocess.R")
+source("R/utils_step1_pipeline_helpers.R")
 source("R/utils_step1_motif_clustering.R")
 
 source("R/utils_step2_connect_tf_genes.R")
@@ -29,38 +30,6 @@ do_tf_to_target_genes_prediction <- TRUE
 
 # Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  fp_cache_dir <- file.path(base_dir, "cache")
-  fp_manifest <- load_footprints(
-    root_dir = fp_root_dir,
-    db_name = db,
-    out_dir = file.path(fp_cache_dir, paste0("fp_", db))
-  )
-
-  # readr::write_csv(fp_manifest, file.path(fp_cache_dir, sprintf("fp_%s_manifest.csv", db)))
-
-  if (db == "HOCOMOCOv13" && !isTRUE(attr(fp_manifest, "from_cache"))) {
-    # (Optional, when using HOCOMOCO database)
-    fp_manifest <- fp_manifest_trim(fp_manifest) # renames files on disk by default
-    # Overwrite every annotation CSV referenced by the manifest:
-    summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TRUE)
-
-    # Inspect what changed:
-    dplyr::count(summary_tbl, status)
-    sum(summary_tbl$n_fixed, na.rm = TRUE)
-  }
-
-  # options(future.globals.maxSize = 32 * 1024^3)
-  # Align the peaks based on the peak similarity
-  fp_aligned <- align_footprints(fp_manifest, mid_slop = 10L, round_digits = 1L, score_match_pct = 0.8, cache_dir = fp_cache_dir, cache_tag = db, output_mode = "distinct")
-
-  # Example: motif clustering (PFM -> PPM) using JASPAR-like alignment
-  run_fp_motif_clustering_pre_if_needed(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
-  fp_motif_clust_data   <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "data", target_clusters = 220, qc_mode = "none", save_motif_db = TRUE)
-  fp_motif_clust_hybrid <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "hybrid", target_clusters = 220, qc_mode = "none", save_motif_db = TRUE)
-
-  length(unique(fp_aligned$id_map$peak_ID))
-  length(unique(fp_aligned$id_map$fp_peak_bak))
-
   # Load inputs needed to build grn_set.
   sample_metadata <- readxl::read_excel(file.path(base_dir, "sample_metadata.xlsx"), na = "NA")
   strict_metadata <- sample_metadata |> dplyr::filter(!is.na(strict_match_rna))
@@ -73,10 +42,6 @@ if (do_load_footprints_preprocess == TRUE) {
 
   # Load RNA data and ATAC data
   atac_data <- readr::read_tsv(file.path(base_dir, "All_ATAC.master_table.narrowpeaks.10mil.txt"))
-  atac_out <- load_atac(atac_data, sort_peaks = TRUE)
-  atac_score <- atac_out$score
-  atac_overlap <- atac_out$overlap
-
   # rna <- readr::read_csv("inst/extdata/HPAFII_AsPC1_Panc1_combined_smallestGroupSize_3_reads_5_filtered_DESeq2_median_of_ratios_normalized.csv")
   # rna <- readr::read_csv("/data/homes/yl814/episcope_test/GSE87218_ATAC/GSE85243_RNA_group_averages_mapped_to_SRR.csv")
   # rna <- readr::read_csv("/data/homes/yl814/episcope_test/nutrient_stress/HPAFII_AsPC1_Panc1_combined_smallestGroupSize_3_reads_5_filtered_DESeq2_median_of_ratios_normalized.csv")
@@ -99,82 +64,47 @@ if (do_load_footprints_preprocess == TRUE) {
   nm <- names(lenient_rna); nm[match(smap$old, nm)] <- smap$new
   lenient_rna <- lenient_rna |> `names<-`(nm) |> dplyr::as_tibble()
 
-  # Build strict condition matching grn_set.
-  grn_set <- build_grn_set(
-    fp_score      = fp_aligned$fp_score,
-    fp_bound      = fp_aligned$fp_bound,
-    fp_annotation = fp_aligned$fp_annotation,
-    atac_score    = atac_score,
-    atac_overlap  = atac_overlap,
-    rna           = strict_rna,
-    metadata      = strict_metadata,
-    tf_list       = tf_list,
-    motif_db      = motif_db,
-    label_col     = "strict_match_rna",
-    expected_n    = 23
+  gene_symbol_col <- if (exists("gene_symbol_col")) gene_symbol_col else "HGNC"
+  grn_set <- load_multiomic_data(
+    config = "dev/config/pdac_nutrient_stress_HOCOMOCOv13.yaml",
+    genome = ref_genome,
+    gene_symbol_col = gene_symbol_col,
+    do_preprocess = TRUE,
+    do_motif_clustering = TRUE,
+    trim_hocomoco = TRUE,
+    output_mode = "distinct",
+    write_outputs = TRUE,
+    atac_data = atac_data,
+    rna_tbl = strict_rna,
+    metadata = strict_metadata,
+    label_col = "strict_match_rna",
+    expected_n = 23,
+    tf_list = tf_list,
+    motif_db = motif_db,
+    threshold_gene_expr = threshold_gene_expr,
+    threshold_fp_score = threshold_fp_score,
+    use_parallel = TRUE,
+    verbose = TRUE
   )
-
-
-
-  # grn_set <- build_grn_set(
-  #   fp_score      = fp_aligned$fp_score,
-  #   fp_bound      = fp_aligned$fp_bound,
-  #   fp_annotation = fp_aligned$fp_annotation,
-  #   atac_score    = atac_score,
-  #   atac_overlap  = atac_overlap,
-  #   rna           = lenient_rna,
-  #   metadata      = lenient_metadata,
-  #   tf_list       = tf_list,
-  #   motif_db      = motif_db,
-  #   label_col     = "strict_match_rna",
-  #   expected_n    = 23
-  # )
-
-  grn_set <- grn_add_rna_expressed(grn_set, label_col = "strict_match_rna", threshold_gene_expr = threshold_gene_expr)
-  grn_set <- grn_add_fp_score_condition(grn_set, label_col = "strict_match_rna")
-  grn_set <- grn_add_fp_bound_condition(grn_set, label_col = "strict_match_rna", threshold_fp_score = threshold_fp_score)
-  grn_set <- grn_filter_fp_bound_condition(grn_set, min_bound = 1L, use_parallel = TRUE)
-  # assert_fp_alignment(grn_set)
-
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-  grn_set <- grn_add_fp_score_qn(grn_set, id_col = "peak_ID")
-  write_grn_outputs(grn_set, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
-
 }
 
 
 # Predict TF binding sites -------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
-  if (!exists("grn_set") || !is.list(grn_set)) {
-    .log_abort("`grn_set` not found. Run footprint preprocessing before TF binding site prediction.")
-  }
-
-  grn_set <- grn_add_rna_condition(grn_set, label_col = "strict_match_rna")
-  grn_set <- grn_add_fp_tfs(grn_set)
-  grn_set <- grn_add_fp_score_qn(grn_set, id_col = "peak_ID")
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-
-  grn_set <- grn_add_fp_tf_corr(
-    grn_set,
-    method = "pearson",
-    cores = 20L,
-    chunk_size = 5000L,
-    min_non_na = 5L
-  )
-  grn_set <- grn_filter_fp_tf_corr(
-    grn_set,
-    method = "pearson",
+  grn_set <- correlate_tf_to_fp(
+    omics_data = grn_set,
+    mode = "canonical",
+    label_col = "strict_match_rna",
     r_thr = threshold_fp_tf_corr_r,
     p_thr = threshold_fp_tf_corr_p,
-    set_active = TRUE,
-    output_bed = file.path(step1_out_dir, sprintf("fp_predicted_tfbs_%s", db)),
-    output_bed_condition = file.path(step1_out_dir, sprintf("fp_predicted_tfbs_%s_by_condition", db)),
-    label_col = "strict_match_rna",
-    verbose = FALSE
+    db = db,
+    cores_pearson = 20L,
+    cores_spearman = 20L,
+    chunk_size = 5000L,
+    min_non_na = 5L,
+    qc = TRUE,
+    write_bed = FALSE
   )
-  write_grn_tf_corr_outputs(grn_set, out_dir = step1_out_dir, db = db)
-
-
 }
 
 

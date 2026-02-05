@@ -931,6 +931,8 @@ run_links_deltas_driver <- function(specs,
 #' @param clean_names Logical; pass-through to comparisons builder.
 #' @param parallel Logical; pass-through to delta computation.
 #' @param workers Integer; pass-through to delta computation.
+#' @param summary_tag Optional tag to insert into TF hub summary filenames.
+#' @param write_tf_hubs_fp If TRUE, write TF hub summaries using delta FP scores.
 #' @export
 find_differential_links <- function(config,
                                     compar = NULL,
@@ -941,7 +943,9 @@ find_differential_links <- function(config,
                                     ctrl_tag = "10_FBS",
                                     clean_names = FALSE,
                                     parallel = TRUE,
-                                    workers = NULL) {
+                                    workers = NULL,
+                                    summary_tag = NULL,
+                                    write_tf_hubs_fp = TRUE) {
   if (is.character(config) && length(config) == 1L && file.exists(config)) {
     load_config(config)
   }
@@ -1022,10 +1026,236 @@ find_differential_links <- function(config,
     filtered_dir = filtered_dir
   )
 
+  if (isTRUE(qc)) {
+    .plot_fp_gene_volcanoes_from_filtered(filtered_dir, out_root)
+  }
+
+  if (isTRUE(write_tf_hubs_fp)) {
+    tf_hub_dir <- file.path(out_root, "master_tf_summary")
+    dir.create(tf_hub_dir, recursive = TRUE, showWarnings = FALSE)
+    filtered_files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+    if (length(filtered_files)) {
+      base_ids <- unique(sub("_(up|down)\\.csv$", "", basename(filtered_files)))
+      for (bid in base_ids) {
+        files <- filtered_files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(filtered_files))]
+        if (!length(files)) next
+        df_list <- lapply(files, function(p) readr::read_csv(p, show_col_types = FALSE))
+        df_all <- dplyr::bind_rows(df_list)
+        if (!nrow(df_all)) next
+        contrast_id <- sub("_delta_links_filtered.*$", "", bid)
+        cp <- .contrast_parts(paste0(contrast_id, "_delta_links_filtered"))
+        summary_df <- .summarize_delta_fp_for_tf_hubs(df_all, cond1 = cp$cond1, cond2 = cp$cond2)
+        if (!nrow(summary_df)) next
+        tag <- if (is.null(summary_tag) || !nzchar(summary_tag)) "fp" else summary_tag
+        out_csv <- file.path(tf_hub_dir, paste0(bid, "_", tag, "_summary.csv"))
+        readr::write_csv(summary_df, out_csv)
+        contrast <- .contrast_from_file(out_csv)
+        hub_args <- list(
+          summary_df,
+          out_pdf   = .path_add_postfix(out_csv, "tf_hubs_fp"),
+          subset_mode = "overall", x_sum_mode = "signed",
+          title_text = paste0("TF hubs (delta fp_score) - ", contrast),
+          cond1_label = cp$cond1, cond2_label = cp$cond2,
+          verbose = TRUE
+        )
+        if ("x_axis_label" %in% names(formals(make_tf_hubs_from_summary))) {
+          hub_args$x_axis_label <- "sum delta link_score per TF (log2-scaled magnitude)"
+        }
+        if ("min_y_for_label" %in% names(formals(make_tf_hubs_from_summary))) {
+          hub_args$min_y_for_label <- 3
+        }
+        if ("size_max" %in% names(formals(make_tf_hubs_from_summary))) {
+          hub_args$size_max <- 4
+        }
+        if ("size_min" %in% names(formals(make_tf_hubs_from_summary))) {
+          hub_args$size_min <- 1
+        }
+        do.call(make_tf_hubs_from_summary, hub_args)
+      }
+    }
+  }
+
   invisible(list(
     delta_dir = delta_dir,
     filtered_dir = filtered_dir
   ))
+}
+
+.plot_fp_gene_volcanoes_from_filtered <- function(filtered_dir, out_root) {
+  .assert_pkg("ggplot2")
+  .assert_pkg("readr")
+  files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+  if (!length(files)) return(invisible(NULL))
+  base_ids <- unique(sub("_(up|down)\\.csv$", "", basename(files)))
+  out_dir <- filtered_dir
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  plot_list <- list()
+  for (bid in base_ids) {
+    sel <- files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(files))]
+    if (!length(sel)) next
+    df_list <- lapply(sel, function(p) readr::read_csv(p, show_col_types = FALSE))
+    df <- dplyr::bind_rows(df_list)
+    if (!nrow(df)) next
+    if (!all(c("delta_fp_bed_score", "log2FC_gene_expr") %in% names(df))) {
+      .log_warn("Skipping volcano; missing delta_fp_bed_score or log2FC_gene_expr in {bid}.")
+      next
+    }
+    df$log2FC_gene_expr <- suppressWarnings(as.numeric(df$log2FC_gene_expr))
+    df$delta_fp_bed_score <- suppressWarnings(as.numeric(df$delta_fp_bed_score))
+    df <- df[is.finite(df$log2FC_gene_expr) & is.finite(df$delta_fp_bed_score), , drop = FALSE]
+    if (!nrow(df)) next
+    df$direction <- ifelse(df$log2FC_gene_expr >= 0, "Up", "Down")
+    contrast <- .contrast_from_file(paste0(bid, "_delta_links_filtered"))
+    p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_bed_score, color = direction)) +
+      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
+      ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
+      ggplot2::geom_point(alpha = 0.6, size = 0.7) +
+      ggplot2::scale_color_manual(values = c(Up = "#d73027", Down = "#4575b4")) +
+      ggplot2::labs(
+        title = paste0("Delta FP vs Gene Expression: ", contrast),
+        x = "target gene log2FC (cond1 - cond2)",
+        y = "delta fp_bed_score (cond1 - cond2)",
+        color = "Direction"
+      ) +
+      ggplot2::theme_classic(base_size = 12) +
+      ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5),
+                     axis.title.x = ggplot2::element_text(face = "bold"),
+                     axis.title.y = ggplot2::element_text(face = "bold"))
+    plot_list[[length(plot_list) + 1L]] <- p
+  }
+  if (!length(plot_list)) return(invisible(TRUE))
+
+  pdf_path <- file.path(out_dir, "filtered_delta_links_summary_plots.pdf")
+  grDevices::pdf(pdf_path, width = 14, height = 9)
+  on.exit(grDevices::dev.off(), add = TRUE)
+
+  n_per_page <- 12L
+  total <- length(plot_list)
+  page_idx <- seq_len(ceiling(total / n_per_page))
+  for (pg in page_idx) {
+    start <- (pg - 1L) * n_per_page + 1L
+    end <- min(pg * n_per_page, total)
+    grid::grid.newpage()
+    lay <- grid::grid.layout(nrow = 3, ncol = 4)
+    grid::pushViewport(grid::viewport(layout = lay))
+    idx <- 0L
+    for (i in start:end) {
+      idx <- idx + 1L
+      row <- ((idx - 1L) %/% 4L) + 1L
+      col <- ((idx - 1L) %% 4L) + 1L
+      grid::pushViewport(grid::viewport(layout.pos.row = row, layout.pos.col = col))
+      grid::grid.draw(ggplot2::ggplotGrob(plot_list[[i]]))
+      grid::popViewport()
+    }
+    grid::popViewport()
+  }
+  invisible(TRUE)
+}
+
+.contrast_from_file <- function(f) {
+  b <- basename(f)
+  stem <- sub("_delta_links.*$", "", b)
+  parts <- strsplit(stem, "_vs_", fixed = TRUE)[[1]]
+  if (length(parts) == 2) paste(parts[1], "vs", parts[2]) else stem
+}
+
+.contrast_parts <- function(f) {
+  b <- basename(f)
+  stem <- sub("_delta_links.*$", "", b)
+  parts <- strsplit(stem, "_vs_", fixed = TRUE)[[1]]
+  cond1 <- if (length(parts) >= 1) parts[1] else NA_character_
+  cond2 <- if (length(parts) >= 2) parts[2] else NA_character_
+  list(cond1 = cond1, cond2 = cond2, label = if (length(parts) == 2) paste(cond1, "vs", cond2) else stem)
+}
+
+.path_add_postfix <- function(path, postfix, new_ext = ".pdf") {
+  noext <- sub("\\.[^.]+$", "", path)
+  paste0(noext, ".", postfix, new_ext)
+}
+
+.summarize_delta_fp_for_tf_hubs <- function(df, cond1 = NULL, cond2 = NULL) {
+  tf_col <- if ("tf" %in% names(df)) "tf" else if ("TF" %in% names(df)) "TF" else NULL
+  gene_col <- if ("gene_key" %in% names(df)) "gene_key" else if ("gene" %in% names(df)) "gene" else if ("target_gene" %in% names(df)) "target_gene" else NULL
+  if (is.null(tf_col) || is.null(gene_col)) return(tibble::tibble())
+
+  delta_col <- if ("delta_link_score" %in% names(df)) "delta_link_score" else NULL
+  if (is.null(delta_col)) return(tibble::tibble())
+
+  tf_expr_max <- NA_real_
+  if (is.character(cond1) && nzchar(cond1) && is.character(cond2) && nzchar(cond2)) {
+    tf_c1 <- paste0("tf_expr_", cond1)
+    tf_c2 <- paste0("tf_expr_", cond2)
+    if (all(c(tf_c1, tf_c2) %in% names(df))) {
+      tf_expr_max <- pmax(
+        suppressWarnings(as.numeric(df[[tf_c1]])),
+        suppressWarnings(as.numeric(df[[tf_c2]])),
+        na.rm = TRUE
+      )
+    }
+  }
+  if (all(is.na(tf_expr_max)) && "tf_expr_max" %in% names(df)) {
+    tf_expr_max <- suppressWarnings(as.numeric(df$tf_expr_max))
+  }
+  if (all(is.na(tf_expr_max)) && all(c("tf_expr_ctrl", "tf_expr_str") %in% names(df))) {
+    tf_expr_max <- pmax(
+      suppressWarnings(as.numeric(df$tf_expr_ctrl)),
+      suppressWarnings(as.numeric(df$tf_expr_str)),
+      na.rm = TRUE
+    )
+  }
+  tf_log2_fc <- if ("log2FC_tf_expr" %in% names(df)) {
+    suppressWarnings(as.numeric(df$log2FC_tf_expr))
+  } else if ("delta_tf_expr" %in% names(df)) {
+    suppressWarnings(as.numeric(df$delta_tf_expr))
+  } else if ("tf_log2_fc" %in% names(df)) {
+    suppressWarnings(as.numeric(df$tf_log2_fc))
+  } else {
+    NA_real_
+  }
+
+  delta_vec <- suppressWarnings(as.numeric(df[[delta_col]]))
+  reg_sign <- sign(delta_vec)
+  delta_oriented <- delta_vec
+  delta_abs <- abs(delta_vec)
+
+  df0 <- tibble::tibble(
+    TF = df[[tf_col]],
+    gene = df[[gene_col]],
+    delta = delta_vec,
+    delta_oriented = delta_oriented,
+    delta_abs = delta_abs,
+    reg_sign = reg_sign,
+    tf_expr_max = tf_expr_max,
+    tf_log2_fc = tf_log2_fc
+  )
+  df0 <- df0[is.finite(df0$delta), , drop = FALSE]
+  if (!nrow(df0)) return(tibble::tibble())
+
+  df0 |>
+    dplyr::group_by(.data$TF) |>
+    dplyr::summarise(
+      tf_delta_sum                  = sum(.data$delta_oriented, na.rm = TRUE),
+      tf_delta_sum_activate         = sum(ifelse(.data$reg_sign > 0,  .data$delta_oriented, 0), na.rm = TRUE),
+      tf_delta_sum_repress          = sum(ifelse(.data$reg_sign < 0,  .data$delta_oriented, 0), na.rm = TRUE),
+      tf_delta_sum_abs              = sum(.data$delta_abs, na.rm = TRUE),
+      tf_delta_sum_abs_activate     = sum(ifelse(.data$reg_sign > 0,  .data$delta_abs, 0), na.rm = TRUE),
+      tf_delta_sum_abs_repress      = sum(ifelse(.data$reg_sign < 0,  .data$delta_abs, 0), na.rm = TRUE),
+      tf_n_links                    = dplyr::n(),
+      tf_n_links_activate           = sum(.data$reg_sign > 0, na.rm = TRUE),
+      tf_n_links_repress            = sum(.data$reg_sign < 0, na.rm = TRUE),
+      tf_expr_max                   = suppressWarnings(max(.data$tf_expr_max, na.rm = TRUE)),
+      tf_log2_fc                    = stats::median(.data$tf_log2_fc, na.rm = TRUE),
+      tf_hits_hub                   = NA_real_,
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      topic = 1L,
+      topic_mean_abs_delta = mean(.data$tf_delta_sum_abs, na.rm = TRUE),
+      topic_n_TFs = dplyr::n(),
+      topic_n_links = sum(.data$tf_n_links, na.rm = TRUE),
+      topic_rank = 1L
+    )
 }
 
 #' #' Driver: run all cell-wise contrasts and write CSVs
@@ -1094,4 +1324,3 @@ find_differential_links <- function(config,
 #   clean_names = FALSE,
 #   parallel = TRUE
 # )
-

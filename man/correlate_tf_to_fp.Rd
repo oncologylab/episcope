@@ -7,9 +7,18 @@
 correlate_tf_to_fp(
   omics_data = NULL,
   grn_set = NULL,
+  config = NULL,
+  genome = NULL,
+  gene_symbol_col = "HGNC",
+  fp_aligned = NULL,
+  do_preprocess = FALSE,
+  do_motif_clustering = FALSE,
+  fp_root_dir = NULL,
+  fp_cache_dir = NULL,
+  fp_cache_tag = NULL,
   mode = c("canonical", "all"),
   label_col,
-  out_dir,
+  out_dir = NULL,
   db,
   r_thr = 0.3,
   p_thr = 0.05,
@@ -27,15 +36,37 @@ correlate_tf_to_fp(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list from [build_grn_set()].}
+\item{omics_data}{A multi-omic data list from [load_multiomic_data()].}
 
 \item{grn_set}{(Deprecated) Use `omics_data`.}
+
+\item{config}{Optional YAML config path used to load inputs when
+\code{omics_data} is NULL.}
+
+\item{genome}{Optional genome string (e.g. "hg38", "mm10").}
+
+\item{gene_symbol_col}{Column in RNA table to treat as gene symbols.}
+
+\item{fp_aligned}{Optional aligned footprint object returned by
+[align_footprints()]. When NULL, cached aligned footprints are loaded.}
+
+\item{do_preprocess}{If TRUE and \code{fp_aligned} is NULL, runs footprint
+preprocessing (load + align) using config paths.}
+
+\item{do_motif_clustering}{If TRUE, runs motif clustering before correlation.}
+
+\item{fp_root_dir}{Optional root directory containing footprint outputs.}
+
+\item{fp_cache_dir}{Optional cache directory for aligned footprint files.}
+
+\item{fp_cache_tag}{Optional cache tag used for aligned footprint files.}
 
 \item{mode}{Correlation mode: "canonical" or "all".}
 
 \item{label_col}{Metadata label column used for conditions.}
 
-\item{out_dir}{Output directory for QC and overviews.}
+\item{out_dir}{Output directory for QC and overviews. If NULL, defaults to
+\code{file.path(base_dir, "predict_tf_binding_sites")}.}
 
 \item{db}{Database tag used in output filenames.}
 

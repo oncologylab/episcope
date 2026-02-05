@@ -277,8 +277,8 @@ make_expr_bubbles_from_summary <- function(
     ggplot2::scale_y_discrete(labels = function(keys) sub("^\\d+::", "", keys)) +
     ggplot2::labs(y = "TF", title = main_title_prefix) +
     ggplot2::guides(
-      size = ggplot2::guide_legend(order = 1, override.aes = list(alpha = 1, stroke = 0.4)),
-      fill = ggplot2::guide_colorbar(order = 2)
+      size = ggplot2::guide_legend(order = 1, override.aes = list(alpha = 1)),
+      color = ggplot2::guide_colorbar(order = 2)
     ) +
     ggplot2::theme_minimal(base_size = base_size) +
     ggplot2::theme(
@@ -330,6 +330,9 @@ make_tf_hubs_from_summary <- function(
     label_quantile_links = 0.70, label_quantile_absx = 0.70,
     label_cap = 220, min_x_for_label = 0, min_y_for_label = 0,
     label_size = 2.0,
+    x_axis_label = NULL,
+    size_min = 1,
+    size_max = 8,
     title_text = NULL, cond1_label = NULL, cond2_label = NULL,
     verbose = TRUE
 ){
@@ -432,6 +435,9 @@ make_tf_hubs_from_summary <- function(
     signed           = "signed sum delta link_score per TF (log2-scaled magnitude)",
     signed_noncancel = "signed log2(sum abs(delta link_score)) per TF  (sign from OVERALL cond1-cond2)"
   )
+  if (!is.null(x_axis_label) && nzchar(x_axis_label)) {
+    x_title <- x_axis_label
+  }
   if (is.null(title_text)) {
     title_text <- paste0("TF hubs  - ",
                          switch(subset_mode, overall="overall",
@@ -439,22 +445,21 @@ make_tf_hubs_from_summary <- function(
   }
   caption_text <- paste0(
     "delta link_score = link_score(", c1, ") - link_score(", c2, ").\n",
-    "For 'signed_noncancel', sign = OVERALL (cond1-cond2), magnitude = subset sum|delta|.\n",
     "Y: log2(1 + #links). Size: log2(max TF RNA across ", c1, " & ", c2, "). Color: TF log2FC z-score."
   )
 
   p <- ggplot2::ggplot(TF, ggplot2::aes(x = x_sum, y = tf_links_plus1)) +
     ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "grey40", linewidth = 0.6) +
-    ggplot2::geom_point(ggplot2::aes(size = size_val, fill = log2_fc_z_c),
-                        shape = 21, color = "grey10", stroke = 0.4, alpha = 0.8) +
+    ggplot2::geom_point(ggplot2::aes(size = size_val, color = log2_fc_z_c),
+                        shape = 16, alpha = 0.8) +
     ggrepel::geom_text_repel(
       data = lab_df, ggplot2::aes(label = TF),
       size = label_size, fontface = "bold",
-      max.overlaps = Inf, box.padding = 0.18, point.padding = 0.12,
+      max.overlaps = Inf, box.padding = 0.3, point.padding = 0.3,
       min.segment.length = 0, segment.alpha = 0.5
     ) +
-    ggplot2::scale_size_area(max_size = 8, name = size_title) +
-    ggplot2::scale_fill_gradient2(
+    ggplot2::scale_size_area(max_size = size_max, name = size_title, range = c(size_min, size_max)) +
+    ggplot2::scale_color_gradient2(
       low = "#4575b4", mid = "white", high = "#d73027",
       midpoint = 0, limits = c(-abs(color_sigma), abs(color_sigma)),
       oob = scales::squish, name = "TF log2FC (z)"

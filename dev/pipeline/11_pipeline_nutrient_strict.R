@@ -30,76 +30,33 @@ do_tf_binding_sites_prediction   <- FALSE
 do_tf_to_target_genes_prediction <- FALSE
 verbose <- TRUE
 
-
-# Predict TF binding sites ------------------------------------------------
 # Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  # Inputs (from YAML): fp_root_dir, base_dir, db, ref_genome, thresholds, etc.
-  fp_cache_dir <- file.path(base_dir, "cache")
-  fp_manifest <- load_footprints(
-    root_dir = fp_root_dir,
-    db_name = db,
-    out_dir = file.path(fp_cache_dir, paste0("fp_", db))
-  )
-
-  # readr::write_csv(fp_manifest, file.path(fp_cache_dir, sprintf("fp_%s_manifest.csv", db)))
-
-  # options(future.globals.maxSize = 32 * 1024^3)
-  # Collapse overlapping footprints and align peaks across samples
-  fp_aligned <- align_footprints(fp_manifest, mid_slop = 10L, round_digits = 1L, score_match_pct = 0.8, cache_dir = fp_cache_dir, cache_tag = db, output_mode = "distinct")
-  plot_fp_merge_summary(fp_aligned, out_dir = file.path(base_dir, "predict_tf_binding_sites"), db = db, verbose = TRUE)
-
-  # Assign TF motifs to consensus motif clusters
-  run_fp_motif_clustering_pre_if_needed(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
-  fp_motif_clust_data   <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "data", target_clusters = 220, qc_mode = "fast", save_motif_db = TRUE)
-  fp_motif_clust_hybrid <- run_fp_motif_clustering(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db, mode = "hybrid", target_clusters = 165, qc_mode = "fast", save_motif_db = TRUE)
-
-  # Build combined multi-omic data object
+  gene_symbol_col <- if (exists("gene_symbol_col")) gene_symbol_col else "HGNC"
   omics_data <- load_multiomic_data(
-    fp_aligned = fp_aligned,
+    config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
+    genome = ref_genome,
+    gene_symbol_col = gene_symbol_col,
     label_col = "strict_match_rna",
     expected_n = expected_n,
     tf_list = tf_list,
     motif_db = motif_db,
     threshold_gene_expr = threshold_gene_expr,
     threshold_fp_score = threshold_fp_score,
+    do_preprocess = TRUE,
+    do_motif_clustering = TRUE,
+    output_mode = "distinct",
+    write_outputs = TRUE,
     use_parallel = TRUE,
     verbose = verbose
   )
-
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-  write_grn_outputs(omics_data, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
-  plot_fp_norm_bound_qc(
-    omics_data = omics_data,
-    out_dir = step1_out_dir,
-    db = db,
-    threshold_fp_score = threshold_fp_score,
-    max_points = 100000L,
-    verbose = TRUE
-  )
-  plot_gene_expr_qc(
-    omics_data = omics_data,
-    out_dir = step1_out_dir,
-    db = db,
-    threshold_gene_expr = threshold_gene_expr,
-    verbose = TRUE
-  )
 }
-
 
 # Predict TF binding sites ------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
-  if (!exists("omics_data") || !is.list(omics_data)) {
-    .log_abort("`omics_data` not found. Run footprint preprocessing before TF binding site prediction.")
-  }
-
-  # Correlate TF expression vs footprint scores (canonical + all modes)
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-
   omics_data <- correlate_tf_to_fp(
     omics_data = omics_data,
     mode = "canonical",
-    out_dir = step1_out_dir,
     label_col = "strict_match_rna",
     r_thr = threshold_fp_tf_corr_r,
     p_thr = threshold_fp_tf_corr_p,
@@ -112,7 +69,6 @@ if (do_tf_binding_sites_prediction == TRUE) {
     write_bed = FALSE
   )
 }
-
 
 # Connect TFs to target genes ---------------------------------------------
 # Connect TF-occupied enhancers to target genes ---------------------------
@@ -378,14 +334,14 @@ if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% nam
 k_grid_default <- c(2:15, 20, 25, 30)
 
 celllines <- c("HPAFII")
-selected_k <- 12L
+selected_k <- 10L
 
 gene_term_modes <- c("aggregate", "unique")
 include_tf_terms_opts <- c(FALSE, TRUE)
 count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
 backends <- c("warplda", "vae")
 vae_variants <- c("multivi_encoder")
-
+library(enrichR)
 for (gene_term_mode in gene_term_modes) {
   for (include_tf_terms in include_tf_terms_opts) {
     for (count_input in count_inputs) {
@@ -402,43 +358,30 @@ for (gene_term_mode in gene_term_modes) {
           topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
           topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
 
-          topic_args <- if (backend == "warplda") {
-            list(
-              pathway_source = "topic_terms",
-              thrP = 0.9,
-              pathway_make_heatmap = FALSE,
-              pathway_make_dotplot = TRUE,
-              pathway_overwrite = TRUE,
-              pathway_per_comparison = FALSE,
-              run_pathway_gsea = FALSE,
-              run_link_topic_scores = FALSE
-            )
-          } else {
-            list(
-              pathway_source = "link_scores",
-              thrP = 0.9,
-              pathway_make_heatmap = FALSE,
-              pathway_make_dotplot = TRUE,
-              pathway_overwrite = TRUE,
-              pathway_per_comparison = TRUE,
-              pathway_per_comparison_dir = "per_cmpr_topic_pathway",
-              pathway_split_direction = TRUE,
-              run_pathway_gsea = FALSE,
-              run_link_topic_scores = TRUE,
-              link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
-              link_topic_overwrite = TRUE,
-              pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-              pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-              pathway_link_gene_terms_file = "topic_terms.csv",
-              pathway_link_min_prob = 0,
-              pathway_link_include_tf = TRUE,
-              pathway_link_include_gene = TRUE,
-              pathway_link_gene_min_prob = 0,
-              pathway_link_tf_min_prob = 0.5,
-              pathway_link_tf_max_topics = 5L,
-              pathway_link_tf_top_n_per_topic = 30L
-            )
-          }
+          topic_args <- list(
+            pathway_source = "link_scores",
+            thrP = 0.9,
+            pathway_make_heatmap = FALSE,
+            pathway_make_dotplot = TRUE,
+            pathway_overwrite = TRUE,
+            pathway_per_comparison = TRUE,
+            pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+            pathway_split_direction = TRUE,
+            run_pathway_gsea = FALSE,
+            run_link_topic_scores = TRUE,
+            link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
+            link_topic_overwrite = TRUE,
+            pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+            pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
+            pathway_link_gene_terms_file = "topic_terms.csv",
+            pathway_link_min_prob = 0,
+            pathway_link_include_tf = TRUE,
+            pathway_link_include_gene = TRUE,
+            pathway_link_gene_min_prob = 0,
+            pathway_link_tf_min_prob = 0.5,
+            pathway_link_tf_max_topics = 5L,
+            pathway_link_tf_top_n_per_topic = 30L
+          )
 
           train_topic_models(
             Kgrid = k_grid_default,
@@ -462,6 +405,11 @@ for (gene_term_mode in gene_term_modes) {
             backend = backend,
             vae_variant = vae_variant,
             topic_report_args = topic_args
+          )
+
+          run_vae_topic_delta_network_plots(
+            topic_root = topic_final_dir,
+            step2_out_dir = diff_res$filtered_dir
           )
         }
       }
@@ -508,4 +456,65 @@ if (isTRUE(run_single_topic_test)) {
       pathway_link_tf_top_n_per_topic = 30L
     )
   )
+}
+
+run_gammafit_preview <- TRUE
+if (isTRUE(run_gammafit_preview)) {
+  preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
+  preview_backend <- "vae"
+  preview_variant <- "multivi_encoder"
+  preview_k <- 12L
+  preview_model_dir <- file.path(step3_root_dir, "topic_models", preview_combo_tag)
+  preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
+
+  extract_regulatory_topics(
+    k = preview_k,
+    model_dir = preview_model_dir,
+    output_dir = preview_final_dir,
+    backend = preview_backend,
+    vae_variant = preview_variant,
+    topic_report_args = list(
+      binarize_method = "gammafit",
+      thrP = 0.9,
+      pathway_make_heatmap = FALSE,
+      pathway_make_dotplot = FALSE,
+      run_pathway_gsea = FALSE,
+      run_link_topic_scores = FALSE,
+      link_topic_overwrite = TRUE
+    )
+  )
+}
+
+run_doc_topic_summary_preview <- TRUE
+if (isTRUE(run_doc_topic_summary_preview)) {
+  preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
+  preview_backend <- "vae"
+  preview_variant <- "multivi_encoder"
+  preview_k <- 12L
+  preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
+
+  out_dirs <- list.dirs(preview_final_dir, recursive = FALSE, full.names = TRUE)
+  if (preview_backend == "vae") {
+    patt <- paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", preview_variant, "_K", preview_k, "$")
+    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_warplda_K", preview_k, "$"), basename(out_dirs))]
+  }
+  if (length(out_dirs)) {
+    link_path <- file.path(out_dirs[1], "link_topic_scores_baseline.csv")
+    if (file.exists(link_path)) {
+      link_dt <- data.table::fread(link_path)
+      plot_topic_delta_networks_from_link_scores(
+        link_scores = link_dt,
+        step2_out_dir = diff_res$filtered_dir,
+        out_root = file.path(out_dirs[1], "doc_topic_sub_network_link_scores_baseline"),
+        min_prob = 0.5,
+        filter_same_direction = TRUE
+      )
+    } else {
+      .log_warn("No link_topic_scores_baseline.csv found for preview.")
+    }
+  } else {
+    .log_warn("No final topic directory found for preview.")
+  }
 }

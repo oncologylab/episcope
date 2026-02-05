@@ -4,7 +4,14 @@
 \alias{extract_regulatory_topics}
 \title{Extract regulatory topics from trained models (Module 3)}
 \usage{
-extract_regulatory_topics(k, model_dir, output_dir, topic_report_args = list())
+extract_regulatory_topics(
+  k,
+  model_dir,
+  output_dir,
+  backend = c("vae", "warplda"),
+  vae_variant = "multivi_encoder",
+  topic_report_args = list()
+)
 }
 \arguments{
 \item{k}{Integer K selected by the user.}

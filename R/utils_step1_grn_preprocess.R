@@ -1428,11 +1428,24 @@ grn_filter_fp_tf_corr <- function(
 #' generates QC outputs and per-TF overview tables. Designed as a simple
 #' user-facing wrapper for Module 1.
 #'
-#' @param omics_data A multi-omic data list from [build_grn_set()].
+#' @param omics_data A multi-omic data list from [load_multiomic_data()].
 #' @param grn_set (Deprecated) Use `omics_data`.
+#' @param config Optional YAML config path used to load inputs when
+#'   \code{omics_data} is NULL.
+#' @param genome Optional genome string (e.g. "hg38", "mm10").
+#' @param gene_symbol_col Column in RNA table to treat as gene symbols.
+#' @param fp_aligned Optional aligned footprint object returned by
+#'   [align_footprints()]. When NULL, cached aligned footprints are loaded.
+#' @param do_preprocess If TRUE and \code{fp_aligned} is NULL, runs footprint
+#'   preprocessing (load + align) using config paths.
+#' @param do_motif_clustering If TRUE, runs motif clustering before correlation.
+#' @param fp_root_dir Optional root directory containing footprint outputs.
+#' @param fp_cache_dir Optional cache directory for aligned footprint files.
+#' @param fp_cache_tag Optional cache tag used for aligned footprint files.
 #' @param mode Correlation mode: "canonical" or "all".
 #' @param label_col Metadata label column used for conditions.
-#' @param out_dir Output directory for QC and overviews.
+#' @param out_dir Output directory for QC and overviews. If NULL, defaults to
+#'   \code{file.path(base_dir, "predict_tf_binding_sites")}.
 #' @param db Database tag used in output filenames.
 #' @param r_thr Correlation threshold.
 #' @param p_thr Adjusted P-value threshold.
@@ -1452,9 +1465,18 @@ grn_filter_fp_tf_corr <- function(
 correlate_tf_to_fp <- function(
     omics_data = NULL,
     grn_set = NULL,
+    config = NULL,
+    genome = NULL,
+    gene_symbol_col = "HGNC",
+    fp_aligned = NULL,
+    do_preprocess = FALSE,
+    do_motif_clustering = FALSE,
+    fp_root_dir = NULL,
+    fp_cache_dir = NULL,
+    fp_cache_tag = NULL,
     mode = c("canonical", "all"),
     label_col,
-    out_dir,
+    out_dir = NULL,
     db,
     r_thr = 0.3,
     p_thr = 0.05,
@@ -1472,12 +1494,137 @@ correlate_tf_to_fp <- function(
 ) {
   mode <- match.arg(mode)
   if (is.null(omics_data)) omics_data <- grn_set
+  # Default config lookup helper (reads from globals set by load_config)
+  cfg_val <- function(name) {
+    if (exists(name, envir = .GlobalEnv, inherits = FALSE)) {
+      return(get(name, envir = .GlobalEnv))
+    }
+    NULL
+  }
+  if (is.null(omics_data) &&
+      is.null(config) &&
+      is.null(fp_aligned) &&
+      !isTRUE(do_preprocess)) {
+    .log_abort("`omics_data` not found. Provide it or set `config`/`do_preprocess`.")
+  }
+  if (is.null(omics_data) && (!is.null(config) || !is.null(fp_aligned) || isTRUE(do_preprocess))) {
+    if (!is.null(config)) {
+      if (is.character(config) && length(config) == 1L && file.exists(config)) {
+        load_config(config)
+      } else {
+        .log_abort("`config` must be a path to a YAML file.")
+      }
+    }
+    if (!is.null(genome) && nzchar(genome)) {
+      assign("ref_genome", genome, envir = .GlobalEnv)
+    }
+    cfg_val <- function(name) {
+      if (exists(name, envir = .GlobalEnv, inherits = FALSE)) {
+        return(get(name, envir = .GlobalEnv))
+      }
+      NULL
+    }
+    if (is.null(fp_cache_dir)) {
+      base_dir_cfg <- cfg_val("base_dir")
+      if (is.character(base_dir_cfg) && nzchar(base_dir_cfg)) {
+        fp_cache_dir <- file.path(base_dir_cfg, "cache")
+      }
+    }
+    if (is.null(fp_cache_tag)) {
+      fp_cache_tag <- cfg_val("db")
+    }
+
+    if (is.null(fp_aligned)) {
+      if (isTRUE(do_preprocess)) {
+        if (is.null(fp_root_dir)) fp_root_dir <- cfg_val("fp_root_dir")
+        if (is.null(fp_root_dir) || !nzchar(fp_root_dir)) {
+          .log_abort("`fp_root_dir` not set. Provide it or set in config.")
+        }
+        if (is.null(db) || !nzchar(db)) {
+          db <- cfg_val("db")
+        }
+        if (is.null(db) || !nzchar(db)) .log_abort("`db` must be provided or set in config.")
+        fp_manifest <- load_footprints(
+          root_dir = fp_root_dir,
+          db_name = db,
+          out_dir = file.path(fp_cache_dir, paste0("fp_", db))
+        )
+        fp_aligned <- align_footprints(
+          fp_manifest,
+          mid_slop = 10L,
+          round_digits = 1L,
+          score_match_pct = 0.8,
+          cache_dir = fp_cache_dir,
+          cache_tag = db,
+          output_mode = "distinct"
+        )
+      } else {
+        fp_aligned <- load_fp_aligned_from_cache(
+          cache_dir = fp_cache_dir,
+          cache_tag = fp_cache_tag,
+          output_mode = "distinct",
+          verbose = verbose
+        )
+      }
+    }
+
+    if (isTRUE(do_motif_clustering)) {
+      run_fp_motif_clustering_pre_if_needed(
+        fp_aligned = fp_aligned,
+        base_dir = cfg_val("base_dir"),
+        ref_db = db,
+        motif_db = cfg_val("motif_db")
+      )
+      run_fp_motif_clustering(
+        fp_aligned = fp_aligned,
+        base_dir = cfg_val("base_dir"),
+        ref_db = db,
+        motif_db = cfg_val("motif_db"),
+        mode = "data",
+        target_clusters = 220,
+        qc_mode = "fast",
+        save_motif_db = TRUE
+      )
+      run_fp_motif_clustering(
+        fp_aligned = fp_aligned,
+        base_dir = cfg_val("base_dir"),
+        ref_db = db,
+        motif_db = cfg_val("motif_db"),
+        mode = "hybrid",
+        target_clusters = 165,
+        qc_mode = "fast",
+        save_motif_db = TRUE
+      )
+    }
+
+    omics_data <- load_multiomic_data(
+      config = config,
+      genome = genome,
+      gene_symbol_col = gene_symbol_col,
+      fp_aligned = fp_aligned,
+      label_col = label_col,
+      expected_n = cfg_val("expected_n"),
+      tf_list = cfg_val("tf_list"),
+      motif_db = cfg_val("motif_db"),
+      threshold_gene_expr = cfg_val("threshold_gene_expr"),
+      threshold_fp_score = cfg_val("threshold_fp_score"),
+      use_parallel = TRUE,
+      verbose = verbose
+    )
+  }
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a list.")
   if (!is.character(label_col) || !nzchar(label_col)) {
     .log_abort("`label_col` must be a non-empty string.")
   }
-  if (!is.character(out_dir) || !nzchar(out_dir)) {
-    .log_abort("`out_dir` must be a non-empty path.")
+  if (is.null(out_dir) || !is.character(out_dir) || !nzchar(out_dir)) {
+    base_dir_cfg <- cfg_val("base_dir")
+    if (!is.character(base_dir_cfg) || !nzchar(base_dir_cfg)) {
+      .log_abort("`out_dir` not set and `base_dir` not available. Provide `out_dir` or load config.")
+    }
+    out_dir <- file.path(base_dir_cfg, "predict_tf_binding_sites")
+  }
+  if (!is.character(db) || !nzchar(db)) {
+    db <- cfg_val("db")
   }
   if (!is.character(db) || !nzchar(db)) {
     .log_abort("`db` must be a non-empty string.")
@@ -1848,6 +1995,117 @@ write_tf_tfbs_overviews <- function(
     .log_inform("Per-TF overviews written to: {out_dir}")
   }
   invisible(out_dir)
+}
+
+#' Export per-condition TFBS BED files from an omics object
+#'
+#' Convenience wrapper around [correlate_tf_to_fp()] that writes
+#' per-condition TFBS BED files and returns the updated object.
+#'
+#' @param omics_data A multi-omic data list (output of [load_multiomic_data()]).
+#' @param out_dir Output directory for TFBS BED files.
+#' @param db Motif database tag used in output file names.
+#' @param label_col Metadata column used for condition labels.
+#' @param mode Correlation mode: \code{"canonical"} or \code{"all"}.
+#' @param r_thr Correlation threshold.
+#' @param p_thr Adjusted P-value threshold.
+#' @param cores_pearson Number of cores for Pearson.
+#' @param cores_spearman Number of cores for Spearman.
+#' @param chunk_size Chunk size for correlation.
+#' @param min_non_na Minimum non-NA observations per TF/peak.
+#' @param use_cache Reuse cached correlations when available.
+#' @param verbose Emit status messages.
+#'
+#' @return Updated multi-omic data list.
+#' @export
+output_per_condition_tfbs_bed_files <- function(
+    omics_data,
+    out_dir,
+    db,
+    label_col,
+    mode = c("canonical", "all"),
+    r_thr = 0.3,
+    p_thr = 0.05,
+    cores_pearson = 20L,
+    cores_spearman = 36L,
+    chunk_size = 5000L,
+    min_non_na = 5L,
+    use_cache = TRUE,
+    verbose = TRUE
+) {
+  mode <- match.arg(mode)
+  correlate_tf_to_fp(
+    omics_data = omics_data,
+    mode = mode,
+    out_dir = out_dir,
+    label_col = label_col,
+    r_thr = r_thr,
+    p_thr = p_thr,
+    db = db,
+    cores_pearson = cores_pearson,
+    cores_spearman = cores_spearman,
+    chunk_size = chunk_size,
+    min_non_na = min_non_na,
+    qc = FALSE,
+    write_bed = TRUE,
+    write_outputs = FALSE,
+    use_cache = use_cache,
+    verbose = verbose
+  )
+}
+
+#' Experimental benchmarking of TFBS predictions
+#'
+#' Runs TFBS correlation in \code{"all"} mode and writes outputs for inspection.
+#' Intended for exploratory benchmarking workflows.
+#'
+#' @param omics_data A multi-omic data list (output of [load_multiomic_data()]).
+#' @param out_dir Output directory for benchmarking artifacts.
+#' @param db Motif database tag used in output file names.
+#' @param label_col Metadata column used for condition labels.
+#' @param r_thr Correlation threshold.
+#' @param p_thr Adjusted P-value threshold.
+#' @param cores_pearson Number of cores for Pearson.
+#' @param cores_spearman Number of cores for Spearman.
+#' @param chunk_size Chunk size for correlation.
+#' @param min_non_na Minimum non-NA observations per TF/peak.
+#' @param use_cache Reuse cached correlations when available.
+#' @param verbose Emit status messages.
+#'
+#' @return Updated multi-omic data list.
+#' @export
+experimental_benchmarking_of_tfbs_predictions <- function(
+    omics_data,
+    out_dir,
+    db,
+    label_col,
+    r_thr = 0.3,
+    p_thr = 0.05,
+    cores_pearson = 20L,
+    cores_spearman = 36L,
+    chunk_size = 5000L,
+    min_non_na = 5L,
+    use_cache = TRUE,
+    verbose = TRUE
+) {
+  correlate_tf_to_fp(
+    omics_data = omics_data,
+    mode = "all",
+    out_dir = out_dir,
+    label_col = label_col,
+    r_thr = r_thr,
+    p_thr = p_thr,
+    db = db,
+    cores_pearson = cores_pearson,
+    cores_spearman = cores_spearman,
+    chunk_size = chunk_size,
+    min_non_na = min_non_na,
+    qc = TRUE,
+    write_bed = TRUE,
+    write_outputs = TRUE,
+    use_cache = use_cache,
+    verbose = verbose
+  )
 }
 
 #' @rdname grn_set_helpers

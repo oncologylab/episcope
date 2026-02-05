@@ -5,7 +5,21 @@
 \title{Load and assemble a combined multi-omic data object}
 \usage{
 load_multiomic_data(
-  fp_aligned,
+  config = NULL,
+  genome = NULL,
+  gene_symbol_col = "HGNC",
+  fp_aligned = NULL,
+  do_preprocess = FALSE,
+  do_motif_clustering = FALSE,
+  trim_hocomoco = FALSE,
+  fp_root_dir = NULL,
+  fp_cache_dir = NULL,
+  fp_cache_tag = NULL,
+  mid_slop = 10L,
+  round_digits = 1L,
+  score_match_pct = 0.8,
+  output_mode = c("full", "distinct"),
+  write_outputs = FALSE,
   atac_data = NULL,
   rna_tbl = NULL,
   metadata = NULL,
@@ -23,7 +37,41 @@ load_multiomic_data(
 )
 }
 \arguments{
+\item{config}{Optional YAML config path; when provided, loads settings via
+[load_config()] and uses configured paths for input data and caches.}
+
+\item{genome}{Optional genome string (e.g. "hg38", "mm10"). When provided,
+sets \code{ref_genome} for motif resolution.}
+
+\item{gene_symbol_col}{Column in RNA table to treat as gene symbols. If not
+\code{"HGNC"}, it will be renamed to \code{"HGNC"} before processing.}
+
 \item{fp_aligned}{Aligned footprint object returned by align_footprints().}
+
+\item{do_preprocess}{If TRUE and \code{fp_aligned} is NULL, run footprint
+preprocessing (load + align) using config paths.}
+
+\item{do_motif_clustering}{If TRUE, run motif clustering on aligned footprints.}
+
+\item{trim_hocomoco}{If TRUE, trims HOCOMOCOv13 footprint annotations after
+loading the manifest (ignored for other databases).}
+
+\item{fp_root_dir}{Optional footprint root directory (overrides config).}
+
+\item{fp_cache_dir}{Optional cache directory for aligned footprint files.}
+
+\item{fp_cache_tag}{Optional cache tag used by [align_footprints()] when
+writing cached outputs.}
+
+\item{mid_slop}{Integer; midpoint tolerance in bp for aligning footprints.}
+
+\item{round_digits}{Integer; digits for rounding scores before matching.}
+
+\item{score_match_pct}{Numeric; fraction of score columns that must match.}
+
+\item{output_mode}{Output mode passed to [align_footprints()].}
+
+\item{write_outputs}{If TRUE, write GRN outputs and QC PDFs.}
 
 \item{atac_data}{ATAC master table (tibble/data.frame). If NULL, load from
 \code{atac_data_path} or YAML config (\code{atac_master} preferred).}

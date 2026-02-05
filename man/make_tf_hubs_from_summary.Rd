@@ -22,6 +22,7 @@ make_tf_hubs_from_summary(
   min_x_for_label = 0,
   min_y_for_label = 0,
   label_size = 2,
+  x_axis_label = NULL,
   title_text = NULL,
   cond1_label = NULL,
   cond2_label = NULL,

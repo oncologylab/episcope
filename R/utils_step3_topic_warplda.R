@@ -1082,6 +1082,7 @@ plot_gammafit_binarize <- function(score_mat,
                                    thrP = 0.975,
                                    min_terms = 50L,
                                    title_prefix = NULL,
+                                   tf_list = NULL,
                                    panels_per_row = 5L,
                                    panels_per_col = 2L,
                                    breaks = 100L) {
@@ -1095,8 +1096,24 @@ plot_gammafit_binarize <- function(score_mat,
   panels_per_col <- max(1L, as.integer(panels_per_col))
   per_page <- panels_per_row * panels_per_col
 
+  terms <- colnames(score_mat)
+  if (is.null(terms)) {
+    terms <- paste0("term_", seq_len(ncol(score_mat)))
+    colnames(score_mat) <- terms
+  }
+  is_peak <- grepl("^PEAK:", terms)
+  is_gene <- grepl("^GENE:", terms)
+  gene_names <- sub("^GENE:", "", terms)
+  tf_list <- unique(as.character(tf_list))
+  tf_list <- tf_list[!is.na(tf_list) & nzchar(tf_list)]
+  tf_upper <- toupper(tf_list)
+  is_tf <- is_gene & (gene_names %in% tf_list | toupper(gene_names) %in% tf_upper)
+
   cutoffs <- rep(NA_real_, K)
   n_selected <- integer(K)
+  n_peak <- integer(K)
+  n_gene <- integer(K)
+  n_tf <- integer(K)
   for (k in seq_len(K)) {
     sc <- as.numeric(score_mat[k, ])
     sc[!is.finite(sc)] <- 0
@@ -1116,7 +1133,11 @@ plot_gammafit_binarize <- function(score_mat,
       in_set[ord[seq_len(take)]] <- TRUE
     }
     cutoffs[k] <- thr
+    in_set <- as.logical(in_set)
     n_selected[k] <- sum(in_set, na.rm = TRUE)
+    n_peak[k] <- sum(in_set & is_peak, na.rm = TRUE)
+    n_tf[k] <- sum(in_set & is_tf, na.rm = TRUE)
+    n_gene[k] <- sum(in_set & is_gene & !is_tf, na.rm = TRUE)
   }
 
   par_opts <- graphics::par(no.readonly = TRUE)
@@ -1179,6 +1200,10 @@ plot_gammafit_binarize <- function(score_mat,
   }
 
   graphics::par(mfrow = c(1, 1))
+  graphics::par(
+    mar = c(4.8, 4.8, 2.5, 1),
+    oma = c(0, 0, 2.5, 0)
+  )
   graphics::barplot(
     n_selected,
     col = grDevices::adjustcolor("dodgerblue", alpha.f = 0.8),
@@ -1187,7 +1212,41 @@ plot_gammafit_binarize <- function(score_mat,
     ylab = "Count"
   )
   if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    graphics::mtext(title_prefix, side = 3, line = 0.5)
+    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
+  }
+
+  graphics::par(
+    mar = c(4.8, 4.8, 2.5, 1),
+    oma = c(0, 0, 2.5, 0)
+  )
+  graphics::barplot(
+    n_peak,
+    col = grDevices::adjustcolor("steelblue", alpha.f = 0.85),
+    main = "Number of links (PEAK terms) per topic",
+    xlab = "Topic",
+    ylab = "Count"
+  )
+  if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
+  }
+
+  gene_tf_mat <- rbind(Gene = n_gene, TF = n_tf)
+  graphics::par(
+    mar = c(4.8, 4.8, 2.5, 1),
+    oma = c(0, 0, 2.5, 0)
+  )
+  graphics::barplot(
+    gene_tf_mat,
+    col = c(grDevices::adjustcolor("forestgreen", alpha.f = 0.85),
+            grDevices::adjustcolor("darkorange", alpha.f = 0.85)),
+    main = "Unique gene/TF terms per topic",
+    xlab = "Topic",
+    ylab = "Count",
+    legend.text = TRUE,
+    args.legend = list(x = "topright", bty = "n", inset = 0.01)
+  )
+  if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
   }
 
   invisible(list(cutoff = cutoffs, n_selected = n_selected))
@@ -3750,12 +3809,14 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
 
   score_mat <- score_terms_normtop(phi)
   if (binarize_method == "gammafit") {
+    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
     plot_gammafit_binarize(
       score_mat,
       out_file = file.path(out_dir, "topic_binarize_gammafit.pdf"),
       thrP = thrP,
       min_terms = in_set_min_terms,
-      title_prefix = title_prefix
+      title_prefix = title_prefix,
+      tf_list = tf_terms
     )
   }
   topic_terms <- binarize_topics(
@@ -4235,12 +4296,14 @@ run_tfdocs_warplda_one_option <- function(edges_all,
 
   score_mat <- score_terms_normtop(phi)
   if (binarize_method == "gammafit") {
+    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
     plot_gammafit_binarize(
       score_mat,
       out_file = file.path(out_dir, "topic_binarize_gammafit.pdf"),
       thrP = thrP,
       min_terms = in_set_min_terms,
-      title_prefix = title_prefix
+      title_prefix = title_prefix,
+      tf_list = tf_terms
     )
   }
   topic_terms <- binarize_topics(
@@ -4914,6 +4977,7 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
   dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
   comps <- unique(link_dt$comparison_id)
   topics_all <- sort(unique(link_dt$topic_num))
+  summary_rows <- list()
   for (cmp in comps) {
     cmp_delta <- fetch_delta_links(cmp)
     if (is.null(cmp_delta) || !nrow(cmp_delta)) next
@@ -4982,8 +5046,33 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
         if (exists(".set_html_title")) {
           .set_html_title(out_html, plot_title)
         }
+
+        tf_vals <- unique(as.character(sub_links[[tf_col]]))
+        gene_vals <- unique(as.character(sub_links[[gene_col]]))
+        tf_vals <- tf_vals[!is.na(tf_vals) & nzchar(tf_vals)]
+        gene_vals <- gene_vals[!is.na(gene_vals) & nzchar(gene_vals)]
+        link_pairs_unique <- unique(data.table::data.table(
+          tf = sub_links[[tf_col]],
+          gene = sub_links[[gene_col]]
+        ))
+        summary_rows[[length(summary_rows) + 1L]] <- data.table::data.table(
+          comparison = cmp,
+          direction = dir_lab,
+          topic_id = as.integer(topic_id),
+          link_count = nrow(link_pairs_unique),
+          peak_count = if ("peak_id" %in% names(sub_links)) length(unique(sub_links$peak_id)) else NA_integer_,
+          total_target_gene_count = length(unique(gene_vals)),
+          tf_count = length(unique(tf_vals)),
+          gene_list = paste(sort(unique(gene_vals)), collapse = ","),
+          tf_list = paste(sort(unique(tf_vals)), collapse = ",")
+        )
       }
     }
+  }
+
+  if (length(summary_rows)) {
+    summary_tbl <- data.table::rbindlist(summary_rows, use.names = TRUE, fill = TRUE)
+    data.table::fwrite(summary_tbl, file.path(out_root, "topic_sub_network_summary.csv"))
   }
 
   invisible(TRUE)

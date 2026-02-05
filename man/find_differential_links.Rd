@@ -14,7 +14,9 @@ find_differential_links(
   ctrl_tag = "10_FBS",
   clean_names = FALSE,
   parallel = TRUE,
-  workers = NULL
+  workers = NULL,
+  summary_tag = NULL,
+  write_tf_hubs_fp = TRUE
 )
 }
 \arguments{
@@ -37,6 +39,10 @@ find_differential_links(
 \item{parallel}{Logical; pass-through to delta computation.}
 
 \item{workers}{Integer; pass-through to delta computation.}
+
+\item{summary_tag}{Optional tag to insert into TF hub summary filenames.}
+
+\item{write_tf_hubs_fp}{If TRUE, write TF hub summaries using delta FP scores.}
 }
 \description{
 Runs link-delta comparisons and filtering using a config + comparison list.

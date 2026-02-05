@@ -27,104 +27,39 @@ expected_n <- if (exists("expected_n")) expected_n else NULL
 # ──────────────────────────────────────────────────────────────────────────────
 do_load_footprints_preprocess    <- TRUE
 do_tf_binding_sites_prediction   <- TRUE
-do_tf_to_target_genes_prediction <- FALSE
+do_tf_to_target_genes_prediction <- TRUE
 verbose <- TRUE
 
 
 # Predict TF binding sites -------------------------------------------------
 # Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
-  fp_cache_dir <- file.path(base_dir, "cache")
-  fp_manifest <- load_footprints(
-    root_dir = fp_root_dir,
-    db_name = db,
-    out_dir = file.path(fp_cache_dir, paste0("fp_", db))
-  )
-
-  if (db == "HOCOMOCOv13" && !isTRUE(attr(fp_manifest, "from_cache"))) {
-    fp_manifest <- fp_manifest_trim(fp_manifest)
-    summary_tbl <- fp_manifest_trim_annots(fp_manifest, n_workers = 18, verbose = TRUE)
-    dplyr::count(summary_tbl, status)
-    sum(summary_tbl$n_fixed, na.rm = TRUE)
-  }
-
-  fp_aligned <- align_footprints(
-    fp_manifest,
-    mid_slop = 10L,
-    round_digits = 1L,
-    score_match_pct = 0.8,
-    cache_dir = fp_cache_dir,
-    cache_tag = db,
-    output_mode = "distinct"
-  )
-  plot_fp_merge_summary(fp_aligned, out_dir = file.path(base_dir, "predict_tf_binding_sites"), db = db, verbose = TRUE)
-
-  run_fp_motif_clustering_pre_if_needed(fp_aligned = fp_aligned, base_dir = base_dir, ref_db = db, motif_db = motif_db)
-  fp_motif_clust_data <- run_fp_motif_clustering(
-    fp_aligned = fp_aligned,
-    base_dir = base_dir,
-    ref_db = db,
-    motif_db = motif_db,
-    mode = "data",
-    target_clusters = 220,
-    qc_mode = "fast",
-    save_motif_db = TRUE
-  )
-  fp_motif_clust_hybrid <- run_fp_motif_clustering(
-    fp_aligned = fp_aligned,
-    base_dir = base_dir,
-    ref_db = db,
-    motif_db = motif_db,
-    mode = "hybrid",
-    target_clusters = 165,
-    qc_mode = "fast",
-    save_motif_db = TRUE
-  )
-
+  gene_symbol_col <- if (exists("gene_symbol_col")) gene_symbol_col else "HGNC"
   omics_data <- load_multiomic_data(
-    fp_aligned = fp_aligned,
+    config = "dev/config/GSE192390_tcell_jaspar2024.yaml",
+    genome = ref_genome,
+    gene_symbol_col = gene_symbol_col,
     label_col = "Sample",
     expected_n = expected_n,
     tf_list = tf_list,
     motif_db = motif_db,
     threshold_gene_expr = threshold_gene_expr,
     threshold_fp_score = threshold_fp_score,
+    do_preprocess = TRUE,
+    do_motif_clustering = TRUE,
+    output_mode = "distinct",
+    write_outputs = TRUE,
     use_parallel = TRUE,
     verbose = verbose
-  )
-
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-  write_grn_outputs(omics_data, out_dir = step1_out_dir, db = db, qn_base_dir = base_dir)
-  plot_fp_norm_bound_qc(
-    omics_data = omics_data,
-    out_dir = step1_out_dir,
-    db = db,
-    threshold_fp_score = threshold_fp_score,
-    max_points = 100000L,
-    verbose = TRUE
-  )
-  plot_gene_expr_qc(
-    omics_data = omics_data,
-    out_dir = step1_out_dir,
-    db = db,
-    threshold_gene_expr = threshold_gene_expr,
-    verbose = TRUE
   )
 }
 
 
 # Predict TF binding sites -------------------------------------------------
 if (do_tf_binding_sites_prediction == TRUE) {
-  if (!exists("omics_data") || !is.list(omics_data)) {
-    .log_abort("`omics_data` not found. Run footprint preprocessing before TF binding site prediction.")
-  }
-
-  step1_out_dir <- file.path(base_dir, "predict_tf_binding_sites")
-
   omics_data <- correlate_tf_to_fp(
     omics_data = omics_data,
     mode = "canonical",
-    out_dir = step1_out_dir,
     label_col = "Sample",
     r_thr = threshold_fp_tf_corr_r,
     p_thr = threshold_fp_tf_corr_p,

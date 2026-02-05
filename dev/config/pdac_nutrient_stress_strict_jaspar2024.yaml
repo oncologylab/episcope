@@ -40,4 +40,4 @@ de_tf_log2_abs_min: 0.5
 fp_delta_min: 0.5
 
 # Module 3: Topics / reporting
-topic_k: 12
+topic_k: 10
