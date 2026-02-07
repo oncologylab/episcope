@@ -31,7 +31,7 @@ train_topic_models(
   binarize_method = "gammafit",
   thrP = 0.9,
   top_n_terms = 500L,
-  in_set_min_terms = 1,
+  in_topic_min_terms = 1,
   topic_report_args = list()
 )
 }
@@ -76,7 +76,7 @@ train_topic_models(
 
 \item{top_n_terms}{Number of terms per topic.}
 
-\item{in_set_min_terms}{Minimum terms per topic set.}
+\item{in_topic_min_terms}{Minimum terms per topic set.}
 
 \item{topic_report_args}{Additional args for downstream extraction (saved in calc_params).}
 }

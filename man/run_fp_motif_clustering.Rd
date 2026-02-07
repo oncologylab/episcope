@@ -25,7 +25,7 @@ run_fp_motif_clustering(
   cores = NULL,
   save_motif_db = FALSE,
   motif_db_out_dir = NULL,
-  motif_db_prefix = "motif_db",
+  motif_db_prefix = "04_motif_db",
   weight_by_group_size = TRUE,
   verbose = TRUE
 )

@@ -1047,13 +1047,13 @@ find_differential_links <- function(config,
         summary_df <- .summarize_delta_fp_for_tf_hubs(df_all, cond1 = cp$cond1, cond2 = cp$cond2)
         if (!nrow(summary_df)) next
         tag <- if (is.null(summary_tag) || !nzchar(summary_tag)) "fp" else summary_tag
-        out_csv <- file.path(tf_hub_dir, paste0(bid, "_", tag, "_summary.csv"))
+        out_csv <- file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.csv"))
         readr::write_csv(summary_df, out_csv)
         contrast <- .contrast_from_file(out_csv)
         .plot_tf_hubs_fp(
           summary_df = summary_df,
-          out_pdf = .path_add_postfix(out_csv, "tf_hubs_fp"),
-          title_text = paste0("TF hubs (delta link_score) - ", contrast),
+          out_pdf = file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.pdf")),
+          title_text = paste0("TF hubs (delta fp_score) - ", contrast),
           cond1_label = cp$cond1,
           cond2_label = cp$cond2,
           min_y_for_label = 3,
@@ -1080,6 +1080,8 @@ find_differential_links <- function(config,
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   plot_list <- list()
+  all_x <- numeric(0)
+  all_y <- numeric(0)
   for (bid in base_ids) {
     sel <- files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(files))]
     if (!length(sel)) next
@@ -1095,6 +1097,8 @@ find_differential_links <- function(config,
     df <- df[is.finite(df$log2FC_gene_expr) & is.finite(df$delta_fp_bed_score), , drop = FALSE]
     if (!nrow(df)) next
     df$direction <- ifelse(df$log2FC_gene_expr >= 0, "Up", "Down")
+    all_x <- c(all_x, df$log2FC_gene_expr)
+    all_y <- c(all_y, df$delta_fp_bed_score)
     contrast <- .contrast_from_file(paste0(bid, "_delta_links_filtered"))
     p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_bed_score, color = direction)) +
       ggplot2::geom_hline(yintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
@@ -1121,6 +1125,11 @@ find_differential_links <- function(config,
   }
   if (!length(plot_list)) return(invisible(TRUE))
 
+  xlim <- range(all_x, finite = TRUE)
+  ylim <- range(all_y, finite = TRUE)
+  if (!all(is.finite(xlim))) xlim <- c(-1, 1)
+  if (!all(is.finite(ylim))) ylim <- c(-1, 1)
+
   pdf_path <- file.path(out_dir, "filtered_delta_links_summary_plots.pdf")
   grDevices::pdf(pdf_path, width = 16, height = 9.5)
   on.exit(grDevices::dev.off(), add = TRUE)
@@ -1140,7 +1149,9 @@ find_differential_links <- function(config,
       row <- ((idx - 1L) %/% 4L) + 1L
       col <- ((idx - 1L) %% 4L) + 1L
       grid::pushViewport(grid::viewport(layout.pos.row = row, layout.pos.col = col))
-      grid::grid.draw(ggplot2::ggplotGrob(plot_list[[i]]))
+      grid::grid.draw(ggplot2::ggplotGrob(
+        plot_list[[i]] + ggplot2::coord_cartesian(xlim = xlim, ylim = ylim)
+      ))
       grid::popViewport()
     }
     grid::popViewport()
@@ -1174,7 +1185,7 @@ find_differential_links <- function(config,
   gene_col <- if ("gene_key" %in% names(df)) "gene_key" else if ("gene" %in% names(df)) "gene" else if ("target_gene" %in% names(df)) "target_gene" else NULL
   if (is.null(tf_col) || is.null(gene_col)) return(tibble::tibble())
 
-  delta_col <- if ("delta_link_score" %in% names(df)) "delta_link_score" else NULL
+  delta_col <- if ("delta_fp_bed_score" %in% names(df)) "delta_fp_bed_score" else if ("delta_fp" %in% names(df)) "delta_fp" else NULL
   if (is.null(delta_col)) return(tibble::tibble())
 
   tf_expr_max <- NA_real_
@@ -1277,8 +1288,8 @@ find_differential_links <- function(config,
                              size_max = 4,
                              color_sigma = 2,
                              base_size = 12,
-                             width_in = 8,
-                             height_in = 5,
+                             width_in = 10,
+                             height_in = 6.5,
                              dpi = 200) {
   .assert_pkg("ggplot2")
   .assert_pkg("ggrepel")
@@ -1324,7 +1335,7 @@ find_differential_links <- function(config,
   }
 
   caption_text <- paste0(
-    "delta link_score = link_score(", c1, ") - link_score(", c2, ").\n",
+    "delta fp_score = fp_score(", c1, ") - fp_score(", c2, ").\n",
     "Y: log2(1 + #links). Size: log2(max TF RNA across ", c1, " & ", c2, "). Color: TF log2FC z-score."
   )
 
@@ -1334,11 +1345,11 @@ find_differential_links <- function(config,
                         shape = 16, alpha = 0.8) +
     ggrepel::geom_text_repel(
       data = lab_df, ggplot2::aes(label = TF),
-      size = 2.2, fontface = "bold",
-      max.overlaps = Inf, box.padding = 0.3, point.padding = 0.3,
-      min.segment.length = 0, segment.alpha = 0.5
+      size = 1.8, fontface = "bold",
+      max.overlaps = 100, box.padding = 0.15, point.padding = 0.15,
+      min.segment.length = 0.1, segment.alpha = 0.4
     ) +
-    ggplot2::scale_size_area(max_size = size_max, range = c(size_min, size_max), name = "expr max (log2)") +
+    ggplot2::scale_size_continuous(range = c(size_min, size_max), name = "expr max (log2)") +
     ggplot2::scale_color_gradient2(
       low = "#4575b4", mid = "white", high = "#d73027",
       midpoint = 0, limits = c(-abs(color_sigma), abs(color_sigma)),
@@ -1346,7 +1357,7 @@ find_differential_links <- function(config,
     ) +
     ggplot2::labs(
       title = title_text,
-      x = "sum delta link_score per TF (log2-scaled magnitude)",
+      x = "sum delta fp_score per TF (log2-scaled magnitude)",
       y = "number of differential links per TF in [log2(1 + count)] scale",
       caption = caption_text
     ) +

@@ -35,20 +35,30 @@ run_vae_ctf_multivi(
   binarize_method = "gammafit",
   thrP = 0.9,
   top_n_terms = 500L,
-  in_set_min_terms = 1,
+  in_topic_min_terms = 1,
   topic_report_args = list()
 )
 
-run_vae_doc_topic_heatmaps(topic_root)
+run_vae_doc_topic_heatmaps(
+  topic_root,
+  backend = c("vae", "warplda"),
+  vae_variant = "multivi_encoder"
+)
 
 run_vae_topic_delta_network_plots(
   topic_root,
   step2_out_dir,
   min_prob = 0.5,
-  filter_same_direction = TRUE
+  filter_same_direction = TRUE,
+  backend = c("vae", "warplda"),
+  vae_variant = "multivi_encoder"
 )
 
-run_vae_topic_delta_network_pathway(topic_root)
+run_vae_topic_delta_network_pathway(
+  topic_root,
+  backend = c("vae", "warplda"),
+  vae_variant = "multivi_encoder"
+)
 }
 \arguments{
 \item{files}{Vector of delta-link CSV paths.}

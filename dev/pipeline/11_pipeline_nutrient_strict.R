@@ -71,7 +71,6 @@ if (do_tf_binding_sites_prediction == TRUE) {
 }
 
 # Connect TFs to target genes ---------------------------------------------
-# Connect TF-occupied enhancers to target genes ---------------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
   step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
   dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -311,9 +310,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   )
 }
 
-
-
-# Diff networks and topic analysis ----------------------------------------
+# Diff GRN and regulatory topics ------------------------------------------
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 diff_res <- find_differential_links(
@@ -341,90 +338,244 @@ include_tf_terms_opts <- c(FALSE, TRUE)
 count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
 backends <- c("warplda", "vae")
 vae_variants <- c("multivi_encoder")
+# Topic document mode: "tf_cluster" (current ctf_docs behavior) or "tf" (new tf_docs behavior).
+topic_doc_mode <- "tf"
 library(enrichR)
-for (gene_term_mode in gene_term_modes) {
-  for (include_tf_terms in include_tf_terms_opts) {
-    for (count_input in count_inputs) {
-      for (backend in backends) {
-        variant_list <- if (backend == "vae") vae_variants else "multivi_encoder"
-        for (vae_variant in variant_list) {
-          combo_tag <- paste0(
-            "gene_", gene_term_mode,
-            "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
-            "_count_", count_input
-          )
-          combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
+library(future)
+library(future.apply)
 
-          topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
-          topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
+combo_grid <- expand.grid(
+  gene_term_mode = gene_term_modes,
+  include_tf_terms = include_tf_terms_opts,
+  count_input = count_inputs,
+  backend = backends,
+  stringsAsFactors = FALSE
+)
+combo_grid$vae_variant <- ifelse(combo_grid$backend == "vae", vae_variants[1], "multivi_encoder")
+combo_error_log <- file.path(step3_root_dir, "benchmark", "topic_combo_errors.log")
+dir.create(dirname(combo_error_log), recursive = TRUE, showWarnings = FALSE)
+if (file.exists(combo_error_log)) file.remove(combo_error_log)
+combo_failures <- vector("list", 0L)
 
-          topic_args <- list(
-            pathway_source = "link_scores",
-            thrP = 0.9,
-            pathway_make_heatmap = FALSE,
-            pathway_make_dotplot = TRUE,
-            pathway_overwrite = TRUE,
-            pathway_per_comparison = TRUE,
-            pathway_per_comparison_dir = "per_cmpr_topic_pathway",
-            pathway_split_direction = TRUE,
-            run_pathway_gsea = FALSE,
-            run_link_topic_scores = TRUE,
-            link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
-            link_topic_overwrite = TRUE,
-            pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-            pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-            pathway_link_gene_terms_file = "topic_terms.csv",
-            pathway_link_min_prob = 0,
-            pathway_link_include_tf = TRUE,
-            pathway_link_include_gene = TRUE,
-            pathway_link_gene_min_prob = 0,
-            pathway_link_tf_min_prob = 0.5,
-            pathway_link_tf_max_topics = 5L,
-            pathway_link_tf_top_n_per_topic = 30L
-          )
+.append_combo_error_log <- function(line) {
+  con <- file(combo_error_log, open = "a")
+  on.exit(close(con), add = TRUE)
+  writeLines(line, con = con, sep = "\n")
+}
 
-          train_topic_models(
-            Kgrid = k_grid_default,
-            input_dir = diff_res$filtered_dir,
-            output_dir = topic_model_dir,
-            celllines = celllines,
-            tf_cluster_map = motif_info$tf_cluster_map,
-            tf_exclude = motif_info$tf_exclude,
-            gene_term_mode = gene_term_mode,
-            include_tf_terms = include_tf_terms,
-            count_input = count_input,
-            backend = backend,
-            vae_variant = vae_variant,
-            topic_report_args = topic_args
-          )
+.log_inform("Starting topic-model combo run: {nrow(combo_grid)} combinations.")
+for (i in seq_len(nrow(combo_grid))) {
+  gene_term_mode <- combo_grid$gene_term_mode[i]
+  include_tf_terms <- combo_grid$include_tf_terms[i]
+  count_input <- combo_grid$count_input[i]
+  backend <- combo_grid$backend[i]
+  vae_variant <- combo_grid$vae_variant[i]
 
-          extract_regulatory_topics(
-            k = selected_k,
-            model_dir = topic_model_dir,
-            output_dir = topic_final_dir,
-            backend = backend,
-            vae_variant = vae_variant,
-            topic_report_args = topic_args
-          )
+  combo_tag <- paste0(
+    "gene_", gene_term_mode,
+    "_tf_", if (isTRUE(include_tf_terms)) "on" else "off",
+    "_count_", count_input
+  )
+  combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
+  .log_inform("[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend}.")
 
-          run_vae_topic_delta_network_plots(
-            topic_root = topic_final_dir,
-            step2_out_dir = diff_res$filtered_dir
-          )
-        }
-      }
+  topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
+  topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
+
+  topic_args <- list(
+    pathway_source = "link_scores",
+    thrP = 0.9,
+    pathway_make_heatmap = FALSE,
+    pathway_make_dotplot = TRUE,
+    pathway_overwrite = TRUE,
+    pathway_per_comparison = TRUE,
+    pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+    pathway_split_direction = TRUE,
+    run_pathway_gsea = FALSE,
+    run_link_topic_scores = TRUE,
+    link_topic_gate_mode = "none",
+    link_topic_overwrite = TRUE,
+    pathway_link_scores_file = "topic_links.csv",
+    pathway_link_scores_file_tf = "topic_links.csv",
+    pathway_link_gene_terms_file = NULL,
+    pathway_link_min_prob = 0,
+    pathway_link_include_tf = TRUE,
+    pathway_link_include_gene = TRUE,
+    pathway_link_gene_min_prob = 0,
+    pathway_link_tf_min_prob = 0,
+    pathway_link_tf_max_topics = Inf,
+    pathway_link_tf_top_n_per_topic = NA_integer_,
+    top_n_per_topic = Inf,
+    max_pathways = Inf
+  )
+
+  combo_ok <- tryCatch(
+    {
+      train_topic_models(
+        Kgrid = k_grid_default,
+        input_dir = diff_res$filtered_dir,
+        output_dir = topic_model_dir,
+        celllines = celllines,
+        tf_cluster_map = motif_info$tf_cluster_map,
+        doc_mode = topic_doc_mode,
+        tf_exclude = motif_info$tf_exclude,
+        gene_term_mode = gene_term_mode,
+        include_tf_terms = include_tf_terms,
+        count_input = count_input,
+        backend = backend,
+        vae_variant = vae_variant,
+        topic_report_args = topic_args
+      )
+
+      extract_regulatory_topics(
+        k = selected_k,
+        model_dir = topic_model_dir,
+        output_dir = topic_final_dir,
+        backend = backend,
+        vae_variant = vae_variant,
+        doc_mode = topic_doc_mode,
+        topic_report_args = topic_args
+      )
+
+      run_vae_doc_topic_heatmaps(
+        topic_root = topic_final_dir,
+        backend = backend,
+        vae_variant = vae_variant,
+        doc_mode = topic_doc_mode
+      )
+
+      run_vae_topic_delta_network_plots(
+        topic_root = topic_final_dir,
+        step2_out_dir = diff_res$filtered_dir
+        ,backend = backend,
+        vae_variant = vae_variant,
+        doc_mode = topic_doc_mode
+      )
+      TRUE
+    },
+    error = function(e) {
+      err_msg <- conditionMessage(e)
+      combo_failures[[length(combo_failures) + 1L]] <<- data.frame(
+        row = i,
+        combo_tag = as.character(combo_tag),
+        backend = as.character(backend),
+        gene_term_mode = as.character(gene_term_mode),
+        include_tf_terms = as.logical(include_tf_terms),
+        count_input = as.character(count_input),
+        error = as.character(err_msg),
+        stringsAsFactors = FALSE
+      )
+      stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+      .append_combo_error_log(sprintf(
+        "[%s]\trow=%d\tcombo=%s\tbackend=%s\tgene_term_mode=%s\tinclude_tf_terms=%s\tcount_input=%s\terror=%s",
+        stamp, i, combo_tag, backend, gene_term_mode, include_tf_terms, count_input, err_msg
+      ))
+      .log_warn("Combo failed [{i}/{nrow(combo_grid)}]: {combo_tag} ({backend}) -> {err_msg}")
+      FALSE
     }
+  )
+  if (isTRUE(combo_ok)) {
+    .log_inform("[{i}/{nrow(combo_grid)}] Completed combo={combo_tag} backend={backend}.")
+  }
+  # Pathway enrichment already runs inside extract_regulatory_topics(topic_report_args).
+  # Keep this disabled to avoid duplicate/repeated pathway runs.
+  # run_vae_topic_delta_network_pathway(
+  #   topic_root = topic_final_dir,
+  #   backend = backend,
+  #   vae_variant = vae_variant,
+  #   top_n_per_topic = topic_args$top_n_per_topic,
+  #   max_pathways = topic_args$max_pathways
+  # )
+}
+
+if (!length(combo_failures)) {
+  .log_inform("All {nrow(combo_grid)} combinations completed successfully.")
+} else {
+  fail_df <- do.call(rbind, combo_failures)
+  .log_warn(
+    "Completed with {nrow(fail_df)} failed combination(s). Error log: {combo_error_log}"
+  )
+  for (j in seq_len(nrow(fail_df))) {
+    .log_warn(sprintf(
+      "FAILED row=%d | combo=%s | backend=%s | gene_term_mode=%s | include_tf_terms=%s | count_input=%s | error=%s",
+      fail_df$row[j],
+      fail_df$combo_tag[j],
+      fail_df$backend[j],
+      fail_df$gene_term_mode[j],
+      fail_df$include_tf_terms[j],
+      fail_df$count_input[j],
+      fail_df$error[j]
+    ))
   }
 }
 
-run_single_topic_test <- TRUE
+
+run_single_topic_test <- FALSE
 if (isTRUE(run_single_topic_test)) {
-  single_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
-  single_backend <- "vae"
-  single_variant <- "multivi_encoder"
-  single_k <- 12L
+  # Pick one combo_grid row for an end-to-end troubleshooting run.
+  # Example: 17 = aggregate/tf_off/pseudo_count_bin/vae
+  single_combo_idx <- 17L
+  if (!is.numeric(single_combo_idx) || single_combo_idx < 1L || single_combo_idx > nrow(combo_grid)) {
+    .log_abort("single_combo_idx must be between 1 and {nrow(combo_grid)}.")
+  }
+  single_row <- combo_grid[single_combo_idx, , drop = FALSE]
+  single_backend <- as.character(single_row$backend[[1]])
+  single_variant <- as.character(single_row$vae_variant[[1]])
+  single_combo_tag <- paste0(
+    "gene_", as.character(single_row$gene_term_mode[[1]]),
+    "_tf_", if (isTRUE(single_row$include_tf_terms[[1]])) "on" else "off",
+    "_count_", as.character(single_row$count_input[[1]])
+  )
+  single_combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", single_combo_tag)
+  single_k <- as.integer(selected_k)
   single_model_dir <- file.path(step3_root_dir, "topic_models", single_combo_tag)
   single_final_dir <- file.path(step3_root_dir, "final_topics", single_combo_tag)
+  .log_inform(
+    "single_topic_test row={single_combo_idx}: combo={single_combo_tag}, backend={single_backend}, variant={single_variant}, k={single_k}"
+  )
+
+  single_topic_args <- list(
+    pathway_source = "link_scores",
+    thrP = 0.95,
+    pathway_make_heatmap = FALSE,
+    pathway_make_dotplot = TRUE,
+    pathway_overwrite = TRUE,
+    pathway_per_comparison = FALSE,
+    pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+    pathway_split_direction = TRUE,
+    run_pathway_gsea = FALSE,
+    run_link_topic_scores = TRUE,
+    link_topic_gate_mode = "none",
+    link_topic_overwrite = TRUE,
+    pathway_link_scores_file = "topic_links.csv",
+    pathway_link_scores_file_tf = "topic_links.csv",
+    pathway_link_gene_terms_file = NULL,
+    pathway_link_min_prob = 0,
+    pathway_link_include_tf = TRUE,
+    pathway_link_include_gene = TRUE,
+    pathway_link_gene_min_prob = 0,
+    pathway_link_tf_min_prob = 0,
+    pathway_link_tf_max_topics = Inf,
+    pathway_link_tf_top_n_per_topic = NA_integer_,
+    top_n_per_topic = Inf,
+    max_pathways = Inf
+  )
+
+  train_topic_models(
+    Kgrid = k_grid_default,
+    input_dir = diff_res$filtered_dir,
+    output_dir = single_model_dir,
+    celllines = celllines,
+    tf_cluster_map = motif_info$tf_cluster_map,
+    doc_mode = topic_doc_mode,
+    tf_exclude = motif_info$tf_exclude,
+    gene_term_mode = as.character(single_row$gene_term_mode[[1]]),
+    include_tf_terms = isTRUE(single_row$include_tf_terms[[1]]),
+    count_input = as.character(single_row$count_input[[1]]),
+    backend = single_backend,
+    vae_variant = single_variant,
+    topic_report_args = single_topic_args
+  )
 
   extract_regulatory_topics(
     k = single_k,
@@ -432,38 +583,121 @@ if (isTRUE(run_single_topic_test)) {
     output_dir = single_final_dir,
     backend = single_backend,
     vae_variant = single_variant,
-    topic_report_args = list(
-      pathway_source = "link_scores",
-      thrP = 0.9,
-      pathway_make_heatmap = FALSE,
-      pathway_make_dotplot = TRUE,
-      pathway_per_comparison = TRUE,
-      pathway_per_comparison_dir = "per_cmpr_topic_pathway",
-      pathway_split_direction = TRUE,
-      run_pathway_gsea = FALSE,
-      run_link_topic_scores = TRUE,
-      link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
-      link_topic_overwrite = TRUE,
-      pathway_link_scores_file = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-      pathway_link_scores_file_tf = "link_topic_scores_gate_peak_and_gene_in_set.csv",
-      pathway_link_gene_terms_file = "topic_terms.csv",
-      pathway_link_min_prob = 0,
-      pathway_link_include_tf = TRUE,
-      pathway_link_include_gene = TRUE,
-      pathway_link_gene_min_prob = 0,
-      pathway_link_tf_min_prob = 0.5,
-      pathway_link_tf_max_topics = 5L,
-      pathway_link_tf_top_n_per_topic = 30L
-    )
+    doc_mode = topic_doc_mode,
+    topic_report_args = single_topic_args
   )
+
+  run_vae_doc_topic_heatmaps(
+    topic_root = single_final_dir,
+    backend = single_backend,
+    vae_variant = single_variant,
+    doc_mode = topic_doc_mode
+  )
+
+  run_vae_topic_delta_network_plots(
+    topic_root = single_final_dir,
+    step2_out_dir = diff_res$filtered_dir,
+    backend = single_backend,
+    vae_variant = single_variant,
+    doc_mode = topic_doc_mode
+  )
+
+  run_single_topic_pathway_test <- FALSE
+  if (isTRUE(run_single_topic_pathway_test)) {
+    run_vae_topic_delta_network_pathway(
+      topic_root = single_final_dir,
+      backend = single_backend,
+      vae_variant = single_variant,
+      doc_mode = topic_doc_mode,
+      top_n_per_topic = single_topic_args$top_n_per_topic,
+      max_pathways = single_topic_args$max_pathways,
+      per_comparison = FALSE
+    )
+  }
+
+  # Quick debug checks for topic_links/topic_terms
+  out_dirs <- list.dirs(single_final_dir, recursive = FALSE, full.names = TRUE)
+  doc_tag <- if (identical(topic_doc_mode, "tf")) "tf" else "ctf"
+  if (single_backend == "vae") {
+    patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", single_variant, "_K", single_k, "$")
+    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+  } else {
+    patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_K", single_k, "$")
+    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+  }
+  if (length(out_dirs)) {
+    d <- out_dirs[[1]]
+    tl_path <- file.path(d, "topic_links.csv")
+    tt_path <- file.path(d, "topic_terms.csv")
+    if (file.exists(tl_path)) {
+      tl <- data.table::fread(tl_path)
+      .log_inform(sprintf(
+        "topic_links: total=%d, peak_pass=%d, gene_pass=%d, both_pass=%d, either_pass=%d",
+        nrow(tl),
+        sum(tl$peak_pass, na.rm = TRUE),
+        sum(tl$gene_pass, na.rm = TRUE),
+        sum(tl$peak_pass & tl$gene_pass, na.rm = TRUE),
+        sum(tl$peak_pass | tl$gene_pass, na.rm = TRUE)
+      ))
+    } else {
+      .log_warn("topic_links.csv not found in {d}.")
+    }
+    if (file.exists(tt_path)) {
+      tt <- data.table::fread(tt_path)
+      .log_inform(sprintf("topic_terms cols: %s", paste(names(tt), collapse = ", ")))
+      if ("in_topic" %in% names(tt)) {
+        in_topic_flag <- .as_logical_flag(tt$in_topic)
+        in_topic_n <- sum(in_topic_flag, na.rm = TRUE)
+        .log_inform(sprintf(
+          "topic_terms: total=%d, in_topic=%d",
+          nrow(tt),
+          in_topic_n
+        ))
+        if (in_topic_n == 0) {
+          if ("score" %in% names(tt)) {
+            .log_inform(sprintf(
+              "topic_terms scores: min=%.4g, max=%.4g",
+              min(tt$score, na.rm = TRUE),
+              max(tt$score, na.rm = TRUE)
+            ))
+          }
+          if ("topic" %in% names(tt)) {
+            topic_counts <- data.table::as.data.table(tt)[, .N, by = topic]
+            .log_inform(sprintf(
+              "topic_terms per topic: min=%d, max=%d",
+              min(topic_counts$N, na.rm = TRUE),
+              max(topic_counts$N, na.rm = TRUE)
+            ))
+          }
+          gamma_path <- file.path(d, "topic_gamma_cutoffs.csv")
+          if (file.exists(gamma_path)) {
+            gc <- data.table::fread(gamma_path)
+            if ("gamma_cutoff" %in% names(gc)) {
+              .log_inform(sprintf(
+                "gamma_cutoffs: min=%.4g, max=%.4g",
+                min(gc$gamma_cutoff, na.rm = TRUE),
+                max(gc$gamma_cutoff, na.rm = TRUE)
+              ))
+            }
+          }
+        }
+      } else {
+        .log_warn("topic_terms.csv missing in_topic column in {d}.")
+      }
+    } else {
+      .log_warn("topic_terms.csv not found in {d}.")
+    }
+  } else {
+    .log_warn("No final topic directory found for single_topic_test.")
+  }
 }
 
-run_gammafit_preview <- TRUE
+run_gammafit_preview <- FALSE
 if (isTRUE(run_gammafit_preview)) {
   preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
-  preview_k <- 12L
+  preview_k <- selected_k
   preview_model_dir <- file.path(step3_root_dir, "topic_models", preview_combo_tag)
   preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
 
@@ -473,19 +707,39 @@ if (isTRUE(run_gammafit_preview)) {
     output_dir = preview_final_dir,
     backend = preview_backend,
     vae_variant = preview_variant,
+    doc_mode = topic_doc_mode,
     topic_report_args = list(
       binarize_method = "gammafit",
       thrP = 0.9,
       pathway_make_heatmap = FALSE,
       pathway_make_dotplot = FALSE,
+      pathway_per_comparison = FALSE,
       run_pathway_gsea = FALSE,
-      run_link_topic_scores = FALSE,
+      run_link_topic_scores = TRUE,
       link_topic_overwrite = TRUE
     )
   )
+
+  out_dirs <- list.dirs(preview_final_dir, recursive = FALSE, full.names = TRUE)
+  doc_tag <- if (identical(topic_doc_mode, "tf")) "tf" else "ctf"
+  if (preview_backend == "vae") {
+    patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", preview_variant, "_K", preview_k, "$")
+    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_K", preview_k, "$"), basename(out_dirs))]
+  }
+  if (length(out_dirs)) {
+    d <- out_dirs[[1]]
+    .log_inform("Gammafit preview outputs:")
+    .log_inform("  {file.path(d, 'topic_terms_and_cutoffs_summary.pdf')}")
+    .log_inform("  {file.path(d, 'topic_terms.csv')}")
+    .log_inform("  {file.path(d, 'topic_links.csv')}")
+  } else {
+    .log_warn("No final topic directory found for gammafit preview.")
+  }
 }
 
-run_doc_topic_summary_preview <- TRUE
+run_doc_topic_summary_preview <- FALSE
 if (isTRUE(run_doc_topic_summary_preview)) {
   preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
   preview_backend <- "vae"
@@ -494,27 +748,78 @@ if (isTRUE(run_doc_topic_summary_preview)) {
   preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
 
   out_dirs <- list.dirs(preview_final_dir, recursive = FALSE, full.names = TRUE)
+  doc_tag <- if (identical(topic_doc_mode, "tf")) "tf" else "ctf"
   if (preview_backend == "vae") {
-    patt <- paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", preview_variant, "_K", preview_k, "$")
+    patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", preview_variant, "_K", preview_k, "$")
     out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
   } else {
-    out_dirs <- out_dirs[grepl(paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_warplda_K", preview_k, "$"), basename(out_dirs))]
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_K", preview_k, "$"), basename(out_dirs))]
   }
   if (length(out_dirs)) {
-    link_path <- file.path(out_dirs[1], "link_topic_scores_baseline.csv")
+    link_path <- file.path(out_dirs[1], "topic_links.csv")
     if (file.exists(link_path)) {
       link_dt <- data.table::fread(link_path)
-      plot_topic_delta_networks_from_link_scores(
-        link_scores = link_dt,
-        step2_out_dir = diff_res$filtered_dir,
-        out_root = file.path(out_dirs[1], "doc_topic_sub_network_link_scores_baseline"),
-        min_prob = 0.5,
-        filter_same_direction = TRUE
-      )
+      link_scores <- .topic_links_to_link_scores(link_dt, method = "peak_and_gene")
+      if (nrow(link_scores)) {
+        plot_topic_delta_networks_from_link_scores(
+          link_scores = link_scores,
+          step2_out_dir = diff_res$filtered_dir,
+          out_root = file.path(out_dirs[1], "doc_topic_sub_network_link_peak_and_gene"),
+          min_prob = 0.5,
+          filter_same_direction = TRUE
+        )
+      }
     } else {
-      .log_warn("No link_topic_scores_baseline.csv found for preview.")
+      .log_warn("No topic_links.csv found for preview.")
     }
   } else {
     .log_warn("No final topic directory found for preview.")
   }
+}
+
+# Benchmark: all peak-gene topic concordance scatter (all methods)
+run_topic_benchmark <- TRUE
+if (isTRUE(run_topic_benchmark)) {
+  source("dev/benchmark/utils_step3_topic_benchmark.R")
+  benchmark_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics", "benchmark")
+  dir.create(benchmark_dir, recursive = TRUE, showWarnings = FALSE)
+  combo_grid <- expand.grid(
+    gene_term_mode = gene_term_modes,
+    include_tf_terms = include_tf_terms_opts,
+    count_input = count_inputs,
+    backend = backends,
+    stringsAsFactors = FALSE
+  )
+  plot_peak_gene_concordance_all_methods(
+    combo_grid = combo_grid,
+    step3_root_dir = step3_root_dir,
+    k = 10L,
+    vae_variant = "multivi_encoder",
+    out_file = file.path(benchmark_dir, "peak_gene_concordance_all_methods.pdf"),
+    point_alpha = 0.05,
+    point_size = 0.4
+  )
+  plot_shared_topic_counts_all_methods(
+    combo_grid = combo_grid,
+    step3_root_dir = step3_root_dir,
+    k = 10L,
+    vae_variant = "multivi_encoder",
+    out_file = file.path(benchmark_dir, "shared_topic_counts_all_methods.pdf")
+  )
+  plot_pathway_logp_hist_all_methods(
+    combo_grid = combo_grid,
+    step3_root_dir = step3_root_dir,
+    k = 10L,
+    vae_variant = "multivi_encoder",
+    out_file = file.path(benchmark_dir, "pathway_logp_hist_all_methods.pdf"),
+    facets_ncol = 6L
+  )
+  plot_pass_state_counts_all_methods(
+    combo_grid = combo_grid,
+    step3_root_dir = step3_root_dir,
+    k = 10L,
+    vae_variant = "multivi_encoder",
+    out_file = file.path(benchmark_dir, "pass_state_counts_all_methods.pdf"),
+    facets_ncol = 6L
+  )
 }

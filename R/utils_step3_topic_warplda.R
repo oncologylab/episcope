@@ -1068,7 +1068,7 @@ binarize_topics <- function(score_mat,
       topic = k,
       term_id = terms,
       score = sc,
-      in_set = as.logical(in_set),
+      in_topic = as.logical(in_set),
       stringsAsFactors = FALSE
     )
   }
@@ -1083,6 +1083,10 @@ plot_gammafit_binarize <- function(score_mat,
                                    min_terms = 50L,
                                    title_prefix = NULL,
                                    tf_list = NULL,
+                                   edges_docs = NULL,
+                                   topic_terms = NULL,
+                                   topic_links = NULL,
+                                   show_gammafit_pages = TRUE,
                                    panels_per_row = 5L,
                                    panels_per_col = 2L,
                                    breaks = 100L) {
@@ -1092,28 +1096,22 @@ plot_gammafit_binarize <- function(score_mat,
 
   min_terms <- as.integer(min_terms)
   if (!is.finite(min_terms) || min_terms < 1L) min_terms <- 1L
-  panels_per_row <- max(1L, as.integer(panels_per_row))
-  panels_per_col <- max(1L, as.integer(panels_per_col))
-  per_page <- panels_per_row * panels_per_col
-
   terms <- colnames(score_mat)
   if (is.null(terms)) {
     terms <- paste0("term_", seq_len(ncol(score_mat)))
     colnames(score_mat) <- terms
   }
-  is_peak <- grepl("^PEAK:", terms)
-  is_gene <- grepl("^GENE:", terms)
-  gene_names <- sub("^GENE:", "", terms)
   tf_list <- unique(as.character(tf_list))
   tf_list <- tf_list[!is.na(tf_list) & nzchar(tf_list)]
   tf_upper <- toupper(tf_list)
-  is_tf <- is_gene & (gene_names %in% tf_list | toupper(gene_names) %in% tf_upper)
+  show_gammafit_pages <- isTRUE(show_gammafit_pages)
+  # Keep gammafit small multiples visually consistent across runs.
+  gamma_cols <- 5L
+  gamma_rows <- 5L
+  per_page <- gamma_cols * gamma_rows
 
   cutoffs <- rep(NA_real_, K)
   n_selected <- integer(K)
-  n_peak <- integer(K)
-  n_gene <- integer(K)
-  n_tf <- integer(K)
   for (k in seq_len(K)) {
     sc <- as.numeric(score_mat[k, ])
     sc[!is.finite(sc)] <- 0
@@ -1133,123 +1131,203 @@ plot_gammafit_binarize <- function(score_mat,
       in_set[ord[seq_len(take)]] <- TRUE
     }
     cutoffs[k] <- thr
-    in_set <- as.logical(in_set)
     n_selected[k] <- sum(in_set, na.rm = TRUE)
-    n_peak[k] <- sum(in_set & is_peak, na.rm = TRUE)
-    n_tf[k] <- sum(in_set & is_tf, na.rm = TRUE)
-    n_gene[k] <- sum(in_set & is_gene & !is_tf, na.rm = TRUE)
+  }
+  cats <- c("PEAK", "Target", "TF")
+  topic_labels <- paste0("Topic", seq_len(K))
+  topic_labels_plot <- rev(topic_labels)
+  col_map <- c(PEAK = "#4C78A8", Target = "#54A24B", TF = "#F58518")
+
+  .empty_mat <- function() {
+    m <- matrix(0L, nrow = length(cats), ncol = K, dimnames = list(cats, topic_labels))
+    m
+  }
+
+  .count_terms <- function(tt) {
+    m <- .empty_mat()
+    if (is.null(tt) || !is.data.frame(tt) || !nrow(tt)) return(m)
+    dt <- data.table::as.data.table(tt)
+    if (!"in_topic" %in% names(dt) || !"term_id" %in% names(dt)) return(m)
+    if (!"topic_num" %in% names(dt)) {
+      if ("topic" %in% names(dt)) {
+        dt[, topic_num := as.integer(gsub("^Topic", "", as.character(topic)))]
+      } else {
+        return(m)
+      }
+    }
+    dt <- dt[.as_logical_flag(in_topic)]
+    dt <- dt[is.finite(topic_num) & topic_num >= 1L & topic_num <= K]
+    if (!nrow(dt)) return(m)
+    dt[, term_str := as.character(term_id)]
+    dt[, gene_name := sub("^GENE:", "", term_str)]
+    dt[, category := data.table::fifelse(
+      grepl("^PEAK:", term_str), "PEAK",
+      data.table::fifelse(grepl("^GENE:", term_str) & (gene_name %in% tf_list | toupper(gene_name) %in% tf_upper), "TF",
+              data.table::fifelse(grepl("^GENE:", term_str), "Target", NA_character_))
+    )]
+    dt <- dt[!is.na(category), .(topic_num, term_str, category)]
+    if (!nrow(dt)) return(m)
+    dt <- unique(dt, by = c("topic_num", "term_str", "category"))
+    cnt <- dt[, .N, by = .(topic_num, category)]
+    for (i in seq_len(nrow(cnt))) {
+      m[cnt$category[i], cnt$topic_num[i]] <- cnt$N[i]
+    }
+    m
+  }
+
+  .count_links <- function(tl, use_and = FALSE) {
+    m <- .empty_mat()
+    if (is.null(tl) || !is.data.frame(tl) || !nrow(tl)) return(m)
+    dt <- data.table::as.data.table(tl)
+    req <- c("topic_num", "peak_pass", "gene_pass", "peak_id", "gene_key")
+    if (!all(req %in% names(dt))) return(m)
+    dt <- dt[is.finite(topic_num) & topic_num >= 1L & topic_num <= K]
+    if (!nrow(dt)) return(m)
+    if (isTRUE(use_and)) {
+      dt <- dt[.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+    } else {
+      dt <- dt[.as_logical_flag(peak_pass) | .as_logical_flag(gene_pass)]
+    }
+    if (!nrow(dt)) return(m)
+    peak_cnt <- unique(dt[!is.na(peak_id) & nzchar(peak_id), .(topic_num, id = as.character(peak_id))])[, .N, by = topic_num]
+    gene_cnt <- unique(dt[!is.na(gene_key) & nzchar(gene_key), .(topic_num, id = as.character(gene_key))])[, .N, by = topic_num]
+    tf_cnt <- data.table::data.table()
+    if ("tf" %in% names(dt)) {
+      tf_cnt <- unique(dt[!is.na(tf) & nzchar(tf), .(topic_num, id = as.character(tf))])[, .N, by = topic_num]
+    }
+    if (nrow(peak_cnt)) m["PEAK", peak_cnt$topic_num] <- peak_cnt$N
+    if (nrow(gene_cnt)) m["Target", gene_cnt$topic_num] <- gene_cnt$N
+    if (nrow(tf_cnt)) m["TF", tf_cnt$topic_num] <- tf_cnt$N
+    m
+  }
+
+  term_mat <- .count_terms(topic_terms)
+  link_or_mat <- .count_links(topic_links, use_and = FALSE)
+  link_and_mat <- .count_links(topic_links, use_and = TRUE)
+
+  global_max <- max(
+    c(colSums(term_mat), colSums(link_or_mat), colSums(link_and_mat)),
+    na.rm = TRUE
+  )
+  if (!is.finite(global_max) || global_max <= 0) global_max <- 1
+  x_limit <- c(0, global_max * 1.05)
+
+  .plot_stack <- function(mat, main_title, add_legend = FALSE) {
+    mat_plot <- mat[, rev(seq_len(ncol(mat))), drop = FALSE]
+    graphics::barplot(
+      mat_plot,
+      horiz = TRUE,
+      beside = FALSE,
+      col = col_map[rownames(mat_plot)],
+      border = NA,
+      main = main_title,
+      xlab = "Count",
+      ylab = "",
+      names.arg = topic_labels_plot,
+      las = 1,
+      xlim = x_limit,
+      cex.main = 1.1,
+      font.main = 2,
+      font.lab = 2,
+      font.axis = 2
+    )
+    if (isTRUE(add_legend)) {
+      graphics::legend(
+        "topright",
+        legend = names(col_map),
+        fill = unname(col_map),
+        border = NA,
+        bty = "n",
+        cex = 0.9
+      )
+    }
   }
 
   par_opts <- graphics::par(no.readonly = TRUE)
-  grDevices::pdf(out_file, width = 11, height = 6)
+  grDevices::pdf(out_file, width = 15, height = 15)
   on.exit({
     grDevices::dev.off()
     suppressWarnings(graphics::par(par_opts))
   }, add = TRUE)
 
-  for (start in seq(1L, K, by = per_page)) {
-    end <- min(K, start + per_page - 1L)
-    graphics::par(
-      mfrow = c(panels_per_col, panels_per_row),
-      mar = c(3.5, 3.5, 3, 1),
-      oma = c(0, 0, 2, 0)
-    )
-    for (k in start:end) {
-      sc <- as.numeric(score_mat[k, ])
-      sc[!is.finite(sc)] <- 0
-      if (!any(sc > 0)) {
-        graphics::plot.new()
-        graphics::title(main = paste0("Topic", k))
-        graphics::text(0.5, 0.5, "No positive scores")
-        next
-      }
-      graphics::hist(
-        sc,
-        breaks = as.integer(breaks),
-        prob = TRUE,
-        main = paste0("Topic", k),
-        col = grDevices::adjustcolor("dodgerblue", alpha.f = 0.8),
-        xlab = "Score",
-        ylab = "Density"
+  if (show_gammafit_pages) {
+    n_pages <- max(1L, ceiling(K / per_page))
+    for (page_idx in seq_len(n_pages)) {
+      start <- (page_idx - 1L) * per_page + 1L
+      graphics::par(
+        mfrow = c(gamma_rows, gamma_cols),
+        mar = c(4.2, 4.6, 2.4, 1.2),
+        mgp = c(2.4, 0.8, 0),
+        oma = c(0, 0, 2, 0)
       )
-      fit <- .gamma_moments(sc)
-      if (!is.null(fit)) {
-        graphics::curve(
-          stats::dgamma(x, rate = fit$rate, shape = fit$shape),
-          add = TRUE,
-          col = "magenta",
-          lwd = 2
+      for (slot_idx in seq_len(per_page)) {
+        k <- start + slot_idx - 1L
+        if (k > K) {
+          graphics::plot.new()
+          next
+        }
+        sc <- as.numeric(score_mat[k, ])
+        sc[!is.finite(sc)] <- 0
+        if (!any(sc > 0)) {
+          graphics::plot.new()
+          graphics::title(main = paste0("Topic", k), font.main = 2, cex.main = 0.9)
+          graphics::text(0.5, 0.5, "No positive scores", cex = 0.8)
+          next
+        }
+        graphics::hist(
+          sc,
+          breaks = as.integer(breaks),
+          prob = TRUE,
+          main = paste0("Topic", k),
+          col = grDevices::adjustcolor("dodgerblue", alpha.f = 0.8),
+          xlab = "Score",
+          ylab = "Density",
+          cex.main = 0.9,
+          font.main = 2
+        )
+        fit <- .gamma_moments(sc)
+        if (!is.null(fit)) {
+          graphics::curve(
+            stats::dgamma(x, rate = fit$rate, shape = fit$shape),
+            add = TRUE,
+            col = "magenta",
+            lwd = 2
+          )
+        }
+        graphics::abline(v = cutoffs[k], lty = 3, lwd = 2, col = "grey40")
+        ann_txt <- paste0("Terms with score > ", signif(cutoffs[k], 3), " (n=", n_selected[k], ")")
+        ann_txt <- paste(strwrap(ann_txt, width = 28), collapse = "\n")
+        usr <- graphics::par("usr")
+        graphics::text(
+          x = usr[2],
+          y = usr[4],
+          labels = ann_txt,
+          adj = c(1, 1),
+          cex = 0.7,
+          font = 2
         )
       }
-      graphics::abline(v = cutoffs[k], lty = 3, lwd = 2, col = "grey40")
-      graphics::mtext(
-        paste0("Terms with score > ", signif(cutoffs[k], 3), " (n=", n_selected[k], ")"),
-        side = 1,
-        line = 2.2,
-        cex = 0.8
-      )
-    }
-    if (!is.null(title_prefix) && nzchar(title_prefix)) {
-      graphics::mtext(
-        paste0(title_prefix, " gammafit thresholds"),
-        outer = TRUE,
-        cex = 1.1,
-        line = 0.5
-      )
+      if (!is.null(title_prefix) && nzchar(title_prefix)) {
+        graphics::mtext(
+          paste0(title_prefix, " gammafit thresholds"),
+          outer = TRUE,
+          cex = 1.1,
+          font = 2,
+          line = 0.5
+        )
+      }
     }
   }
 
-  graphics::par(mfrow = c(1, 1))
-  graphics::par(
-    mar = c(4.8, 4.8, 2.5, 1),
-    oma = c(0, 0, 2.5, 0)
-  )
-  graphics::barplot(
-    n_selected,
-    col = grDevices::adjustcolor("dodgerblue", alpha.f = 0.8),
-    main = "Number of terms selected per topic",
-    xlab = "Topic",
-    ylab = "Count"
-  )
+  graphics::par(mfrow = c(3, 1), mar = c(4.5, 8, 4, 1), oma = c(0, 0, 2.5, 0))
+  .plot_stack(term_mat, "Terms In Topic", add_legend = TRUE)
+  .plot_stack(link_or_mat, "Links In Topic: Peak or Gene Pass")
+  .plot_stack(link_and_mat, "Links In Topic: Peak and Gene Pass")
   if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
+    graphics::mtext(title_prefix, outer = TRUE, cex = 1.1, font = 2, line = 1)
   }
 
-  graphics::par(
-    mar = c(4.8, 4.8, 2.5, 1),
-    oma = c(0, 0, 2.5, 0)
-  )
-  graphics::barplot(
-    n_peak,
-    col = grDevices::adjustcolor("steelblue", alpha.f = 0.85),
-    main = "Number of links (PEAK terms) per topic",
-    xlab = "Topic",
-    ylab = "Count"
-  )
-  if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
-  }
-
-  gene_tf_mat <- rbind(Gene = n_gene, TF = n_tf)
-  graphics::par(
-    mar = c(4.8, 4.8, 2.5, 1),
-    oma = c(0, 0, 2.5, 0)
-  )
-  graphics::barplot(
-    gene_tf_mat,
-    col = c(grDevices::adjustcolor("forestgreen", alpha.f = 0.85),
-            grDevices::adjustcolor("darkorange", alpha.f = 0.85)),
-    main = "Unique gene/TF terms per topic",
-    xlab = "Topic",
-    ylab = "Count",
-    legend.text = TRUE,
-    args.legend = list(x = "topright", bty = "n", inset = 0.01)
-  )
-  if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    graphics::mtext(title_prefix, outer = TRUE, cex = 1, line = 0.5)
-  }
-
-  invisible(list(cutoff = cutoffs, n_selected = n_selected))
+  invisible(list(cutoff = cutoffs))
 }
 
 # =============================================================================
@@ -1482,8 +1560,8 @@ plot_doc_topic_heatmaps_by_comparison <- function(theta, out_dir, edges_docs = N
           {
             ph <- pheatmap::pheatmap(
               mat,
-              cluster_rows = TRUE,
-              cluster_cols = TRUE,
+              cluster_rows = nrow(mat) > 1L,
+              cluster_cols = ncol(mat) > 1L,
               show_rownames = TRUE,
               show_colnames = TRUE,
               fontsize_row = font_row,
@@ -1543,10 +1621,12 @@ plot_doc_topic_heatmaps_by_comparison <- function(theta, out_dir, edges_docs = N
       grDevices::pdf(out_file, width = width, height = height)
       tryCatch(
         {
+          cluster_rows <- nrow(mat) > 1L
+          cluster_cols <- ncol(mat) > 1L
           ph <- pheatmap::pheatmap(
             mat,
-            cluster_rows = TRUE,
-            cluster_cols = TRUE,
+            cluster_rows = cluster_rows,
+            cluster_cols = cluster_cols,
             show_rownames = TRUE,
             show_colnames = TRUE,
             fontsize_row = font_row,
@@ -1685,8 +1765,8 @@ plot_tf_topic_heatmaps_from_link_scores <- function(link_scores,
         {
           ph <- pheatmap::pheatmap(
             mat,
-            cluster_rows = TRUE,
-            cluster_cols = TRUE,
+            cluster_rows = nrow(mat) > 1L,
+            cluster_cols = ncol(mat) > 1L,
             show_rownames = TRUE,
             show_colnames = TRUE,
             fontsize_row = font_row,
@@ -1781,8 +1861,8 @@ plot_topic_by_comparison_heatmaps <- function(theta,
     }
     pheatmap::pheatmap(
       mat,
-      cluster_rows = TRUE,
-      cluster_cols = TRUE,
+      cluster_rows = nrow(mat) > 1L,
+      cluster_cols = ncol(mat) > 1L,
       show_rownames = TRUE,
       show_colnames = ncol(mat) <= 50,
       fontsize_col = if (ncol(mat) > 50) 5 else 7,
@@ -1807,8 +1887,8 @@ plot_topic_by_comparison_heatmaps <- function(theta,
       }
       pheatmap::pheatmap(
         mat,
-        cluster_rows = TRUE,
-        cluster_cols = TRUE,
+        cluster_rows = nrow(mat) > 1L,
+        cluster_cols = ncol(mat) > 1L,
         show_rownames = TRUE,
         show_colnames = ncol(mat) <= 50,
         fontsize_col = if (ncol(mat) > 50) 5 else 7,
@@ -2070,8 +2150,8 @@ topic_gene_sets <- function(topic_terms,
     if (!("term_id" %in% names(tt))) return(list())
     tt <- tt[!is.na(term_id) & nzchar(term_id)]
   } else {
-    if (!("in_set" %in% names(tt))) return(list())
-    in_set_vec <- .as_logical_flag(tt$in_set)
+    if (!("in_topic" %in% names(tt))) return(list())
+    in_set_vec <- .as_logical_flag(tt$in_topic)
     tt <- tt[in_set_vec]
   }
   if (!nrow(tt)) return(list())
@@ -2239,7 +2319,7 @@ compute_link_topic_scores <- function(edges_docs,
   #
   # Option C (hard confirmation gate):
   # If gate_mode != "none", a topic only contributes if the PEAK/GENE term(s)
-  # are marked in_set for that topic in topic_terms (e.g., peak_and_gene_in_set).
+  # are marked in_topic for that topic in topic_terms (e.g., peak_and_gene_in_set).
   .assert_pkg("data.table")
   .assert_pkg("cli")
 
@@ -2300,10 +2380,10 @@ compute_link_topic_scores <- function(edges_docs,
     if (!nrow(tt)) {
       .log_abort("gate_mode requires non-empty topic_terms.")
     }
-    in_set_vec <- .as_logical_flag(tt$in_set)
+    in_set_vec <- .as_logical_flag(tt$in_topic)
     tt <- tt[in_set_vec]
     if (!nrow(tt)) {
-      .log_abort("gate_mode requires in_set terms in topic_terms.")
+      .log_abort("gate_mode requires in_topic terms in topic_terms.")
     }
     tt[, topic := as.integer(topic)]
     inset_map <- split(tt$topic, tt$term_id)
@@ -2384,6 +2464,194 @@ compute_link_topic_scores <- function(edges_docs,
   out[]
 }
 
+.gammafit_cutoffs <- function(score_mat, thrP = 0.975, min_terms = 50L) {
+  score_mat <- as.matrix(score_mat)
+  K <- nrow(score_mat)
+  if (!K) return(numeric(0))
+  min_terms <- as.integer(min_terms)
+  if (!is.finite(min_terms) || min_terms < 1L) min_terms <- 1L
+  cutoffs <- rep(NA_real_, K)
+  for (k in seq_len(K)) {
+    sc <- as.numeric(score_mat[k, ])
+    sc[!is.finite(sc)] <- 0
+    ord <- order(sc, decreasing = TRUE)
+    fit <- .gamma_moments(sc)
+    thr <- NA_real_
+    if (!is.null(fit)) {
+      thr <- stats::qgamma(as.numeric(thrP), shape = fit$shape, rate = fit$rate)
+    }
+    if (!is.finite(thr)) {
+      thr <- sc[ord[min(length(ord), as.integer(min_terms))]]
+    }
+    if (!is.finite(thr)) thr <- NA_real_
+    cutoffs[k] <- thr
+  }
+  cutoffs
+}
+
+.topic_links_to_link_scores <- function(topic_links,
+                                        method = c("peak_and_gene", "peak_or_gene"),
+                                        min_prob = 0) {
+  .assert_pkg("data.table")
+  method <- match.arg(method)
+  dt <- data.table::as.data.table(topic_links)
+  if (!nrow(dt)) return(data.table::data.table())
+  req <- c("doc_id", "peak_id", "gene_key", "topic_num", "peak_score", "gene_score", "peak_pass", "gene_pass")
+  .assert_has_cols(dt, req, context = "topic_links_to_link_scores")
+  if (method == "peak_and_gene") {
+    dt <- dt[.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+  } else {
+    dt <- dt[.as_logical_flag(peak_pass) | .as_logical_flag(gene_pass)]
+  }
+  if (!nrow(dt)) return(data.table::data.table())
+  # Binary membership only (no score ranking)
+  dt[, score := 1]
+  dt[, prob := 1]
+  if (is.finite(min_prob) && min_prob > 1) {
+    dt <- dt[FALSE]
+  }
+  keep <- c("doc_id", "tf", "peak_id", "gene_key", "topic_num", "score", "prob")
+  if (!"tf" %in% names(dt)) dt[, tf := NA_character_]
+  dt[, ..keep]
+}
+
+compute_topic_links <- function(edges_docs,
+                                score_mat,
+                                topic_terms = NULL,
+                                binarize_method = c("gammafit", "topn"),
+                                thrP = 0.975,
+                                min_terms = 50L,
+                                out_file = NULL,
+                                chunk_size = 5000L,
+                                n_cores = 1L,
+                                overwrite = FALSE) {
+  .assert_pkg("data.table")
+  .assert_pkg("cli")
+  binarize_method <- match.arg(binarize_method)
+  chunk_size <- as.integer(chunk_size)
+  n_cores <- as.integer(n_cores)
+
+  if (!is.null(out_file) && file.exists(out_file) && !isTRUE(overwrite)) {
+    .log_inform("Skipping topic_links; file exists: {out_file}")
+    return(invisible(FALSE))
+  }
+
+  dt <- data.table::as.data.table(edges_docs)
+  req <- c("doc_id", "peak_id", "gene_key")
+  .assert_has_cols(dt, req, context = "compute_topic_links")
+  if (!"tf" %in% names(dt)) dt[, tf := NA_character_]
+
+  score_mat <- as.matrix(score_mat)
+  K <- nrow(score_mat)
+  if (!K) {
+    .log_abort("score_mat has zero topics.")
+  }
+  term_ids <- colnames(score_mat)
+  if (is.null(term_ids)) .log_abort("score_mat must have colnames (term_id).")
+  term_index <- stats::setNames(seq_along(term_ids), term_ids)
+
+  dt <- dt[!is.na(doc_id) & nzchar(doc_id)]
+  dt[, peak_term := paste0("PEAK:", peak_id)]
+  dt[, gene_term := paste0("GENE:", gene_key)]
+  dt[, peak_idx := term_index[peak_term]]
+  dt[, gene_idx := term_index[gene_term]]
+  dt <- dt[!is.na(peak_idx) & !is.na(gene_idx)]
+  if (!nrow(dt)) {
+    .log_inform("No valid links for topic_links after term matching.")
+    return(invisible(FALSE))
+  }
+
+  gamma_cutoffs <- rep(NA_real_, K)
+  in_set_map <- NULL
+  if (binarize_method == "gammafit") {
+    gamma_cutoffs <- .gammafit_cutoffs(score_mat, thrP = thrP, min_terms = min_terms)
+  } else if (!is.null(topic_terms)) {
+    tt <- data.table::as.data.table(topic_terms)
+    if (nrow(tt)) {
+      in_set_vec <- .as_logical_flag(tt$in_topic)
+      tt <- tt[in_set_vec]
+      tt[, topic := as.integer(topic)]
+      in_set_map <- split(tt$topic, tt$term_id)
+    }
+  }
+
+  score_chunk <- function(chunk_dt) {
+    if (!nrow(chunk_dt)) return(data.table::data.table())
+    peak_idx <- chunk_dt$peak_idx
+    gene_idx <- chunk_dt$gene_idx
+    peak_scores <- score_mat[, peak_idx, drop = FALSE]
+    gene_scores <- score_mat[, gene_idx, drop = FALSE]
+    n <- nrow(chunk_dt)
+    rep_doc <- rep(chunk_dt$doc_id, each = K)
+    rep_tf <- rep(chunk_dt$tf, each = K)
+    rep_peak <- rep(chunk_dt$peak_id, each = K)
+    rep_gene <- rep(chunk_dt$gene_key, each = K)
+    rep_topic <- rep(seq_len(K), times = n)
+    peak_score <- as.vector(peak_scores)
+    gene_score <- as.vector(gene_scores)
+    gamma_cutoff <- rep(gamma_cutoffs, times = n)
+    if (binarize_method == "gammafit") {
+      peak_pass <- is.finite(gamma_cutoff) & peak_score >= gamma_cutoff & peak_score > 0
+      gene_pass <- is.finite(gamma_cutoff) & gene_score >= gamma_cutoff & gene_score > 0
+    } else if (!is.null(in_set_map)) {
+      peak_allowed <- in_set_map[chunk_dt$peak_term]
+      gene_allowed <- in_set_map[chunk_dt$gene_term]
+      peak_pass <- rep(FALSE, length(rep_topic))
+      gene_pass <- rep(FALSE, length(rep_topic))
+      for (i in seq_len(n)) {
+        if (length(peak_allowed[[i]])) {
+          idx <- ((i - 1L) * K + 1L):(i * K)
+          peak_pass[idx] <- rep_topic[idx] %in% peak_allowed[[i]]
+        }
+        if (length(gene_allowed[[i]])) {
+          idx <- ((i - 1L) * K + 1L):(i * K)
+          gene_pass[idx] <- rep_topic[idx] %in% gene_allowed[[i]]
+        }
+      }
+    } else {
+      peak_pass <- rep(FALSE, length(rep_topic))
+      gene_pass <- rep(FALSE, length(rep_topic))
+    }
+    data.table::data.table(
+      doc_id = rep_doc,
+      tf = rep_tf,
+      peak_id = rep_peak,
+      gene_key = rep_gene,
+      topic_num = rep_topic,
+      peak_score = peak_score,
+      gene_score = gene_score,
+      gamma_cutoff = gamma_cutoff,
+      peak_pass = peak_pass,
+      gene_pass = gene_pass
+    )
+  }
+
+  if (is.null(chunk_size) || !is.finite(chunk_size) || chunk_size <= 0L) {
+    chunk_size <- nrow(dt)
+  }
+  idx <- split(seq_len(nrow(dt)), ceiling(seq_len(nrow(dt)) / chunk_size))
+
+  if (.Platform$OS.type != "windows" && n_cores > 1L && length(idx) > 1L) {
+    res <- parallel::mclapply(
+      idx,
+      function(ii) score_chunk(dt[ii]),
+      mc.cores = min(n_cores, length(idx))
+    )
+  } else {
+    res <- lapply(idx, function(ii) score_chunk(dt[ii]))
+  }
+  out <- data.table::rbindlist(res, use.names = TRUE, fill = TRUE)
+  if (!nrow(out)) {
+    .log_inform("No topic_links generated.")
+    return(invisible(FALSE))
+  }
+
+  if (!is.null(out_file)) {
+    data.table::fwrite(out, out_file)
+  }
+  out[]
+}
+
 link_scores_to_gene_sets <- function(link_scores,
                                      include_tf = TRUE,
                                      include_gene = TRUE,
@@ -2434,8 +2702,8 @@ link_scores_to_gene_sets <- function(link_scores,
       } else {
         .log_abort("gene_terms must have term_id or gene.")
       }
-      if ("in_set" %in% names(gt)) {
-        gt <- gt[isTRUE(in_set)]
+      if ("in_topic" %in% names(gt)) {
+        gt <- gt[isTRUE(in_topic)]
       }
       gt <- gt[is.finite(topic_num)]
       gt <- gt[!is.na(gene) & nzchar(gene)]
@@ -2641,8 +2909,12 @@ plot_topic_pathway_enrichment_gsea <- function(topic_terms,
     return(invisible(NULL))
   }
 
-  res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
-  if (nrow(res_dt)) {
+  if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+    res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
+  } else {
+    res_dt <- res_dt[order(topic, -logp)]
+  }
+  if (nrow(res_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
     path_rank <- res_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
     if (nrow(path_rank) > as.integer(max_pathways)) {
       keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
@@ -2677,8 +2949,8 @@ plot_topic_pathway_enrichment_gsea <- function(topic_terms,
     {
       ph <- suppressWarnings(pheatmap::pheatmap(
         mat,
-        cluster_rows = TRUE,
-        cluster_cols = TRUE,
+        cluster_rows = nrow(mat) > 1L,
+        cluster_cols = ncol(mat) > 1L,
         show_rownames = TRUE,
         show_colnames = TRUE,
         fontsize_row = font_row,
@@ -2846,14 +3118,14 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     return(invisible(NULL))
   }
   if (!isTRUE(use_all_terms)) {
-    if (!("in_set" %in% names(topic_terms))) {
-      msg <- "Skipping pathway enrichment heatmap: topic_terms missing in_set."
+    if (!("in_topic" %in% names(topic_terms))) {
+      msg <- "Skipping pathway enrichment heatmap: topic_terms missing in_topic."
       .log_inform(msg)
       log_msg(msg)
       return(invisible(NULL))
     }
-    if (!any(.as_logical_flag(topic_terms$in_set))) {
-      msg <- "Skipping pathway enrichment heatmap: topic_terms has no in_set == TRUE."
+    if (!any(.as_logical_flag(topic_terms$in_topic))) {
+      msg <- "Skipping pathway enrichment heatmap: topic_terms has no in_topic == TRUE."
       .log_inform(msg)
       log_msg(msg)
       return(invisible(NULL))
@@ -2963,8 +3235,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     log_msg(msg)
     return(invisible(NULL))
   }
-  res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
-  if (nrow(res_dt)) {
+  if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+    res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
+  } else {
+    res_dt <- res_dt[order(topic, -logp)]
+  }
+  if (nrow(res_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
     path_rank <- res_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
     if (nrow(path_rank) > as.integer(max_pathways)) {
       keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
@@ -3000,8 +3276,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
       {
         ph <- suppressWarnings(pheatmap::pheatmap(
           mat,
-          cluster_rows = TRUE,
-          cluster_cols = TRUE,
+          cluster_rows = nrow(mat) > 1L,
+          cluster_cols = ncol(mat) > 1L,
           show_rownames = TRUE,
           show_colnames = TRUE,
           fontsize_row = font_row,
@@ -3113,6 +3389,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
 plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            out_dir,
                                                            title_prefix = NULL,
+                                                           file_tag = NULL,
                                                            dbs = c(
                                                              "GO_Biological_Process_2023",
                                                              "GO_Cellular_Component_2023",
@@ -3139,7 +3416,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            make_heatmap = TRUE,
                                                            make_dotplot = TRUE) {
   .assert_pkg("data.table")
-  log_path <- file.path(out_dir, "topic_pathway_enrichment_links_debug.txt")
+  log_tag <- if (!is.null(file_tag) && nzchar(file_tag)) paste0("_", file_tag) else ""
+  log_path <- file.path(out_dir, paste0("topic_pathway_enrichment_links_debug", log_tag, ".txt"))
   log_msg <- function(msg) {
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
@@ -3151,13 +3429,30 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     log_msg(msg)
     return(invisible(NULL))
   }
+  .ensure_enrichr_site <- function() {
+    base_addr <- getOption("enrichR.sites.base.address")
+    if (is.null(base_addr) || !nzchar(base_addr)) {
+      options(enrichR.sites.base.address = "https://maayanlab.cloud/")
+    }
+    sites <- getOption("enrichR.sites")
+    if (is.null(sites) || !length(sites)) {
+      options(enrichR.sites = "Enrichr")
+    }
+    base <- getOption("enrichR.base.address")
+    if (is.null(base) || !nzchar(base)) {
+      options(enrichR.base.address = paste0(getOption("enrichR.sites.base.address"), "Enrichr/"))
+    }
+  }
   tryCatch(
     {
+      .ensure_enrichr_site()
       enrichR::setEnrichrSite("Enrichr")
       log_msg("Enrichr site set to 'Enrichr'.")
     },
     error = function(e) {
       log_msg(sprintf("Failed to set Enrichr site: %s", conditionMessage(e)))
+      .ensure_enrichr_site()
+      options(enrichR.base.address = paste0(getOption("enrichR.sites.base.address"), "Enrichr/"))
     }
   )
 
@@ -3358,8 +3653,12 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     log_msg(msg)
     return(invisible(NULL))
   }
-  res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
-  if (nrow(res_dt)) {
+  if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+    res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
+  } else {
+    res_dt <- res_dt[order(topic, -logp)]
+  }
+  if (nrow(res_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
     path_rank <- res_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
     if (nrow(path_rank) > as.integer(max_pathways)) {
       keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
@@ -3394,8 +3693,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
       {
         ph <- suppressWarnings(pheatmap::pheatmap(
           mat,
-          cluster_rows = TRUE,
-          cluster_cols = TRUE,
+          cluster_rows = nrow(mat) > 1L,
+          cluster_cols = ncol(mat) > 1L,
           show_rownames = TRUE,
           show_colnames = TRUE,
           fontsize_row = font_row,
@@ -3426,9 +3725,14 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   }
 
   if (isTRUE(make_dotplot)) {
+    dot_base <- if (!is.null(file_tag) && nzchar(file_tag)) {
+      paste0("topic_pathway_enrichment_", file_tag, "_dotplot")
+    } else {
+      "topic_pathway_enrichment_dotplot"
+    }
     .write_dotplot(
       res_dt,
-      dot_prefix = file.path(out_dir, "topic_pathway_enrichment_dotplot"),
+      dot_prefix = file.path(out_dir, dot_base),
       plot_title = main_title
     )
   } else {
@@ -3492,8 +3796,12 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           }
           res_sub <- res_sub[is.finite(logp) & logp > 0]
           if (!nrow(res_sub)) next
-          res_sub <- res_sub[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
-          if (nrow(res_sub)) {
+          if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+            res_sub <- res_sub[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
+          } else {
+            res_sub <- res_sub[order(topic, -logp)]
+          }
+          if (nrow(res_sub) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
             path_rank <- res_sub[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
             if (nrow(path_rank) > as.integer(max_pathways)) {
               keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
@@ -3535,7 +3843,7 @@ rerun_pathway_from_link_scores <- function(out_dir,
     if (file.exists(cand)) {
       link_scores_file <- cand
     } else {
-      cand <- file.path(out_dir, "link_topic_scores_gate_peak_and_gene_in_set.csv")
+    cand <- file.path(out_dir, "link_topic_scores_gate_peak_and_gene_in_set.csv")
       if (file.exists(cand)) link_scores_file <- cand
     }
   }
@@ -3565,6 +3873,45 @@ rerun_pathway_from_link_scores <- function(out_dir,
   do.call(
     plot_topic_pathway_enrichment_from_link_scores,
     c(list(link_scores = link_scores, tf_link_scores = tf_link_scores, gene_terms = gene_terms, out_dir = out_dir), dots)
+  )
+}
+
+rerun_pathway_from_topic_links <- function(out_dir,
+                                           topic_links_file = NULL,
+                                           method = c("peak_and_gene", "peak_or_gene"),
+                                           allow_missing = FALSE,
+                                           ...) {
+  resolve_rel <- function(path, base_dir) {
+    if (is.null(path) || !nzchar(path)) return(path)
+    if (grepl("^/", path)) return(path)
+    cand <- file.path(base_dir, path)
+    if (file.exists(cand)) return(cand)
+    path
+  }
+  method <- match.arg(method)
+  if (is.null(topic_links_file)) {
+    cand <- file.path(out_dir, "topic_links.csv")
+    if (file.exists(cand)) topic_links_file <- cand
+  }
+  topic_links_file <- resolve_rel(topic_links_file, out_dir)
+  if (is.null(topic_links_file) || !file.exists(topic_links_file)) {
+    if (isTRUE(allow_missing)) {
+      .log_inform("Skipping topic-link pathway enrichment: topic_links_file not found.")
+      return(invisible(NULL))
+    }
+    .log_abort("topic_links_file not found for rerun_pathway_from_topic_links.")
+  }
+  topic_links <- data.table::fread(topic_links_file)
+  link_scores <- .topic_links_to_link_scores(topic_links, method = method)
+  dots <- list(...)
+  if (!"title_prefix" %in% names(dots) || is.null(dots$title_prefix)) {
+    dots$title_prefix <- basename(out_dir)
+  }
+  dots$title_prefix <- paste(dots$title_prefix, method, sep = " | ")
+  dots$file_tag <- method
+  do.call(
+    plot_topic_pathway_enrichment_from_link_scores,
+    c(list(link_scores = link_scores, out_dir = out_dir), dots)
   )
 }
 
@@ -3620,7 +3967,7 @@ plot_intertopic_distance_map <- function(phi, topic_terms, out_file, option_labe
   sizes <- rep(1, K)
   if (!is.null(topic_terms) && nrow(topic_terms)) {
     tt <- data.table::as.data.table(topic_terms)
-    tt <- tt[.as_logical_flag(in_set)]
+    tt <- tt[.as_logical_flag(in_topic)]
     if (option_label == "joint") {
       counts <- tt[, .N, by = topic]
     } else {
@@ -3737,7 +4084,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               binarize_method = c("gammafit", "topn"),
                                               thrP = 0.975,
                                               top_n_terms = 500L,
-                                              in_set_min_terms = 50L,
+                                              in_topic_min_terms = 50L,
                                               pathway_use_all_terms = FALSE,
                                               pathway_make_heatmap = TRUE,
                                               pathway_make_dotplot = TRUE,
@@ -3808,48 +4155,57 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   topic_base$phi <- phi
 
   score_mat <- score_terms_normtop(phi)
-  if (binarize_method == "gammafit") {
-    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
-    plot_gammafit_binarize(
-      score_mat,
-      out_file = file.path(out_dir, "topic_binarize_gammafit.pdf"),
-      thrP = thrP,
-      min_terms = in_set_min_terms,
-      title_prefix = title_prefix,
-      tf_list = tf_terms
-    )
-  }
   topic_terms <- binarize_topics(
     score_mat,
     method = binarize_method,
     thrP = thrP,
     top_n_terms = top_n_terms,
-    min_terms = in_set_min_terms
+    min_terms = in_topic_min_terms
   )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
   .save_all(out_dir, "topic_term_scores_normtop", score_mat)
 
+  topic_links_tbl <- NULL
   if (isTRUE(run_link_topic_scores)) {
-    # Baseline: posterior over topics from theta*phi; Hard gate: require in_set terms.
-    for (gm in link_topic_gate_mode) {
-      lt_tag <- if (gm == "none") "baseline" else paste0("gate_", gm)
-      out_file <- file.path(out_dir, paste0("link_topic_scores_", lt_tag, ".csv"))
-      compute_link_topic_scores(
-        edges_docs = edges_docs,
-        theta = topic_base$theta,
-        phi = topic_base$phi,
-        topic_terms = topic_terms,
-        out_file = out_file,
-        gate_mode = gm,
-        top_k = link_topic_top_k,
-        min_prob = link_topic_min_prob,
-        include_tf = link_topic_include_tf,
-        overwrite = link_topic_overwrite,
-        chunk_size = link_topic_chunk_size,
-        n_cores = link_topic_n_cores
-      )
+    gamma_cutoffs <- .gammafit_cutoffs(score_mat, thrP = thrP, min_terms = in_topic_min_terms)
+    data.table::fwrite(
+      data.table::data.table(topic_num = seq_along(gamma_cutoffs), gamma_cutoff = gamma_cutoffs),
+      file.path(out_dir, "topic_gamma_cutoffs.csv")
+    )
+    topic_links_tbl <- compute_topic_links(
+      edges_docs = edges_docs,
+      score_mat = score_mat,
+      topic_terms = topic_terms,
+      binarize_method = binarize_method,
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      out_file = file.path(out_dir, "topic_links.csv"),
+      chunk_size = link_topic_chunk_size,
+      n_cores = link_topic_n_cores,
+      overwrite = link_topic_overwrite
+    )
+  } else {
+    topic_links_path <- file.path(out_dir, "topic_links.csv")
+    if (file.exists(topic_links_path)) {
+      topic_links_tbl <- data.table::fread(topic_links_path)
     }
+  }
+
+  if (binarize_method == "gammafit") {
+    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
+    topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
+    plot_gammafit_binarize(
+      score_mat,
+      out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      title_prefix = title_prefix,
+      tf_list = tf_terms,
+      edges_docs = edges_docs,
+      topic_terms = topic_terms_tbl,
+      topic_links = topic_links_tbl
+    )
   }
 
   plot_doc_topic_heatmaps_by_comparison(
@@ -3892,28 +4248,29 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
 
   if (pathway_source == "link_scores") {
-    rerun_pathway_from_link_scores(
-      out_dir = out_dir,
-      link_scores_file = pathway_link_scores_file,
-      tf_link_scores_file = pathway_link_scores_file_tf,
-      gene_terms_file = pathway_link_gene_terms_file,
-      allow_missing = TRUE,
-      title_prefix = title_prefix,
-      include_tf = pathway_link_include_tf,
-      include_gene = pathway_link_include_gene,
-      min_prob = pathway_link_min_prob,
-      gene_min_prob = pathway_link_gene_min_prob,
-      tf_min_prob = pathway_link_tf_min_prob,
-      tf_max_topics = pathway_link_tf_max_topics,
-      tf_top_n_per_topic = pathway_link_tf_top_n_per_topic,
-      top_n_per_topic = top_n_per_topic,
-      max_pathways = max_pathways,
-      per_comparison = pathway_per_comparison,
-      per_comparison_dir = pathway_per_comparison_dir,
-      split_direction = pathway_split_direction,
-      make_heatmap = pathway_make_heatmap,
-      make_dotplot = pathway_make_dotplot
-    )
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      rerun_pathway_from_topic_links(
+        out_dir = out_dir,
+        topic_links_file = pathway_link_scores_file,
+        method = method,
+        allow_missing = TRUE,
+        title_prefix = title_prefix,
+        include_tf = pathway_link_include_tf,
+        include_gene = pathway_link_include_gene,
+        min_prob = pathway_link_min_prob,
+        gene_min_prob = pathway_link_gene_min_prob,
+        tf_min_prob = pathway_link_tf_min_prob,
+        tf_max_topics = pathway_link_tf_max_topics,
+        tf_top_n_per_topic = pathway_link_tf_top_n_per_topic,
+        top_n_per_topic = top_n_per_topic,
+        max_pathways = max_pathways,
+        per_comparison = pathway_per_comparison,
+        per_comparison_dir = paste0(pathway_per_comparison_dir, "_", method),
+        split_direction = pathway_split_direction,
+        make_heatmap = pathway_make_heatmap,
+        make_dotplot = pathway_make_dotplot
+      )
+    }
   } else {
     plot_topic_pathway_enrichment_heatmap(
       topic_terms = topic_terms,
@@ -4014,7 +4371,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           binarize_method = c("gammafit", "topn"),
                                           thrP = 0.975,
                                           top_n_terms = 500L,
-                                          in_set_min_terms = 50L,
+                                          in_topic_min_terms = 50L,
                                           pathway_use_all_terms = FALSE,
                                           pathway_make_heatmap = TRUE,
                                           top_n_per_topic = 20L,
@@ -4109,8 +4466,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       top_n_terms = as.integer(top_n_terms)
     ),
     pathway = list(
-      top_n_per_topic = as.integer(top_n_per_topic),
-      max_pathways = as.integer(max_pathways),
+      top_n_per_topic = if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) as.integer(top_n_per_topic) else Inf,
+      max_pathways = if (is.finite(max_pathways) && as.numeric(max_pathways) > 0) as.integer(max_pathways) else Inf,
       use_all_terms = isTRUE(pathway_use_all_terms),
       make_heatmap = isTRUE(pathway_make_heatmap),
       make_dotplot = isTRUE(pathway_make_dotplot),
@@ -4295,47 +4652,56 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   phi <- topic_base$phi
 
   score_mat <- score_terms_normtop(phi)
-  if (binarize_method == "gammafit") {
-    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
-    plot_gammafit_binarize(
-      score_mat,
-      out_file = file.path(out_dir, "topic_binarize_gammafit.pdf"),
-      thrP = thrP,
-      min_terms = in_set_min_terms,
-      title_prefix = title_prefix,
-      tf_list = tf_terms
-    )
-  }
   topic_terms <- binarize_topics(
     score_mat,
     method = binarize_method,
     thrP = thrP,
     top_n_terms = top_n_terms,
-    min_terms = in_set_min_terms
+    min_terms = in_topic_min_terms
   )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
 
+  topic_links_tbl <- NULL
   if (isTRUE(run_link_topic_scores)) {
-    # Baseline: posterior over topics from theta*phi; Hard gate: require in_set terms.
-    for (gm in link_topic_gate_mode) {
-      lt_tag <- if (gm == "none") "baseline" else paste0("gate_", gm)
-      out_file <- file.path(out_dir, paste0("link_topic_scores_", lt_tag, ".csv"))
-      compute_link_topic_scores(
-        edges_docs = edges_docs,
-        theta = topic_base$theta,
-        phi = topic_base$phi,
-        topic_terms = topic_terms,
-        out_file = out_file,
-        gate_mode = gm,
-        top_k = link_topic_top_k,
-        min_prob = link_topic_min_prob,
-        include_tf = link_topic_include_tf,
-        overwrite = link_topic_overwrite,
-        chunk_size = link_topic_chunk_size,
-        n_cores = link_topic_n_cores
-      )
+    gamma_cutoffs <- .gammafit_cutoffs(score_mat, thrP = thrP, min_terms = in_topic_min_terms)
+    data.table::fwrite(
+      data.table::data.table(topic_num = seq_along(gamma_cutoffs), gamma_cutoff = gamma_cutoffs),
+      file.path(out_dir, "topic_gamma_cutoffs.csv")
+    )
+    topic_links_tbl <- compute_topic_links(
+      edges_docs = edges_docs,
+      score_mat = score_mat,
+      topic_terms = topic_terms,
+      binarize_method = binarize_method,
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      out_file = file.path(out_dir, "topic_links.csv"),
+      chunk_size = link_topic_chunk_size,
+      n_cores = link_topic_n_cores,
+      overwrite = link_topic_overwrite
+    )
+  } else {
+    topic_links_path <- file.path(out_dir, "topic_links.csv")
+    if (file.exists(topic_links_path)) {
+      topic_links_tbl <- data.table::fread(topic_links_path)
     }
+  }
+
+  if (binarize_method == "gammafit") {
+    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
+    topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
+    plot_gammafit_binarize(
+      score_mat,
+      out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      title_prefix = title_prefix,
+      tf_list = tf_terms,
+      edges_docs = edges_docs,
+      topic_terms = topic_terms_tbl,
+      topic_links = topic_links_tbl
+    )
   }
 
   # Also save full score matrix (can be large)
@@ -4372,27 +4738,28 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     option_label = option_label
   )
   if (pathway_source == "link_scores") {
-    rerun_pathway_from_link_scores(
-      out_dir = out_dir,
-      link_scores_file = pathway_link_scores_file,
-      tf_link_scores_file = pathway_link_scores_file_tf,
-      gene_terms_file = pathway_link_gene_terms_file,
-      allow_missing = TRUE,
-      title_prefix = title_prefix,
-      include_tf = pathway_link_include_tf,
-      include_gene = pathway_link_include_gene,
-      min_prob = pathway_link_min_prob,
-      gene_min_prob = pathway_link_gene_min_prob,
-      tf_min_prob = pathway_link_tf_min_prob,
-      tf_max_topics = pathway_link_tf_max_topics,
-      tf_top_n_per_topic = pathway_link_tf_top_n_per_topic,
-      top_n_per_topic = top_n_per_topic,
-      max_pathways = max_pathways,
-      per_comparison = pathway_per_comparison,
-      per_comparison_dir = pathway_per_comparison_dir,
-      split_direction = pathway_split_direction,
-      make_heatmap = pathway_make_heatmap
-    )
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      rerun_pathway_from_topic_links(
+        out_dir = out_dir,
+        topic_links_file = pathway_link_scores_file,
+        method = method,
+        allow_missing = TRUE,
+        title_prefix = title_prefix,
+        include_tf = pathway_link_include_tf,
+        include_gene = pathway_link_include_gene,
+        min_prob = pathway_link_min_prob,
+        gene_min_prob = pathway_link_gene_min_prob,
+        tf_min_prob = pathway_link_tf_min_prob,
+        tf_max_topics = pathway_link_tf_max_topics,
+        tf_top_n_per_topic = pathway_link_tf_top_n_per_topic,
+        top_n_per_topic = top_n_per_topic,
+        max_pathways = max_pathways,
+        per_comparison = pathway_per_comparison,
+        per_comparison_dir = paste0(pathway_per_comparison_dir, "_", method),
+        split_direction = pathway_split_direction,
+        make_heatmap = pathway_make_heatmap
+      )
+    }
   } else {
     plot_topic_pathway_enrichment_heatmap(
       topic_terms = topic_terms,
@@ -4648,7 +5015,7 @@ run_vae_topic_report_py <- function(doc_term,
     binarize_method = "gammafit",
     thrP = 0.9,
     top_n_terms = 500L,
-    in_set_min_terms = 1L,
+    in_topic_min_terms = 1L,
     pathway_use_all_terms = FALSE,
     pathway_make_heatmap = FALSE,
     pathway_make_dotplot = TRUE,
@@ -4724,7 +5091,7 @@ run_vae_ctf_multivi <- function(edges_all,
                                 binarize_method = "gammafit",
                                 thrP = 0.9,
                                 top_n_terms = 500L,
-                                in_set_min_terms = 1,
+                                in_topic_min_terms = 1,
                                 topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("cli")
@@ -4793,7 +5160,7 @@ run_vae_ctf_multivi <- function(edges_all,
       binarize_method = binarize_method,
       thrP = thrP,
       top_n_terms = top_n_terms,
-      in_set_min_terms = in_set_min_terms
+      in_topic_min_terms = in_topic_min_terms
     ), topic_report_args)
 
     out_grid <- file.path(
@@ -4843,24 +5210,39 @@ run_vae_ctf_multivi <- function(edges_all,
 
 #' @rdname vae_topic_helpers
 #' @export
-run_vae_doc_topic_heatmaps <- function(topic_root) {
+run_vae_doc_topic_heatmaps <- function(topic_root,
+                                       backend = c("vae", "warplda"),
+                                       vae_variant = "multivi_encoder",
+                                       doc_mode = c("tf_cluster", "tf")) {
   .assert_pkg("data.table")
   if (!exists("plot_tf_topic_heatmaps_from_link_scores")) return(invisible(NULL))
+  backend <- match.arg(backend)
+  doc_mode <- match.arg(doc_mode)
+  doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   out_dirs <- list.dirs(topic_root, recursive = FALSE, full.names = TRUE)
-  out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_", basename(out_dirs))]
+  if (backend == "vae") {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_"), basename(out_dirs))]
+  }
   for (d in out_dirs) {
-    base_file <- file.path(d, "link_topic_scores_baseline.csv")
-    if (!file.exists(base_file)) next
-    out_base <- file.path(d, "doc_topic_heatmaps_link_scores_baseline")
-    plot_tf_topic_heatmaps_from_link_scores(
-      link_scores = data.table::fread(base_file),
-      out_dir = out_base,
-      title_prefix = paste("Link scores baseline", basename(d), sep = " | "),
-      value_col = "prob",
-      min_value = 0,
-      per_comparison = TRUE,
-      split_direction = TRUE
-    )
+    topic_links_path <- file.path(d, "topic_links.csv")
+    if (!file.exists(topic_links_path)) next
+    topic_links <- data.table::fread(topic_links_path)
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      link_scores <- .topic_links_to_link_scores(topic_links, method = method)
+      if (!nrow(link_scores)) next
+      out_base <- file.path(d, paste0("doc_topic_heatmaps_link_scores_", method))
+      plot_tf_topic_heatmaps_from_link_scores(
+        link_scores = link_scores,
+        out_dir = out_base,
+        title_prefix = paste("Link scores", method, basename(d), sep = " | "),
+        value_col = "prob",
+        min_value = 0,
+        per_comparison = TRUE,
+        split_direction = TRUE
+      )
+    }
   }
   invisible(TRUE)
 }
@@ -5055,6 +5437,16 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
           tf = sub_links[[tf_col]],
           gene = sub_links[[gene_col]]
         ))
+        link_pairs_unique <- unique(data.table::data.table(
+          tf = sub_links[[tf_col]],
+          gene = sub_links[[gene_col]]
+        ))
+        link_pairs_unique <- link_pairs_unique[!is.na(tf) & !is.na(gene) & nzchar(tf) & nzchar(gene)]
+        link_list <- if (nrow(link_pairs_unique)) {
+          paste(paste0(link_pairs_unique$tf, "::", link_pairs_unique$gene), collapse = ",")
+        } else {
+          ""
+        }
         summary_rows[[length(summary_rows) + 1L]] <- data.table::data.table(
           comparison = cmp,
           direction = dir_lab,
@@ -5064,7 +5456,8 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
           total_target_gene_count = length(unique(gene_vals)),
           tf_count = length(unique(tf_vals)),
           gene_list = paste(sort(unique(gene_vals)), collapse = ","),
-          tf_list = paste(sort(unique(tf_vals)), collapse = ",")
+          tf_list = paste(sort(unique(tf_vals)), collapse = ","),
+          link_list = link_list
         )
       }
     }
@@ -5080,46 +5473,81 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
 
 #' @rdname vae_topic_helpers
 #' @export
-run_vae_topic_delta_network_plots <- function(topic_root, step2_out_dir, min_prob = 0.5,
-                                              filter_same_direction = TRUE) {
+run_vae_topic_delta_network_plots <- function(topic_root,
+                                              step2_out_dir,
+                                              min_prob = 0.5,
+                                              filter_same_direction = TRUE,
+                                              backend = c("vae", "warplda"),
+                                              vae_variant = "multivi_encoder",
+                                              doc_mode = c("tf_cluster", "tf")) {
   out_dirs <- list.dirs(topic_root, recursive = FALSE, full.names = TRUE)
-  out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_", basename(out_dirs))]
+  backend <- match.arg(backend)
+  doc_mode <- match.arg(doc_mode)
+  doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
+  if (backend == "vae") {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_"), basename(out_dirs))]
+  }
   if (!length(out_dirs)) return(invisible(NULL))
   for (d in out_dirs) {
-    link_path <- file.path(d, "link_topic_scores_baseline.csv")
-    if (!file.exists(link_path)) next
-    link_dt <- data.table::fread(link_path)
-    out_root <- file.path(d, "doc_topic_sub_network_link_scores_baseline")
-    plot_topic_delta_networks_from_link_scores(
-      link_scores = link_dt,
-      step2_out_dir = step2_out_dir,
-      out_root = out_root,
-      min_prob = min_prob,
-      filter_same_direction = filter_same_direction
-    )
+    topic_links_path <- file.path(d, "topic_links.csv")
+    if (!file.exists(topic_links_path)) next
+    topic_links <- data.table::fread(topic_links_path)
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      link_dt <- .topic_links_to_link_scores(topic_links, method = method)
+      if (!nrow(link_dt)) next
+      out_root <- file.path(d, paste0("doc_topic_sub_network_link_", method))
+      plot_topic_delta_networks_from_link_scores(
+        link_scores = link_dt,
+        step2_out_dir = step2_out_dir,
+        out_root = out_root,
+        min_prob = min_prob,
+        filter_same_direction = filter_same_direction
+      )
+    }
   }
   invisible(TRUE)
 }
 
 #' @rdname vae_topic_helpers
 #' @export
-run_vae_topic_delta_network_pathway <- function(topic_root) {
+run_vae_topic_delta_network_pathway <- function(topic_root,
+                                                backend = c("vae", "warplda"),
+                                                vae_variant = "multivi_encoder",
+                                                top_n_per_topic = Inf,
+                                                max_pathways = Inf,
+                                                per_comparison = TRUE,
+                                                split_direction = TRUE,
+                                                doc_mode = c("tf_cluster", "tf")) {
   out_dirs <- list.dirs(topic_root, recursive = FALSE, full.names = TRUE)
-  out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_multivi_encoder_", basename(out_dirs))]
+  backend <- match.arg(backend)
+  doc_mode <- match.arg(doc_mode)
+  doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
+  if (backend == "vae") {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
+  } else {
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_"), basename(out_dirs))]
+  }
   if (!length(out_dirs)) return(invisible(NULL))
   for (d in out_dirs) {
-    rerun_pathway_from_link_scores(
-      out_dir = d,
-      link_scores_file = file.path(d, "link_topic_scores_baseline.csv"),
-      allow_missing = TRUE,
-      include_tf = TRUE,
-      include_gene = TRUE,
-      min_prob = 0,
-      per_comparison = TRUE,
-      per_comparison_dir = "per_cmpr_topic_pathway",
-      split_direction = TRUE,
-      make_heatmap = FALSE
-    )
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      rerun_pathway_from_topic_links(
+        out_dir = d,
+        topic_links_file = file.path(d, "topic_links.csv"),
+        method = method,
+        allow_missing = TRUE,
+        include_tf = TRUE,
+        include_gene = TRUE,
+        min_prob = 0,
+        per_comparison = isTRUE(per_comparison),
+        per_comparison_dir = paste0("per_cmpr_topic_pathway_", method),
+        split_direction = isTRUE(split_direction),
+        make_heatmap = FALSE,
+        top_n_per_topic = top_n_per_topic,
+        max_pathways = max_pathways
+      )
+    }
   }
   invisible(TRUE)
 }
@@ -5154,7 +5582,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root) {
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.
 #' @param top_n_terms Number of terms per topic.
-#' @param in_set_min_terms Minimum terms per topic set.
+#' @param in_topic_min_terms Minimum terms per topic set.
 #' @param topic_report_args Additional args for downstream extraction (saved in calc_params).
 #' @export
 train_topic_models <- function(Kgrid,
@@ -5162,6 +5590,7 @@ train_topic_models <- function(Kgrid,
                                output_dir,
                                celllines = c("AsPC1", "HPAFII", "Panc1"),
                                tf_cluster_map,
+                               doc_mode = c("tf_cluster", "tf"),
                                tf_exclude = NULL,
                                abs_log2fc_fp_min = 0,
                                abs_delta_fp_min = 1,
@@ -5183,7 +5612,7 @@ train_topic_models <- function(Kgrid,
                                binarize_method = "gammafit",
                                thrP = 0.9,
                                top_n_terms = 500L,
-                               in_set_min_terms = 1,
+                               in_topic_min_terms = 1,
                                topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("cli")
@@ -5192,6 +5621,8 @@ train_topic_models <- function(Kgrid,
   gene_term_mode <- match.arg(gene_term_mode)
   count_input <- match.arg(count_input)
   backend <- match.arg(backend)
+  doc_mode <- match.arg(doc_mode)
+  doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
   if (!length(delta_files)) {
     delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
@@ -5237,7 +5668,7 @@ train_topic_models <- function(Kgrid,
 
     edges_docs <- add_tf_docs(
       edges_filt,
-      doc_mode = "tf_cluster",
+      doc_mode = doc_mode,
       direction_by = "gene",
       tf_cluster_map = tf_cluster_map
     )
@@ -5264,13 +5695,13 @@ train_topic_models <- function(Kgrid,
       binarize_method = binarize_method,
       thrP = thrP,
       top_n_terms = top_n_terms,
-      in_set_min_terms = in_set_min_terms
+      in_topic_min_terms = in_topic_min_terms
     ), topic_report_args)
 
     model_name <- if (backend == "vae") vae_variant else "warplda"
     out_dir <- file.path(
       output_dir,
-      paste0(cell, "_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", model_name, "_Kgrid")
+      paste0(cell, "_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", model_name, "_Kgrid")
     )
     metrics_path <- file.path(out_dir, "model_metrics.csv")
     models_dir <- file.path(out_dir, "vae_models")
@@ -5360,6 +5791,7 @@ extract_regulatory_topics <- function(k,
                                       output_dir,
                                       backend = c("vae", "warplda"),
                                       vae_variant = "multivi_encoder",
+                                      doc_mode = c("tf_cluster", "tf"),
                                       topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("readr")
@@ -5367,14 +5799,16 @@ extract_regulatory_topics <- function(k,
   k <- as.integer(k)
   if (!is.finite(k) || k <= 0L) .log_abort("`k` must be a positive integer.")
   backend <- match.arg(backend)
+  doc_mode <- match.arg(doc_mode)
+  doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
   out_dirs <- list.dirs(model_dir, recursive = FALSE, full.names = TRUE)
   if (backend == "vae") {
-    patt <- paste0("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_")
+    patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_")
     out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
   } else {
-    out_dirs <- out_dirs[grepl("_vae_joint_ctf_docs_peak_delta_fp_gene_fc_expr_warplda_", basename(out_dirs))]
+    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_warplda_"), basename(out_dirs))]
   }
   if (!length(out_dirs)) .log_abort("No trained topic model directories found in {model_dir}")
 
@@ -5419,7 +5853,7 @@ extract_regulatory_topics <- function(k,
       binarize_method = "gammafit",
       thrP = 0.9,
       top_n_terms = 500L,
-      in_set_min_terms = 1L,
+      in_topic_min_terms = 1L,
       pathway_use_all_terms = FALSE,
     pathway_make_heatmap = FALSE,
     pathway_make_dotplot = TRUE,

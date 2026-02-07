@@ -92,7 +92,7 @@ plot_fp_merge_summary <- function(
     ) +
     base_theme
 
-  pdf_path <- file.path(out_dir, sprintf("fp_merge_summary_%s.pdf", db))
+  pdf_path <- file.path(out_dir, sprintf("02_fp_merge_summary_%s.pdf", db))
   grDevices::pdf(pdf_path, width = 8, height = 6)
   print(p_counts)
   print(p_hist)
@@ -206,7 +206,7 @@ plot_fp_norm_bound_qc <- function(
       )
     ) +
     base_theme +
-    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))
+    ggplot2::coord_flip()
 
   p_bound <- ggplot2::ggplot(bound_df, ggplot2::aes(x = condition, y = bound_peaks)) +
     ggplot2::geom_col(fill = "#3182bd") +
@@ -219,7 +219,7 @@ plot_fp_norm_bound_qc <- function(
     base_theme +
     ggplot2::coord_flip()
 
-  pdf_path <- file.path(out_dir, sprintf("fp_norm_bound_qc_%s.pdf", db))
+  pdf_path <- file.path(out_dir, sprintf("03_fp_norm_bound_qc_%s.pdf", db))
   grDevices::pdf(pdf_path, width = 7, height = 10)
   print(p_box)
   print(p_bound)
@@ -290,7 +290,7 @@ plot_gene_expr_qc <- function(
     base_theme +
     ggplot2::coord_flip()
 
-  pdf_path <- file.path(out_dir, sprintf("gene_expr_qc_%s.pdf", db))
+  pdf_path <- file.path(out_dir, sprintf("05_gene_expr_flag_summary_plot_%s.pdf", db))
   grDevices::pdf(pdf_path, width = 7, height = 9)
   print(p_expr)
   grDevices::dev.off()
@@ -478,7 +478,7 @@ plot_tf_corr_stats_pdf <- function(
     }
   }
 
-  pdf_path <- file.path(out_dir, sprintf("tf_corr_stats_%s_%s.pdf", db, mode))
+  pdf_path <- file.path(out_dir, sprintf("06_tf_corr_stats_%s_%s.pdf", db, mode))
   grDevices::pdf(pdf_path, width = 11, height = 8.5)
 
   n_panels <- length(panels)

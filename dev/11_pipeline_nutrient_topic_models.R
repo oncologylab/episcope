@@ -48,9 +48,9 @@ common_args <- list(
   beta = 0.1,
   seed = 123,
   binarize_method = "gammafit",
-  thrP = 0.9, # gamma‑fit cutoff percentile for in_set
-  top_n_terms = 500, # only used in binarize_topics() when binarize_method = "topn" to define in_set(TRUE/FALSE)
-  in_set_min_terms = 1,
+  thrP = 0.9, # gamma‑fit cutoff percentile for in_topic
+  top_n_terms = 500, # only used in binarize_topics() when binarize_method = "topn" to define in_topic(TRUE/FALSE)
+  in_topic_min_terms = 1,
   pathway_use_all_terms = FALSE,
   pathway_make_heatmap = FALSE,
   top_n_per_topic = 100L,
@@ -83,7 +83,7 @@ common_args <- list(
 # VAE pathway rerun defaults (used by run_vae_pathway_rerun too)
 vae_pathway_source <- "link_scores"
 vae_pathway_link_scores_file <- NULL
-vae_pathway_link_scores_file_tf <- "link_topic_scores_gate_peak_and_gene_in_set.csv"
+vae_pathway_link_scores_file_tf <- "topic_links.csv"
 vae_pathway_link_gene_terms_file <- "topic_terms.csv"
 vae_pathway_link_min_prob <- 0
 vae_pathway_link_include_tf <- TRUE
@@ -477,7 +477,7 @@ if (run_mira_vae) {
       binarize_method = common_args$binarize_method,
       thrP = common_args$thrP,
       top_n_terms = common_args$top_n_terms,
-      in_set_min_terms = common_args$in_set_min_terms,
+      in_topic_min_terms = common_args$in_topic_min_terms,
       pathway_use_all_terms = common_args$pathway_use_all_terms,
       pathway_make_heatmap = common_args$pathway_make_heatmap,
       top_n_per_topic = common_args$top_n_per_topic,
@@ -733,47 +733,36 @@ run_vae_pathway_rerun <- FALSE
 if (run_vae_pathway_rerun) {
   vae_root <- file.path(base_dir, "benchmark_topic_vae_models")
   all_dirs <- list.dirs(vae_root, recursive = TRUE, full.names = TRUE)
-  out_dirs <- all_dirs[file.exists(file.path(all_dirs, "link_topic_scores_baseline.csv"))]
+  out_dirs <- all_dirs[file.exists(file.path(all_dirs, "topic_links.csv"))]
   if (!length(out_dirs)) {
-    out_dirs <- all_dirs[file.exists(file.path(all_dirs, "link_topic_scores_gate_peak_and_gene_in_set.csv"))]
-    cli::cli_inform("VAE pathway rerun: no baseline link-score files found; falling back to gate file scan.")
-  }
-  if (!length(out_dirs)) {
-    cli::cli_inform("VAE pathway rerun: no output dirs with link_topic_scores_* files under {vae_root}.")
-    cli::cli_inform("VAE pathway rerun: set base_dir or check that link_topic_scores files exist.")
+    cli::cli_inform("VAE pathway rerun: no output dirs with topic_links.csv under {vae_root}.")
+    cli::cli_inform("VAE pathway rerun: set base_dir or check that topic_links.csv exists.")
   } else {
     cli::cli_inform("VAE pathway rerun: {length(out_dirs)} target folder(s) under {vae_root}.")
   }
 
   rerun_one <- function(d) {
-    rerun_pathway_from_link_scores(
-      out_dir = d,
-      link_scores_file = file.path(d, "link_topic_scores_baseline.csv"),
-      tf_link_scores_file = if (!is.null(vae_pathway_link_scores_file_tf)) {
-        file.path(d, vae_pathway_link_scores_file_tf)
-      } else {
-        NULL
-      },
-      gene_terms_file = if (!is.null(vae_pathway_link_gene_terms_file)) {
-        file.path(d, vae_pathway_link_gene_terms_file)
-      } else {
-        NULL
-      },
-      allow_missing = TRUE,
-      include_tf = vae_pathway_link_include_tf,
-      include_gene = vae_pathway_link_include_gene,
-      min_prob = vae_pathway_link_min_prob,
-      gene_min_prob = vae_pathway_link_gene_min_prob,
-      tf_min_prob = vae_pathway_link_tf_min_prob,
-      tf_max_topics = vae_pathway_link_tf_max_topics,
-      tf_top_n_per_topic = vae_pathway_link_tf_top_n_per_topic,
-      top_n_per_topic = common_args$top_n_per_topic,
-      max_pathways = common_args$max_pathways,
-      per_comparison = vae_pathway_per_comparison,
-      per_comparison_dir = vae_pathway_per_comparison_dir,
-      split_direction = vae_pathway_split_direction,
-      make_heatmap = FALSE
-    )
+    for (method in c("peak_and_gene", "peak_or_gene")) {
+      rerun_pathway_from_topic_links(
+        out_dir = d,
+        topic_links_file = file.path(d, "topic_links.csv"),
+        method = method,
+        allow_missing = TRUE,
+        include_tf = vae_pathway_link_include_tf,
+        include_gene = vae_pathway_link_include_gene,
+        min_prob = vae_pathway_link_min_prob,
+        gene_min_prob = vae_pathway_link_gene_min_prob,
+        tf_min_prob = vae_pathway_link_tf_min_prob,
+        tf_max_topics = vae_pathway_link_tf_max_topics,
+        tf_top_n_per_topic = vae_pathway_link_tf_top_n_per_topic,
+        top_n_per_topic = common_args$top_n_per_topic,
+        max_pathways = common_args$max_pathways,
+        per_comparison = vae_pathway_per_comparison,
+        per_comparison_dir = paste0(vae_pathway_per_comparison_dir, "_", method),
+        split_direction = vae_pathway_split_direction,
+        make_heatmap = FALSE
+      )
+    }
   }
 
   mc_cores <- min(20L, length(out_dirs))
@@ -866,7 +855,7 @@ if (run_vae_doc_topic_heatmaps_rerun) {
     out_dirs <- vae_out_dirs_override
   } else {
     out_dirs <- list.dirs(vae_root, recursive = TRUE, full.names = TRUE)
-    out_dirs <- out_dirs[file.exists(file.path(out_dirs, "link_topic_scores_baseline.csv"))]
+    out_dirs <- out_dirs[file.exists(file.path(out_dirs, "topic_links.csv"))]
   }
 
   rerun_one <- function(d) {
@@ -876,31 +865,23 @@ if (run_vae_doc_topic_heatmaps_rerun) {
     if (!exists("plot_tf_topic_heatmaps_from_link_scores")) {
       stop("plot_tf_topic_heatmaps_from_link_scores not found after source(", utils_path, ").")
     }
-    base_file <- file.path(d, "link_topic_scores_baseline.csv")
-    if (file.exists(base_file)) {
-      out_base <- file.path(d, "doc_topic_heatmaps_link_scores_baseline")
-      plot_tf_topic_heatmaps_from_link_scores(
-        link_scores = data.table::fread(base_file),
-        out_dir = out_base,
-        title_prefix = paste("Link scores baseline", basename(d), sep = " | "),
-        value_col = "prob",
-        min_value = 0,
-        per_comparison = TRUE,
-        split_direction = TRUE
-      )
-    }
-    gate_file <- file.path(d, "link_topic_scores_gate_peak_and_gene_in_set.csv")
-    if (file.exists(gate_file)) {
-      out_gate <- file.path(d, "doc_topic_heatmaps_link_scores_gate_peak_and_gene_in_set")
-      plot_tf_topic_heatmaps_from_link_scores(
-        link_scores = data.table::fread(gate_file),
-        out_dir = out_gate,
-        title_prefix = paste("Link scores gate peak+gene in_set", basename(d), sep = " | "),
-        value_col = "prob",
-        min_value = 0,
-        per_comparison = TRUE,
-        split_direction = TRUE
-      )
+    topic_links_path <- file.path(d, "topic_links.csv")
+    if (file.exists(topic_links_path)) {
+      topic_links <- data.table::fread(topic_links_path)
+      for (method in c("peak_and_gene", "peak_or_gene")) {
+        link_scores <- .topic_links_to_link_scores(topic_links, method = method)
+        if (!nrow(link_scores)) next
+        out_dir <- file.path(d, paste0("doc_topic_heatmaps_link_scores_", method))
+        plot_tf_topic_heatmaps_from_link_scores(
+          link_scores = link_scores,
+          out_dir = out_dir,
+          title_prefix = paste("Link scores", method, basename(d), sep = " | "),
+          value_col = "prob",
+          min_value = 0,
+          per_comparison = TRUE,
+          split_direction = TRUE
+        )
+      }
     }
   }
 
@@ -949,19 +930,16 @@ if (run_vae_topic_delta_network_plots) {
           cli::cli_abort("topic_terms missing topic_num/topic.")
         }
       }
-      topic_terms <- topic_terms[isTRUE(in_set) & grepl("^GENE:", term_id)]
+      topic_terms <- topic_terms[isTRUE(in_topic) & grepl("^GENE:", term_id)]
       topic_terms[, gene_key := sub("^GENE:", "", term_id)]
       gene_terms_by_topic <- split(topic_terms$gene_key, topic_terms$topic_num)
 
-      link_sources <- list(
-        baseline = file.path(target_model_dir, "link_topic_scores_baseline.csv"),
-        gate = file.path(target_model_dir, "link_topic_scores_gate_peak_and_gene_in_set.csv")
-      )
-      link_sources <- link_sources[file.exists(unlist(link_sources))]
-      if (!length(link_sources)) {
-        cli::cli_inform("No link_topic_scores_*.csv found in {target_model_dir}; skipping.")
+      topic_links_path <- file.path(target_model_dir, "topic_links.csv")
+      if (!file.exists(topic_links_path)) {
+        cli::cli_inform("No topic_links.csv found in {target_model_dir}; skipping.")
         next
       }
+      topic_links <- data.table::fread(topic_links_path)
 
     is_ctrl_tag <- function(tag) {
       ctrl_patterns <- c("(^|_)ctrl($|_)", "control", "baseline", "basal", "_10_fbs($|_)", "10fbs")
@@ -1014,9 +992,8 @@ if (run_vae_topic_delta_network_plots) {
       df
     }
 
-    for (src_name in names(link_sources)) {
-      link_path <- link_sources[[src_name]]
-      link_dt <- data.table::fread(link_path)
+    for (src_name in c("peak_and_gene", "peak_or_gene")) {
+      link_dt <- .topic_links_to_link_scores(topic_links, method = src_name)
       if (!nrow(link_dt)) next
 
       if (!("topic_num" %in% names(link_dt))) {
@@ -1039,11 +1016,7 @@ if (run_vae_topic_delta_network_plots) {
         link_min_prob <- max(link_min_prob, vae_pathway_link_gene_min_prob, na.rm = TRUE)
       }
 
-      out_root <- file.path(
-        target_model_dir,
-        if (src_name == "baseline") "doc_topic_sub_network_link_scores_baseline"
-        else "doc_topic_sub_network_link_topic_scores_gate_peak_and_gene_in_set"
-      )
+      out_root <- file.path(target_model_dir, paste0("doc_topic_sub_network_link_", src_name))
       dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
 
       comps <- unique(link_dt$comparison_id)
@@ -1327,8 +1300,8 @@ if (run_vae_topic_delta_network_pathway) {
     for (target_model_dir in target_model_dirs) {
       cli::cli_inform("Delta network pathway: processing {basename(target_model_dir)}")
       input_roots <- list(
-        baseline = file.path(target_model_dir, "doc_topic_sub_network_link_scores_baseline"),
-        gate = file.path(target_model_dir, "doc_topic_sub_network_link_topic_scores_gate_peak_and_gene_in_set")
+        peak_and_gene = file.path(target_model_dir, "doc_topic_sub_network_link_peak_and_gene"),
+        peak_or_gene = file.path(target_model_dir, "doc_topic_sub_network_link_peak_or_gene")
       )
       input_roots <- input_roots[dir.exists(unlist(input_roots))]
       if (!length(input_roots)) {
@@ -1343,8 +1316,8 @@ if (run_vae_topic_delta_network_pathway) {
 
         out_root <- file.path(
           target_model_dir,
-          if (src_name == "baseline") "doc_topic_sub_network_pathway_link_scores_baseline"
-          else "doc_topic_sub_network_pathway_link_topic_scores_gate_peak_and_gene_in_set"
+          if (src_name == "peak_and_gene") "doc_topic_sub_network_pathway_peak_and_gene"
+          else "doc_topic_sub_network_pathway_peak_or_gene"
         )
         dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
         log_path <- file.path(out_root, "subnet_pathway_debug.txt")

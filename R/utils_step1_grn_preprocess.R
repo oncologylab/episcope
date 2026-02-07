@@ -1743,7 +1743,7 @@ correlate_tf_to_fp <- function(
       ann_spearman_all = grn_set$fp_annotation_spearman,
       verbose = verbose
     )
-    overview_dir <- file.path(out_dir, sprintf("fp_predicted_tfbs_%s_%s", db, mode))
+    overview_dir <- file.path(out_dir, sprintf("06_fp_predicted_tfbs_%s_%s", db, mode))
     write_tf_tfbs_overviews(
       omics_data = grn_set,
       ann_pearson = grn_set$fp_annotation_pearson,
@@ -1768,6 +1768,8 @@ write_grn_tf_corr_outputs <- function(grn_set, out_dir, db) {
   if (!is.character(db) || !nzchar(db)) .log_abort("`db` must be a non-empty string.")
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_dir <- file.path(out_dir, "cache")
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
   if (!is.data.frame(grn_set$fp_score)) .log_abort("`grn_set$fp_score` is missing or invalid.")
   if (!is.data.frame(grn_set$fp_bound)) .log_abort("`grn_set$fp_bound` is missing or invalid.")
@@ -1775,15 +1777,15 @@ write_grn_tf_corr_outputs <- function(grn_set, out_dir, db) {
 
   readr::write_csv(
     grn_set$fp_score,
-    file.path(out_dir, sprintf("fp_score_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_score_strict_tf_filtered_corr_%s.csv", db))
   )
   readr::write_csv(
     grn_set$fp_bound,
-    file.path(out_dir, sprintf("fp_bound_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_bound_strict_tf_filtered_corr_%s.csv", db))
   )
   readr::write_csv(
     grn_set$fp_annotation,
-    file.path(out_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s.csv", db))
   )
 
   invisible(out_dir)
@@ -1987,7 +1989,7 @@ write_tf_tfbs_overviews <- function(
     summary_tbl <- all_dt[, lapply(.SD, function(x) sum(as.integer(x) > 0L, na.rm = TRUE)),
                           by = TF, .SDcols = bound_cols]
     data.table::setnames(summary_tbl, bound_cols, cond_cols)
-    summary_path <- file.path(dirname(out_dir), sprintf("tf_binding_site_counts_%s.csv", db))
+    summary_path <- file.path(dirname(out_dir), sprintf("06_tf_binding_site_counts_%s.csv", db))
     data.table::fwrite(summary_tbl, summary_path, sep = ",", col.names = TRUE)
   }
 
@@ -2122,24 +2124,50 @@ write_grn_outputs <- function(grn_set, out_dir, db, qn_base_dir = NULL) {
   if (!is.data.frame(grn_set$rna_expressed)) .log_abort("`grn_set$rna_expressed` is missing or invalid.")
   if (!is.data.frame(grn_set$fp_bound_condition)) .log_abort("`grn_set$fp_bound_condition` is missing or invalid.")
 
-  readr::write_csv(grn_set$fp_score, file.path(out_dir, sprintf("fp_score_raw_filtered_%s.csv", db)))
-  readr::write_csv(grn_set$fp_annotation, file.path(out_dir, sprintf("fp_annotation_filtered_%s.csv", db)))
-  readr::write_csv(grn_set$rna_expressed, file.path(out_dir, sprintf("gene_expr_flag_%s.csv", db)))
-  readr::write_csv(grn_set$fp_bound_condition, file.path(out_dir, sprintf("fp_bound_condition_%s.csv", db)))
+  fp_score_out <- grn_set$fp_score
+  if (is.data.frame(fp_score_out) && "peak_ID" %in% names(fp_score_out)) {
+    fp_score_out <- dplyr::distinct(fp_score_out, .data$peak_ID, .keep_all = TRUE)
+  }
+  readr::write_csv(fp_score_out, file.path(out_dir, sprintf("02_fp_score_raw_%s.csv", db)))
+  readr::write_csv(grn_set$fp_annotation, file.path(out_dir, sprintf("03_fp_annotation_%s.csv", db)))
+  readr::write_csv(grn_set$rna_expressed, file.path(out_dir, sprintf("05_gene_expr_flag_%s.csv", db)))
+  fp_bound_out <- grn_set$fp_bound_condition
+  if (is.data.frame(fp_bound_out) && "peak_ID" %in% names(fp_bound_out)) {
+    fp_bound_out <- dplyr::distinct(fp_bound_out, .data$peak_ID, .keep_all = TRUE)
+  }
 
   if (is.data.frame(grn_set$fp_score_condition_qn)) {
+    fp_qn_out <- grn_set$fp_score_condition_qn
+    if (is.data.frame(fp_qn_out) && "peak_ID" %in% names(fp_qn_out)) {
+      fp_qn_out <- dplyr::distinct(fp_qn_out, .data$peak_ID, .keep_all = TRUE)
+    }
+    if (is.data.frame(fp_qn_out) && "peak_ID" %in% names(fp_qn_out) &&
+        is.data.frame(fp_bound_out) && "peak_ID" %in% names(fp_bound_out)) {
+      idx_bound <- match(fp_qn_out$peak_ID, fp_bound_out$peak_ID)
+      if (anyNA(idx_bound)) {
+        .log_warn("Some fp_bound_condition peaks are missing in fp_score_qn; dropping unmatched rows.")
+        idx_keep <- which(!is.na(idx_bound))
+        idx_bound <- idx_bound[idx_keep]
+      }
+      fp_bound_out <- fp_bound_out[idx_bound, , drop = FALSE]
+    }
+    readr::write_csv(
+      fp_bound_out,
+      file.path(out_dir, sprintf("03_fp_bound_condition_%s.csv", db))
+    )
     if (!is.null(qn_base_dir)) {
       if (!is.character(qn_base_dir) || !nzchar(qn_base_dir)) {
         .log_abort("`qn_base_dir` must be a non-empty path when provided.")
       }
+      dir.create(qn_base_dir, recursive = TRUE, showWarnings = FALSE)
       readr::write_csv(
-        grn_set$fp_score_condition_qn,
+        fp_qn_out,
         file.path(qn_base_dir, sprintf("fp_scores_qn_%s.csv", db))
       )
     }
     readr::write_csv(
-      grn_set$fp_score_condition_qn,
-      file.path(out_dir, sprintf("fp_score_qn_filtered_%s.csv", db))
+      fp_qn_out,
+      file.path(out_dir, sprintf("03_fp_score_qn_%s.csv", db))
     )
   }
 

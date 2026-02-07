@@ -368,7 +368,12 @@ load_multiomic_data <- function(
 
   if (isTRUE(write_outputs)) {
     step1_out_dir <- file.path(get_cfg("base_dir"), "predict_tf_binding_sites")
-    write_grn_outputs(grn_set, out_dir = step1_out_dir, db = get_cfg("db"), qn_base_dir = get_cfg("base_dir"))
+    write_grn_outputs(
+      grn_set,
+      out_dir = step1_out_dir,
+      db = get_cfg("db"),
+      qn_base_dir = file.path(step1_out_dir, "cache")
+    )
     plot_fp_norm_bound_qc(
       omics_data = grn_set,
       out_dir = step1_out_dir,
@@ -383,6 +388,10 @@ load_multiomic_data <- function(
       db = get_cfg("db"),
       threshold_gene_expr = threshold_gene_expr,
       verbose = verbose
+    )
+    saveRDS(
+      grn_set,
+      file.path(step1_out_dir, sprintf("01_multiomic_data_object_%s.rds", get_cfg("db")))
     )
   }
 
