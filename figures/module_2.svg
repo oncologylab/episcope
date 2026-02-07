@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200">
+  <defs>
+    <style>
+      .cls-1 {
+        font-size: 14px;
+      }
+
+      .cls-1, .cls-2 {
+        fill: #2c3e50;
+      }
+
+      .cls-1, .cls-2, .cls-3, .cls-4, .cls-5, .cls-6, .cls-7 {
+        isolation: isolate;
+      }
+
+      .cls-1, .cls-2, .cls-3, .cls-6, .cls-7 {
+        font-family: Arial-BoldMT, Arial;
+        font-weight: 700;
+      }
+
+      .cls-2, .cls-3 {
+        font-size: 10px;
+      }
+
+      .cls-8 {
+        stroke: #fff;
+      }
+
+      .cls-8, .cls-9, .cls-10, .cls-5, .cls-11, .cls-12 {
+        fill: none;
+      }
+
+      .cls-8, .cls-13 {
+        stroke-width: 3px;
+      }
+
+      .cls-14 {
+        fill: #e67e22;
+      }
+
+      .cls-9 {
+        stroke: #7f8c8d;
+        stroke-width: 3.11px;
+      }
+
+      .cls-15 {
+        letter-spacing: -.06em;
+      }
+
+      .cls-16 {
+        letter-spacing: -.07em;
+      }
+
+      .cls-17 {
+        stroke: #95a5a6;
+        stroke-dasharray: 2 2;
+      }
+
+      .cls-3, .cls-18, .cls-7 {
+        fill: #fff;
+      }
+
+      .cls-18 {
+        stroke: #2c3e50;
+      }
+
+      .cls-18, .cls-10, .cls-19, .cls-20, .cls-12 {
+        stroke-width: 2px;
+      }
+
+      .cls-10 {
+        stroke: #000305;
+      }
+
+      .cls-19 {
+        fill: #27ae60;
+        stroke: #229954;
+      }
+
+      .cls-21 {
+        fill: #9b59b6;
+      }
+
+      .cls-4 {
+        opacity: .6;
+      }
+
+      .cls-4, .cls-20 {
+        fill: #e74c3c;
+      }
+
+      .cls-5 {
+        opacity: .7;
+        stroke: #9b59b6;
+        stroke-width: 1.39px;
+      }
+
+      .cls-6 {
+        fill: #7f8c8d;
+        font-size: 9px;
+      }
+
+      .cls-22 {
+        fill: #000305;
+      }
+
+      .cls-7 {
+        font-size: 24px;
+      }
+
+      .cls-11 {
+        stroke-width: 2.5px;
+      }
+
+      .cls-11, .cls-12 {
+        stroke: #27ae60;
+      }
+
+      .cls-13 {
+        fill: #4dbbd5;
+        stroke: #3a8ea2;
+      }
+
+      .cls-20 {
+        stroke: #c0392b;
+      }
+
+      .cls-12 {
+        opacity: .5;
+      }
+    </style>
+  </defs>
+  <circle class="cls-13" cx="92.8" cy="97.02" r="35"/>
+  <text class="cls-7" transform="translate(86.12 107.02)"><tspan x="0" y="0">2</tspan></text>
+  <text class="cls-1" transform="translate(171.8 64.42)"><tspan x="0" y="0">Potential 3D Chromatin Interaction</tspan></text>
+  <line class="cls-9" x1="154.8" y1="130.42" x2="454.8" y2="130.42"/>
+  <rect class="cls-20" x="160.8" y="121.42" width="50" height="15" rx="3" ry="3"/>
+  <text class="cls-3" transform="translate(163.01 132.42)"><tspan x="0" y="0">Enhancer</tspan></text>
+  <ellipse class="cls-4" cx="195.8" cy="113.42" rx="8" ry="5"/>
+  <circle class="cls-14" cx="175.8" cy="112.42" r="7"/>
+  <rect class="cls-19" x="355.8" y="121.42" width="60" height="15" rx="3" ry="3"/>
+  <text class="cls-3" transform="translate(363.57 132.42)"><tspan x="0" y="0">Promoter</tspan></text>
+  <path class="cls-19" d="M415.8,118.92h45v-7.5l15,7.5-15,7.5v-7.5"/>
+  <path class="cls-5" d="M185.8,107.92c66.67-40,133.33-40,200,0"/>
+  <path class="cls-17" d="M205.8,141.42h160"/>
+  <text class="cls-6" transform="translate(240.64 156.42)"><tspan x="0" y="0">~100kb linear distance</tspan></text>
+  <text class="cls-1" transform="translate(631.8 67.71)"><tspan x="0" y="0">Concordance Filter</tspan></text>
+  <g>
+    <text class="cls-1" transform="translate(681.74 114.76)"><tspan x="0" y="0">&amp;</tspan></text>
+    <rect class="cls-18" x="596.8" y="84.76" width="70" height="55"/>
+    <circle class="cls-14" cx="608.8" cy="126.76" r="2.5"/>
+    <circle class="cls-14" cx="616.8" cy="122.76" r="2.5"/>
+    <circle class="cls-14" cx="624.8" cy="114.76" r="2.5"/>
+    <circle class="cls-14" cx="634.8" cy="107.76" r="2.5"/>
+    <circle class="cls-14" cx="644.8" cy="99.76" r="2.5"/>
+    <circle class="cls-14" cx="654.8" cy="94.76" r="2.5"/>
+    <line class="cls-12" x1="600.8" y1="134.76" x2="654.8" y2="93.76"/>
+    <text class="cls-2" transform="translate(608.79 152.76)"><tspan x="0" y="0">TF↔</tspan><tspan class="cls-16" x="22.22" y="0">T</tspan><tspan x="27.58" y="0">arget</tspan></text>
+    <path class="cls-11" d="M658.8,87.76l3,3,5-8"/>
+    <rect class="cls-18" x="706.8" y="84.76" width="70" height="55"/>
+    <circle class="cls-21" cx="718.8" cy="124.76" r="2.5"/>
+    <circle class="cls-21" cx="726.8" cy="120.76" r="2.5"/>
+    <circle class="cls-21" cx="734.8" cy="116.76" r="2.5"/>
+    <circle class="cls-21" cx="744.8" cy="108.76" r="2.5"/>
+    <circle class="cls-21" cx="754.8" cy="101.76" r="2.5"/>
+    <circle class="cls-21" cx="764.8" cy="96.76" r="2.5"/>
+    <line class="cls-12" x1="714.8" y1="129.76" x2="768.8" y2="92.76"/>
+    <text class="cls-2" transform="translate(699.53 152.76)"><tspan x="0" y="0">Footprint↔</tspan><tspan class="cls-16" x="53.87" y="0">T</tspan><tspan x="59.24" y="0">arget</tspan></text>
+    <path class="cls-11" d="M768.8,87.76l3,3,5-8"/>
+    <circle class="cls-19" cx="846.8" cy="114.76" r="18"/>
+    <path class="cls-8" d="M840.8,114.76l4,4,8-10"/>
+    <text class="cls-2" transform="translate(823.46 152.63)"><tspan class="cls-15" x="0" y="0">V</tspan><tspan x="6.12" y="0">alid Link</tspan></text>
+  </g>
+  <line class="cls-19" x1="416.8" y1="129.42" x2="416.8" y2="119.42"/>
+  <text class="cls-2" transform="translate(420.89 102.42)"><tspan class="cls-16" x="0" y="0">T</tspan><tspan x="5.37" y="0">arget</tspan><tspan x="2.4" y="12">Gene</tspan></text>
+  <g>
+    <line class="cls-10" x1="504.3" y1="112.42" x2="551.58" y2="112.42"/>
+    <polygon class="cls-22" points="547.62 118.23 569.3 112.42 547.62 106.6 547.62 118.23"/>
+  </g>
+</svg>
