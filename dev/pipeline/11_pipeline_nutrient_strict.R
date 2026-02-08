@@ -336,10 +336,10 @@ selected_k <- 10L
 gene_term_modes <- c("aggregate", "unique")
 include_tf_terms_opts <- c(FALSE, TRUE)
 count_inputs <- c("weight", "pseudo_count_bin", "pseudo_count_log")
-backends <- c("warplda", "vae")
+backends <- c("vae","warplda")
 vae_variants <- c("multivi_encoder")
 # Topic document mode: "tf_cluster" (current ctf_docs behavior) or "tf" (new tf_docs behavior).
-topic_doc_mode <- "tf"
+topic_doc_mode <- "tf_cluster"
 library(enrichR)
 library(future)
 library(future.apply)
@@ -370,6 +370,7 @@ for (i in seq_len(nrow(combo_grid))) {
   count_input <- combo_grid$count_input[i]
   backend <- combo_grid$backend[i]
   vae_variant <- combo_grid$vae_variant[i]
+  thrP_use <- if (identical(backend, "warplda")) 0.7 else 0.9
 
   combo_tag <- paste0(
     "gene_", gene_term_mode,
@@ -384,17 +385,18 @@ for (i in seq_len(nrow(combo_grid))) {
 
   topic_args <- list(
     pathway_source = "link_scores",
-    thrP = 0.9,
+    thrP = thrP_use,
     pathway_make_heatmap = FALSE,
     pathway_make_dotplot = TRUE,
     pathway_overwrite = TRUE,
-    pathway_per_comparison = TRUE,
+    pathway_per_comparison = FALSE,
     pathway_per_comparison_dir = "per_cmpr_topic_pathway",
     pathway_split_direction = TRUE,
     run_pathway_gsea = FALSE,
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
-    link_topic_overwrite = TRUE,
+    link_topic_overwrite = FALSE,
+    link_topic_fdr_q = 0.2,
     pathway_link_scores_file = "topic_links.csv",
     pathway_link_scores_file_tf = "topic_links.csv",
     pathway_link_gene_terms_file = NULL,
@@ -546,7 +548,8 @@ if (isTRUE(run_single_topic_test)) {
     run_pathway_gsea = FALSE,
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
-    link_topic_overwrite = TRUE,
+    link_topic_overwrite = FALSE,
+    link_topic_fdr_q = 0.2,
     pathway_link_scores_file = "topic_links.csv",
     pathway_link_scores_file_tf = "topic_links.csv",
     pathway_link_gene_terms_file = NULL,
@@ -672,11 +675,16 @@ if (isTRUE(run_single_topic_test)) {
           gamma_path <- file.path(d, "topic_gamma_cutoffs.csv")
           if (file.exists(gamma_path)) {
             gc <- data.table::fread(gamma_path)
-            if ("gamma_cutoff" %in% names(gc)) {
+            if (all(c("peaks_gamma_cutoff", "gene_gamma_cutoff") %in% names(gc))) {
               .log_inform(sprintf(
-                "gamma_cutoffs: min=%.4g, max=%.4g",
-                min(gc$gamma_cutoff, na.rm = TRUE),
-                max(gc$gamma_cutoff, na.rm = TRUE)
+                "peaks_gamma_cutoff: min=%.4g, max=%.4g",
+                min(gc$peaks_gamma_cutoff, na.rm = TRUE),
+                max(gc$peaks_gamma_cutoff, na.rm = TRUE)
+              ))
+              .log_inform(sprintf(
+                "gene_gamma_cutoff: min=%.4g, max=%.4g",
+                min(gc$gene_gamma_cutoff, na.rm = TRUE),
+                max(gc$gene_gamma_cutoff, na.rm = TRUE)
               ))
             }
           }
@@ -716,7 +724,8 @@ if (isTRUE(run_gammafit_preview)) {
       pathway_per_comparison = FALSE,
       run_pathway_gsea = FALSE,
       run_link_topic_scores = TRUE,
-      link_topic_overwrite = TRUE
+      link_topic_overwrite = FALSE,
+      link_topic_fdr_q = 0.2
     )
   )
 

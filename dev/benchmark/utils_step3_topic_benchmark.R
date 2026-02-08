@@ -482,7 +482,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
                                                    point_size = 0.4,
                                                    facets_ncol = 6,
                                                    density_bins = 140L,
-                                                   methods = c("peak_and_gene", "peak_or_gene"),
+                                                   methods = c("peak_and_gene", "link_score_efdr"),
                                                    verbose = TRUE) {
   .assert_pkg("data.table")
   .assert_pkg("ggplot2")
@@ -490,9 +490,9 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "peak_or_gene"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or peak_or_gene.")
+    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for peak-gene concordance outputs.")
@@ -579,7 +579,11 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
       if (method == "peak_and_gene") {
         dt <- dt[.as_flag(peak_pass) & .as_flag(gene_pass)]
       } else {
-        dt <- dt[.as_flag(peak_pass) | .as_flag(gene_pass)]
+        if (!("link_pass" %in% names(dt))) {
+          if (isTRUE(verbose)) .log_warn("[topic_benchmark] topic_links missing link_pass for {row$combo_tag}")
+          next
+        }
+        dt <- dt[.as_flag(link_pass)]
       }
       if (!nrow(dt)) next
       dt[, peak_score := suppressWarnings(as.numeric(peak_score))]
@@ -745,7 +749,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   if (!is.data.frame(df) || ncol(df) < 2L) return(NULL)
   df <- df[!duplicated(df), , drop = FALSE]
   n_topics <- as.integer(table(df[[item_col]]))
-  n_topics <- n_topics[n_topics >= 2L]
+  n_topics <- n_topics[n_topics >= 1L]
   if (!length(n_topics)) {
     return(data.frame(n_topics = integer(0), n_items = integer(0), stringsAsFactors = FALSE))
   }
@@ -764,16 +768,16 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
                                                  vae_variant = "multivi_encoder",
                                                  doc_mode = c("tf_cluster", "tf"),
                                                  out_file,
-                                                 methods = c("peak_and_gene", "peak_or_gene"),
+                                                 methods = c("peak_and_gene", "link_score_efdr"),
                                                  verbose = TRUE) {
   .assert_pkg("data.table")
   .assert_pkg("ggplot2")
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "peak_or_gene"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or peak_or_gene.")
+    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for shared-topic benchmark outputs.")
@@ -838,7 +842,12 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
           if (method == "peak_and_gene") {
             link_df <- link_df[.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
           } else {
-            link_df <- link_df[.as_logical_flag(peak_pass) | .as_logical_flag(gene_pass)]
+            if (!("link_pass" %in% names(link_df))) {
+              if (isTRUE(verbose)) .log_warn("[topic_benchmark] topic_links missing link_pass for {row$combo_tag}")
+              link_df <- NULL
+            } else {
+              link_df <- link_df[.as_logical_flag(link_pass)]
+            }
           }
           link_df$link_id <- paste(link_df$peak_id, link_df$gene_key, sep = "::")
         } else {
@@ -915,8 +924,8 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
         if (is.null(df) || !is.data.frame(df) || !nrow(df)) return(integer(0))
         as.integer(df$n_topics)
       })))
-      vals <- vals[is.finite(vals) & vals >= 2L]
-      if (!length(vals)) vals <- 2L
+      vals <- vals[is.finite(vals) & vals >= 1L]
+      if (!length(vals)) vals <- 1L
       as.character(sort(vals))
     }
     x_links <- .topic_levels(row_payload, "links")
@@ -927,10 +936,14 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
     .plot_bar <- function(df, title, y_max, x_levels) {
       if (!is.data.frame(df) || !nrow(df)) {
         df <- data.frame(n_topics = integer(0), n_items = numeric(0))
+      } else {
+        df <- df[is.finite(df$n_topics) & !is.na(df$n_topics) & df$n_topics >= 1L, , drop = FALSE]
       }
+      df$bar_group <- ifelse(as.integer(df$n_topics) == 1L, "n1", "n_other")
       df$n_topics <- factor(as.character(df$n_topics), levels = x_levels)
       p <- ggplot2::ggplot(df, ggplot2::aes(x = n_topics, y = n_items)) +
-        ggplot2::geom_col(fill = "#3182bd", width = 0.8, na.rm = TRUE) +
+        ggplot2::geom_col(ggplot2::aes(fill = bar_group), width = 0.8, na.rm = TRUE) +
+        ggplot2::scale_fill_manual(values = c(n1 = "#e34a33", n_other = "#3182bd"), guide = "none") +
         ggplot2::scale_x_discrete(drop = FALSE) +
         ggplot2::coord_cartesian(ylim = c(0, y_max), expand = TRUE) +
         ggplot2::labs(
@@ -981,7 +994,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
                                                vae_variant = "multivi_encoder",
                                                doc_mode = c("tf_cluster", "tf"),
                                                out_file,
-                                               methods = c("peak_and_gene", "peak_or_gene"),
+                                               methods = c("peak_and_gene", "link_score_efdr"),
                                                facets_ncol = 6,
                                                min_bins = 80L,
                                                max_bins = 260L,
@@ -991,9 +1004,9 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "peak_or_gene"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or peak_or_gene.")
+    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for pathway logp histogram outputs.")
@@ -1157,7 +1170,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
   panel_metrics <- Filter(Negate(is.null), panel_metrics)
   if (length(panel_metrics)) {
     metrics_dt <- data.table::rbindlist(lapply(panel_metrics, data.table::as.data.table), use.names = TRUE, fill = TRUE)
-    metrics_dt[, method := factor(method, levels = c("peak_and_gene", "peak_or_gene"))]
+    metrics_dt[, method := factor(method, levels = c("peak_and_gene", "link_score_efdr"))]
     metrics_dt <- metrics_dt[order(method, panel)]
     metrics_file <- sprintf("%s_panel_metrics.csv", out_base)
     readr::write_csv(as.data.frame(metrics_dt), metrics_file)
@@ -1185,11 +1198,11 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
       }
       z_cols <- paste0("z_", metrics_key)
       metrics_plot$composite_right_shift_score <- rowMeans(metrics_plot[, z_cols, drop = FALSE], na.rm = TRUE)
-      metrics_plot <- metrics_plot[order(-composite_right_shift_score, panel_method)]
+      metrics_plot <- metrics_plot[order(-metrics_plot$composite_right_shift_score, metrics_plot$panel_method), , drop = FALSE]
       metrics_plot$panel_method <- factor(metrics_plot$panel_method, levels = rev(unique(metrics_plot$panel_method)))
 
       long_dt <- data.table::melt(
-        metrics_plot,
+        data.table::as.data.table(metrics_plot),
         id.vars = c("method", "panel", "panel_method", "composite_right_shift_score"),
         measure.vars = z_cols,
         variable.name = "metric",
@@ -1395,9 +1408,9 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
     paste(backend_lbl, gene_lbl, tf_lbl, count_lbl)
   }
 
-  method_levels <- c("peak_or_gene", "peak_and_gene")
+  method_levels <- c("link_score_efdr", "peak_and_gene")
   method_labels <- c(
-    "peak_or_gene" = "Peak or gene",
+    "link_score_efdr" = "Link score eFDR",
     "peak_and_gene" = "Peak and gene"
   )
   status_levels <- c("Pass", "Fail")
@@ -1445,17 +1458,21 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
           if (nrow(dt)) {
             # Strictly count each tf-peak-gene link once in this plot.
             dt <- unique(dt, by = c("link_id", "peak_pass", "gene_pass"))
+            if (!("link_pass" %in% names(dt))) {
+              if (isTRUE(verbose)) .log_warn("[topic_benchmark] Missing link_pass in topic_links.csv for {row$combo_tag}")
+              dt[, link_pass := FALSE]
+            }
             link_status <- dt[, .(
-              pass_peak_or_gene = any(.as_logical_flag(peak_pass) | .as_logical_flag(gene_pass), na.rm = TRUE),
+              pass_link_score_efdr = any(.as_logical_flag(link_pass), na.rm = TRUE),
               pass_peak_and_gene = any(.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass), na.rm = TRUE)
             ), by = .(link_id)]
 
             n_total <- nrow(link_status)
-            n_pass_or <- sum(link_status$pass_peak_or_gene, na.rm = TRUE)
+            n_pass_efdr <- sum(link_status$pass_link_score_efdr, na.rm = TRUE)
             n_pass_and <- sum(link_status$pass_peak_and_gene, na.rm = TRUE)
 
-            counts$count[counts$method == "peak_or_gene" & counts$status == "Pass"] <- as.integer(n_pass_or)
-            counts$count[counts$method == "peak_or_gene" & counts$status == "Fail"] <- as.integer(n_total - n_pass_or)
+            counts$count[counts$method == "link_score_efdr" & counts$status == "Pass"] <- as.integer(n_pass_efdr)
+            counts$count[counts$method == "link_score_efdr" & counts$status == "Fail"] <- as.integer(n_total - n_pass_efdr)
             counts$count[counts$method == "peak_and_gene" & counts$status == "Pass"] <- as.integer(n_pass_and)
             counts$count[counts$method == "peak_and_gene" & counts$status == "Fail"] <- as.integer(n_total - n_pass_and)
           }
@@ -1481,7 +1498,7 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
   if (!is.finite(y_max)) y_max <- 1
 
   p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = method, y = count, fill = status)) +
-    ggplot2::geom_col(width = 0.8, na.rm = TRUE) +
+    ggplot2::geom_col(width = 0.8, na.rm = TRUE, position = ggplot2::position_stack(reverse = TRUE)) +
     ggplot2::scale_fill_manual(values = status_colors, drop = FALSE) +
     ggplot2::facet_wrap(~panel, ncol = as.integer(facets_ncol), drop = FALSE) +
     ggplot2::coord_cartesian(ylim = c(0, y_max), expand = FALSE) +
