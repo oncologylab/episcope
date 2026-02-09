@@ -508,6 +508,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
     vapply(methods, function(m) sprintf("%s_rrho2_like_%s.%s", out_base, m, out_ext), character(1)),
     methods
   )
+  out_file_density_all <- sprintf("%s_rrho2_like_all.%s", out_base, out_ext)
 
   combo_grid$combo_tag <- paste0(
     "gene_", combo_grid$gene_term_mode,
@@ -550,6 +551,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   }
 
   all_data <- vector("list", 0L)
+  all_data_unfiltered <- vector("list", 0L)
   for (method in methods) {
     for (i in seq_len(nrow(combo_grid))) {
       row <- combo_grid[i, , drop = FALSE]
@@ -571,10 +573,25 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
         next
       }
       dt <- data.table::fread(link_path)
+      dt_all <- data.table::copy(dt)
       req <- c("peak_id", "gene_key", "peak_score", "gene_score", "peak_pass", "gene_pass")
       if (!all(req %in% names(dt))) {
         if (isTRUE(verbose)) .log_warn("[topic_benchmark] topic_links missing required columns for {row$combo_tag}")
         next
+      }
+      dt_all[, peak_score := suppressWarnings(as.numeric(peak_score))]
+      dt_all[, gene_score := suppressWarnings(as.numeric(gene_score))]
+      dt_all <- dt_all[is.finite(peak_score) & is.finite(gene_score)]
+      if (nrow(dt_all)) {
+        dt_all <- dt_all[, .(
+          peak_score = max(peak_score, na.rm = TRUE),
+          gene_score = max(gene_score, na.rm = TRUE)
+        ), by = .(peak_id, gene_key)]
+        dt_all <- dt_all[is.finite(peak_score) & is.finite(gene_score)]
+        if (nrow(dt_all)) {
+          dt_all[, panel := .row_label(row)]
+          all_data_unfiltered[[length(all_data_unfiltered) + 1L]] <- dt_all[, .(panel, peak_score, gene_score)]
+        }
       }
       if (method == "peak_and_gene") {
         dt <- dt[.as_flag(peak_pass) & .as_flag(gene_pass)]
@@ -618,12 +635,30 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   if (!nrow(plot_df)) {
     .log_abort("No finite log10(peak_score)/log10(gene_score) values to plot.")
   }
+  plot_df_all <- NULL
+  if (length(all_data_unfiltered)) {
+    plot_df_all <- data.table::rbindlist(all_data_unfiltered, use.names = TRUE, fill = TRUE)
+    plot_df_all <- plot_df_all[is.finite(peak_score) & is.finite(gene_score)]
+    if (nrow(plot_df_all)) {
+      plot_df_all[, peak_score_log10 := suppressWarnings(log10(peak_score))]
+      plot_df_all[, gene_score_log10 := suppressWarnings(log10(gene_score))]
+      plot_df_all <- plot_df_all[is.finite(peak_score_log10) & is.finite(gene_score_log10)]
+    } else {
+      plot_df_all <- NULL
+    }
+  }
 
   # Shared axes across methods for direct comparability.
   xlim <- range(plot_df$peak_score_log10, finite = TRUE)
   ylim <- range(plot_df$gene_score_log10, finite = TRUE)
   if (!all(is.finite(xlim))) xlim <- c(-6, 0)
   if (!all(is.finite(ylim))) ylim <- c(-6, 0)
+  if (data.table::is.data.table(plot_df_all) && nrow(plot_df_all)) {
+    xlim_all <- range(plot_df_all$peak_score_log10, finite = TRUE)
+    ylim_all <- range(plot_df_all$gene_score_log10, finite = TRUE)
+    if (all(is.finite(xlim_all))) xlim <- range(c(xlim, xlim_all), finite = TRUE)
+    if (all(is.finite(ylim_all))) ylim <- range(c(ylim, ylim_all), finite = TRUE)
+  }
   # Use a shared square bin width in data units for RRHO2-like density panels.
   density_bins <- max(10L, as.integer(density_bins))
   xr <- diff(xlim)
@@ -734,6 +769,71 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
       )
     ggplot2::ggsave(method_out_files_density[[m]], p_density, width = width, height = height, limitsize = FALSE)
     if (isTRUE(verbose)) .log_inform("[topic_benchmark] Wrote RRHO2-like density: {method_out_files_density[[m]]}")
+  }
+
+  if (data.table::is.data.table(plot_df_all) && nrow(plot_df_all)) {
+    dsub <- data.table::copy(plot_df_all)
+    dsub[, panel := factor(panel, levels = panel_levels)]
+    stats_dt <- dsub[, {
+      x <- as.numeric(peak_score)
+      y <- as.numeric(gene_score)
+      ok <- is.finite(x) & is.finite(y)
+      x <- x[ok]
+      y <- y[ok]
+      n <- length(x)
+      if (n >= 3L && stats::sd(x) > 0 && stats::sd(y) > 0) {
+        r <- suppressWarnings(stats::cor(x, y, method = "pearson"))
+        if (is.finite(r) && abs(r) < 1) {
+          tval <- r * sqrt((n - 2) / (1 - r^2))
+          pval <- 2 * stats::pt(-abs(tval), df = n - 2)
+          lab <- sprintf("R=%.2f, p=%s", r, formatC(pval, format = "e", digits = 2))
+        } else if (is.finite(r) && abs(r) == 1) {
+          lab <- sprintf("R=%.2f, p=0", r)
+        } else {
+          lab <- "R=NA, p=NA"
+        }
+      } else {
+        lab <- "R=NA, p=NA"
+      }
+      .(label = lab)
+    }, by = panel]
+    stats_dt[, panel := factor(panel, levels = levels(dsub$panel))]
+    x_annot <- xlim[1] + 0.02 * diff(xlim)
+    y_annot <- ylim[2] - 0.02 * diff(ylim)
+    stats_dt[, `:=`(x = x_annot, y = y_annot)]
+
+    rrho2_palette <- c("#4815AA", "#3783FF", "#4DE94C", "#FFEE00", "#FF8C00", "#F60000")
+    p_density_all <- ggplot2::ggplot(dsub, ggplot2::aes(x = peak_score_log10, y = gene_score_log10)) +
+      ggplot2::stat_bin_2d(binwidth = c(square_binwidth, square_binwidth), na.rm = TRUE) +
+      ggplot2::scale_fill_gradientn(colours = rrho2_palette, trans = "sqrt") +
+      ggplot2::coord_cartesian(xlim = xlim, ylim = ylim) +
+      ggplot2::facet_wrap(~ panel, ncol = as.integer(facets_ncol), drop = FALSE) +
+      ggplot2::geom_text(
+        data = stats_dt,
+        ggplot2::aes(x = x, y = y, label = label),
+        inherit.aes = FALSE,
+        hjust = 0,
+        vjust = 1,
+        size = 2.4,
+        fontface = "bold"
+      ) +
+      ggplot2::labs(
+        title = "Peak-gene RRHO2-like density (all links)",
+        x = "log10(peak_score)",
+        y = "log10(gene_score)",
+        fill = "N"
+      ) +
+      ggplot2::theme_classic(base_size = 9) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+        strip.text = ggplot2::element_text(size = 8, face = "bold"),
+        axis.title = ggplot2::element_text(face = "bold"),
+        axis.text = ggplot2::element_text(face = "bold"),
+        legend.title = ggplot2::element_text(face = "bold"),
+        legend.text = ggplot2::element_text(face = "bold")
+      )
+    ggplot2::ggsave(out_file_density_all, p_density_all, width = width, height = height, limitsize = FALSE)
+    if (isTRUE(verbose)) .log_inform("[topic_benchmark] Wrote RRHO2-like density: {out_file_density_all}")
   }
 
   invisible(NULL)

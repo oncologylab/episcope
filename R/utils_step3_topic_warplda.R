@@ -1290,6 +1290,21 @@ plot_gammafit_binarize <- function(score_mat,
   term_mat <- .count_terms(topic_terms)
   link_or_mat <- .count_links(topic_links, use_and = FALSE)
   link_and_mat <- .count_links(topic_links, use_and = TRUE)
+  .safe_hist_breaks <- function(x, n = 100L) {
+    x <- x[is.finite(x)]
+    if (!length(x)) return(c(0, 1))
+    xr <- range(x, finite = TRUE)
+    if (!all(is.finite(xr))) return(c(0, 1))
+    if (xr[1] == xr[2]) {
+      eps <- if (xr[1] == 0) 1e-6 else abs(xr[1]) * 1e-6
+      return(c(xr[1] - eps, xr[2] + eps))
+    }
+    br <- pretty(xr, n = max(10L, as.integer(n)))
+    br <- unique(as.numeric(br))
+    br <- br[is.finite(br)]
+    if (length(br) < 2L) return(c(xr[1], xr[2]))
+    br
+  }
 
   global_max <- max(
     c(colSums(term_mat), colSums(link_or_mat), colSums(link_and_mat)),
@@ -1372,7 +1387,7 @@ plot_gammafit_binarize <- function(score_mat,
         n_sel_k <- if (identical(panel_type, "GENE")) n_selected_gene[k] else n_selected_peak[k]
         graphics::hist(
           sc_panel,
-          breaks = as.integer(breaks),
+          breaks = .safe_hist_breaks(sc_panel, n = as.integer(breaks)),
           prob = TRUE,
           main = paste0("Topic", k, " ", panel_type),
           col = grDevices::adjustcolor(col_fill, alpha.f = 0.55),
@@ -2849,6 +2864,7 @@ compute_topic_links <- function(edges_docs,
                                 thrP = 0.975,
                                 min_terms = 50L,
                                 fdr_q = 0.2,
+                                fdr_p = NA_real_,
                                 efdr_scope = c("per_topic", "global"),
                                 efdr_B = 100L,
                                 efdr_seed = 1L,
@@ -2864,8 +2880,11 @@ compute_topic_links <- function(edges_docs,
   n_cores <- as.integer(n_cores)
   efdr_B <- as.integer(efdr_B)
   fdr_q <- .safe_num(fdr_q)
-  if (!is.finite(fdr_q) || fdr_q <= 0 || fdr_q >= 1) {
-    .log_abort("fdr_q must be in (0, 1).")
+  fdr_p <- .safe_num(fdr_p)
+  use_p_cut <- is.finite(fdr_p) && fdr_p > 0 && fdr_p < 1
+  use_q_cut <- is.finite(fdr_q) && fdr_q > 0 && fdr_q < 1
+  if (!use_p_cut && !use_q_cut) {
+    .log_abort("Provide at least one valid cutoff: fdr_p in (0,1) or fdr_q in (0,1).")
   }
 
   if (!is.null(out_file) && file.exists(out_file) && !isTRUE(overwrite)) {
@@ -3043,11 +3062,23 @@ compute_topic_links <- function(edges_docs,
   }
 
   n_before_efdr <- nrow(out)
-  out[, link_pass := is.finite(link_efdr_q) & link_efdr_q <= fdr_q]
+  if (use_p_cut) {
+    out[, link_pass := is.finite(link_efdr_p) & link_efdr_p <= fdr_p &
+                     .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+  } else {
+    out[, link_pass := is.finite(link_efdr_q) & link_efdr_q <= fdr_q &
+                     .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+  }
   n_pass_efdr <- sum(out$link_pass, na.rm = TRUE)
-  .log_inform(
-    "topic_links eFDR ({efdr_scope}): pass {n_pass_efdr}/{n_before_efdr} rows (q<={fdr_q}, B={efdr_B}, seed={efdr_seed})."
-  )
+  if (use_p_cut) {
+    .log_inform(
+      "topic_links eFDR ({efdr_scope}): pass {n_pass_efdr}/{n_before_efdr} rows (p<={fdr_p}, B={efdr_B}, seed={efdr_seed})."
+    )
+  } else {
+    .log_inform(
+      "topic_links eFDR ({efdr_scope}): pass {n_pass_efdr}/{n_before_efdr} rows (q<={fdr_q}, B={efdr_B}, seed={efdr_seed})."
+    )
+  }
 
   if (!is.null(out_file)) {
     data.table::fwrite(out, out_file)
@@ -4524,6 +4555,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               link_topic_n_cores = 1L,
                                               link_topic_overwrite = FALSE,
                                               link_topic_fdr_q = 0.2,
+                                              link_topic_fdr_p = NA_real_,
                                               link_topic_efdr_scope = c("per_topic", "global"),
                                               link_topic_efdr_B = 100L,
                                               link_topic_efdr_seed = 1L,
@@ -4590,6 +4622,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       thrP = thrP,
       min_terms = in_topic_min_terms,
       fdr_q = link_topic_fdr_q,
+      fdr_p = link_topic_fdr_p,
       efdr_scope = link_topic_efdr_scope,
       efdr_B = link_topic_efdr_B,
       efdr_seed = link_topic_efdr_seed,
@@ -4833,6 +4866,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           link_topic_n_cores = 1L,
                                           link_topic_overwrite = FALSE,
                                           link_topic_fdr_q = 0.2,
+                                          link_topic_fdr_p = NA_real_,
                                           link_topic_efdr_scope = c("per_topic", "global"),
                                           link_topic_efdr_B = 100L,
                                           link_topic_efdr_seed = 1L,
@@ -5110,6 +5144,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       thrP = thrP,
       min_terms = in_topic_min_terms,
       fdr_q = link_topic_fdr_q,
+      fdr_p = link_topic_fdr_p,
       efdr_scope = link_topic_efdr_scope,
       efdr_B = link_topic_efdr_B,
       efdr_seed = link_topic_efdr_seed,
@@ -5502,6 +5537,7 @@ run_vae_topic_report_py <- function(doc_term,
     link_topic_n_cores = 1L,
     link_topic_overwrite = FALSE,
     link_topic_fdr_q = 0.2,
+    link_topic_fdr_p = NA_real_,
     link_topic_efdr_scope = "per_topic",
     link_topic_efdr_B = 100L,
     link_topic_efdr_seed = 1L
@@ -6344,6 +6380,7 @@ extract_regulatory_topics <- function(k,
       link_topic_n_cores = 1L,
       link_topic_overwrite = FALSE,
       link_topic_fdr_q = 0.2,
+      link_topic_fdr_p = NA_real_,
       link_topic_efdr_scope = "per_topic",
       link_topic_efdr_B = 100L,
       link_topic_efdr_seed = 1L,

@@ -370,7 +370,8 @@ for (i in seq_len(nrow(combo_grid))) {
   count_input <- combo_grid$count_input[i]
   backend <- combo_grid$backend[i]
   vae_variant <- combo_grid$vae_variant[i]
-  thrP_use <- if (identical(backend, "warplda")) 0.7 else 0.9
+  thrP_use <- if (identical(backend, "warplda")) 0.5 else 0.8
+  link_fdr_p_use <- if (identical(backend, "warplda")) 0.01 else 0.1
 
   combo_tag <- paste0(
     "gene_", gene_term_mode,
@@ -378,7 +379,9 @@ for (i in seq_len(nrow(combo_grid))) {
     "_count_", count_input
   )
   combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
-  .log_inform("[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend}.")
+  .log_inform(
+    "[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend} (thrP={thrP_use}, link_fdr_p={link_fdr_p_use})."
+  )
 
   topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
   topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
@@ -395,8 +398,9 @@ for (i in seq_len(nrow(combo_grid))) {
     run_pathway_gsea = FALSE,
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
-    link_topic_overwrite = FALSE,
-    link_topic_fdr_q = 0.2,
+    link_topic_overwrite = TRUE,
+    link_topic_fdr_q = 0.5,
+    link_topic_fdr_p = link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
     pathway_link_scores_file_tf = "topic_links.csv",
     pathway_link_gene_terms_file = NULL,
@@ -535,10 +539,12 @@ if (isTRUE(run_single_topic_test)) {
   .log_inform(
     "single_topic_test row={single_combo_idx}: combo={single_combo_tag}, backend={single_backend}, variant={single_variant}, k={single_k}"
   )
+  single_thrP_use <- if (identical(single_backend, "warplda")) 0.5 else 0.8
+  single_link_fdr_p_use <- if (identical(single_backend, "warplda")) 0.01 else 0.1
 
   single_topic_args <- list(
     pathway_source = "link_scores",
-    thrP = 0.95,
+    thrP = single_thrP_use,
     pathway_make_heatmap = FALSE,
     pathway_make_dotplot = TRUE,
     pathway_overwrite = TRUE,
@@ -548,8 +554,9 @@ if (isTRUE(run_single_topic_test)) {
     run_pathway_gsea = FALSE,
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
-    link_topic_overwrite = FALSE,
-    link_topic_fdr_q = 0.2,
+    link_topic_overwrite = TRUE,
+    link_topic_fdr_q = 0.5,
+    link_topic_fdr_p = single_link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
     pathway_link_scores_file_tf = "topic_links.csv",
     pathway_link_gene_terms_file = NULL,
@@ -706,6 +713,8 @@ if (isTRUE(run_gammafit_preview)) {
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
   preview_k <- selected_k
+  preview_thrP_use <- if (identical(preview_backend, "warplda")) 0.5 else 0.8
+  preview_link_fdr_p_use <- if (identical(preview_backend, "warplda")) 0.01 else 0.1
   preview_model_dir <- file.path(step3_root_dir, "topic_models", preview_combo_tag)
   preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
 
@@ -718,14 +727,15 @@ if (isTRUE(run_gammafit_preview)) {
     doc_mode = topic_doc_mode,
     topic_report_args = list(
       binarize_method = "gammafit",
-      thrP = 0.9,
+      thrP = preview_thrP_use,
       pathway_make_heatmap = FALSE,
       pathway_make_dotplot = FALSE,
       pathway_per_comparison = FALSE,
       run_pathway_gsea = FALSE,
       run_link_topic_scores = TRUE,
-      link_topic_overwrite = FALSE,
-      link_topic_fdr_q = 0.2
+      link_topic_overwrite = TRUE,
+      link_topic_fdr_q = 0.5,
+      link_topic_fdr_p = preview_link_fdr_p_use
     )
   )
 
@@ -832,3 +842,4 @@ if (isTRUE(run_topic_benchmark)) {
     facets_ncol = 6L
   )
 }
+
