@@ -380,7 +380,7 @@ for (i in seq_len(nrow(combo_grid))) {
   )
   combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
   .log_inform(
-    "[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend} (thrP={thrP_use}, link_fdr_p={link_fdr_p_use})."
+    "[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend} (thrP={thrP_use}, link_method=link_score_prob, link_prob_cutoff=0.3)."
   )
 
   topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
@@ -399,6 +399,8 @@ for (i in seq_len(nrow(combo_grid))) {
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
     link_topic_overwrite = TRUE,
+    link_topic_method = "link_score_prob",
+    link_topic_prob_cutoff = 0.3,
     link_topic_fdr_q = 0.5,
     link_topic_fdr_p = link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
@@ -555,6 +557,8 @@ if (isTRUE(run_single_topic_test)) {
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
     link_topic_overwrite = TRUE,
+    link_topic_method = "link_score_prob",
+    link_topic_prob_cutoff = 0.3,
     link_topic_fdr_q = 0.5,
     link_topic_fdr_p = single_link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
@@ -734,6 +738,8 @@ if (isTRUE(run_gammafit_preview)) {
       run_pathway_gsea = FALSE,
       run_link_topic_scores = TRUE,
       link_topic_overwrite = TRUE,
+      link_topic_method = "link_score_prob",
+      link_topic_prob_cutoff = 0.3,
       link_topic_fdr_q = 0.5,
       link_topic_fdr_p = preview_link_fdr_p_use
     )
@@ -842,4 +848,3 @@ if (isTRUE(run_topic_benchmark)) {
     facets_ncol = 6L
   )
 }
-

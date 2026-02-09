@@ -482,7 +482,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
                                                    point_size = 0.4,
                                                    facets_ncol = 6,
                                                    density_bins = 140L,
-                                                   methods = c("peak_and_gene", "link_score_efdr"),
+                                                   methods = c("peak_and_gene", "link_score_prob"),
                                                    verbose = TRUE) {
   .assert_pkg("data.table")
   .assert_pkg("ggplot2")
@@ -490,9 +490,9 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_prob"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
+    .log_abort("methods must include peak_and_gene and/or link_score_prob.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for peak-gene concordance outputs.")
@@ -868,16 +868,16 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
                                                  vae_variant = "multivi_encoder",
                                                  doc_mode = c("tf_cluster", "tf"),
                                                  out_file,
-                                                 methods = c("peak_and_gene", "link_score_efdr"),
+                                                 methods = c("peak_and_gene", "link_score_prob"),
                                                  verbose = TRUE) {
   .assert_pkg("data.table")
   .assert_pkg("ggplot2")
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_prob"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
+    .log_abort("methods must include peak_and_gene and/or link_score_prob.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for shared-topic benchmark outputs.")
@@ -1094,7 +1094,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
                                                vae_variant = "multivi_encoder",
                                                doc_mode = c("tf_cluster", "tf"),
                                                out_file,
-                                               methods = c("peak_and_gene", "link_score_efdr"),
+                                               methods = c("peak_and_gene", "link_score_prob"),
                                                facets_ncol = 6,
                                                min_bins = 80L,
                                                max_bins = 260L,
@@ -1104,9 +1104,9 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
   doc_mode <- match.arg(doc_mode)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
 
-  methods <- intersect(methods, c("peak_and_gene", "link_score_efdr"))
+  methods <- intersect(methods, c("peak_and_gene", "link_score_prob"))
   if (!length(methods)) {
-    .log_abort("methods must include peak_and_gene and/or link_score_efdr.")
+    .log_abort("methods must include peak_and_gene and/or link_score_prob.")
   }
   if (missing(out_file) || is.null(out_file) || !nzchar(out_file)) {
     .log_abort("out_file must be provided for pathway logp histogram outputs.")
@@ -1270,7 +1270,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
   panel_metrics <- Filter(Negate(is.null), panel_metrics)
   if (length(panel_metrics)) {
     metrics_dt <- data.table::rbindlist(lapply(panel_metrics, data.table::as.data.table), use.names = TRUE, fill = TRUE)
-    metrics_dt[, method := factor(method, levels = c("peak_and_gene", "link_score_efdr"))]
+    metrics_dt[, method := factor(method, levels = c("peak_and_gene", "link_score_prob"))]
     metrics_dt <- metrics_dt[order(method, panel)]
     metrics_file <- sprintf("%s_panel_metrics.csv", out_base)
     readr::write_csv(as.data.frame(metrics_dt), metrics_file)
@@ -1508,9 +1508,9 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
     paste(backend_lbl, gene_lbl, tf_lbl, count_lbl)
   }
 
-  method_levels <- c("link_score_efdr", "peak_and_gene")
+  method_levels <- c("link_score_prob", "peak_and_gene")
   method_labels <- c(
-    "link_score_efdr" = "Link score eFDR",
+    "link_score_prob" = "Link score prob",
     "peak_and_gene" = "Peak and gene"
   )
   status_levels <- c("Pass", "Fail")
@@ -1563,16 +1563,16 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
               dt[, link_pass := FALSE]
             }
             link_status <- dt[, .(
-              pass_link_score_efdr = any(.as_logical_flag(link_pass), na.rm = TRUE),
+              pass_link_score_prob = any(.as_logical_flag(link_pass), na.rm = TRUE),
               pass_peak_and_gene = any(.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass), na.rm = TRUE)
             ), by = .(link_id)]
 
             n_total <- nrow(link_status)
-            n_pass_efdr <- sum(link_status$pass_link_score_efdr, na.rm = TRUE)
+            n_pass_prob <- sum(link_status$pass_link_score_prob, na.rm = TRUE)
             n_pass_and <- sum(link_status$pass_peak_and_gene, na.rm = TRUE)
 
-            counts$count[counts$method == "link_score_efdr" & counts$status == "Pass"] <- as.integer(n_pass_efdr)
-            counts$count[counts$method == "link_score_efdr" & counts$status == "Fail"] <- as.integer(n_total - n_pass_efdr)
+            counts$count[counts$method == "link_score_prob" & counts$status == "Pass"] <- as.integer(n_pass_prob)
+            counts$count[counts$method == "link_score_prob" & counts$status == "Fail"] <- as.integer(n_total - n_pass_prob)
             counts$count[counts$method == "peak_and_gene" & counts$status == "Pass"] <- as.integer(n_pass_and)
             counts$count[counts$method == "peak_and_gene" & counts$status == "Fail"] <- as.integer(n_total - n_pass_and)
           }
