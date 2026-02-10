@@ -3056,7 +3056,8 @@ compute_topic_links <- function(edges_docs,
       s <- sum(link_score, na.rm = TRUE)
       if (!is.finite(s) || s <= 0) rep(1 / .N, .N) else link_score / s
     }, by = grp]
-    out[, link_pass := is.finite(link_score_prob) & link_score_prob >= link_prob_cutoff]
+    out[, link_pass := is.finite(link_score_prob) & link_score_prob >= link_prob_cutoff &
+                     .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
     n_pass <- sum(out$link_pass, na.rm = TRUE)
     .log_inform(
       "topic_links prob: pass {n_pass}/{nrow(out)} rows (link_score_prob>={link_prob_cutoff})."
@@ -3544,6 +3545,14 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
   }
+  .quiet_enrichr_call <- function(expr) {
+    val <- NULL
+    utils::capture.output(
+      val <- suppressMessages(eval.parent(substitute(expr))),
+      type = "output"
+    )
+    val
+  }
 
   if (!requireNamespace("enrichR", quietly = TRUE)) {
     msg <- "Skipping pathway enrichment heatmap: enrichR not installed."
@@ -3560,7 +3569,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   site_set <- FALSE
   tryCatch(
     {
-      enrichR::setEnrichrSite("Enrichr")
+      .quiet_enrichr_call(enrichR::setEnrichrSite("Enrichr"))
       site_set <- TRUE
       log_msg("Enrichr site set to 'Enrichr'.")
     },
@@ -3638,7 +3647,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
       next
     }
     enr <- tryCatch(
-      enrichR::enrichr(genes, dbs),
+      .quiet_enrichr_call(enrichR::enrichr(genes, dbs)),
       error = function(e) {
         log_msg(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
         NULL
@@ -3884,6 +3893,14 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
   }
+  .quiet_enrichr_call <- function(expr) {
+    val <- NULL
+    utils::capture.output(
+      val <- suppressMessages(eval.parent(substitute(expr))),
+      type = "output"
+    )
+    val
+  }
 
   if (!requireNamespace("enrichR", quietly = TRUE)) {
     msg <- "Skipping link-score pathway enrichment: enrichR not installed."
@@ -3908,7 +3925,7 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   tryCatch(
     {
       .ensure_enrichr_site()
-      enrichR::setEnrichrSite("Enrichr")
+      .quiet_enrichr_call(enrichR::setEnrichrSite("Enrichr"))
       log_msg("Enrichr site set to 'Enrichr'.")
     },
     error = function(e) {
@@ -3967,7 +3984,7 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
       }
       log_fun(sprintf("Topic %s gene count: %d", nm, length(genes)))
       enr <- tryCatch(
-        enrichR::enrichr(genes, dbs),
+        .quiet_enrichr_call(enrichR::enrichr(genes, dbs)),
         error = function(e) {
           log_fun(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
           NULL

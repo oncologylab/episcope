@@ -553,6 +553,7 @@ r_grid  = c(-1, 0, 0.3, 0.5, 0.7)
 p_grid  = 10^seq(-4, -1, length.out = 20)
 
 modes <- c("AllFP", "CanonicalFP")
+eval_modes <- c("legacy", "fixed_binary")
 
 
 stack_range <- function(df, comp_levels) {
@@ -582,6 +583,30 @@ stack_range <- function(df, comp_levels) {
     nrow()
   TN <- predicted_unbound_eval %>%
     filter(!is.na(chip_bound_TN) & chip_bound_TN == 0) %>%
+    select(peak_chr, peak_start, peak_end) %>%
+    distinct() %>%
+    nrow()
+  FN <- predicted_unbound_eval %>%
+    filter(chip_bound_FN == 1) %>%
+    select(peak_chr, peak_start, peak_end) %>%
+    distinct() %>%
+    nrow()
+  c(TP = TP, FP = FP, TN = TN, FN = FN)
+}
+
+.count_confusion_fixed_binary <- function(predicted_bound, predicted_unbound_eval) {
+  TP <- predicted_bound %>%
+    filter(chip_bound_FN == 1) %>%
+    select(peak_chr, peak_start, peak_end) %>%
+    distinct() %>%
+    nrow()
+  FP <- predicted_bound %>%
+    filter(chip_bound_FN == 0) %>%
+    select(peak_chr, peak_start, peak_end) %>%
+    distinct() %>%
+    nrow()
+  TN <- predicted_unbound_eval %>%
+    filter(chip_bound_FN == 0) %>%
     select(peak_chr, peak_start, peak_end) %>%
     distinct() %>%
     nrow()
@@ -647,16 +672,18 @@ for (i in seq_along(batch)) {
       distinct(peak_chr, peak_start, peak_end, .keep_all = TRUE)
   }
 
-  grid <- data.frame()
-  k <- 1
-  for (r in r_grid) {
-    for(p in p_grid) {
-      print(paste(r,p))
+  for (eval_mode in eval_modes) {
+    message("Running evaluation mode: ", eval_mode)
+    grid <- data.frame()
+    k <- 1
+    for (r in r_grid) {
+      for(p in p_grid) {
+        print(paste(r,p))
 
-      grid[k, "r"] <- r
-      grid[k, "p"] <- p
+        grid[k, "r"] <- r
+        grid[k, "p"] <- p
 
-      for (mode in modes) {
+        for (mode in modes) {
 
         if (mode==modes[1]) {
           if (method %in% c("pearson_or_spearman", "pearson_and_spearman")) {
@@ -714,33 +741,41 @@ for (i in seq_along(batch)) {
           }
         }
 
-        predicted_unbound_eval <- predicted_unbound_fn %>%
-          distinct(peak_chr, peak_start, peak_end, .keep_all = TRUE) %>%
-          filter(is.finite(corr_fp_tf_r) & is.finite(corr_fp_tf_p_adj))
-        counts <- .count_confusion(predicted_bound, predicted_unbound_eval)
-        TP <- counts[["TP"]]; FP <- counts[["FP"]]
-        TN <- counts[["TN"]]; FN <- counts[["FN"]]
+          predicted_unbound_eval <- predicted_unbound_fn %>%
+            distinct(peak_chr, peak_start, peak_end, .keep_all = TRUE) %>%
+            filter(is.finite(corr_fp_tf_r) & is.finite(corr_fp_tf_p_adj))
 
-        grid[k, paste0(mode, "_TP")] <- TP
-        grid[k, paste0(mode, "_FP")] <- FP
-        grid[k, paste0(mode, "_TN")] <- TN
-        grid[k, paste0(mode, "_FN")] <- FN
-        grid[k, paste0(mode, "_accuracy")] <- (TP+TN)/(FP+TN+TP+FN)
-        grid[k, paste0(mode, "_precision")] <- TP/(TP+FP)
-        grid[k, paste0(mode, "_recall")] <- TP/(TP+FN)
+          counts <- if (eval_mode == "fixed_binary") {
+            .count_confusion_fixed_binary(predicted_bound, predicted_unbound_eval)
+          } else {
+            .count_confusion(predicted_bound, predicted_unbound_eval)
+          }
+          TP <- counts[["TP"]]; FP <- counts[["FP"]]
+          TN <- counts[["TN"]]; FN <- counts[["FN"]]
+
+          grid[k, paste0(mode, "_TP")] <- TP
+          grid[k, paste0(mode, "_FP")] <- FP
+          grid[k, paste0(mode, "_TN")] <- TN
+          grid[k, paste0(mode, "_FN")] <- FN
+          grid[k, paste0(mode, "_accuracy")] <- (TP+TN)/(FP+TN+TP+FN)
+          grid[k, paste0(mode, "_precision")] <- TP/(TP+FP)
+          grid[k, paste0(mode, "_recall")] <- TP/(TP+FN)
+        }
+        k=k+1
       }
-      k=k+1
     }
 
+    # save the raw grid table
+    grid_file <- file.path(
+      base_exp_dir,
+      if (eval_mode == "legacy") {
+        paste0(tf, "_", method, "_cutoff_grid_fp.csv")
+      } else {
+        paste0(tf, "_", method, "_cutoff_grid_fp_", eval_mode, ".csv")
+      }
+    )
+    readr::write_csv(grid, grid_file)
   }
-
-  # save the raw grid table
-  grid_file <- file.path(
-    base_exp_dir,
-    paste0(tf, "_", method, "_cutoff_grid_fp.csv")
-  )
-
-  readr::write_csv(grid, grid_file)
 }
 
 
@@ -759,13 +794,23 @@ for (i in seq_along(batch)) {
   pred_all <- batch[[i]]$pred_all
   pred_canonical <- batch[[i]]$pred_canonical
 
-  metrics_df <- readr::read_csv(
-    file.path(base_exp_dir, paste0(tf, "_", method, "_cutoff_grid_fp.csv")),
-    show_col_types = FALSE
-  )
+  for (eval_mode in eval_modes) {
+    metrics_df <- readr::read_csv(
+      file.path(
+        base_exp_dir,
+        if (eval_mode == "legacy") {
+          paste0(tf, "_", method, "_cutoff_grid_fp.csv")
+        } else {
+          paste0(tf, "_", method, "_cutoff_grid_fp_", eval_mode, ".csv")
+        }
+      ),
+      show_col_types = FALSE
+    )
 
   r_vals <- sort(unique(metrics_df$r))
   r_labs <- paste0("r > ", r_vals)
+  x_breaks <- scales::trans_breaks("log10", function(x) 10^x)
+  x_labels <- scales::trans_format("log10", scales::math_format(bold(10^.x)))
 
   plot_df <- metrics_df %>%
     select(
@@ -787,8 +832,8 @@ for (i in seq_along(batch)) {
     )
 
   p_metrics <- ggplot(plot_df, aes(x = p, y = value, color = metric, linetype = line_group)) +
-    geom_line(size = 0.7) +
-    scale_x_log10() +
+    geom_line(linewidth = 0.7, na.rm = TRUE) +
+    scale_x_log10(breaks = x_breaks, labels = x_labels) +
     labs(
       title = paste0(tf, " cutoff optimization metrics"),
       x = "p-value cutoff",
@@ -804,8 +849,14 @@ for (i in seq_along(batch)) {
       legend.position = "bottom",
       legend.box = "vertical",
       strip.background = element_rect(fill = "grey90"),
-      strip.text = element_text(size = 9),
-      plot.title = element_text(hjust = 0.5)
+      strip.text = element_text(size = 9, face = "bold"),
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(face = "bold")
     ) +
     guides(color = guide_legend(order = 1), linetype = guide_legend(order = 2))
 
@@ -854,44 +905,80 @@ for (i in seq_along(batch)) {
   p_all_counts_fixed <- ggplot(counts_all, aes(x = p, y = count_signed, fill = component)) +
     geom_col(data = all_neg) +
     geom_col(data = all_pos) +
-    scale_x_log10() +
+    scale_x_log10(breaks = x_breaks, labels = x_labels) +
     scale_y_continuous(limits = y_lim_shared) +
     facet_wrap(~ r_lab, ncol = length(r_vals)) +
     scale_fill_manual(values = conf_fill, name = "component") +
     labs(x = "p-value cutoff", y = "All (|y| = count)") +
     theme_bw() +
-    theme(legend.position = "none", strip.background = element_rect(fill = "grey90"), strip.text = element_blank())
+    theme(
+      legend.position = "none",
+      strip.background = element_rect(fill = "grey90"),
+      strip.text = element_blank(),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold")
+    )
 
   p_can_counts_fixed <- ggplot(counts_can, aes(x = p, y = count_signed, fill = component)) +
     geom_col(data = can_neg) +
     geom_col(data = can_pos) +
-    scale_x_log10() +
+    scale_x_log10(breaks = x_breaks, labels = x_labels) +
     scale_y_continuous(limits = y_lim_shared) +
     facet_wrap(~ r_lab, ncol = length(r_vals)) +
     scale_fill_manual(values = conf_fill, name = "component") +
     labs(x = "p-value cutoff", y = "Canonical (|y| = count)") +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"), strip.text = element_blank())
+    theme(
+      legend.position = "bottom",
+      strip.background = element_rect(fill = "grey90"),
+      strip.text = element_blank(),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(face = "bold")
+    )
 
   p_all_counts_auto <- ggplot(counts_all, aes(x = p, y = count_signed, fill = component)) +
     geom_col(data = all_neg) +
     geom_col(data = all_pos) +
-    scale_x_log10() +
+    scale_x_log10(breaks = x_breaks, labels = x_labels) +
     facet_wrap(~ r_lab, ncol = length(r_vals)) +
     scale_fill_manual(values = conf_fill, name = "component") +
     labs(x = "p-value cutoff", y = "All (|y| = count)") +
     theme_bw() +
-    theme(legend.position = "none", strip.background = element_rect(fill = "grey90"), strip.text = element_blank())
+    theme(
+      legend.position = "none",
+      strip.background = element_rect(fill = "grey90"),
+      strip.text = element_blank(),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold")
+    )
 
   p_can_counts_auto <- ggplot(counts_can, aes(x = p, y = count_signed, fill = component)) +
     geom_col(data = can_neg) +
     geom_col(data = can_pos) +
-    scale_x_log10() +
+    scale_x_log10(breaks = x_breaks, labels = x_labels) +
     facet_wrap(~ r_lab, ncol = length(r_vals)) +
     scale_fill_manual(values = conf_fill, name = "component") +
     labs(x = "p-value cutoff", y = "Canonical (|y| = count)") +
     theme_bw() +
-    theme(legend.position = "bottom", strip.background = element_rect(fill = "grey90"), strip.text = element_blank())
+    theme(
+      legend.position = "bottom",
+      strip.background = element_rect(fill = "grey90"),
+      strip.text = element_blank(),
+      axis.title.x = element_text(face = "bold"),
+      axis.title.y = element_text(face = "bold"),
+      axis.text.x = element_text(face = "bold"),
+      axis.text.y = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(face = "bold")
+    )
 
   combined_fixed <- p_metrics / p_all_counts_fixed / p_can_counts_fixed +
     plot_layout(heights = c(1, 1, 1))
@@ -899,8 +986,16 @@ for (i in seq_along(batch)) {
   combined_auto <- p_metrics / p_all_counts_auto / p_can_counts_auto +
     plot_layout(heights = c(1, 1, 1))
 
-  ggsave(
-    file.path(base_exp_dir, paste0(tf, "_", method, "_cutoff_metrics_and_counts_by_r_fp.pdf")),
-    combined_auto, width = 12, height = 10, dpi = 600
-  )
+    ggsave(
+      file.path(
+        base_exp_dir,
+        if (eval_mode == "legacy") {
+          paste0(tf, "_", method, "_cutoff_metrics_and_counts_by_r_fp.pdf")
+        } else {
+          paste0(tf, "_", method, "_cutoff_metrics_and_counts_by_r_fp_", eval_mode, ".pdf")
+        }
+      ),
+      combined_auto, width = 12, height = 10, dpi = 600
+    )
+  }
 }

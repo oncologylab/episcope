@@ -474,6 +474,7 @@ plot_peak_gene_concordance_all <- function(model_dir,
 
 plot_peak_gene_concordance_all_methods <- function(combo_grid,
                                                    step3_root_dir,
+                                                   final_topics_subdir = "final_topics",
                                                    k,
                                                    vae_variant = "multivi_encoder",
                                                    doc_mode = c("tf_cluster", "tf"),
@@ -555,7 +556,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
   for (method in methods) {
     for (i in seq_len(nrow(combo_grid))) {
       row <- combo_grid[i, , drop = FALSE]
-      final_dir <- file.path(step3_root_dir, "final_topics", row$combo_tag)
+      final_dir <- file.path(step3_root_dir, final_topics_subdir, row$combo_tag)
       out_dirs <- list.dirs(final_dir, recursive = FALSE, full.names = TRUE)
       if (row$backend == "vae") {
         patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_K", as.integer(k), "$")
@@ -864,6 +865,7 @@ plot_peak_gene_concordance_all_methods <- function(combo_grid,
 
 plot_shared_topic_counts_all_methods <- function(combo_grid,
                                                  step3_root_dir,
+                                                 final_topics_subdir = "final_topics",
                                                  k,
                                                  vae_variant = "multivi_encoder",
                                                  doc_mode = c("tf_cluster", "tf"),
@@ -913,7 +915,7 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
     row_payload <- vector("list", nrow(combo_grid))
     for (i in seq_len(nrow(combo_grid))) {
       row <- combo_grid[i, ]
-      final_dir <- file.path(step3_root_dir, "final_topics", row$combo_tag)
+      final_dir <- file.path(step3_root_dir, final_topics_subdir, row$combo_tag)
       out_dirs <- list.dirs(final_dir, recursive = FALSE, full.names = TRUE)
       if (row$backend == "vae") {
         patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_K", as.integer(k), "$")
@@ -1090,6 +1092,7 @@ plot_shared_topic_counts_all_methods <- function(combo_grid,
 
 plot_pathway_logp_hist_all_methods <- function(combo_grid,
                                                step3_root_dir,
+                                               final_topics_subdir = "final_topics",
                                                k,
                                                vae_variant = "multivi_encoder",
                                                doc_mode = c("tf_cluster", "tf"),
@@ -1164,7 +1167,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
   for (method in methods) {
     for (i in seq_len(nrow(combo_grid))) {
       row <- combo_grid[i, , drop = FALSE]
-      final_dir <- file.path(step3_root_dir, "final_topics", row$combo_tag)
+      final_dir <- file.path(step3_root_dir, final_topics_subdir, row$combo_tag)
       out_dirs <- list.dirs(final_dir, recursive = FALSE, full.names = TRUE)
       if (row$backend == "vae") {
         patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_K", as.integer(k), "$")
@@ -1461,6 +1464,7 @@ plot_pathway_logp_hist_all_methods <- function(combo_grid,
 
 plot_pass_state_counts_all_methods <- function(combo_grid,
                                                step3_root_dir,
+                                               final_topics_subdir = "final_topics",
                                                k,
                                                vae_variant = "multivi_encoder",
                                                doc_mode = c("tf_cluster", "tf"),
@@ -1525,7 +1529,7 @@ plot_pass_state_counts_all_methods <- function(combo_grid,
   for (i in seq_len(nrow(combo_grid))) {
     row <- combo_grid[i, , drop = FALSE]
     panel <- .row_label(row)
-    final_dir <- file.path(step3_root_dir, "final_topics", row$combo_tag)
+    final_dir <- file.path(step3_root_dir, final_topics_subdir, row$combo_tag)
     out_dirs <- list.dirs(final_dir, recursive = FALSE, full.names = TRUE)
     if (row$backend == "vae") {
       patt <- paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_K", as.integer(k), "$")

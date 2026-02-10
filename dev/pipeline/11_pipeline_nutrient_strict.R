@@ -28,6 +28,8 @@ expected_n <- if (exists("expected_n")) expected_n else NULL
 do_load_footprints_preprocess    <- FALSE
 do_tf_binding_sites_prediction   <- FALSE
 do_tf_to_target_genes_prediction <- FALSE
+do_diff_grn <- FALSE
+
 verbose <- TRUE
 
 # Load footprint data and preprocess --------------------------------------
@@ -313,18 +315,21 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 # Diff GRN and regulatory topics ------------------------------------------
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
-diff_res <- find_differential_links(
-  config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
-  compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-  output_dir = step3_root_dir
-)
+if (do_diff_grn == TRUE) {
+  diff_res <- find_differential_links(
+    config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
+    compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
+    output_dir = step3_root_dir
+  )
 
-motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")
-motif_db$gene_symbol <- motif_db$HGNC
-if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% names(motif_db))) {
-  motif_info <- build_tf_cluster_map_from_motif(motif_db)
-} else {
-  motif_info <- build_tf_cluster_map_from_motif(motif_path)
+  motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")
+  motif_db$gene_symbol <- motif_db$HGNC
+  if (is.data.frame(motif_db) && all(c("sub_cluster_name", "gene_symbol") %in% names(motif_db))) {
+    motif_info <- build_tf_cluster_map_from_motif(motif_db)
+  } else {
+    motif_info <- build_tf_cluster_map_from_motif(motif_path)
+  }
+
 }
 
 # k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)
@@ -352,6 +357,8 @@ combo_grid <- expand.grid(
   stringsAsFactors = FALSE
 )
 combo_grid$vae_variant <- ifelse(combo_grid$backend == "vae", vae_variants[1], "multivi_encoder")
+final_topics_dirname <- "final_topics_gamma_thrP_lda_0.5_vae_0.8_link_topic_prob_cutoff_0.5"
+benchmark_dirname <- "benchmark_gammafit_thrP_lda_0.5_vae_0.8_peak_and_gene_vs_link_topic_prob_cutoff_0.5"
 combo_error_log <- file.path(step3_root_dir, "benchmark", "topic_combo_errors.log")
 dir.create(dirname(combo_error_log), recursive = TRUE, showWarnings = FALSE)
 if (file.exists(combo_error_log)) file.remove(combo_error_log)
@@ -384,7 +391,7 @@ for (i in seq_len(nrow(combo_grid))) {
   )
 
   topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
-  topic_final_dir <- file.path(step3_root_dir, "final_topics", combo_tag)
+  topic_final_dir <- file.path(step3_root_dir, final_topics_dirname, combo_tag)
 
   topic_args <- list(
     pathway_source = "link_scores",
@@ -400,7 +407,7 @@ for (i in seq_len(nrow(combo_grid))) {
     link_topic_gate_mode = "none",
     link_topic_overwrite = TRUE,
     link_topic_method = "link_score_prob",
-    link_topic_prob_cutoff = 0.3,
+    link_topic_prob_cutoff = 0.5,
     link_topic_fdr_q = 0.5,
     link_topic_fdr_p = link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
@@ -537,7 +544,7 @@ if (isTRUE(run_single_topic_test)) {
   single_combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", single_combo_tag)
   single_k <- as.integer(selected_k)
   single_model_dir <- file.path(step3_root_dir, "topic_models", single_combo_tag)
-  single_final_dir <- file.path(step3_root_dir, "final_topics", single_combo_tag)
+  single_final_dir <- file.path(step3_root_dir, final_topics_dirname, single_combo_tag)
   .log_inform(
     "single_topic_test row={single_combo_idx}: combo={single_combo_tag}, backend={single_backend}, variant={single_variant}, k={single_k}"
   )
@@ -558,7 +565,7 @@ if (isTRUE(run_single_topic_test)) {
     link_topic_gate_mode = "none",
     link_topic_overwrite = TRUE,
     link_topic_method = "link_score_prob",
-    link_topic_prob_cutoff = 0.3,
+    link_topic_prob_cutoff = 0.5,
     link_topic_fdr_q = 0.5,
     link_topic_fdr_p = single_link_fdr_p_use,
     pathway_link_scores_file = "topic_links.csv",
@@ -720,7 +727,7 @@ if (isTRUE(run_gammafit_preview)) {
   preview_thrP_use <- if (identical(preview_backend, "warplda")) 0.5 else 0.8
   preview_link_fdr_p_use <- if (identical(preview_backend, "warplda")) 0.01 else 0.1
   preview_model_dir <- file.path(step3_root_dir, "topic_models", preview_combo_tag)
-  preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
+  preview_final_dir <- file.path(step3_root_dir, final_topics_dirname, preview_combo_tag)
 
   extract_regulatory_topics(
     k = preview_k,
@@ -739,7 +746,7 @@ if (isTRUE(run_gammafit_preview)) {
       run_link_topic_scores = TRUE,
       link_topic_overwrite = TRUE,
       link_topic_method = "link_score_prob",
-      link_topic_prob_cutoff = 0.3,
+      link_topic_prob_cutoff = 0.5,
       link_topic_fdr_q = 0.5,
       link_topic_fdr_p = preview_link_fdr_p_use
     )
@@ -770,7 +777,7 @@ if (isTRUE(run_doc_topic_summary_preview)) {
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
   preview_k <- 12L
-  preview_final_dir <- file.path(step3_root_dir, "final_topics", preview_combo_tag)
+  preview_final_dir <- file.path(step3_root_dir, final_topics_dirname, preview_combo_tag)
 
   out_dirs <- list.dirs(preview_final_dir, recursive = FALSE, full.names = TRUE)
   doc_tag <- if (identical(topic_doc_mode, "tf")) "tf" else "ctf"
@@ -806,7 +813,7 @@ if (isTRUE(run_doc_topic_summary_preview)) {
 run_topic_benchmark <- TRUE
 if (isTRUE(run_topic_benchmark)) {
   source("dev/benchmark/utils_step3_topic_benchmark.R")
-  benchmark_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics", "benchmark")
+  benchmark_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics", benchmark_dirname)
   dir.create(benchmark_dir, recursive = TRUE, showWarnings = FALSE)
   combo_grid <- expand.grid(
     gene_term_mode = gene_term_modes,
@@ -818,6 +825,7 @@ if (isTRUE(run_topic_benchmark)) {
   plot_peak_gene_concordance_all_methods(
     combo_grid = combo_grid,
     step3_root_dir = step3_root_dir,
+    final_topics_subdir = final_topics_dirname,
     k = 10L,
     vae_variant = "multivi_encoder",
     out_file = file.path(benchmark_dir, "peak_gene_concordance_all_methods.pdf"),
@@ -827,6 +835,7 @@ if (isTRUE(run_topic_benchmark)) {
   plot_shared_topic_counts_all_methods(
     combo_grid = combo_grid,
     step3_root_dir = step3_root_dir,
+    final_topics_subdir = final_topics_dirname,
     k = 10L,
     vae_variant = "multivi_encoder",
     out_file = file.path(benchmark_dir, "shared_topic_counts_all_methods.pdf")
@@ -834,6 +843,7 @@ if (isTRUE(run_topic_benchmark)) {
   plot_pathway_logp_hist_all_methods(
     combo_grid = combo_grid,
     step3_root_dir = step3_root_dir,
+    final_topics_subdir = final_topics_dirname,
     k = 10L,
     vae_variant = "multivi_encoder",
     out_file = file.path(benchmark_dir, "pathway_logp_hist_all_methods.pdf"),
@@ -842,6 +852,7 @@ if (isTRUE(run_topic_benchmark)) {
   plot_pass_state_counts_all_methods(
     combo_grid = combo_grid,
     step3_root_dir = step3_root_dir,
+    final_topics_subdir = final_topics_dirname,
     k = 10L,
     vae_variant = "multivi_encoder",
     out_file = file.path(benchmark_dir, "pass_state_counts_all_methods.pdf"),
