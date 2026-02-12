@@ -2769,7 +2769,7 @@ compute_link_topic_scores <- function(edges_docs,
 }
 
 .topic_links_to_link_scores <- function(topic_links,
-                                        method = c("peak_and_gene", "link_score_prob", "link_score_efdr"),
+                                        method = c("peak_and_gene", "peak_and_gene_prob", "link_score_prob", "link_score_efdr"),
                                         min_prob = 0) {
   .assert_pkg("data.table")
   method <- match.arg(method)
@@ -2778,12 +2778,16 @@ compute_link_topic_scores <- function(edges_docs,
   req <- c("doc_id", "peak_id", "gene_key", "topic_num", "peak_score", "gene_score")
   if (method == "peak_and_gene") {
     req <- c(req, "peak_pass", "gene_pass")
+  } else if (method == "peak_and_gene_prob") {
+    req <- c(req, "peak_pass", "gene_prob_pass")
   } else {
     req <- c(req, "link_pass")
   }
   .assert_has_cols(dt, req, context = "topic_links_to_link_scores")
   if (method == "peak_and_gene") {
     dt <- dt[.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+  } else if (method == "peak_and_gene_prob") {
+    dt <- dt[.as_logical_flag(peak_pass) & .as_logical_flag(gene_prob_pass)]
   } else {
     dt <- dt[.as_logical_flag(link_pass)]
   }
@@ -2792,10 +2796,14 @@ compute_link_topic_scores <- function(edges_docs,
     dt[, score := .safe_num(link_score)]
     dt[!is.finite(score), score := 0]
   } else {
-    dt[, score := 1]
+    dt[, score := .safe_num(peak_score) * .safe_num(gene_score)]
+    dt[!is.finite(score), score := 0]
   }
   if (method == "link_score_prob" && "link_score_prob" %in% names(dt)) {
     dt[, prob := .safe_num(link_score_prob)]
+    dt[!is.finite(prob), prob := 0]
+  } else if (method == "peak_and_gene_prob" && "gene_prob" %in% names(dt)) {
+    dt[, prob := .safe_num(gene_prob)]
     dt[!is.finite(prob), prob := 0]
   } else {
     dt[, prob := 1]
@@ -2865,7 +2873,7 @@ compute_topic_links <- function(edges_docs,
                                 raw_score_mat = NULL,
                                 topic_terms = NULL,
                                 binarize_method = c("gammafit", "topn"),
-                                link_method = c("link_score_efdr", "link_score_prob"),
+                                link_method = c("link_score_efdr", "link_score_prob", "gene_prob"),
                                 link_prob_cutoff = 0.3,
                                 thrP = 0.975,
                                 min_terms = 50L,
@@ -2886,12 +2894,19 @@ compute_topic_links <- function(edges_docs,
   chunk_size <- as.integer(chunk_size)
   n_cores <- as.integer(n_cores)
   efdr_B <- as.integer(efdr_B)
-  link_prob_cutoff <- .safe_num(link_prob_cutoff)
+  link_prob_cutoff_raw <- link_prob_cutoff
   fdr_q <- .safe_num(fdr_q)
   fdr_p <- .safe_num(fdr_p)
-  if (identical(link_method, "link_score_prob")) {
-    if (!is.finite(link_prob_cutoff) || link_prob_cutoff <= 0 || link_prob_cutoff >= 1) {
-      .log_abort("link_prob_cutoff must be in (0,1) for link_score_prob.")
+  use_prob_max <- is.character(link_prob_cutoff_raw) && length(link_prob_cutoff_raw) &&
+    identical(tolower(trimws(link_prob_cutoff_raw[1])), "max")
+  if (identical(link_method, "link_score_prob") || identical(link_method, "gene_prob")) {
+    if (!use_prob_max) {
+      link_prob_cutoff <- .safe_num(link_prob_cutoff_raw)
+      if (!is.finite(link_prob_cutoff) || link_prob_cutoff <= 0 || link_prob_cutoff >= 1) {
+        .log_abort("link_prob_cutoff must be in (0,1) or 'max' for {link_method}.")
+      }
+    } else {
+      link_prob_cutoff <- "max"
     }
   } else {
     use_p_cut <- is.finite(fdr_p) && fdr_p > 0 && fdr_p < 1
@@ -3022,7 +3037,6 @@ compute_topic_links <- function(edges_docs,
       topic_num = rep_topic,
       peak_score = peak_score,
       gene_score = gene_score,
-      link_score = peak_score * gene_score,
       peaks_gamma_cutoff = peaks_gamma_cutoff,
       gene_gamma_cutoff = gene_gamma_cutoff,
       peak_pass = peak_pass,
@@ -3051,18 +3065,72 @@ compute_topic_links <- function(edges_docs,
   }
 
   if (identical(link_method, "link_score_prob")) {
+    out[, link_score := peak_score * gene_score]
     grp <- c("doc_id", "tf", "peak_id", "gene_key")
     out[, link_score_prob := {
       s <- sum(link_score, na.rm = TRUE)
       if (!is.finite(s) || s <= 0) rep(1 / .N, .N) else link_score / s
     }, by = grp]
-    out[, link_pass := is.finite(link_score_prob) & link_score_prob >= link_prob_cutoff &
-                     .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+    if (isTRUE(use_prob_max)) {
+      out[, link_pass := FALSE]
+      out[, rid___ := .I]
+      max_idx <- out[, {
+        cand <- which(is.finite(link_score_prob) & .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass))
+        if (!length(cand)) .(rid___ = integer(0)) else .(rid___ = rid___[cand[which.max(link_score_prob[cand])]])
+      }, by = grp]
+      if (nrow(max_idx)) {
+        out[rid___ %in% max_idx$rid___, link_pass := TRUE]
+      }
+      out[, rid___ := NULL]
+    } else {
+      out[, link_pass := is.finite(link_score_prob) & link_score_prob >= link_prob_cutoff &
+                       .as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
+    }
     n_pass <- sum(out$link_pass, na.rm = TRUE)
     .log_inform(
-      "topic_links prob: pass {n_pass}/{nrow(out)} rows (link_score_prob>={link_prob_cutoff})."
+      "topic_links prob: pass {n_pass}/{nrow(out)} rows (link_score_prob {if (isTRUE(use_prob_max)) '= max' else paste0('>=', link_prob_cutoff)})."
+    )
+  } else if (identical(link_method, "gene_prob")) {
+    gene_topic <- unique(out[, .(doc_id, gene_key, topic_num, gene_score, gene_pass)])
+    gene_topic[, gene_score := .safe_num(gene_score)]
+    gene_topic[, gene_prob := 0]
+    gene_topic[, gene_prob_pass := FALSE]
+    grp <- c("doc_id", "gene_key")
+    gene_topic[, `:=`(gene_prob = {
+      keep <- .as_logical_flag(gene_pass)
+      s <- sum(gene_score[keep], na.rm = TRUE)
+      out_prob <- rep(0, .N)
+      if (is.finite(s) && s > 0) out_prob[keep] <- gene_score[keep] / s
+      out_prob
+    }), by = grp]
+    if (isTRUE(use_prob_max)) {
+      gene_topic[, rid___ := .I]
+      keep_idx <- gene_topic[, {
+        cand <- which(.as_logical_flag(gene_pass) & is.finite(gene_prob))
+        if (!length(cand)) .(rid___ = integer(0)) else .(rid___ = rid___[cand[which.max(gene_prob[cand])]])
+      }, by = grp]
+      if (nrow(keep_idx)) {
+        gene_topic[rid___ %in% keep_idx$rid___, gene_prob_pass := TRUE]
+      }
+      gene_topic[, rid___ := NULL]
+    } else {
+      gene_topic[, gene_prob_pass := .as_logical_flag(gene_pass) & is.finite(gene_prob) & gene_prob >= link_prob_cutoff]
+    }
+    out <- merge(
+      out,
+      gene_topic[, .(doc_id, gene_key, topic_num, gene_prob, gene_prob_pass)],
+      by = c("doc_id", "gene_key", "topic_num"),
+      all.x = TRUE,
+      sort = FALSE
+    )
+    out[is.na(gene_prob), gene_prob := 0]
+    out[is.na(gene_prob_pass), gene_prob_pass := FALSE]
+    n_pass <- sum(out$gene_prob_pass & .as_logical_flag(out$peak_pass), na.rm = TRUE)
+    .log_inform(
+      "topic_links gene_prob: peak_and_gene_prob pass {n_pass}/{nrow(out)} rows (gene_prob {if (isTRUE(use_prob_max)) '= max' else paste0('>=', link_prob_cutoff)})."
     )
   } else {
+    out[, link_score := peak_score * gene_score]
     use_p_cut <- is.finite(fdr_p) && fdr_p > 0 && fdr_p < 1
     out[, `:=`(link_efdr_p = NA_real_, link_efdr_q = NA_real_)]
     if (efdr_scope == "per_topic") {
@@ -4357,7 +4425,7 @@ rerun_pathway_from_link_scores <- function(out_dir,
 
 rerun_pathway_from_topic_links <- function(out_dir,
                                            topic_links_file = NULL,
-                                           method = c("peak_and_gene", "link_score_prob", "link_score_efdr"),
+                                           method = c("peak_and_gene", "peak_and_gene_prob", "link_score_prob", "link_score_efdr"),
                                            allow_missing = FALSE,
                                            ...) {
   resolve_rel <- function(path, base_dir) {
@@ -4599,7 +4667,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               link_topic_chunk_size = 5000L,
                                               link_topic_n_cores = 1L,
                                               link_topic_overwrite = FALSE,
-                                              link_topic_method = c("link_score_prob", "link_score_efdr"),
+                                              link_topic_method = c("gene_prob", "link_score_prob", "link_score_efdr"),
                                               link_topic_prob_cutoff = 0.3,
                                               link_topic_fdr_q = 0.2,
                                               link_topic_fdr_p = NA_real_,
@@ -4758,7 +4826,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
 
   if (pathway_source == "link_scores") {
-    for (method in c("peak_and_gene", link_topic_method)) {
+    method_secondary <- if (identical(link_topic_method, "gene_prob")) "peak_and_gene_prob" else link_topic_method
+    for (method in unique(c("peak_and_gene", method_secondary))) {
       rerun_pathway_from_topic_links(
         out_dir = out_dir,
         topic_links_file = pathway_link_scores_file,
@@ -4915,7 +4984,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           link_topic_chunk_size = 5000L,
                                           link_topic_n_cores = 1L,
                                           link_topic_overwrite = FALSE,
-                                          link_topic_method = c("link_score_prob", "link_score_efdr"),
+                                          link_topic_method = c("gene_prob", "link_score_prob", "link_score_efdr"),
                                           link_topic_prob_cutoff = 0.3,
                                           link_topic_fdr_q = 0.2,
                                           link_topic_fdr_p = NA_real_,
@@ -5279,7 +5348,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     option_label = option_label
   )
   if (pathway_source == "link_scores") {
-    for (method in c("peak_and_gene", link_topic_method)) {
+    method_secondary <- if (identical(link_topic_method, "gene_prob")) "peak_and_gene_prob" else link_topic_method
+    for (method in unique(c("peak_and_gene", method_secondary))) {
       rerun_pathway_from_topic_links(
         out_dir = out_dir,
         topic_links_file = pathway_link_scores_file,
@@ -5591,7 +5661,7 @@ run_vae_topic_report_py <- function(doc_term,
     link_topic_chunk_size = 5000L,
     link_topic_n_cores = 1L,
     link_topic_overwrite = FALSE,
-    link_topic_method = "link_score_prob",
+    link_topic_method = "gene_prob",
     link_topic_prob_cutoff = 0.3,
     link_topic_fdr_q = 0.2,
     link_topic_fdr_p = NA_real_,
@@ -5777,7 +5847,7 @@ run_vae_doc_topic_heatmaps <- function(topic_root,
     topic_links_path <- file.path(d, "topic_links.csv")
     if (!file.exists(topic_links_path)) next
     topic_links <- data.table::fread(topic_links_path)
-    for (method in c("peak_and_gene", "link_score_prob")) {
+    for (method in c("peak_and_gene", "peak_and_gene_prob")) {
       link_scores <- .topic_links_to_link_scores(topic_links, method = method)
       if (!nrow(link_scores)) next
       out_base <- file.path(d, paste0("doc_topic_heatmaps_link_scores_", method))
@@ -6042,7 +6112,7 @@ run_vae_topic_delta_network_plots <- function(topic_root,
     topic_links_path <- file.path(d, "topic_links.csv")
     if (!file.exists(topic_links_path)) next
     topic_links <- data.table::fread(topic_links_path)
-    for (method in c("peak_and_gene", "link_score_prob")) {
+    for (method in c("peak_and_gene", "peak_and_gene_prob")) {
       link_dt <- .topic_links_to_link_scores(topic_links, method = method)
       if (!nrow(link_dt)) next
       out_root <- file.path(d, paste0("doc_topic_sub_network_link_", method))
@@ -6079,7 +6149,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
   }
   if (!length(out_dirs)) return(invisible(NULL))
   for (d in out_dirs) {
-    for (method in c("peak_and_gene", "link_score_prob")) {
+    for (method in c("peak_and_gene", "peak_and_gene_prob")) {
       rerun_pathway_from_topic_links(
         out_dir = d,
         topic_links_file = file.path(d, "topic_links.csv"),
@@ -6436,7 +6506,7 @@ extract_regulatory_topics <- function(k,
       link_topic_chunk_size = 5000L,
       link_topic_n_cores = 1L,
       link_topic_overwrite = FALSE,
-      link_topic_method = "link_score_prob",
+      link_topic_method = "gene_prob",
       link_topic_prob_cutoff = 0.3,
       link_topic_fdr_q = 0.2,
       link_topic_fdr_p = NA_real_,

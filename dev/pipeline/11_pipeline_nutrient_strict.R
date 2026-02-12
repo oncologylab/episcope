@@ -28,7 +28,7 @@ expected_n <- if (exists("expected_n")) expected_n else NULL
 do_load_footprints_preprocess    <- FALSE
 do_tf_binding_sites_prediction   <- FALSE
 do_tf_to_target_genes_prediction <- FALSE
-do_diff_grn <- FALSE
+do_diff_grn <- TRUE
 
 verbose <- TRUE
 
@@ -316,11 +316,22 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 if (do_diff_grn == TRUE) {
+  # diff_res <- find_differential_links(
+  #   config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
+  #   compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
+  #   output_dir = step3_root_dir
+  # )
+
   diff_res <- find_differential_links(
     config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
     compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-    output_dir = step3_root_dir
+    output_dir = step3_root_dir,
+    overwrite_delta = FALSE,
+    overwrite_filtered = FALSE,
+    overwrite_tf_hubs = TRUE,
+    connectivity_min_degree = 5L
   )
+
 
   motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")
   motif_db$gene_symbol <- motif_db$HGNC
@@ -357,27 +368,49 @@ combo_grid <- expand.grid(
   stringsAsFactors = FALSE
 )
 combo_grid$vae_variant <- ifelse(combo_grid$backend == "vae", vae_variants[1], "multivi_encoder")
-final_topics_dirname <- "final_topics_gamma_thrP_lda_0.5_vae_0.8_link_topic_prob_cutoff_0.5"
-benchmark_dirname <- "benchmark_gammafit_thrP_lda_0.5_vae_0.8_peak_and_gene_vs_link_topic_prob_cutoff_0.5"
+# Minimal single-combo run (set FALSE to restore full grid).
+run_single_combo_only <- TRUE
+if (isTRUE(run_single_combo_only)) {
+  combo_grid <- combo_grid[
+    combo_grid$gene_term_mode == "aggregate" &
+      !combo_grid$include_tf_terms &
+      combo_grid$count_input == "pseudo_count_log" &
+      combo_grid$backend == "vae",
+    ,
+    drop = FALSE
+  ]
+}
+gene_prob_cutoff_modes <- c("max")
+benchmark_dirname <- "benchmark_gammafit_thrP_vae_0.9_peak_and_gene_vs_peak_and_gene_prob"
 combo_error_log <- file.path(step3_root_dir, "benchmark", "topic_combo_errors.log")
 dir.create(dirname(combo_error_log), recursive = TRUE, showWarnings = FALSE)
 if (file.exists(combo_error_log)) file.remove(combo_error_log)
 combo_failures <- vector("list", 0L)
 
 .append_combo_error_log <- function(line) {
-  con <- file(combo_error_log, open = "a")
-  on.exit(close(con), add = TRUE)
-  writeLines(line, con = con, sep = "\n")
+  dir.create(dirname(combo_error_log), recursive = TRUE, showWarnings = FALSE)
+  tryCatch(
+    {
+      con <- file(combo_error_log, open = "a")
+      on.exit(close(con), add = TRUE)
+      writeLines(line, con = con, sep = "\n")
+    },
+    error = function(e) {
+      .log_warn("Could not write combo error log: {conditionMessage(e)}")
+      .log_warn("Original combo error: {line}")
+      invisible(NULL)
+    }
+  )
 }
 
-.log_inform("Starting topic-model combo run: {nrow(combo_grid)} combinations.")
+.log_inform("Starting topic-model combo run: {nrow(combo_grid)} combinations x {length(gene_prob_cutoff_modes)} gene_prob modes.")
 for (i in seq_len(nrow(combo_grid))) {
   gene_term_mode <- combo_grid$gene_term_mode[i]
   include_tf_terms <- combo_grid$include_tf_terms[i]
   count_input <- combo_grid$count_input[i]
   backend <- combo_grid$backend[i]
   vae_variant <- combo_grid$vae_variant[i]
-  thrP_use <- if (identical(backend, "warplda")) 0.5 else 0.8
+  thrP_use <- if (identical(backend, "warplda")) 0.5 else 0.9
   link_fdr_p_use <- if (identical(backend, "warplda")) 0.01 else 0.1
 
   combo_tag <- paste0(
@@ -386,111 +419,115 @@ for (i in seq_len(nrow(combo_grid))) {
     "_count_", count_input
   )
   combo_tag <- gsub("[^A-Za-z0-9_.-]+", "_", combo_tag)
-  .log_inform(
-    "[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend} (thrP={thrP_use}, link_method=link_score_prob, link_prob_cutoff=0.3)."
-  )
+  for (cut_mode in gene_prob_cutoff_modes) {
+    final_topics_dirname <- paste0("final_topics_gamma_thrP_vae_0.9_peak_and_gene_vs_peak_and_gene_prob_", cut_mode)
+    prob_cutoff_use <- if (identical(cut_mode, "max")) "max" else as.numeric(cut_mode)
+    .log_inform(
+      "[{i}/{nrow(combo_grid)}] Running combo={combo_tag} backend={backend} (thrP={thrP_use}, link_method=gene_prob, gene_prob_cutoff={cut_mode})."
+    )
 
-  topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
-  topic_final_dir <- file.path(step3_root_dir, final_topics_dirname, combo_tag)
+    topic_model_dir <- file.path(step3_root_dir, "topic_models", combo_tag)
+    topic_final_dir <- file.path(step3_root_dir, final_topics_dirname, combo_tag)
 
-  topic_args <- list(
-    pathway_source = "link_scores",
-    thrP = thrP_use,
-    pathway_make_heatmap = FALSE,
-    pathway_make_dotplot = TRUE,
-    pathway_overwrite = TRUE,
-    pathway_per_comparison = FALSE,
-    pathway_per_comparison_dir = "per_cmpr_topic_pathway",
-    pathway_split_direction = TRUE,
-    run_pathway_gsea = FALSE,
-    run_link_topic_scores = TRUE,
-    link_topic_gate_mode = "none",
-    link_topic_overwrite = TRUE,
-    link_topic_method = "link_score_prob",
-    link_topic_prob_cutoff = 0.5,
-    link_topic_fdr_q = 0.5,
-    link_topic_fdr_p = link_fdr_p_use,
-    pathway_link_scores_file = "topic_links.csv",
-    pathway_link_scores_file_tf = "topic_links.csv",
-    pathway_link_gene_terms_file = NULL,
-    pathway_link_min_prob = 0,
-    pathway_link_include_tf = TRUE,
-    pathway_link_include_gene = TRUE,
-    pathway_link_gene_min_prob = 0,
-    pathway_link_tf_min_prob = 0,
-    pathway_link_tf_max_topics = Inf,
-    pathway_link_tf_top_n_per_topic = NA_integer_,
-    top_n_per_topic = Inf,
-    max_pathways = Inf
-  )
+    topic_args <- list(
+      pathway_source = "link_scores",
+      thrP = thrP_use,
+      pathway_make_heatmap = FALSE,
+      pathway_make_dotplot = TRUE,
+      pathway_overwrite = TRUE,
+      pathway_per_comparison = TRUE,
+      pathway_per_comparison_dir = "per_cmpr_topic_pathway",
+      pathway_split_direction = TRUE,
+      run_pathway_gsea = FALSE,
+      run_link_topic_scores = TRUE,
+      link_topic_gate_mode = "none",
+      link_topic_overwrite = TRUE,
+      link_topic_method = "gene_prob",
+      link_topic_prob_cutoff = prob_cutoff_use,
+      link_topic_fdr_q = 0.5,
+      link_topic_fdr_p = link_fdr_p_use,
+      pathway_link_scores_file = "topic_links.csv",
+      pathway_link_scores_file_tf = "topic_links.csv",
+      pathway_link_gene_terms_file = NULL,
+      pathway_link_min_prob = 0,
+      pathway_link_include_tf = TRUE,
+      pathway_link_include_gene = TRUE,
+      pathway_link_gene_min_prob = 0,
+      pathway_link_tf_min_prob = 0,
+      pathway_link_tf_max_topics = Inf,
+      pathway_link_tf_top_n_per_topic = NA_integer_,
+      top_n_per_topic = Inf,
+      max_pathways = Inf
+    )
 
-  combo_ok <- tryCatch(
-    {
-      train_topic_models(
-        Kgrid = k_grid_default,
-        input_dir = diff_res$filtered_dir,
-        output_dir = topic_model_dir,
-        celllines = celllines,
-        tf_cluster_map = motif_info$tf_cluster_map,
-        doc_mode = topic_doc_mode,
-        tf_exclude = motif_info$tf_exclude,
-        gene_term_mode = gene_term_mode,
-        include_tf_terms = include_tf_terms,
-        count_input = count_input,
-        backend = backend,
-        vae_variant = vae_variant,
-        topic_report_args = topic_args
-      )
+    combo_ok <- tryCatch(
+      {
+        train_topic_models(
+          Kgrid = k_grid_default,
+          input_dir = diff_res$filtered_dir,
+          output_dir = topic_model_dir,
+          celllines = celllines,
+          tf_cluster_map = motif_info$tf_cluster_map,
+          doc_mode = topic_doc_mode,
+          tf_exclude = motif_info$tf_exclude,
+          gene_term_mode = gene_term_mode,
+          include_tf_terms = include_tf_terms,
+          count_input = count_input,
+          backend = backend,
+          vae_variant = vae_variant,
+          topic_report_args = topic_args
+        )
 
-      extract_regulatory_topics(
-        k = selected_k,
-        model_dir = topic_model_dir,
-        output_dir = topic_final_dir,
-        backend = backend,
-        vae_variant = vae_variant,
-        doc_mode = topic_doc_mode,
-        topic_report_args = topic_args
-      )
+        extract_regulatory_topics(
+          k = selected_k,
+          model_dir = topic_model_dir,
+          output_dir = topic_final_dir,
+          backend = backend,
+          vae_variant = vae_variant,
+          doc_mode = topic_doc_mode,
+          topic_report_args = topic_args
+        )
 
-      run_vae_doc_topic_heatmaps(
-        topic_root = topic_final_dir,
-        backend = backend,
-        vae_variant = vae_variant,
-        doc_mode = topic_doc_mode
-      )
+        run_vae_doc_topic_heatmaps(
+          topic_root = topic_final_dir,
+          backend = backend,
+          vae_variant = vae_variant,
+          doc_mode = topic_doc_mode
+        )
 
-      run_vae_topic_delta_network_plots(
-        topic_root = topic_final_dir,
-        step2_out_dir = diff_res$filtered_dir
-        ,backend = backend,
-        vae_variant = vae_variant,
-        doc_mode = topic_doc_mode
-      )
-      TRUE
-    },
-    error = function(e) {
-      err_msg <- conditionMessage(e)
-      combo_failures[[length(combo_failures) + 1L]] <<- data.frame(
-        row = i,
-        combo_tag = as.character(combo_tag),
-        backend = as.character(backend),
-        gene_term_mode = as.character(gene_term_mode),
-        include_tf_terms = as.logical(include_tf_terms),
-        count_input = as.character(count_input),
-        error = as.character(err_msg),
-        stringsAsFactors = FALSE
-      )
-      stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-      .append_combo_error_log(sprintf(
-        "[%s]\trow=%d\tcombo=%s\tbackend=%s\tgene_term_mode=%s\tinclude_tf_terms=%s\tcount_input=%s\terror=%s",
-        stamp, i, combo_tag, backend, gene_term_mode, include_tf_terms, count_input, err_msg
-      ))
-      .log_warn("Combo failed [{i}/{nrow(combo_grid)}]: {combo_tag} ({backend}) -> {err_msg}")
-      FALSE
+        run_vae_topic_delta_network_plots(
+          topic_root = topic_final_dir,
+          step2_out_dir = diff_res$filtered_dir
+          ,backend = backend,
+          vae_variant = vae_variant,
+          doc_mode = topic_doc_mode
+        )
+        TRUE
+      },
+      error = function(e) {
+        err_msg <- conditionMessage(e)
+        combo_failures[[length(combo_failures) + 1L]] <<- data.frame(
+          row = i,
+          combo_tag = as.character(combo_tag),
+          backend = as.character(backend),
+          gene_term_mode = as.character(gene_term_mode),
+          include_tf_terms = as.logical(include_tf_terms),
+          count_input = as.character(count_input),
+          error = as.character(err_msg),
+          stringsAsFactors = FALSE
+        )
+        stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+        .append_combo_error_log(sprintf(
+          "[%s]\trow=%d\tcombo=%s\tbackend=%s\tgene_term_mode=%s\tinclude_tf_terms=%s\tcount_input=%s\tcutoff=%s\terror=%s",
+          stamp, i, combo_tag, backend, gene_term_mode, include_tf_terms, count_input, cut_mode, err_msg
+        ))
+        .log_warn("Combo failed [{i}/{nrow(combo_grid)}]: {combo_tag} ({backend}, cutoff={cut_mode}) -> {err_msg}")
+        FALSE
+      }
+    )
+    if (isTRUE(combo_ok)) {
+      .log_inform("[{i}/{nrow(combo_grid)}] Completed combo={combo_tag} backend={backend}, cutoff={cut_mode}.")
     }
-  )
-  if (isTRUE(combo_ok)) {
-    .log_inform("[{i}/{nrow(combo_grid)}] Completed combo={combo_tag} backend={backend}.")
   }
   # Pathway enrichment already runs inside extract_regulatory_topics(topic_report_args).
   # Keep this disabled to avoid duplicate/repeated pathway runs.
@@ -548,7 +585,7 @@ if (isTRUE(run_single_topic_test)) {
   .log_inform(
     "single_topic_test row={single_combo_idx}: combo={single_combo_tag}, backend={single_backend}, variant={single_variant}, k={single_k}"
   )
-  single_thrP_use <- if (identical(single_backend, "warplda")) 0.5 else 0.8
+  single_thrP_use <- if (identical(single_backend, "warplda")) 0.5 else 0.9
   single_link_fdr_p_use <- if (identical(single_backend, "warplda")) 0.01 else 0.1
 
   single_topic_args <- list(
@@ -564,7 +601,7 @@ if (isTRUE(run_single_topic_test)) {
     run_link_topic_scores = TRUE,
     link_topic_gate_mode = "none",
     link_topic_overwrite = TRUE,
-    link_topic_method = "link_score_prob",
+    link_topic_method = "gene_prob",
     link_topic_prob_cutoff = 0.5,
     link_topic_fdr_q = 0.5,
     link_topic_fdr_p = single_link_fdr_p_use,
@@ -724,7 +761,7 @@ if (isTRUE(run_gammafit_preview)) {
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
   preview_k <- selected_k
-  preview_thrP_use <- if (identical(preview_backend, "warplda")) 0.5 else 0.8
+  preview_thrP_use <- if (identical(preview_backend, "warplda")) 0.5 else 0.9
   preview_link_fdr_p_use <- if (identical(preview_backend, "warplda")) 0.01 else 0.1
   preview_model_dir <- file.path(step3_root_dir, "topic_models", preview_combo_tag)
   preview_final_dir <- file.path(step3_root_dir, final_topics_dirname, preview_combo_tag)
@@ -745,7 +782,7 @@ if (isTRUE(run_gammafit_preview)) {
       run_pathway_gsea = FALSE,
       run_link_topic_scores = TRUE,
       link_topic_overwrite = TRUE,
-      link_topic_method = "link_score_prob",
+      link_topic_method = "gene_prob",
       link_topic_prob_cutoff = 0.5,
       link_topic_fdr_q = 0.5,
       link_topic_fdr_p = preview_link_fdr_p_use
@@ -810,11 +847,9 @@ if (isTRUE(run_doc_topic_summary_preview)) {
 }
 
 # Benchmark: all peak-gene topic concordance scatter (all methods)
-run_topic_benchmark <- TRUE
+run_topic_benchmark <- FALSE
 if (isTRUE(run_topic_benchmark)) {
   source("dev/benchmark/utils_step3_topic_benchmark.R")
-  benchmark_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics", benchmark_dirname)
-  dir.create(benchmark_dir, recursive = TRUE, showWarnings = FALSE)
   combo_grid <- expand.grid(
     gene_term_mode = gene_term_modes,
     include_tf_terms = include_tf_terms_opts,
@@ -822,40 +857,49 @@ if (isTRUE(run_topic_benchmark)) {
     backend = backends,
     stringsAsFactors = FALSE
   )
-  plot_peak_gene_concordance_all_methods(
-    combo_grid = combo_grid,
-    step3_root_dir = step3_root_dir,
-    final_topics_subdir = final_topics_dirname,
-    k = 10L,
-    vae_variant = "multivi_encoder",
-    out_file = file.path(benchmark_dir, "peak_gene_concordance_all_methods.pdf"),
-    point_alpha = 0.05,
-    point_size = 0.4
-  )
-  plot_shared_topic_counts_all_methods(
-    combo_grid = combo_grid,
-    step3_root_dir = step3_root_dir,
-    final_topics_subdir = final_topics_dirname,
-    k = 10L,
-    vae_variant = "multivi_encoder",
-    out_file = file.path(benchmark_dir, "shared_topic_counts_all_methods.pdf")
-  )
-  plot_pathway_logp_hist_all_methods(
-    combo_grid = combo_grid,
-    step3_root_dir = step3_root_dir,
-    final_topics_subdir = final_topics_dirname,
-    k = 10L,
-    vae_variant = "multivi_encoder",
-    out_file = file.path(benchmark_dir, "pathway_logp_hist_all_methods.pdf"),
-    facets_ncol = 6L
-  )
-  plot_pass_state_counts_all_methods(
-    combo_grid = combo_grid,
-    step3_root_dir = step3_root_dir,
-    final_topics_subdir = final_topics_dirname,
-    k = 10L,
-    vae_variant = "multivi_encoder",
-    out_file = file.path(benchmark_dir, "pass_state_counts_all_methods.pdf"),
-    facets_ncol = 6L
-  )
+  for (cut_mode in gene_prob_cutoff_modes) {
+    final_topics_dirname <- paste0("final_topics_gamma_thrP_vae_0.9_peak_and_gene_vs_peak_and_gene_prob_", cut_mode)
+    benchmark_dir <- file.path(
+      base_dir,
+      "diff_grn_and_regulatory_topics",
+      paste0(benchmark_dirname, "_", cut_mode)
+    )
+    dir.create(benchmark_dir, recursive = TRUE, showWarnings = FALSE)
+    plot_peak_gene_concordance_all_methods(
+      combo_grid = combo_grid,
+      step3_root_dir = step3_root_dir,
+      final_topics_subdir = final_topics_dirname,
+      k = 10L,
+      vae_variant = "multivi_encoder",
+      out_file = file.path(benchmark_dir, "peak_gene_concordance_all_methods.pdf"),
+      point_alpha = 0.05,
+      point_size = 0.4
+    )
+    plot_shared_topic_counts_all_methods(
+      combo_grid = combo_grid,
+      step3_root_dir = step3_root_dir,
+      final_topics_subdir = final_topics_dirname,
+      k = 10L,
+      vae_variant = "multivi_encoder",
+      out_file = file.path(benchmark_dir, "shared_topic_counts_all_methods.pdf")
+    )
+    plot_pathway_logp_hist_all_methods(
+      combo_grid = combo_grid,
+      step3_root_dir = step3_root_dir,
+      final_topics_subdir = final_topics_dirname,
+      k = 10L,
+      vae_variant = "multivi_encoder",
+      out_file = file.path(benchmark_dir, "pathway_logp_hist_all_methods.pdf"),
+      facets_ncol = 6L
+    )
+    plot_pass_state_counts_all_methods(
+      combo_grid = combo_grid,
+      step3_root_dir = step3_root_dir,
+      final_topics_subdir = final_topics_dirname,
+      k = 10L,
+      vae_variant = "multivi_encoder",
+      out_file = file.path(benchmark_dir, "pass_state_counts_all_methods.pdf"),
+      facets_ncol = 6L
+    )
+  }
 }

@@ -23,6 +23,16 @@
 #'   \code{"distinct"}; both return the 4-slot list with aligned, unique rows.
 #'   In \code{"distinct"}, \code{fp_score} has one row per aligned \code{peak_ID}
 #'   (no motif duplication) and \code{fp_bound} matches that row set.
+#' @param save_prealign_score Logical; if TRUE, write a merged footprint score
+#'   table immediately after loading motif score files and before any alignment.
+#' @param prealign_score_path Optional CSV path for the pre-alignment score
+#'   output. If NULL and \code{cache_dir} is set, defaults to
+#'   \code{fp_scores_prealign_<cache_tag>.csv} in \code{cache_dir}.
+#' @param prealign_output_mode Output mode for pre-alignment score export:
+#'   \code{"distinct"} (default; one row per \code{peak_ID}) or \code{"all"}
+#'   (all rows as loaded from motif files).
+#' @param prealign_only Logical; if TRUE and \code{save_prealign_score = TRUE},
+#'   return immediately after writing the pre-alignment score table (skip alignment).
 #'
 #' @return List with tibbles: \code{fp_score}, \code{fp_bound},
 #'   \code{fp_annotation}, and \code{id_map}.
@@ -45,7 +55,11 @@ align_footprints <- function(
     write_cache      = TRUE,
     log_file         = NULL,
     parallel_by      = c("atac_peak", "chromosome", "none"),
-    output_mode      = c("full", "distinct")
+    output_mode      = c("full", "distinct"),
+    save_prealign_score = FALSE,
+    prealign_score_path = NULL,
+    prealign_output_mode = c("distinct", "all"),
+    prealign_only = FALSE
 ) {
   stopifnot(is.data.frame(fp_filtered_manifest),
             all(c("motif","score","bound","annot") %in% names(fp_filtered_manifest)))
@@ -60,6 +74,13 @@ align_footprints <- function(
 
   stopifnot(is.numeric(score_match_pct), length(score_match_pct) == 1L,
             score_match_pct > 0 && score_match_pct <= 1)
+  prealign_output_mode <- match.arg(prealign_output_mode)
+
+  prealign_path_use <- prealign_score_path
+  if (is.null(prealign_path_use) && !is.null(cache_dir)) {
+    tag <- if (!is.null(cache_tag) && nzchar(cache_tag)) cache_tag else "cache"
+    prealign_path_use <- file.path(cache_dir, sprintf("fp_scores_prealign_%s.csv", tag))
+  }
 
   cache_paths <- NULL
   if (!is.null(cache_dir) && !is.null(cache_tag)) {
@@ -101,6 +122,15 @@ align_footprints <- function(
     }
     if (!identical(out_cached$fp_score$peak_ID, out_cached$fp_bound$peak_ID)) {
       cli::cli_abort("fp_score and fp_bound peak_ID rows are not in the same order.")
+    }
+    if (isTRUE(save_prealign_score)) {
+      if (!is.null(prealign_path_use) && file.exists(prealign_path_use)) {
+        if (isTRUE(verbose)) {
+          .log_inform("Using existing pre-alignment score table: {.path {prealign_path_use}}.")
+        }
+      } else {
+        .log_warn("`save_prealign_score = TRUE` but aligned cache was used; set `use_cache = FALSE` to regenerate pre-alignment score output.")
+      }
     }
     return(out_cached)
   }
@@ -158,6 +188,33 @@ align_footprints <- function(
   bound_dt <- data.table::rbindlist(lapply(use$bound,  read_bound), use.names = TRUE, fill = TRUE)
   annot_dt <- data.table::rbindlist(lapply(use$annot,  read_annot), use.names = TRUE, fill = TRUE)
   # Keep annot_dt EXACT as loaded (row count + order).
+
+  if (isTRUE(save_prealign_score)) {
+    if (is.null(prealign_path_use) || !nzchar(prealign_path_use)) {
+      .log_warn("`save_prealign_score = TRUE` but no writable output path was resolved; skipping pre-alignment export.")
+    } else {
+      prealign_out <- data.table::copy(score_dt)
+      if (identical(prealign_output_mode, "distinct") && "peak_ID" %in% names(prealign_out)) {
+        prealign_out <- prealign_out[!duplicated(peak_ID)]
+      }
+      dir.create(dirname(prealign_path_use), recursive = TRUE, showWarnings = FALSE)
+      readr::write_csv(tibble::as_tibble(prealign_out), prealign_path_use)
+      if (isTRUE(verbose)) {
+        .log_inform("Saved pre-alignment score table ({prealign_output_mode}): {.path {prealign_path_use}}.")
+      }
+      if (isTRUE(prealign_only)) {
+        if (isTRUE(verbose)) {
+          .log_inform("`prealign_only = TRUE`: skipping alignment and returning pre-alignment table only.")
+        }
+        return(list(
+          fp_score = tibble::as_tibble(prealign_out),
+          fp_bound = tibble::tibble(),
+          fp_annotation = tibble::tibble(),
+          id_map = tibble::tibble()
+        ))
+      }
+    }
+  }
 
   # De-dupe score/bound by old peak id defensively
   if ("peak_ID" %in% names(score_dt)) score_dt <- score_dt[!duplicated(peak_ID)]

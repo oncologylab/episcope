@@ -933,6 +933,12 @@ run_links_deltas_driver <- function(specs,
 #' @param workers Integer; pass-through to delta computation.
 #' @param summary_tag Optional tag to insert into TF hub summary filenames.
 #' @param write_tf_hubs_fp If TRUE, write TF hub summaries using delta FP scores.
+#' @param overwrite_delta Logical; if TRUE, recompute `delta_links` even if files exist.
+#' @param overwrite_filtered Logical; if TRUE, recompute `filtered_delta_links` even if files exist.
+#' @param overwrite_tf_hubs Logical; if TRUE, always regenerate `master_tf_summary` outputs.
+#' @param connectivity_min_degree Integer cutoff for TF inclusion in connectivity
+#'   heatmaps. A TF is shown only if it connects to at least this many other TFs
+#'   (undirected degree).
 #' @export
 find_differential_links <- function(config,
                                     compar = NULL,
@@ -945,7 +951,11 @@ find_differential_links <- function(config,
                                     parallel = TRUE,
                                     workers = NULL,
                                     summary_tag = NULL,
-                                    write_tf_hubs_fp = TRUE) {
+                                    write_tf_hubs_fp = TRUE,
+                                    overwrite_delta = FALSE,
+                                    overwrite_filtered = FALSE,
+                                    overwrite_tf_hubs = TRUE,
+                                    connectivity_min_degree = 1L) {
   if (is.character(config) && length(config) == 1L && file.exists(config)) {
     load_config(config)
   }
@@ -991,40 +1001,51 @@ find_differential_links <- function(config,
   de_tf_log2_abs_min <- if (exists("de_tf_log2_abs_min")) de_tf_log2_abs_min else 0.5
   fp_delta_min <- if (exists("fp_delta_min")) fp_delta_min else 0.5
 
-  run_links_deltas_driver(
-    specs = specs,
-    clean_names = clean_names,
-    parallel = parallel,
-    workers = workers,
-    restrict_to_active_both = FALSE,
-    edge_change_min = delta_link,
-    keep_all_cols = TRUE,
-    input_dir = step2_out_dir,
-    input_prefix = input_prefix,
-    out_dir = delta_dir
-  )
+  existing_delta <- list.files(delta_dir, "_delta_links\\.csv$", full.names = TRUE)
+  if (!isTRUE(overwrite_delta) && length(existing_delta) > 0L) {
+    .log_inform("Using existing delta links from {delta_dir} (set overwrite_delta=TRUE to rebuild).")
+  } else {
+    run_links_deltas_driver(
+      specs = specs,
+      clean_names = clean_names,
+      parallel = parallel,
+      workers = workers,
+      restrict_to_active_both = FALSE,
+      edge_change_min = delta_link,
+      keep_all_cols = TRUE,
+      input_dir = step2_out_dir,
+      input_prefix = input_prefix,
+      out_dir = delta_dir
+    )
+  }
 
   delta_csvs <- list.files(delta_dir, "_delta_links.csv$", full.names = TRUE)
   if (!length(delta_csvs)) .log_abort("No *_delta_links.csv files found in {delta_dir}")
 
-  filter_links_deltas_bulk(
-    delta_csvs,
-    gene_expr_min = threshold_gene_expr,
-    tf_expr_min = threshold_tf_expr,
-    fp_min = threshold_fp_score,
-    link_min = threshold_link_score,
-    abs_delta_min = delta_link,
-    apply_de_gene = TRUE,
-    de_gene_log2_abs_min = de_gene_log2_abs_min,
-    de_tf_log2_abs_min = de_tf_log2_abs_min,
-    fp_delta_min = fp_delta_min,
-    split_direction = TRUE,
-    write_combined = FALSE,
-    enforce_link_expr_sign = TRUE,
-    expr_dir_col = "log2FC_gene_expr",
-    workers = workers,
-    filtered_dir = filtered_dir
-  )
+  existing_filtered_manifest <- file.path(filtered_dir, "delta_links_filtered_manifest.csv")
+  existing_filtered_files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+  if (!isTRUE(overwrite_filtered) && file.exists(existing_filtered_manifest) && length(existing_filtered_files) > 0L) {
+    .log_inform("Using existing filtered delta links from {filtered_dir} (set overwrite_filtered=TRUE to rebuild).")
+  } else {
+    filter_links_deltas_bulk(
+      delta_csvs,
+      gene_expr_min = threshold_gene_expr,
+      tf_expr_min = threshold_tf_expr,
+      fp_min = threshold_fp_score,
+      link_min = threshold_link_score,
+      abs_delta_min = delta_link,
+      apply_de_gene = TRUE,
+      de_gene_log2_abs_min = de_gene_log2_abs_min,
+      de_tf_log2_abs_min = de_tf_log2_abs_min,
+      fp_delta_min = fp_delta_min,
+      split_direction = TRUE,
+      write_combined = FALSE,
+      enforce_link_expr_sign = TRUE,
+      expr_dir_col = "log2FC_gene_expr",
+      workers = workers,
+      filtered_dir = filtered_dir
+    )
+  }
 
   if (isTRUE(qc)) {
     .plot_fp_gene_volcanoes_from_filtered(filtered_dir, out_root)
@@ -1039,7 +1060,15 @@ find_differential_links <- function(config,
       for (bid in base_ids) {
         files <- filtered_files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(filtered_files))]
         if (!length(files)) next
-        df_list <- lapply(files, function(p) readr::read_csv(p, show_col_types = FALSE))
+        df_list <- lapply(files, function(p) {
+          x <- readr::read_csv(p, show_col_types = FALSE)
+          if (grepl("_up\\.csv$", basename(p), ignore.case = TRUE)) {
+            x$direction_group <- "Up"
+          } else if (grepl("_down\\.csv$", basename(p), ignore.case = TRUE)) {
+            x$direction_group <- "Down"
+          }
+          x
+        })
         df_all <- dplyr::bind_rows(df_list)
         if (!nrow(df_all)) next
         contrast_id <- sub("_delta_links_filtered.*$", "", bid)
@@ -1048,17 +1077,24 @@ find_differential_links <- function(config,
         if (!nrow(summary_df)) next
         tag <- if (is.null(summary_tag) || !nzchar(summary_tag)) "fp" else summary_tag
         out_csv <- file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.csv"))
+        out_pdf <- file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.pdf"))
+        if (!isTRUE(overwrite_tf_hubs) && file.exists(out_csv) && file.exists(out_pdf)) {
+          .log_inform("Skipping existing master_tf_summary for {bid} (set overwrite_tf_hubs=TRUE to rebuild).")
+          next
+        }
         readr::write_csv(summary_df, out_csv)
         contrast <- .contrast_from_file(out_csv)
         .plot_tf_hubs_fp(
           summary_df = summary_df,
-          out_pdf = file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.pdf")),
+          out_pdf = out_pdf,
+          links_df = df_all,
           title_text = paste0("TF hubs (delta fp_score) - ", contrast),
           cond1_label = cp$cond1,
           cond2_label = cp$cond2,
           min_y_for_label = 3,
           size_min = 1,
-          size_max = 4
+          size_max = 4,
+          connectivity_min_degree = connectivity_min_degree
         )
       }
     }
@@ -1280,6 +1316,7 @@ find_differential_links <- function(config,
 
 .plot_tf_hubs_fp <- function(summary_df,
                              out_pdf,
+                             links_df = NULL,
                              title_text = NULL,
                              cond1_label = NULL,
                              cond2_label = NULL,
@@ -1290,10 +1327,12 @@ find_differential_links <- function(config,
                              base_size = 12,
                              width_in = 10,
                              height_in = 6.5,
-                             dpi = 200) {
+                             dpi = 200,
+                             connectivity_min_degree = 1L) {
   .assert_pkg("ggplot2")
   .assert_pkg("ggrepel")
   .assert_pkg("scales")
+  .assert_pkg("pheatmap")
 
   need <- c(
     "TF","tf_expr_max","tf_log2_fc",
@@ -1378,7 +1417,301 @@ find_differential_links <- function(config,
       axis.title.y = ggplot2::element_text(face = "bold")
     )
 
+  out_pdf_waterfall <- sub("\\.pdf$", "_tf_target_direction_waterfall.pdf", out_pdf)
+  out_pdf_heatmap <- sub("\\.pdf$", "_tf_tf_connectivity_heatmap.pdf", out_pdf)
+
+  # Master summary: page 1 only.
   ggplot2::ggsave(out_pdf, p, width = width_in, height = height_in, dpi = dpi, limitsize = FALSE)
+
+  # Additional pages use the original per-link table when available.
+  if (is.data.frame(links_df) && nrow(links_df)) {
+    link_dt <- data.table::as.data.table(links_df)
+    tf_col <- if ("tf" %in% names(link_dt)) "tf" else if ("TF" %in% names(link_dt)) "TF" else NULL
+    gene_col <- if ("gene_key" %in% names(link_dt)) "gene_key" else if ("gene" %in% names(link_dt)) "gene" else if ("target_gene" %in% names(link_dt)) "target_gene" else NULL
+    peak_col <- if ("peak_id" %in% names(link_dt)) "peak_id" else NULL
+
+    if (!is.null(tf_col) && !is.null(gene_col)) {
+      # Normalize direction.
+      if ("direction_group" %in% names(link_dt)) {
+        link_dt[, .dir := tolower(trimws(as.character(direction_group)))]
+        link_dt[grepl("^up", .dir), .dir2 := "Up"]
+        link_dt[grepl("^down", .dir), .dir2 := "Down"]
+      } else if ("log2FC_gene_expr" %in% names(link_dt)) {
+        link_dt[, .dir2 := ifelse(suppressWarnings(as.numeric(log2FC_gene_expr)) >= 0, "Up", "Down")]
+      } else if ("delta_gene_expr" %in% names(link_dt)) {
+        link_dt[, .dir2 := ifelse(suppressWarnings(as.numeric(delta_gene_expr)) >= 0, "Up", "Down")]
+      } else {
+        link_dt[, .dir2 := "Up"]
+      }
+      link_dt <- link_dt[.dir2 %in% c("Up", "Down")]
+
+      # De-duplicate links once.
+      if (!is.null(peak_col)) {
+        link_dt <- unique(link_dt[, .(TF = as.character(get(tf_col)), gene_key = as.character(get(gene_col)), peak_id = as.character(get(peak_col)), direction = .dir2)])
+      } else {
+        link_dt <- unique(link_dt[, .(TF = as.character(get(tf_col)), gene_key = as.character(get(gene_col)), direction = .dir2)])
+      }
+      link_dt <- link_dt[!is.na(TF) & nzchar(TF) & !is.na(gene_key) & nzchar(gene_key)]
+
+      if (nrow(link_dt)) {
+        tf_universe <- unique(link_dt$TF)
+        tf_upper <- toupper(tf_universe)
+        link_dt[, target_type := ifelse(toupper(gene_key) %in% tf_upper, "TF target", "Gene target")]
+
+        # Waterfall uses unique gene counts (not link counts), with TF-level display cutoff.
+        gene_dt <- unique(link_dt[, .(TF, gene_key, direction, target_type)])
+        tf_gene_totals <- gene_dt[, .(n_unique_genes = data.table::uniqueN(gene_key)), by = TF]
+        tf_keep <- tf_gene_totals[n_unique_genes > 10, TF]
+        gene_dt_plot <- gene_dt[TF %in% tf_keep]
+
+        # Sort TFs from largest net positive to largest net negative by unique-gene counts.
+        tf_order <- gene_dt_plot[
+          , .(net_n = sum(ifelse(direction == "Up", 1L, -1L), na.rm = TRUE)),
+          by = TF
+        ][order(net_n, decreasing = TRUE)]$TF
+        bar_dt_all <- gene_dt_plot[
+          , .(n = ifelse(.BY$direction == "Up", .N, -.N)),
+          by = .(TF, target_type, direction)
+        ]
+
+        # Stacked waterfall data prep by TF.
+        x_max_abs <- suppressWarnings(max(abs(bar_dt_all$n), na.rm = TRUE))
+        if (!is.finite(x_max_abs) || x_max_abs <= 0) x_max_abs <- 1
+        x_lim <- c(-x_max_abs, x_max_abs)
+        tf_per_page <- 45L
+        tf_chunks <- split(tf_order, ceiling(seq_along(tf_order) / tf_per_page))
+        n_pages <- length(tf_chunks)
+
+        # Standalone waterfall PDF as a single page with dynamic height and fixed x-axis.
+        if (length(tf_order) > 0L) {
+          n_tf_total <- length(tf_order)
+          tf_axis_size_single <- max(4, min(8, 260 / max(10, n_tf_total)))
+          waterfall_height <- max(height_in, min(28, 2.8 + 0.11 * n_tf_total))
+          bar_dt_single <- data.table::copy(bar_dt_all)
+          bar_dt_single[, TF := factor(TF, levels = rev(tf_order))]
+          p2_single <- ggplot2::ggplot(bar_dt_single, ggplot2::aes(x = n, y = TF, fill = direction, alpha = target_type)) +
+            ggplot2::geom_col(width = 0.82) +
+            ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "grey45") +
+            ggplot2::scale_fill_manual(values = c("Up" = "#C21807", "Down" = "#1565C0")) +
+            ggplot2::scale_alpha_manual(values = c("TF target" = 1.0, "Gene target" = 0.45)) +
+            ggplot2::labs(
+              title = paste0(
+                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                " | TF target-gene waterfall"
+              ),
+              x = "Signed unique-gene count (Up positive, Down negative)",
+              y = "TF",
+              fill = "Direction",
+              alpha = "Target class",
+              caption = "Counts are unique genes per TF. TFs shown: >10 unique genes. Red=Up, Blue=Down; shading encodes target class."
+            ) +
+            ggplot2::coord_cartesian(xlim = x_lim, clip = "off") +
+            ggplot2::theme_classic(base_size = base_size) +
+            ggplot2::theme(
+              text = ggplot2::element_text(face = "bold"),
+              plot.title = ggplot2::element_text(hjust = 0.5, margin = ggplot2::margin(b = 10), face = "bold"),
+              axis.title.x = ggplot2::element_text(face = "bold"),
+              axis.title.y = ggplot2::element_text(face = "bold"),
+              axis.text.y = ggplot2::element_text(size = tf_axis_size_single, face = "bold"),
+              axis.text.x = ggplot2::element_text(face = "bold"),
+              legend.position = "right",
+              plot.caption = ggplot2::element_text(size = max(7, base_size - 3), margin = ggplot2::margin(t = 8)),
+              plot.margin = ggplot2::margin(t = 16, r = 40, b = 22, l = 14)
+            )
+          ggplot2::ggsave(out_pdf_waterfall, p2_single, width = width_in, height = waterfall_height, dpi = dpi, limitsize = FALSE)
+        } else {
+          grDevices::pdf(out_pdf_waterfall, width = width_in, height = height_in, onefile = TRUE)
+          graphics::plot.new()
+          graphics::title(main = paste0(title_text, " | TF target-direction waterfall"))
+          graphics::text(0.5, 0.5, "No TFs pass cutoff: unique gene count > 10")
+          grDevices::dev.off()
+        }
+
+        # Page 3: TF-to-TF connectivity clustered heatmap.
+        tf2tf <- link_dt[toupper(gene_key) %in% tf_upper, .(TF_src = TF, TF_tgt = gene_key)]
+        if (nrow(tf2tf)) {
+          conn <- tf2tf[, .N, by = .(TF_src, TF_tgt)]
+          tf_levels <- sort(unique(c(conn$TF_src, conn$TF_tgt)))
+          mat <- matrix(0, nrow = length(tf_levels), ncol = length(tf_levels),
+                        dimnames = list(tf_levels, tf_levels))
+          for (ii in seq_len(nrow(conn))) {
+            mat[conn$TF_src[ii], conn$TF_tgt[ii]] <- conn$N[ii]
+          }
+
+          deg_cut <- suppressWarnings(as.integer(connectivity_min_degree))
+          if (!is.finite(deg_cut) || is.na(deg_cut) || deg_cut < 0L) deg_cut <- 1L
+          adj_undir_keep <- (mat > 0) | (t(mat) > 0)
+          diag(adj_undir_keep) <- FALSE
+          deg_vec <- rowSums(adj_undir_keep, na.rm = TRUE)
+          tf_keep <- names(deg_vec)[deg_vec >= deg_cut]
+          if (length(tf_keep) >= 2L) {
+            mat <- mat[tf_keep, tf_keep, drop = FALSE]
+          } else {
+            tryCatch({
+              grDevices::pdf(out_pdf_heatmap, width = 10, height = 10, onefile = TRUE)
+              pdf_dev <- grDevices::dev.cur()
+              graphics::plot.new()
+              graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF connectivity heatmap"))
+              graphics::text(0.5, 0.58, "No TFs pass connectivity cutoff")
+              graphics::text(0.5, 0.50, paste0("Cutoff: undirected degree >= ", deg_cut))
+              graphics::text(0.5, 0.42, paste0("TFs passing cutoff: ", length(tf_keep)))
+              try(grDevices::dev.off(pdf_dev), silent = TRUE)
+            }, error = function(e) {
+              .log_warn("Failed writing cutoff-empty standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
+            })
+            next
+          }
+
+          mat_log <- log1p(mat)
+          tf_fs <- max(6.5, min(13, 320 / max(10, nrow(mat_log))))
+          cell_sz <- max(2, min(12, 240 / max(12, nrow(mat_log))))
+          # Build an undirected shortest-path connectivity score for indirect links.
+          # Score(i,j) = 1 / (1 + number of intermediate TF nodes on shortest path i->j),
+          # so direct links have score 1 and disconnected pairs have score 0.
+          adj_undir <- (mat > 0) | (t(mat) > 0)
+          diag(adj_undir) <- FALSE
+          n_tf <- nrow(adj_undir)
+          dist_mat <- matrix(Inf, n_tf, n_tf, dimnames = dimnames(adj_undir))
+          for (src in seq_len(n_tf)) {
+            d <- rep(Inf, n_tf)
+            d[src] <- 0
+            q <- src
+            while (length(q)) {
+              v <- q[[1]]
+              q <- q[-1]
+              nb <- which(adj_undir[v, ] & is.infinite(d))
+              if (length(nb)) {
+                d[nb] <- d[v] + 1
+                q <- c(q, nb)
+              }
+            }
+            dist_mat[src, ] <- d
+          }
+          nodes_needed <- pmax(dist_mat - 1, 0)
+          conn_indirect <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
+          conn_indirect[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
+          diag(conn_indirect) <- 1
+
+          # Third connectivity mode (one-layer composite):
+          # score(i,j) = I(i->j) + I(j->i) + 0.5 * |targets(i) ∩ targets(j)|
+          # where targets(.) are gene_key targets (including TF targets).
+          tf_levels_now <- rownames(mat)
+          edge_gene <- unique(link_dt[, .(TF = as.character(TF), gene_key = as.character(gene_key))])
+          edge_gene <- edge_gene[TF %in% tf_levels_now]
+          if (nrow(edge_gene)) {
+            gene_levels <- sort(unique(edge_gene$gene_key))
+            inc <- matrix(0L, nrow = length(tf_levels_now), ncol = length(gene_levels),
+                          dimnames = list(tf_levels_now, gene_levels))
+            r_idx <- match(edge_gene$TF, tf_levels_now)
+            c_idx <- match(edge_gene$gene_key, gene_levels)
+            keep_idx <- which(!is.na(r_idx) & !is.na(c_idx))
+            if (length(keep_idx)) {
+              inc[cbind(r_idx[keep_idx], c_idx[keep_idx])] <- 1L
+            }
+            shared_targets <- inc %*% t(inc)
+          } else {
+            shared_targets <- matrix(0, nrow = n_tf, ncol = n_tf, dimnames = dimnames(mat))
+          }
+          direct_bin <- (mat > 0) * 1L
+          conn_layer1 <- direct_bin + t(direct_bin) + 0.5 * shared_targets
+          conn_layer1 <- as.matrix(conn_layer1)
+          diag(conn_layer1) <- 0
+
+          # Standalone square heatmap PDF with two pages: direct and indirect.
+          # Use ggplot tiles on a dedicated device to avoid no-page PDF issues.
+          tryCatch({
+            old_dev <- grDevices::dev.cur()
+            tf_n <- nrow(mat_log)
+            side_in <- max(10, min(24, 4 + 0.15 * tf_n))
+            grDevices::pdf(out_pdf_heatmap, width = side_in, height = side_in, onefile = TRUE)
+            pdf_dev <- grDevices::dev.cur()
+            grDevices::dev.set(pdf_dev)
+
+            .plot_mat_tile <- function(mat_in, title_in, fill_title, palette_fn) {
+              ord <- stats::hclust(stats::dist(mat_in), method = "complete")$order
+              mat_ord <- mat_in[ord, ord, drop = FALSE]
+              dt <- data.table::as.data.table(as.table(mat_ord))
+              names(dt) <- c("TF_row", "TF_col", "value")
+              dt[, TF_row := factor(as.character(TF_row), levels = rev(rownames(mat_ord)))]
+              dt[, TF_col := factor(as.character(TF_col), levels = colnames(mat_ord))]
+              fs <- max(6.5, min(13, 340 / max(10, nrow(mat_ord))))
+              p_hm <- ggplot2::ggplot(dt, ggplot2::aes(x = TF_col, y = TF_row, fill = value)) +
+                ggplot2::geom_tile() +
+                ggplot2::scale_fill_gradientn(colors = palette_fn(128), name = fill_title) +
+                ggplot2::coord_fixed() +
+                ggplot2::labs(
+                  title = title_in,
+                  x = "TF target",
+                  y = "TF source",
+                  caption = paste0("TF inclusion cutoff: undirected degree >= ", deg_cut)
+                ) +
+                ggplot2::theme_minimal(base_size = 11) +
+                ggplot2::theme(
+                  text = ggplot2::element_text(face = "bold"),
+                  plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+                  axis.title.x = ggplot2::element_text(face = "bold"),
+                  axis.title.y = ggplot2::element_text(face = "bold"),
+                  axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5, size = fs, face = "bold"),
+                  axis.text.y = ggplot2::element_text(size = fs, face = "bold"),
+                  plot.caption = ggplot2::element_text(face = "bold", hjust = 0, size = max(8, fs * 0.9)),
+                  panel.grid = ggplot2::element_blank()
+                )
+              print(p_hm)
+            }
+
+            .plot_mat_tile(
+              mat_log,
+              paste0(
+                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                " | TF-to-TF direct connectivity (clustered)\nConnectivity(i,j)=# unique directed TF_i->TF_j links; value=log1p(count)."
+              ),
+              "log1p(count)",
+              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#F7B7A3", "#F1695B", "#B2182B"))(n)
+            )
+            .plot_mat_tile(
+              conn_indirect,
+              paste0(
+                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                " | TF-to-TF indirect connectivity (clustered)\nScore(i,j)=1/(1 + # min nodes); direct=1, disconnected=0."
+              ),
+              "indirect score",
+              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#A6CEE3", "#1F78B4", "#08306B"))(n)
+            )
+            .plot_mat_tile(
+              conn_layer1,
+              paste0(
+                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                " | TF-to-TF one-layer composite connectivity (clustered)\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets"
+              ),
+              "composite score",
+              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#D1C4E9", "#7E57C2", "#311B92"))(n)
+            )
+            # Close standalone PDF immediately and return to the original device.
+            try(grDevices::dev.off(pdf_dev), silent = TRUE)
+            devs2 <- grDevices::dev.list()
+            if (!is.null(devs2) && old_dev %in% devs2) {
+              try(grDevices::dev.set(old_dev), silent = TRUE)
+            }
+          }, error = function(e) {
+            .log_warn("Failed writing standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
+          })
+        } else {
+          # Ensure standalone connectivity PDF still has one explanatory page.
+          tryCatch({
+            grDevices::pdf(out_pdf_heatmap, width = 10, height = 10, onefile = TRUE)
+            pdf_dev <- grDevices::dev.cur()
+            graphics::plot.new()
+            graphics::title(main = paste0(title_text, " | TF-to-TF connectivity heatmap"))
+            graphics::text(0.5, 0.5, "No TF->TF links found")
+            try(grDevices::dev.off(pdf_dev), silent = TRUE)
+          }, error = function(e) {
+            .log_warn("Failed writing empty standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
+          })
+        }
+      }
+    }
+  }
+
   invisible(out_pdf)
 }
 
