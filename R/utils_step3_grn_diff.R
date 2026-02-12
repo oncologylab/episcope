@@ -1333,6 +1333,7 @@ find_differential_links <- function(config,
   .assert_pkg("ggrepel")
   .assert_pkg("scales")
   .assert_pkg("pheatmap")
+  .assert_pkg("RColorBrewer")
 
   need <- c(
     "TF","tf_expr_max","tf_log2_fc",
@@ -1627,17 +1628,35 @@ find_differential_links <- function(config,
             pdf_dev <- grDevices::dev.cur()
             grDevices::dev.set(pdf_dev)
 
-            .plot_mat_tile <- function(mat_in, title_in, fill_title, palette_fn) {
+            .plot_mat_tile <- function(mat_in, title_in, fill_title, palette_fn, fill_transform = "none") {
               ord <- stats::hclust(stats::dist(mat_in), method = "complete")$order
               mat_ord <- mat_in[ord, ord, drop = FALSE]
               dt <- data.table::as.data.table(as.table(mat_ord))
               names(dt) <- c("TF_row", "TF_col", "value")
+              dt[, value_raw := as.numeric(value)]
+              if (identical(fill_transform, "log1p")) {
+                dt[, value_fill := log1p(pmax(value_raw, 0))]
+                max_raw <- max(dt$value_raw, na.rm = TRUE)
+                raw_breaks <- pretty(c(0, max_raw), n = 5)
+                raw_breaks <- raw_breaks[is.finite(raw_breaks) & raw_breaks >= 0]
+                fill_breaks <- log1p(raw_breaks)
+                fill_labels <- format(round(raw_breaks, 2), trim = TRUE, scientific = FALSE)
+              } else {
+                dt[, value_fill := value_raw]
+                fill_breaks <- ggplot2::waiver()
+                fill_labels <- ggplot2::waiver()
+              }
               dt[, TF_row := factor(as.character(TF_row), levels = rev(rownames(mat_ord)))]
               dt[, TF_col := factor(as.character(TF_col), levels = colnames(mat_ord))]
               fs <- max(6.5, min(13, 340 / max(10, nrow(mat_ord))))
-              p_hm <- ggplot2::ggplot(dt, ggplot2::aes(x = TF_col, y = TF_row, fill = value)) +
+              p_hm <- ggplot2::ggplot(dt, ggplot2::aes(x = TF_col, y = TF_row, fill = value_fill)) +
                 ggplot2::geom_tile() +
-                ggplot2::scale_fill_gradientn(colors = palette_fn(128), name = fill_title) +
+                ggplot2::scale_fill_gradientn(
+                  colors = palette_fn(128),
+                  name = fill_title,
+                  breaks = fill_breaks,
+                  labels = fill_labels
+                ) +
                 ggplot2::coord_fixed() +
                 ggplot2::labs(
                   title = title_in,
@@ -1659,15 +1678,10 @@ find_differential_links <- function(config,
               print(p_hm)
             }
 
-            .plot_mat_tile(
-              mat_log,
-              paste0(
-                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                " | TF-to-TF direct connectivity (clustered)\nConnectivity(i,j)=# unique directed TF_i->TF_j links; value=log1p(count)."
-              ),
-              "log1p(count)",
-              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#F7B7A3", "#F1695B", "#B2182B"))(n)
-            )
+            heat_cols <- grDevices::colorRampPalette(
+              rev(RColorBrewer::brewer.pal(7, "RdYlBu"))
+            )(100)
+
             .plot_mat_tile(
               conn_indirect,
               paste0(
@@ -1675,16 +1689,18 @@ find_differential_links <- function(config,
                 " | TF-to-TF indirect connectivity (clustered)\nScore(i,j)=1/(1 + # min nodes); direct=1, disconnected=0."
               ),
               "indirect score",
-              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#A6CEE3", "#1F78B4", "#08306B"))(n)
+              function(n) heat_cols,
+              fill_transform = "none"
             )
             .plot_mat_tile(
               conn_layer1,
               paste0(
                 sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                " | TF-to-TF one-layer composite connectivity (clustered)\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets"
+                " | TF-to-TF one-layer composite connectivity (clustered)\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets (color uses log1p(score))"
               ),
               "composite score",
-              function(n) grDevices::colorRampPalette(c("#FFFFFF", "#D1C4E9", "#7E57C2", "#311B92"))(n)
+              function(n) heat_cols,
+              fill_transform = "log1p"
             )
             # Close standalone PDF immediately and return to the original device.
             try(grDevices::dev.off(pdf_dev), silent = TRUE)
