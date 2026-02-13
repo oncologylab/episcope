@@ -282,7 +282,7 @@ step2_specs <- build_cellwise_contrasts_from_index(
   clean_names = FALSE
 )
 
-delta_link <- 1
+delta_fp_cutoff <- 0.5
 regulated_genes <- 1.5 # 1.5 2
 
 run_links_deltas_driver(
@@ -290,7 +290,7 @@ run_links_deltas_driver(
   clean_names = FALSE,
   parallel    = TRUE,
   restrict_to_active_both = FALSE,
-  edge_change_min = delta_link,
+  edge_change_min = 0,
   keep_all_cols = TRUE
 )
 
@@ -299,14 +299,16 @@ step2_de_gene_log2_abs_min <- if (regulated_genes == 1.5) 0.585 else if (regulat
 
 step2_bulk <- episcope::filter_links_deltas_bulk(
   step2_delta_csvs,
-  gene_expr_min = threshold_gene_expr,
-  tf_expr_min = threshold_tf_expr,
-  fp_min = threshold_fp_score,
-  link_min = threshold_link_score,
-  abs_delta_min = delta_link,
+  gene_expr_min = -Inf,
+  tf_expr_min = -Inf,
+  fp_min = -Inf,
+  link_min = -Inf,
+  abs_delta_min = -Inf,
   apply_de_gene = TRUE,
   de_gene_log2_abs_min = step2_de_gene_log2_abs_min,
-  enforce_link_expr_sign = TRUE,
+  fp_delta_min = delta_fp_cutoff,
+  tf_opposition_log2_abs_min = step2_de_gene_log2_abs_min,
+  enforce_link_expr_sign = FALSE,
   expr_dir_col = "log2FC_gene_expr",
   workers = 20
 )

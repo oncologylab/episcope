@@ -36,3 +36,7 @@ rna_mapped: /data/homes/yl814/episcope_test/GSE192390_T_Cells_JASPAR2024/data/rn
 # Pipeline paths
 base_dir: /data/homes/yl814/episcope_test/GSE192390_T_Cells_JASPAR2024
 fp_root_dir: /data/homes/yl814/fptools_test/GSE192390_ATAC_T_Cells/TOBIAS_merged_peaks
+
+# Module 3: Differential links
+de_gene_log2_abs_min: 0.5
+delta_fp_cutoff: 0.5

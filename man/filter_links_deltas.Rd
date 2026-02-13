@@ -19,6 +19,7 @@ filter_links_deltas(
   de_tf_fc_min = NULL,
   fp_delta_min = NULL,
   enforce_link_expr_sign = TRUE,
+  tf_opposition_log2_abs_min = NULL,
   expr_dir_col = "log2FC_gene_expr",
   save_csv = FALSE,
   out_file = NULL,

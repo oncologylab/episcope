@@ -1041,10 +1041,9 @@ find_differential_links <- function(config,
     )
   }
 
-  delta_link <- if (exists("delta_link")) delta_link else 1
+  delta_fp_cutoff <- if (exists("delta_fp_cutoff")) delta_fp_cutoff else if (exists("fp_delta_min")) fp_delta_min else 0.5
   de_gene_log2_abs_min <- if (exists("de_gene_log2_abs_min")) de_gene_log2_abs_min else 0.5
-  de_tf_log2_abs_min <- if (exists("de_tf_log2_abs_min")) de_tf_log2_abs_min else 0.5
-  fp_delta_min <- if (exists("fp_delta_min")) fp_delta_min else 0.5
+  fp_delta_min <- delta_fp_cutoff
 
   existing_delta <- list.files(delta_dir, "_delta_links\\.csv$", full.names = TRUE)
   if (!isTRUE(overwrite_delta) && length(existing_delta) > 0L) {
@@ -1056,7 +1055,7 @@ find_differential_links <- function(config,
       parallel = parallel,
       workers = workers,
       restrict_to_active_both = FALSE,
-      edge_change_min = delta_link,
+      edge_change_min = 0,
       keep_all_cols = TRUE,
       input_dir = step2_out_dir,
       input_prefix = input_prefix,
@@ -1074,18 +1073,19 @@ find_differential_links <- function(config,
   } else {
     filter_links_deltas_bulk(
       delta_csvs,
-      gene_expr_min = threshold_gene_expr,
-      tf_expr_min = threshold_tf_expr,
-      fp_min = threshold_fp_score,
-      link_min = threshold_link_score,
-      abs_delta_min = delta_link,
+      gene_expr_min = -Inf,
+      tf_expr_min = -Inf,
+      fp_min = -Inf,
+      link_min = -Inf,
+      abs_delta_min = -Inf,
       apply_de_gene = TRUE,
       de_gene_log2_abs_min = de_gene_log2_abs_min,
-      de_tf_log2_abs_min = de_tf_log2_abs_min,
+      apply_de_tf = FALSE,
       fp_delta_min = fp_delta_min,
+      tf_opposition_log2_abs_min = de_gene_log2_abs_min,
       split_direction = TRUE,
       write_combined = FALSE,
-      enforce_link_expr_sign = TRUE,
+      enforce_link_expr_sign = FALSE,
       expr_dir_col = "log2FC_gene_expr",
       workers = workers,
       filtered_dir = filtered_dir
@@ -1097,7 +1097,9 @@ find_differential_links <- function(config,
       filtered_dir = filtered_dir,
       out_root = out_root,
       output_format = summary_plot_format,
-      html_selfcontained = summary_html_selfcontained
+      html_selfcontained = summary_html_selfcontained,
+      de_gene_log2_abs_min = de_gene_log2_abs_min,
+      delta_fp_cutoff = delta_fp_cutoff
     )
   }
 
@@ -1165,7 +1167,9 @@ find_differential_links <- function(config,
 .plot_fp_gene_volcanoes_from_filtered <- function(filtered_dir,
                                                   out_root,
                                                   output_format = c("pdf", "html", "both"),
-                                                  html_selfcontained = TRUE) {
+                                                  html_selfcontained = TRUE,
+                                                  de_gene_log2_abs_min = 0.5,
+                                                  delta_fp_cutoff = 0.5) {
   .assert_pkg("ggplot2")
   .assert_pkg("readr")
   output_format <- match.arg(output_format)
@@ -1231,6 +1235,54 @@ find_differential_links <- function(config,
     as.data.frame(out)
   }
 
+  .gene_count_stages_from_delta <- function(delta_df, comparison_id) {
+    if (!is.data.frame(delta_df) || !nrow(delta_df)) return(data.frame())
+    gene_col <- .pick_gene_col(names(delta_df))
+    if (is.na(gene_col) || !("log2FC_gene_expr" %in% names(delta_df))) return(data.frame())
+
+    gene_vals <- as.character(delta_df[[gene_col]])
+    lfc <- suppressWarnings(as.numeric(delta_df$log2FC_gene_expr))
+    direction <- ifelse(is.finite(lfc) & (lfc >= 0), "Up", ifelse(is.finite(lfc) & (lfc < 0), "Down", NA_character_))
+
+    fp_delta <- if ("delta_fp_bed_score" %in% names(delta_df)) {
+      suppressWarnings(as.numeric(delta_df$delta_fp_bed_score))
+    } else {
+      rep(NA_real_, nrow(delta_df))
+    }
+    thr_gene <- as.numeric(de_gene_log2_abs_min)
+    thr_fp <- as.numeric(delta_fp_cutoff)
+
+    keep_base <- !is.na(gene_vals) & nzchar(gene_vals) & !is.na(direction) & direction %in% c("Up", "Down")
+    if (!any(keep_base)) return(data.frame())
+    base_df <- data.frame(
+      comparison_id = comparison_id,
+      direction = direction[keep_base],
+      gene_key = gene_vals[keep_base],
+      stringsAsFactors = FALSE
+    )
+    dir_sign <- ifelse(direction[keep_base] == "Up", 1, -1)
+    rna_pass <- (abs(lfc[keep_base]) >= thr_gene)
+    fp_pass <- (dir_sign * fp_delta[keep_base]) >= thr_fp
+    stage_list <- list(
+      "No filter" = rep(TRUE, nrow(base_df)),
+      "RNA" = rna_pass,
+      "FP" = fp_pass,
+      "RNA & FP" = rna_pass & fp_pass
+    )
+    out_rows <- lapply(names(stage_list), function(stage_name) {
+      idx <- as.logical(stage_list[[stage_name]])
+      idx[is.na(idx)] <- FALSE
+      if (!any(idx, na.rm = TRUE)) return(data.frame())
+      tmp <- base_df[idx, , drop = FALSE]
+      tmp$stage <- stage_name
+      tmp |>
+        dplyr::distinct(.data$comparison_id, .data$direction, .data$stage, .data$gene_key) |>
+        dplyr::count(.data$comparison_id, .data$direction, .data$stage, name = "n_gene_unique") |>
+        as.data.frame()
+    })
+    dplyr::bind_rows(out_rows)
+  }
+
   for (bid in base_ids) {
     sel <- files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(files))]
     if (!length(sel)) next
@@ -1284,37 +1336,24 @@ find_differential_links <- function(config,
     )
     plot_list[[length(plot_list) + 1L]] <- p
 
-    # Gene-key counts by direction: before = delta links, after = filtered links.
+    # Gene-key counts by direction using thresholded stage filters from delta links.
     count_rows_this <- list()
-    for (p in sel) {
-      dlab <- if (grepl("_up\\.csv$", basename(p), ignore.case = TRUE)) "Up" else "Down"
-      dfi <- readr::read_csv(p, show_col_types = FALSE)
-      cr <- .count_unique_genes_by_dir(
-        df = dfi,
-        stage = "After filtering",
-        comparison_id = contrast_id,
-        direction_hint = dlab
-      )
-      if (nrow(cr)) count_rows_this[[length(count_rows_this) + 1L]] <- cr
-    }
     delta_path <- file.path(out_root, "diff_links", paste0(contrast_id, "_delta_links.csv"))
     if (!file.exists(delta_path)) {
       delta_path <- file.path(out_root, "delta_links", paste0(contrast_id, "_delta_links.csv"))
     }
     if (file.exists(delta_path)) {
       delta_df <- readr::read_csv(delta_path, show_col_types = FALSE)
-      crb <- .count_unique_genes_by_dir(
-        df = delta_df,
-        stage = "Before filtering",
-        comparison_id = contrast_id,
-        direction_hint = NULL
+      crb <- .gene_count_stages_from_delta(
+        delta_df = delta_df,
+        comparison_id = contrast_id
       )
       if (nrow(crb)) count_rows_this[[length(count_rows_this) + 1L]] <- crb
     }
     gene_counts_this <- if (length(count_rows_this)) dplyr::bind_rows(count_rows_this) else data.frame()
     if (nrow(gene_counts_this)) {
       gene_counts_this$direction <- factor(gene_counts_this$direction, levels = c("Up", "Down"))
-      gene_counts_this$stage <- factor(gene_counts_this$stage, levels = c("Before filtering", "After filtering"))
+      gene_counts_this$stage <- factor(gene_counts_this$stage, levels = c("No filter", "RNA", "FP", "RNA & FP"))
       all_gene_count_rows[[length(all_gene_count_rows) + 1L]] <- gene_counts_this
     }
 
@@ -1328,18 +1367,25 @@ find_differential_links <- function(config,
           ggplot2::aes(x = .data$direction, y = .data$n_gene_unique, fill = .data$stage)
         ) +
           ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
-          ggplot2::scale_fill_manual(values = c("Before filtering" = "#9ecae1", "After filtering" = "#3182bd")) +
+          ggplot2::scale_fill_manual(values = c("No filter" = "#bdbdbd", "RNA" = "#9ecae1", "FP" = "#6baed6", "RNA & FP" = "#2171b5")) +
           ggplot2::labs(
             title = paste0(.contrast_from_file(bid), " | Unique gene_key counts"),
             x = "Direction",
             y = "Unique gene_key (N)",
-            fill = NULL
+            fill = NULL,
+            caption = paste0(
+              "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
+              " (direction-specific sign). ",
+              "FP filter: |delta_fp_bed_score| >= ", signif(delta_fp_cutoff, 4),
+              " (direction-specific sign)."
+            )
           ) +
           ggplot2::theme_classic(base_size = 9) +
           ggplot2::theme(
             plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
             axis.title = ggplot2::element_text(face = "bold"),
-            legend.position = "top"
+            legend.position = "top",
+            plot.caption = ggplot2::element_text(hjust = 0, size = 7)
           )
         print(p_cnt)
       }
@@ -1389,9 +1435,9 @@ find_differential_links <- function(config,
     counts_all <- dplyr::bind_rows(all_gene_count_rows)
     if (nrow(counts_all)) {
       counts_all$comparison_direction <- paste0(counts_all$comparison_id, " | ", counts_all$direction)
-      counts_all$stage <- factor(counts_all$stage, levels = c("Before filtering", "After filtering"))
+      counts_all$stage <- factor(counts_all$stage, levels = c("No filter", "RNA", "FP", "RNA & FP"))
       ord_tbl <- counts_all |>
-        dplyr::filter(.data$stage == "Before filtering") |>
+        dplyr::filter(.data$stage == "No filter") |>
         dplyr::arrange(dplyr::desc(.data$n_gene_unique)) |>
         dplyr::distinct(.data$comparison_direction, .keep_all = FALSE)
       ord_levels <- ord_tbl$comparison_direction
@@ -1402,19 +1448,26 @@ find_differential_links <- function(config,
         ggplot2::aes(x = .data$comparison_direction, y = .data$n_gene_unique, fill = .data$stage)
       ) +
         ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
-        ggplot2::scale_fill_manual(values = c("Before filtering" = "#9ecae1", "After filtering" = "#3182bd")) +
+        ggplot2::scale_fill_manual(values = c("No filter" = "#bdbdbd", "RNA" = "#9ecae1", "FP" = "#6baed6", "RNA & FP" = "#2171b5")) +
         ggplot2::labs(
           title = "Unique gene_key counts by comparison-direction",
           x = "Comparison | Direction",
           y = "Unique gene_key (N)",
-          fill = NULL
+          fill = NULL,
+          caption = paste0(
+            "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
+            " (direction-specific sign). ",
+            "FP filter: |delta_fp_bed_score| >= ", signif(delta_fp_cutoff, 4),
+            " (direction-specific sign)."
+          )
         ) +
         ggplot2::theme_classic(base_size = 9) +
         ggplot2::theme(
           plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
           axis.title = ggplot2::element_text(face = "bold"),
           axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
-          legend.position = "top"
+          legend.position = "top",
+          plot.caption = ggplot2::element_text(hjust = 0, size = 7)
         )
       ggplot2::ggsave(
         filename = file.path(out_dir, "differential_links_gene_key_counts_summary.pdf"),
@@ -2063,6 +2116,73 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     g <- trimws(g)
     g[!is.na(g) & nzchar(g)]
   }
+  .pick_col <- function(nm, choices) {
+    hit <- choices[choices %in% nm]
+    if (!length(hit)) return(NA_character_)
+    hit[[1]]
+  }
+  .build_plot_col_map <- function(df, comparison_id) {
+    parts <- strsplit(comparison_id, "_vs_", fixed = TRUE)[[1]]
+    if (length(parts) != 2L) return(NULL)
+    cond1 <- parts[[1]]
+    cond2 <- parts[[2]]
+    m <- list(
+      score_str_col = paste0("link_score_", cond1),
+      score_ctrl_col = paste0("link_score_", cond2),
+      sign_str_col = paste0("link_sign_", cond1),
+      sign_ctrl_col = paste0("link_sign_", cond2),
+      tf_expr_str_col = paste0("tf_expr_", cond1),
+      tf_expr_ctrl_col = paste0("tf_expr_", cond2),
+      gene_expr_str_col = paste0("gene_expr_", cond1),
+      gene_expr_ctrl_col = paste0("gene_expr_", cond2)
+    )
+    need <- c("score_str_col", "score_ctrl_col")
+    if (!all(unlist(m[need]) %in% names(df))) return(NULL)
+    m
+  }
+  .merge_with_delta_links <- function(sub_links, comparison_id) {
+    if (sum(grepl("^link_score_", names(sub_links))) >= 2L) return(sub_links)
+    delta_dir <- file.path(dirname(filtered_dir), "diff_links")
+    raw_path <- file.path(delta_dir, paste0(comparison_id, "_delta_links.csv"))
+    if (!file.exists(raw_path)) {
+      raw_path <- file.path(dirname(filtered_dir), "delta_links", paste0(comparison_id, "_delta_links.csv"))
+    }
+    if (!file.exists(raw_path)) return(sub_links)
+    raw_df <- readr::read_csv(raw_path, show_col_types = FALSE)
+    fdt <- data.table::as.data.table(sub_links)
+    rdt <- data.table::as.data.table(raw_df)
+
+    tf_f <- .pick_col(names(fdt), c("tf", "TF"))
+    gn_f <- .pick_col(names(fdt), c("gene_key", "gene", "target_gene"))
+    pk_f <- .pick_col(names(fdt), c("peak_id", "peak_ID", "fp_peak"))
+    tf_r <- .pick_col(names(rdt), c("tf", "TF"))
+    gn_r <- .pick_col(names(rdt), c("gene_key", "gene", "target_gene"))
+    pk_r <- .pick_col(names(rdt), c("peak_id", "peak_ID", "fp_peak"))
+    if (is.na(tf_f) || is.na(gn_f) || is.na(tf_r) || is.na(gn_r)) return(sub_links)
+
+    keys_f <- data.table::data.table(
+      tf_key = as.character(fdt[[tf_f]]),
+      gene_key = as.character(fdt[[gn_f]])
+    )
+    rdt[, tf_key := as.character(get(tf_r))]
+    rdt[, gene_key := as.character(get(gn_r))]
+    by_cols <- c("tf_key", "gene_key")
+    if (!is.na(pk_f) && !is.na(pk_r)) {
+      keys_f[, peak_key := as.character(fdt[[pk_f]])]
+      rdt[, peak_key := as.character(get(pk_r))]
+      by_cols <- c(by_cols, "peak_key")
+    }
+    keys_f <- unique(keys_f[!is.na(tf_key) & nzchar(tf_key) & !is.na(gene_key) & nzchar(gene_key)])
+    if (!nrow(keys_f)) return(sub_links)
+    keep_cols <- unique(c(by_cols, names(sub_links), names(raw_df)))
+    keep_cols <- intersect(keep_cols, names(rdt))
+    if (!length(keep_cols)) return(sub_links)
+    rsub <- unique(rdt[, ..keep_cols])
+    merged <- data.table::merge.data.table(keys_f, rsub, by = by_cols, all.x = FALSE, all.y = FALSE)
+    if (!nrow(merged)) return(sub_links)
+    merged[, c("tf_key", "gene_key", "peak_key") := NULL]
+    as.data.frame(merged)
+  }
   .select_nonredundant_pathways <- function(tbl, overlap_thr = 0.8) {
     if (!is.data.frame(tbl) || !nrow(tbl)) return(tbl)
     if (!all(c("genes", "adjusted_p") %in% names(tbl))) return(tbl)
@@ -2184,6 +2304,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
       if (!length(p_genes)) next
       sub_links <- links_full[as.character(links_full$gene_key) %in% p_genes, , drop = FALSE]
       if (!nrow(sub_links)) next
+      sub_links <- .merge_with_delta_links(sub_links, comparison_id = comparison_id)
 
       p_slug <- .safe_label(p_name)
       if (!nzchar(p_slug)) p_slug <- paste0("pathway_", i)
@@ -2194,8 +2315,18 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
       }
 
       plot_title <- paste(comparison_id, dir_label, p_name, sep = " | ")
+      plot_col_map <- .build_plot_col_map(sub_links, comparison_id = comparison_id)
+      if (is.null(plot_col_map) && isTRUE(verbose)) {
+        .log_warn("Could not resolve explicit score column mapping for {comparison_id}; falling back to auto-detection in plot_tf_network_delta().")
+      } else if (isTRUE(verbose)) {
+        .log_inform(
+          "Pathway subnet mapping for {comparison_id}: case={plot_col_map$score_str_col}, ctrl={plot_col_map$score_ctrl_col} (delta = case - ctrl)."
+        )
+      }
       w <- try(
-        plot_tf_network_delta(
+        do.call(
+          plot_tf_network_delta,
+          c(list(
           data = sub_links,
           plot_title = plot_title,
           layout_algo = "fr",
@@ -2209,10 +2340,15 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
           gene_fc_thresh = 1.5,
           de_reference = "str_over_ctrl",
           motif_db = "jaspar2024"
+          ),
+          if (is.null(plot_col_map)) list() else plot_col_map)
         ),
         silent = TRUE
       )
-      if (inherits(w, "try-error")) next
+      if (inherits(w, "try-error")) {
+        if (isTRUE(verbose)) .log_warn("Pathway subnet plot failed for {comparison_id} [{dir_label}] {p_name}: {as.character(w)}")
+        next
+      }
       htmlwidgets::saveWidget(w, out_html, selfcontained = isTRUE(html_selfcontained))
       if (exists(".set_html_title")) .set_html_title(out_html, plot_title)
 
@@ -2232,6 +2368,8 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
   if (isTRUE(can_plot) && length(summary_rows)) {
     summary_tbl <- dplyr::bind_rows(summary_rows)
     readr::write_csv(summary_tbl, file.path(subnetwork_root, "pathway_sub_network_summary.csv"))
+  } else if (isTRUE(can_plot) && isTRUE(verbose)) {
+    .log_inform("Pathway subnet plotting: no pathway subnet HTML files were produced.")
   }
 
   invisible(out_files)

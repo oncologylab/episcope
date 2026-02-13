@@ -39,3 +39,7 @@ rna_path: /data/homes/yl814/episcope_test/nutrient_stress_lenient_JASPAR2024/dat
 base_dir: /data/homes/yl814/episcope_test/nutrient_stress_lenient_JASPAR2024
 basal_links_dir: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024
 fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
+
+# Module 3: Differential links
+de_gene_log2_abs_min: 0.5
+delta_fp_cutoff: 0.5

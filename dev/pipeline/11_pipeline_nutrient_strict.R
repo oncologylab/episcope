@@ -324,16 +324,16 @@ step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 if (do_diff_grn == TRUE) {
 
-  # diff_res <- find_differential_links(
-  #   config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
-  #   compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-  #   output_dir = step3_root_dir,
-  #   overwrite_delta = FALSE,
-  #   overwrite_filtered = FALSE,
-  #   overwrite_tf_hubs = TRUE,
-  #   connectivity_min_degree = 5L,
-  #   summary_plot_format = "both"
-  # )
+  diff_res <- find_differential_links(
+    config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
+    compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
+    output_dir = step3_root_dir,
+    overwrite_delta = FALSE,
+    overwrite_filtered = FALSE,
+    overwrite_tf_hubs = TRUE,
+    connectivity_min_degree = 5L,
+    summary_plot_format = "both"
+  )
 
   # Optional: pathway enrichment from diff_links_filtered (minimal gene_key-based run).
   do_diff_links_pathway_enrichment <- TRUE
@@ -342,7 +342,9 @@ if (do_diff_grn == TRUE) {
       diff_res = diff_res,
       min_genes = 5L,
       padj_cut = 0.05,
-      overwrite = FALSE,
+      plot_subnetwork = TRUE,
+      top_n_pathways_plot = 10L,
+      overwrite = TRUE,
       verbose = TRUE
     )
   }

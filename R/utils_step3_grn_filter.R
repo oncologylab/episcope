@@ -194,6 +194,7 @@ filter_links_deltas <- function(x,
                                 de_tf_fc_min   = NULL,
                                 fp_delta_min = NULL,
                                 enforce_link_expr_sign = TRUE,
+                                tf_opposition_log2_abs_min = NULL,
                                 expr_dir_col = "log2FC_gene_expr",
                                 save_csv = FALSE,
                                 out_file = NULL,
@@ -229,7 +230,7 @@ filter_links_deltas <- function(x,
         ", link_min=", link_min,
         ", abs_delta_min=", abs_delta_min, ".", verbose = verbose)
 
-  # Per-criterion passes
+  # Legacy per-criterion summaries (kept for diagnostics; not used in final keep for module3 directional filtering)
   pass_gene <- .any_gt(df, cols_gene, gene_expr_min)
   if (length(cols_gene) == 0L) warning("No gene_expr_* columns found; skipping gene expression filter.")
   .flog("Pass gene_expr: ", sum(pass_gene), "/", n0, " rows.", verbose = verbose)
@@ -255,7 +256,7 @@ filter_links_deltas <- function(x,
   }
   .flog("Pass delta_link_score: ", sum(pass_delta), "/", n0, " rows.", verbose = verbose)
 
-  # Optional consistency between delta_link_score and gene change
+  # Optional consistency between delta_link_score and gene change (legacy)
   if (isTRUE(enforce_link_expr_sign)) {
     mode <- .link_mode_from_signs(df)  # "activator", "repressor", or NA
     s_link <- suppressWarnings(sign(as.numeric(df[["delta_link_score"]])))
@@ -285,6 +286,31 @@ filter_links_deltas <- function(x,
     }
   } else {
     pass_sign <- rep(TRUE, n0)
+  }
+
+  # Opposite TF-vs-target removal:
+  # drop rows where TF change is significant and TF sign is opposite to target-gene sign.
+  if (is.null(tf_opposition_log2_abs_min) || !is.finite(tf_opposition_log2_abs_min)) {
+    tf_opposition_log2_abs_min <- de_gene_log2_abs_min
+  }
+  if ("log2FC_tf_expr" %in% nms && "log2FC_gene_expr" %in% nms &&
+      is.finite(tf_opposition_log2_abs_min)) {
+    lt <- suppressWarnings(as.numeric(df[["log2FC_tf_expr"]]))
+    lg <- suppressWarnings(as.numeric(df[["log2FC_gene_expr"]]))
+    tf_sig <- is.finite(lt) & (abs(lt) >= as.numeric(tf_opposition_log2_abs_min))
+    opp <- tf_sig & is.finite(lg) & (sign(lt) == -sign(lg))
+    pass_tf_gene_dir <- !opp
+    .flog(
+      "Pass TF-vs-target direction check (drop TF-significant opposite direction): ",
+      sum(pass_tf_gene_dir), "/", n0, " rows.",
+      verbose = verbose
+    )
+  } else {
+    pass_tf_gene_dir <- rep(TRUE, n0)
+    .flog(
+      "Skipping TF-vs-target direction check (missing log2FC_tf_expr/log2FC_gene_expr or tf_opposition_log2_abs_min).",
+      verbose = verbose
+    )
   }
 
   # Absolute log2FC filters
@@ -324,8 +350,9 @@ filter_links_deltas <- function(x,
     pass_de_tf <- rep(TRUE, n0)
   }
 
-  # Combine (logical AND)
-  keep <- pass_gene & pass_tf & pass_fp & pass_link & pass_delta & pass_de_gene & pass_de_tf & pass_sign
+  # Module3 filtering is driven by differential direction cutoffs; do not apply legacy
+  # absolute link-score/delta-link/base-expression filters here.
+  keep <- pass_de_gene & pass_de_tf & pass_tf_gene_dir
 
   out <- df[keep, , drop = FALSE]
   .flog("Kept ", nrow(out), " / ", n0, " rows after all filters.", verbose = verbose)
@@ -397,6 +424,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      de_gene_fc_min = NULL,
                                      de_tf_fc_min   = NULL,
                                      fp_delta_min = NULL,
+                                     tf_opposition_log2_abs_min = NULL,
                                      split_direction = FALSE,
                                      write_combined = TRUE,
                                      enforce_link_expr_sign = FALSE,
@@ -484,6 +512,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
       de_tf_fc_min   = de_tf_fc_min,
       fp_delta_min = fp_delta_min,
       enforce_link_expr_sign = enforce_link_expr_sign,
+      tf_opposition_log2_abs_min = tf_opposition_log2_abs_min,
       expr_dir_col = expr_dir_col,
       save_csv = isTRUE(save_csv) && isTRUE(write_combined),
       out_file = out_path,
@@ -498,7 +527,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
         df,
         gene_log2_abs_min = de_gene_log2_abs_min,
         fp_delta_min = fp_delta_min,
-        tf_log2_abs_min = de_tf_log2_abs_min,
+        tf_log2_abs_min = if (is.finite(tf_opposition_log2_abs_min)) tf_opposition_log2_abs_min else de_gene_log2_abs_min,
         verbose = worker_verbose
       )
       readr::write_csv(split$up, up_path)

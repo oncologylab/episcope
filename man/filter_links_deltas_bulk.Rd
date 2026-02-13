@@ -18,6 +18,7 @@ filter_links_deltas_bulk(
   de_gene_fc_min = NULL,
   de_tf_fc_min = NULL,
   fp_delta_min = NULL,
+  tf_opposition_log2_abs_min = NULL,
   split_direction = FALSE,
   write_combined = TRUE,
   enforce_link_expr_sign = FALSE,
