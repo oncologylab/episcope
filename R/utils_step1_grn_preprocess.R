@@ -1683,29 +1683,70 @@ correlate_tf_to_fp <- function(
   run_mode_chunked <- is.null(tf_subset) && mode %in% c("all", "canonical")
 
   if (isTRUE(run_mode_chunked)) {
+    tf_list_cfg <- if (is.character(grn_set_base$tf_list) && length(grn_set_base$tf_list)) {
+      sort(unique(as.character(grn_set_base$tf_list)))
+    } else {
+      character(0)
+    }
+    rna_hgnc <- sort(unique(grn_set_base$rna_condition$HGNC))
+    rna_hgnc <- rna_hgnc[!is.na(rna_hgnc) & nzchar(rna_hgnc)]
+
     tf_pool <- if (identical(mode, "all")) {
-      if (is.character(grn_set_base$tf_list) && length(grn_set_base$tf_list)) {
-        intersect(unique(grn_set_base$rna_condition$HGNC), unique(as.character(grn_set_base$tf_list)))
+      if (length(tf_list_cfg)) {
+        intersect(rna_hgnc, tf_list_cfg)
       } else {
-        unique(grn_set_base$rna_condition$HGNC)
+        rna_hgnc
       }
     } else {
       ann <- grn_set_base$fp_annotation
       tfs_raw <- if (is.data.frame(ann) && "tfs" %in% names(ann)) ann$tfs else character(0)
       tf_vec <- unique(unlist(strsplit(paste(tfs_raw, collapse = ","), "\\s*,\\s*|\\s*::\\s*")))
       tf_vec <- tf_vec[!is.na(tf_vec) & nzchar(tf_vec)]
-      if (is.character(grn_set_base$tf_list) && length(grn_set_base$tf_list)) {
-        intersect(tf_vec, unique(as.character(grn_set_base$tf_list)))
+      if (length(tf_list_cfg)) {
+        intersect(tf_vec, tf_list_cfg)
       } else {
         tf_vec
       }
     }
     tf_pool <- tf_pool[!is.na(tf_pool) & nzchar(tf_pool)]
     tf_pool <- sort(unique(tf_pool))
+    tf_pool_before_subset <- tf_pool
+    if (!is.null(tf_subset) && length(tf_subset)) {
+      tf_pool <- intersect(tf_pool, unique(as.character(tf_subset)))
+    }
     mode_tf_chunk_size <- if (identical(mode, "all")) all_mode_tf_chunk_size else canonical_mode_tf_chunk_size
     mode_tf_chunk_size <- max(1L, as.integer(mode_tf_chunk_size))
     tf_chunks <- split(tf_pool, ceiling(seq_along(tf_pool) / mode_tf_chunk_size))
     if (isTRUE(verbose)) {
+      if (identical(mode, "all")) {
+        n_tf_rna_and_list <- if (length(tf_list_cfg)) length(intersect(rna_hgnc, tf_list_cfg)) else length(rna_hgnc)
+        .log_inform(
+          paste0(
+            "All-mode TF pool: tf_list=", length(tf_list_cfg),
+            "; RNA genes=", length(rna_hgnc),
+            "; TFs in RNA", if (length(tf_list_cfg)) " ∩ tf_list" else "", "=", n_tf_rna_and_list,
+            "; after tf_subset=", length(tf_pool), "."
+          )
+        )
+      } else {
+        ann <- grn_set_base$fp_annotation
+        tfs_raw <- if (is.data.frame(ann) && "tfs" %in% names(ann)) ann$tfs else character(0)
+        tf_from_ann <- unique(unlist(strsplit(paste(tfs_raw, collapse = ","), "\\s*,\\s*|\\s*::\\s*")))
+        tf_from_ann <- tf_from_ann[!is.na(tf_from_ann) & nzchar(tf_from_ann)]
+        n_ann_and_list <- if (length(tf_list_cfg)) length(intersect(tf_from_ann, tf_list_cfg)) else length(tf_from_ann)
+        .log_inform(
+          paste0(
+            "Canonical-mode TF pool: TFs in fp_annotation=", length(tf_from_ann),
+            if (length(tf_list_cfg)) paste0("; in fp_annotation ∩ tf_list=", n_ann_and_list) else "",
+            "; after tf_subset=", length(tf_pool), "."
+          )
+        )
+      }
+      if (length(tf_pool_before_subset) != length(tf_pool)) {
+        .log_inform(
+          "{mode}-mode TF subset filter excluded {length(tf_pool_before_subset) - length(tf_pool)} TFs from the candidate pool."
+        )
+      }
       .log_inform(
         "Running {mode}-mode in TF chunks: {length(tf_pool)} TFs in {length(tf_chunks)} chunks (chunk size {mode_tf_chunk_size})."
       )

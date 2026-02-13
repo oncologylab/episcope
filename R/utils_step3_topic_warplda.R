@@ -3926,21 +3926,11 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     log_msg(msg)
     make_heatmap <- FALSE
   }
-  site_set <- FALSE
-  tryCatch(
-    {
-      .quiet_enrichr_call(enrichR::setEnrichrSite("Enrichr"))
-      site_set <- TRUE
-      log_msg("Enrichr site set to 'Enrichr'.")
-    },
-    error = function(e) {
-      log_msg(sprintf("Failed to set Enrichr site: %s", conditionMessage(e)))
-    }
+  .ensure_enrichr_ready(
+    site = "Enrichr",
+    verbose = TRUE,
+    log_fun = log_msg
   )
-  if (!isTRUE(site_set)) {
-    options(enrichR.site = "https://maayanlab.cloud/Enrichr/")
-    log_msg("Enrichr site set via options(enrichR.site=...).")
-  }
 
   if (is.null(topic_terms) || !nrow(topic_terms)) {
     msg <- "Skipping pathway enrichment heatmap: topic_terms empty."
@@ -4269,31 +4259,10 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     log_msg(msg)
     return(invisible(NULL))
   }
-  .ensure_enrichr_site <- function() {
-    base_addr <- getOption("enrichR.sites.base.address")
-    if (is.null(base_addr) || !nzchar(base_addr)) {
-      options(enrichR.sites.base.address = "https://maayanlab.cloud/")
-    }
-    sites <- getOption("enrichR.sites")
-    if (is.null(sites) || !length(sites)) {
-      options(enrichR.sites = "Enrichr")
-    }
-    base <- getOption("enrichR.base.address")
-    if (is.null(base) || !nzchar(base)) {
-      options(enrichR.base.address = paste0(getOption("enrichR.sites.base.address"), "Enrichr/"))
-    }
-  }
-  tryCatch(
-    {
-      .ensure_enrichr_site()
-      .quiet_enrichr_call(enrichR::setEnrichrSite("Enrichr"))
-      log_msg("Enrichr site set to 'Enrichr'.")
-    },
-    error = function(e) {
-      log_msg(sprintf("Failed to set Enrichr site: %s", conditionMessage(e)))
-      .ensure_enrichr_site()
-      options(enrichR.base.address = paste0(getOption("enrichR.sites.base.address"), "Enrichr/"))
-    }
+  .ensure_enrichr_ready(
+    site = "Enrichr",
+    verbose = TRUE,
+    log_fun = log_msg
   )
 
   dt <- data.table::as.data.table(link_scores)

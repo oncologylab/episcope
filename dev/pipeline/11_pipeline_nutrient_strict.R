@@ -25,10 +25,10 @@ expected_n <- if (exists("expected_n")) expected_n else NULL
 # ──────────────────────────────────────────────────────────────────────────────
 # Turn modules ON/OFF
 # ──────────────────────────────────────────────────────────────────────────────
-do_load_footprints_preprocess    <- TRUE
-do_tf_binding_sites_prediction   <- TRUE
+do_load_footprints_preprocess    <- FALSE
+do_tf_binding_sites_prediction   <- FALSE
 do_tf_to_target_genes_prediction <- FALSE
-do_diff_grn <- FALSE
+do_diff_grn <- TRUE
 do_topic_combo_run <- FALSE
 
 verbose <- TRUE
@@ -322,11 +322,6 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 if (do_diff_grn == TRUE) {
-  # diff_res <- find_differential_links(
-  #   config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
-  #   compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-  #   output_dir = step3_root_dir
-  # )
 
   # diff_res <- find_differential_links(
   #   config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
@@ -335,18 +330,21 @@ if (do_diff_grn == TRUE) {
   #   overwrite_delta = FALSE,
   #   overwrite_filtered = FALSE,
   #   overwrite_tf_hubs = TRUE,
-  #   connectivity_min_degree = 5L
+  #   connectivity_min_degree = 5L,
+  #   summary_plot_format = "both"
   # )
-  diff_res <- find_differential_links(
-    config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
-    compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-    output_dir = step3_root_dir,
-    overwrite_delta = FALSE,
-    overwrite_filtered = FALSE,
-    overwrite_tf_hubs = TRUE,
-    connectivity_min_degree = 5L,
-    summary_plot_format = "both"
-  )
+
+  # Optional: pathway enrichment from diff_links_filtered (minimal gene_key-based run).
+  do_diff_links_pathway_enrichment <- FALSE
+  if (isTRUE(do_diff_links_pathway_enrichment)) {
+    run_diff_links_pathway_grn(
+      diff_res = diff_res,
+      min_genes = 5L,
+      padj_cut = 0.05,
+      overwrite = FALSE,
+      verbose = TRUE
+    )
+  }
 
   motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")
   # motif_db$gene_symbol <- motif_db$HGNC
@@ -631,7 +629,7 @@ if (isTRUE(do_topic_combo_run)) {
 
 
 run_single_topic_test <- FALSE
-if (isTRUE(run_single_topic_test)) {
+if (isTRUE(do_topic_combo_run) && isTRUE(run_single_topic_test)) {
   # Pick one combo_grid row for an end-to-end troubleshooting run.
   # Example: 17 = aggregate/tf_off/pseudo_count_bin/vae
   single_combo_idx <- 17L
@@ -843,7 +841,7 @@ if (isTRUE(run_single_topic_test)) {
 }
 
 run_gammafit_preview <- FALSE
-if (isTRUE(run_gammafit_preview)) {
+if (isTRUE(do_topic_combo_run) && isTRUE(run_gammafit_preview)) {
   preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
@@ -915,7 +913,7 @@ if (isTRUE(run_gammafit_preview)) {
 }
 
 run_doc_topic_summary_preview <- FALSE
-if (isTRUE(run_doc_topic_summary_preview)) {
+if (isTRUE(do_topic_combo_run) && isTRUE(run_doc_topic_summary_preview)) {
   preview_combo_tag <- "gene_aggregate_tf_off_count_pseudo_count_bin"
   preview_backend <- "vae"
   preview_variant <- "multivi_encoder"
@@ -977,7 +975,7 @@ if (isTRUE(run_doc_topic_summary_preview)) {
 
 # Benchmark: all peak-gene topic concordance scatter (all methods)
 run_topic_benchmark <- FALSE
-if (isTRUE(run_topic_benchmark)) {
+if (isTRUE(do_topic_combo_run) && isTRUE(run_topic_benchmark)) {
   .log_abort(
     "run_topic_benchmark currently expects legacy final_topics_gamma_* directories. Update benchmark utils to compact folder naming before enabling this block."
   )

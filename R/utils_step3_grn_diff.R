@@ -1876,6 +1876,101 @@ find_differential_links <- function(config,
 # ---------------------------------------------------------------------------
 # Examples (not run)
 # ---------------------------------------------------------------------------
+#' Minimal pathway enrichment on filtered differential-link files
+#'
+#' For each `*_filtered_links_up.csv` / `*_filtered_links_down.csv` under
+#' `diff_links_filtered`, reads distinct `gene_key`, runs Enrichr pathway
+#' enrichment (same DB defaults as later topic-pathway steps), sorts by adjusted
+#' p-value (small to large), and writes a CSV in the same folder.
+#'
+#' @param diff_res Optional list returned by [find_differential_links()].
+#' @param filtered_dir Directory containing filtered link files.
+#' @param dbs Enrichr databases.
+#' @param min_genes Minimum distinct genes to run enrichment.
+#' @param padj_cut Keep rows with adjusted p-value <= this cutoff.
+#' @param overwrite Overwrite existing enrichment CSVs.
+#' @param verbose Emit concise messages.
+#'
+#' @return Invisible character vector of output CSV paths.
+#' @export
+run_diff_links_pathway_grn <- function(diff_res = NULL,
+                                       filtered_dir = NULL,
+                                       dbs = c("GO_Biological_Process_2023",
+                                               "GO_Cellular_Component_2023",
+                                               "GO_Molecular_Function_2023",
+                                               "Reactome_2022",
+                                               "WikiPathways_2024_Human"),
+                                       min_genes = 5L,
+                                       padj_cut = 0.05,
+                                       overwrite = FALSE,
+                                       verbose = TRUE) {
+  if (is.null(filtered_dir) && is.list(diff_res) && !is.null(diff_res$filtered_dir)) {
+    filtered_dir <- diff_res$filtered_dir
+  }
+  if (!is.character(filtered_dir) || !nzchar(filtered_dir) || !dir.exists(filtered_dir)) {
+    .log_abort("`filtered_dir` must be an existing directory (or provide `diff_res$filtered_dir`).")
+  }
+  if (!requireNamespace("enrichR", quietly = TRUE)) {
+    .log_abort("`enrichR` package is required for pathway enrichment.")
+  }
+  .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
+
+  files <- list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE)
+  if (!length(files)) {
+    .log_warn("No *_filtered_links_(up|down).csv files found in {filtered_dir}.")
+    return(invisible(character(0)))
+  }
+
+  out_files <- character(0)
+  for (csv in files) {
+    out_csv <- sub("\\.csv$", "_pathway_enrichment.csv", csv, ignore.case = TRUE)
+    if (!isTRUE(overwrite) && file.exists(out_csv)) {
+      out_files <- c(out_files, out_csv)
+      next
+    }
+
+    dat <- readr::read_csv(csv, show_col_types = FALSE, col_select = c("gene_key"))
+    genes <- unique(as.character(dat$gene_key))
+    genes <- genes[!is.na(genes) & nzchar(genes)]
+    if (length(genes) < as.integer(min_genes)) {
+      if (isTRUE(verbose)) .log_inform("Skip {basename(csv)}: distinct gene_key={length(genes)} < {as.integer(min_genes)}.")
+      next
+    }
+
+    enr <- tryCatch(enrichR::enrichr(genes, dbs), error = function(e) NULL)
+    if (is.null(enr)) {
+      .log_warn("Enrichr failed for {basename(csv)}.")
+      next
+    }
+
+    rows <- lapply(names(enr), function(db) {
+      tbl <- enr[[db]]
+      if (!is.data.frame(tbl) || !nrow(tbl) || !all(c("Term", "Adjusted.P.value") %in% names(tbl))) return(NULL)
+      out <- data.frame(
+        db = db,
+        pathway = as.character(tbl$Term),
+        adjusted_p = suppressWarnings(as.numeric(tbl$Adjusted.P.value)),
+        p_value = if ("P.value" %in% names(tbl)) suppressWarnings(as.numeric(tbl$P.value)) else NA_real_,
+        combined_score = if ("Combined.Score" %in% names(tbl)) suppressWarnings(as.numeric(tbl$Combined.Score)) else NA_real_,
+        overlap = if ("Overlap" %in% names(tbl)) as.character(tbl$Overlap) else NA_character_,
+        genes = if ("Genes" %in% names(tbl)) as.character(tbl$Genes) else NA_character_,
+        stringsAsFactors = FALSE
+      )
+      out
+    })
+    res <- dplyr::bind_rows(rows)
+    if (!nrow(res)) next
+    res <- res[is.finite(res$adjusted_p) & res$adjusted_p <= as.numeric(padj_cut), , drop = FALSE]
+    if (!nrow(res)) next
+    res <- res[order(res$adjusted_p), , drop = FALSE]
+    readr::write_csv(res, out_csv)
+    out_files <- c(out_files, out_csv)
+    if (isTRUE(verbose)) .log_inform("Saved pathway enrichment: {out_csv}")
+  }
+
+  invisible(out_files)
+}
+
 # res <- compare_links_two_conditions(
 #   "inst/extdata/lighting/lighting_cond-HPAFII_0_FBS_tf_gene_links.csv",
 #   "inst/extdata/lighting/lighting_cond-HPAFII_10_FBS_tf_gene_links.csv",

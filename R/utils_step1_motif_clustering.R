@@ -1294,7 +1294,7 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
             ) +
             ggplot2::scale_color_manual(values = colors_top[seq_len(nrow(top_d2))])
         }
-        gridExtra::grid.arrange(p1, p2, ncol = 2, top = title)
+        gridExtra::arrangeGrob(p1, p2, ncol = 2, top = title)
       } else {
         old_par <- par(no.readonly = TRUE)
         on.exit(par(old_par), add = TRUE)
