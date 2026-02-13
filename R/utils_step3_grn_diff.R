@@ -1,4 +1,4 @@
-# FILE: R/utils_grn_diff.R
+# FILE: R/utils_step3_grn_diff.R
 # ---------------------------------------------------------------------------
 # General TF-gene links delta computation
 # Author: Yaoxiang Li
@@ -1888,6 +1888,14 @@ find_differential_links <- function(config,
 #' @param dbs Enrichr databases.
 #' @param min_genes Minimum distinct genes to run enrichment.
 #' @param padj_cut Keep rows with adjusted p-value <= this cutoff.
+#' @param plot_subnetwork If TRUE, render pathway subnet HTMLs using
+#'   \code{plot_tf_network_delta()}.
+#' @param top_n_pathways_plot Maximum pathways (smallest adjusted p-value) to
+#'   plot per comparison-direction.
+#' @param subnetwork_dirname Output subfolder (under \code{filtered_dir}) for
+#'   pathway subnetworks.
+#' @param html_selfcontained Passed to \code{htmlwidgets::saveWidget()} for
+#'   pathway subnet HTML.
 #' @param overwrite Overwrite existing enrichment CSVs.
 #' @param verbose Emit concise messages.
 #'
@@ -1902,6 +1910,10 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
                                                "WikiPathways_2024_Human"),
                                        min_genes = 5L,
                                        padj_cut = 0.05,
+                                       plot_subnetwork = TRUE,
+                                       top_n_pathways_plot = 10L,
+                                       subnetwork_dirname = "subnet_pathway",
+                                       html_selfcontained = FALSE,
                                        overwrite = FALSE,
                                        verbose = TRUE) {
   if (is.null(filtered_dir) && is.list(diff_res) && !is.null(diff_res$filtered_dir)) {
@@ -1921,51 +1933,140 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     return(invisible(character(0)))
   }
 
+  can_plot <- isTRUE(plot_subnetwork) &&
+    requireNamespace("htmlwidgets", quietly = TRUE) &&
+    exists("plot_tf_network_delta", mode = "function")
+  if (isTRUE(plot_subnetwork) && !isTRUE(can_plot) && isTRUE(verbose)) {
+    .log_warn("Pathway subnetwork plotting skipped: need htmlwidgets and plot_tf_network_delta().")
+  }
+  subnetwork_root <- file.path(filtered_dir, subnetwork_dirname)
+  if (isTRUE(can_plot)) dir.create(subnetwork_root, recursive = TRUE, showWarnings = FALSE)
+  summary_rows <- list()
+
+  .split_genes <- function(x) {
+    if (!length(x) || is.na(x) || !nzchar(x)) return(character(0))
+    g <- unlist(strsplit(as.character(x), "[,;|/]+"))
+    g <- trimws(g)
+    g[!is.na(g) & nzchar(g)]
+  }
+
   out_files <- character(0)
   for (csv in files) {
+    file_base <- sub("\\.csv$", "", basename(csv), ignore.case = TRUE)
+    dir_label <- if (grepl("_up$", file_base, ignore.case = TRUE)) "Up" else "Down"
+    comparison_id <- sub("_(up|down)$", "", file_base, ignore.case = TRUE)
+    comparison_id <- sub("_filtered_links$", "", comparison_id, ignore.case = TRUE)
+
     out_csv <- sub("\\.csv$", "_pathway_enrichment.csv", csv, ignore.case = TRUE)
     if (!isTRUE(overwrite) && file.exists(out_csv)) {
       out_files <- c(out_files, out_csv)
-      next
+      res <- readr::read_csv(out_csv, show_col_types = FALSE)
+    } else {
+      dat <- readr::read_csv(csv, show_col_types = FALSE, col_select = c("gene_key"))
+      genes <- unique(as.character(dat$gene_key))
+      genes <- genes[!is.na(genes) & nzchar(genes)]
+      if (length(genes) < as.integer(min_genes)) {
+        if (isTRUE(verbose)) .log_inform("Skip {basename(csv)}: distinct gene_key={length(genes)} < {as.integer(min_genes)}.")
+        next
+      }
+
+      enr <- tryCatch(enrichR::enrichr(genes, dbs), error = function(e) NULL)
+      if (is.null(enr)) {
+        .log_warn("Enrichr failed for {basename(csv)}.")
+        next
+      }
+
+      rows <- lapply(names(enr), function(db) {
+        tbl <- enr[[db]]
+        if (!is.data.frame(tbl) || !nrow(tbl) || !all(c("Term", "Adjusted.P.value") %in% names(tbl))) return(NULL)
+        out <- data.frame(
+          db = db,
+          pathway = as.character(tbl$Term),
+          adjusted_p = suppressWarnings(as.numeric(tbl$Adjusted.P.value)),
+          p_value = if ("P.value" %in% names(tbl)) suppressWarnings(as.numeric(tbl$P.value)) else NA_real_,
+          combined_score = if ("Combined.Score" %in% names(tbl)) suppressWarnings(as.numeric(tbl$Combined.Score)) else NA_real_,
+          overlap = if ("Overlap" %in% names(tbl)) as.character(tbl$Overlap) else NA_character_,
+          genes = if ("Genes" %in% names(tbl)) as.character(tbl$Genes) else NA_character_,
+          stringsAsFactors = FALSE
+        )
+        out
+      })
+      res <- dplyr::bind_rows(rows)
+      if (!nrow(res)) next
+      res <- res[is.finite(res$adjusted_p) & res$adjusted_p <= as.numeric(padj_cut), , drop = FALSE]
+      if (!nrow(res)) next
+      res <- res[order(res$adjusted_p), , drop = FALSE]
+      readr::write_csv(res, out_csv)
+      out_files <- c(out_files, out_csv)
+      if (isTRUE(verbose)) .log_inform("Saved pathway enrichment: {out_csv}")
     }
 
-    dat <- readr::read_csv(csv, show_col_types = FALSE, col_select = c("gene_key"))
-    genes <- unique(as.character(dat$gene_key))
-    genes <- genes[!is.na(genes) & nzchar(genes)]
-    if (length(genes) < as.integer(min_genes)) {
-      if (isTRUE(verbose)) .log_inform("Skip {basename(csv)}: distinct gene_key={length(genes)} < {as.integer(min_genes)}.")
-      next
-    }
+    if (!isTRUE(can_plot) || !nrow(res)) next
 
-    enr <- tryCatch(enrichR::enrichr(genes, dbs), error = function(e) NULL)
-    if (is.null(enr)) {
-      .log_warn("Enrichr failed for {basename(csv)}.")
-      next
-    }
-
-    rows <- lapply(names(enr), function(db) {
-      tbl <- enr[[db]]
-      if (!is.data.frame(tbl) || !nrow(tbl) || !all(c("Term", "Adjusted.P.value") %in% names(tbl))) return(NULL)
-      out <- data.frame(
-        db = db,
-        pathway = as.character(tbl$Term),
-        adjusted_p = suppressWarnings(as.numeric(tbl$Adjusted.P.value)),
-        p_value = if ("P.value" %in% names(tbl)) suppressWarnings(as.numeric(tbl$P.value)) else NA_real_,
-        combined_score = if ("Combined.Score" %in% names(tbl)) suppressWarnings(as.numeric(tbl$Combined.Score)) else NA_real_,
-        overlap = if ("Overlap" %in% names(tbl)) as.character(tbl$Overlap) else NA_character_,
-        genes = if ("Genes" %in% names(tbl)) as.character(tbl$Genes) else NA_character_,
-        stringsAsFactors = FALSE
-      )
-      out
-    })
-    res <- dplyr::bind_rows(rows)
-    if (!nrow(res)) next
-    res <- res[is.finite(res$adjusted_p) & res$adjusted_p <= as.numeric(padj_cut), , drop = FALSE]
+    links_full <- readr::read_csv(csv, show_col_types = FALSE)
+    if (!all(c("gene_key") %in% names(links_full))) next
+    if (!all(c("adjusted_p", "pathway", "genes") %in% names(res))) next
+    res <- res[is.finite(res$adjusted_p), , drop = FALSE]
     if (!nrow(res)) next
     res <- res[order(res$adjusted_p), , drop = FALSE]
-    readr::write_csv(res, out_csv)
-    out_files <- c(out_files, out_csv)
-    if (isTRUE(verbose)) .log_inform("Saved pathway enrichment: {out_csv}")
+    plot_rows <- res[seq_len(min(as.integer(top_n_pathways_plot), nrow(res))), , drop = FALSE]
+    out_dir <- file.path(subnetwork_root, .safe_label(comparison_id), dir_label)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+    for (i in seq_len(nrow(plot_rows))) {
+      p_name <- as.character(plot_rows$pathway[i])
+      p_genes <- .split_genes(plot_rows$genes[i])
+      if (!length(p_genes)) next
+      sub_links <- links_full[as.character(links_full$gene_key) %in% p_genes, , drop = FALSE]
+      if (!nrow(sub_links)) next
+
+      p_slug <- .safe_label(p_name)
+      if (!nzchar(p_slug)) p_slug <- paste0("pathway_", i)
+      if (nchar(p_slug) > 120L) p_slug <- substr(p_slug, 1L, 120L)
+      out_html <- file.path(out_dir, paste0(p_slug, ".html"))
+      if (!isTRUE(overwrite) && file.exists(out_html)) {
+        next
+      }
+
+      plot_title <- paste(comparison_id, dir_label, p_name, sep = " | ")
+      w <- try(
+        plot_tf_network_delta(
+          data = sub_links,
+          plot_title = plot_title,
+          layout_algo = "fr",
+          physics = TRUE,
+          add_direct = TRUE,
+          edge_filter_min = 0,
+          min_delta_abs = 0,
+          keep_top_edges_per_tf = 6000,
+          peak_mode = "show_all",
+          show_peaks = FALSE,
+          gene_fc_thresh = 1.5,
+          de_reference = "str_over_ctrl",
+          motif_db = "jaspar2024"
+        ),
+        silent = TRUE
+      )
+      if (inherits(w, "try-error")) next
+      htmlwidgets::saveWidget(w, out_html, selfcontained = isTRUE(html_selfcontained))
+      if (exists(".set_html_title")) .set_html_title(out_html, plot_title)
+
+      summary_rows[[length(summary_rows) + 1L]] <- data.frame(
+        comparison = comparison_id,
+        direction = dir_label,
+        pathway_rank = i,
+        pathway = p_name,
+        adjusted_p = as.numeric(plot_rows$adjusted_p[i]),
+        n_links = nrow(sub_links),
+        html = out_html,
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+
+  if (isTRUE(can_plot) && length(summary_rows)) {
+    summary_tbl <- dplyr::bind_rows(summary_rows)
+    readr::write_csv(summary_tbl, file.path(subnetwork_root, "pathway_sub_network_summary.csv"))
   }
 
   invisible(out_files)

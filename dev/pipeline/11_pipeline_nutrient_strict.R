@@ -335,7 +335,7 @@ if (do_diff_grn == TRUE) {
   # )
 
   # Optional: pathway enrichment from diff_links_filtered (minimal gene_key-based run).
-  do_diff_links_pathway_enrichment <- FALSE
+  do_diff_links_pathway_enrichment <- TRUE
   if (isTRUE(do_diff_links_pathway_enrichment)) {
     run_diff_links_pathway_grn(
       diff_res = diff_res,
