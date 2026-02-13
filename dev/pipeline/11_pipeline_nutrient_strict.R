@@ -2,6 +2,7 @@ library(episcope)
 
 source("R/utils_config.R")
 source("R/utils_logging.R")
+source("R/utils_helpers.R")
 
 source("R/utils_step1_footprints.R")
 source("R/utils_step1_align_footprints.R")

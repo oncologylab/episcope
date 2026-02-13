@@ -1892,6 +1892,8 @@ find_differential_links <- function(config,
 #'   \code{plot_tf_network_delta()}.
 #' @param top_n_pathways_plot Maximum pathways (smallest adjusted p-value) to
 #'   plot per comparison-direction.
+#' @param pathway_gene_overlap_thresh Overlap threshold (relative to smaller
+#'   gene set) used to treat pathways as redundant before plotting.
 #' @param subnetwork_dirname Output subfolder (under \code{filtered_dir}) for
 #'   pathway subnetworks.
 #' @param html_selfcontained Passed to \code{htmlwidgets::saveWidget()} for
@@ -1912,6 +1914,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
                                        padj_cut = 0.05,
                                        plot_subnetwork = TRUE,
                                        top_n_pathways_plot = 10L,
+                                       pathway_gene_overlap_thresh = 0.8,
                                        subnetwork_dirname = "subnet_pathway",
                                        html_selfcontained = FALSE,
                                        overwrite = FALSE,
@@ -1924,6 +1927,9 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
   }
   if (!requireNamespace("enrichR", quietly = TRUE)) {
     .log_abort("`enrichR` package is required for pathway enrichment.")
+  }
+  if (!exists(".ensure_enrichr_ready", mode = "function")) {
+    .log_abort("Missing internal helper `.ensure_enrichr_ready()`. In source()-based runs, source('R/utils_helpers.R') before this file.")
   }
   .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
 
@@ -1948,6 +1954,52 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     g <- unlist(strsplit(as.character(x), "[,;|/]+"))
     g <- trimws(g)
     g[!is.na(g) & nzchar(g)]
+  }
+  .select_nonredundant_pathways <- function(tbl, overlap_thr = 0.8) {
+    if (!is.data.frame(tbl) || !nrow(tbl)) return(tbl)
+    if (!all(c("genes", "adjusted_p") %in% names(tbl))) return(tbl)
+    n <- nrow(tbl)
+    gene_sets <- lapply(tbl$genes, .split_genes)
+    gene_sets <- lapply(gene_sets, unique)
+    sizes <- vapply(gene_sets, length, integer(1))
+    keep <- rep(TRUE, n)
+    for (i in seq_len(n)) {
+      if (!keep[i]) next
+      gi <- gene_sets[[i]]
+      if (!length(gi)) next
+      for (j in seq.int(i + 1L, n)) {
+        if (j > n || !keep[j]) next
+        gj <- gene_sets[[j]]
+        if (!length(gj)) next
+        ov <- length(intersect(gi, gj))
+        min_sz <- min(length(gi), length(gj))
+        if (min_sz <= 0L) next
+        frac_small <- ov / min_sz
+        containment <- ov == min_sz
+        if (!(isTRUE(containment) || frac_small >= as.numeric(overlap_thr))) next
+
+        if (sizes[i] > sizes[j]) {
+          keep[j] <- FALSE
+        } else if (sizes[j] > sizes[i]) {
+          keep[i] <- FALSE
+          break
+        } else {
+          pi <- suppressWarnings(as.numeric(tbl$adjusted_p[i]))
+          pj <- suppressWarnings(as.numeric(tbl$adjusted_p[j]))
+          if (!is.finite(pi)) pi <- Inf
+          if (!is.finite(pj)) pj <- Inf
+          if (pi <= pj) {
+            keep[j] <- FALSE
+          } else {
+            keep[i] <- FALSE
+            break
+          }
+        }
+      }
+    }
+    out <- tbl[keep, , drop = FALSE]
+    out <- out[order(out$adjusted_p), , drop = FALSE]
+    out
   }
 
   out_files <- character(0)
@@ -2009,6 +2061,11 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     res <- res[is.finite(res$adjusted_p), , drop = FALSE]
     if (!nrow(res)) next
     res <- res[order(res$adjusted_p), , drop = FALSE]
+    res <- .select_nonredundant_pathways(
+      res,
+      overlap_thr = pathway_gene_overlap_thresh
+    )
+    if (!nrow(res)) next
     plot_rows <- res[seq_len(min(as.integer(top_n_pathways_plot), nrow(res))), , drop = FALSE]
     out_dir <- file.path(subnetwork_root, .safe_label(comparison_id), dir_label)
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
