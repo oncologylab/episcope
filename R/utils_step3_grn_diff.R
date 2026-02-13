@@ -1,6 +1,6 @@
 # FILE: R/utils_grn_diff.R
 # ---------------------------------------------------------------------------
-# General TF-gene links delta computation (episcope)
+# General TF-gene links delta computation
 # Author: Yaoxiang Li
 # Updated: 2025-11-10
 #
