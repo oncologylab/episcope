@@ -22,11 +22,11 @@ fp_score_condition_qn, and fp_bound_condition.}
 
 \item{out_dir}{Output directory for the PDF.}
 
-\item{db}{Database tag used in the output filename.}
+\item{db}{Database tag (kept for API compatibility; not used in filename).}
 
 \item{threshold_fp_score}{Footprint score threshold used for bound calls.}
 
-\item{max_points}{Maximum peaks sampled for boxplots.}
+\item{max_points}{Maximum peaks sampled for violin plots.}
 
 \item{verbose}{Emit status messages.}
 }

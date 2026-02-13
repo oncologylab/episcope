@@ -23,9 +23,11 @@ correlate_tf_to_fp(
   r_thr = 0.3,
   p_thr = 0.05,
   tf_subset = NULL,
-  cores_pearson = 20L,
-  cores_spearman = 36L,
+  cores_pearson = NULL,
+  cores_spearman = NULL,
   chunk_size = 5000L,
+  all_mode_tf_chunk_size = 5L,
+  canonical_mode_tf_chunk_size = 50L,
   min_non_na = 5L,
   qc = TRUE,
   write_bed = FALSE,
@@ -36,7 +38,7 @@ correlate_tf_to_fp(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list from [load_multiomic_data()].}
+\item{omics_data}{A multi-omic data list from [load_prep_multiomic_data()].}
 
 \item{grn_set}{(Deprecated) Use `omics_data`.}
 

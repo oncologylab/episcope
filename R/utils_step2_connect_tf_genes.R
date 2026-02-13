@@ -1867,6 +1867,38 @@ make_fp_annotation_corr <- function(grn_set,
   rownames(rna_m) <- rna_m$HGNC
   rna_m <- as.matrix(rna_m[, sample_cols, drop = FALSE])
 
+  # Optional gating: only correlate on conditions where
+  # (i) footprint is bound and (ii) TF is expressed.
+  use_gate <- FALSE
+  fp_bound_m <- NULL
+  rna_expr_m <- NULL
+  if (is.data.frame(grn_set$fp_bound_condition) && is.data.frame(grn_set$rna_expressed)) {
+    cond_gate <- intersect(
+      sample_cols,
+      intersect(
+        setdiff(names(grn_set$fp_bound_condition), "peak_ID"),
+        setdiff(names(grn_set$rna_expressed), c("ensembl_gene_id", "HGNC"))
+      )
+    )
+    if (length(cond_gate)) {
+      fpb <- grn_set$fp_bound_condition[, c("peak_ID", cond_gate), drop = FALSE]
+      if (anyDuplicated(fpb$peak_ID)) {
+        fpb <- fpb[!duplicated(fpb$peak_ID), , drop = FALSE]
+      }
+      fp_bound_m <- as.matrix(fpb[, cond_gate, drop = FALSE])
+      rownames(fp_bound_m) <- fpb$peak_ID
+
+      rxe <- grn_set$rna_expressed |>
+        dplyr::filter(!is.na(HGNC), HGNC != "") |>
+        dplyr::select(HGNC, dplyr::all_of(cond_gate)) |>
+        dplyr::distinct(HGNC, .keep_all = TRUE) |>
+        as.data.frame()
+      rownames(rxe) <- rxe$HGNC
+      rna_expr_m <- as.matrix(rxe[, cond_gate, drop = FALSE])
+      use_gate <- TRUE
+    }
+  }
+
   fp_id <- match(ann$fp_peak, rownames(fp_m))
   tf_id <- match(ann$tfs, rownames(rna_m))
 
@@ -1892,6 +1924,25 @@ make_fp_annotation_corr <- function(grn_set,
       x <- fp_m[sub$fp_id[i], ]
       y <- rna_m[sub$tf_id[i], ]
       ok <- is.finite(x) & is.finite(y)
+      if (isTRUE(use_gate)) {
+        fp_key <- rownames(fp_m)[sub$fp_id[i]]
+        tf_key <- rownames(rna_m)[sub$tf_id[i]]
+        fp_gate <- rep(FALSE, ncol(fp_m))
+        tf_gate <- rep(FALSE, ncol(fp_m))
+        fp_gate_idx <- match(colnames(fp_m), colnames(fp_bound_m))
+        tf_gate_idx <- match(colnames(fp_m), colnames(rna_expr_m))
+        fp_row <- match(fp_key, rownames(fp_bound_m))
+        tf_row <- match(tf_key, rownames(rna_expr_m))
+        if (is.finite(fp_row) && !is.na(fp_row) && any(is.finite(fp_gate_idx))) {
+          idx <- which(is.finite(fp_gate_idx))
+          fp_gate[idx] <- as.numeric(fp_bound_m[fp_row, fp_gate_idx[idx]]) > 0
+        }
+        if (is.finite(tf_row) && !is.na(tf_row) && any(is.finite(tf_gate_idx))) {
+          idx <- which(is.finite(tf_gate_idx))
+          tf_gate[idx] <- as.numeric(rna_expr_m[tf_row, tf_gate_idx[idx]]) > 0
+        }
+        ok <- ok & fp_gate & tf_gate
+      }
       n  <- sum(ok)
       if (n < min_non_na) {
         r[i] <- NA_real_
@@ -2568,8 +2619,40 @@ light_by_condition <- function(ds, basal_links,
                                fp_variance_tbl = NULL,
                                rna_variance_tbl = NULL) {
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  matrices_dir <- file.path(out_dir, "per_condition_link_matrices")
+  dir.create(matrices_dir, recursive = TRUE, showWarnings = FALSE)
   .log  <- function(...) if (isTRUE(verbose)) message("[light_by_condition] ", sprintf(...))
   .safe <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+  .cond_file <- function(lab) {
+    s_lab <- .safe(lab)
+    if (is.character(prefix) && nzchar(prefix)) {
+      sprintf("%s_%s_tf_gene_links.csv", prefix, s_lab)
+    } else {
+      sprintf("%s_tf_gene_links.csv", s_lab)
+    }
+  }
+  old_pat <- if (is.character(prefix) && nzchar(prefix)) {
+    sprintf("^%s_cond-(.*)_tf_gene_links\\.csv$", prefix)
+  } else {
+    "^cond-(.*)_tf_gene_links\\.csv$"
+  }
+  old_files <- unique(c(
+    list.files(out_dir, pattern = old_pat, full.names = TRUE),
+    list.files(matrices_dir, pattern = old_pat, full.names = TRUE)
+  ))
+  if (length(old_files)) {
+    for (p in old_files) {
+      b <- basename(p)
+      lbl <- sub(old_pat, "\\1", b)
+      p_new <- file.path(matrices_dir, .cond_file(lbl))
+      if (!identical(p, p_new) && !file.exists(p_new)) {
+        ok <- file.rename(p, p_new)
+        if (isTRUE(ok) && isTRUE(verbose)) {
+          .log_inform("[light_by_condition] Renamed legacy file {b} -> {basename(p_new)}.")
+        }
+      }
+    }
+  }
 
   # ------- sanity & shared sample ids -------
   stopifnot(is.data.frame(ds$fp_score), "peak_ID" %in% names(ds$fp_score))
@@ -2925,7 +3008,7 @@ light_by_condition <- function(ds, basal_links,
 
     readr::write_csv(
       links,
-      file.path(out_dir, sprintf("%s_cond-%s_tf_gene_links.csv", prefix, .safe(cond_label)))
+      file.path(matrices_dir, .cond_file(cond_label))
     )
     tibble::tibble(label = cond_label, n_links_rows = nrow(links))
   }
@@ -2943,7 +3026,7 @@ light_by_condition <- function(ds, basal_links,
     index <- purrr::map2_dfr(ids, labs, build_one)
   }
 
-  readr::write_csv(index, file.path(out_dir, sprintf("%s_per_condition_index.csv", prefix)))
+  readr::write_csv(index, file.path(matrices_dir, sprintf("%s_per_condition_index.csv", prefix)))
   .log("Wrote per-condition index: %s rows.", format(nrow(index), big.mark = ","))
   invisible(index)
 }

@@ -94,7 +94,7 @@ grn_filter_fp_tf_corr(
   verbose = TRUE
 )
 
-write_grn_tf_corr_outputs(grn_set, out_dir, db)
+write_grn_tf_corr_outputs(grn_set, out_dir, db, mode = c("canonical", "all"))
 
 write_grn_outputs(grn_set, out_dir, db, qn_base_dir = NULL)
 }

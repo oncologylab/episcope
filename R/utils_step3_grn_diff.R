@@ -735,6 +735,18 @@ build_cellwise_contrasts_from_index <- function(index_csv,
     if (isTRUE(verbose)) .log_inform(c(v = paste0("[utils_grn_diff] ", msg)))
   }
   .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+  .mk_cond_link_path <- function(lab) {
+    s_lab <- .safe_label(lab)
+    new_path <- file.path(input_dir, sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
+    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
+    old_path <- file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    if (file.exists(new_path)) return(new_path)
+    if (file.exists(new_path_sub)) return(new_path_sub)
+    if (file.exists(old_path_sub)) return(old_path_sub)
+    if (file.exists(old_path)) return(old_path)
+    new_path_sub
+  }
 
   .log(paste0("Reading index:\n  ", index_csv), verbose = verbose)
   idx <- readr::read_csv(index_csv, show_col_types = FALSE)
@@ -751,8 +763,7 @@ build_cellwise_contrasts_from_index <- function(index_csv,
       return(tibble::tibble())
     }
 
-    mk_path <- function(lab) file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
-                                                        input_prefix, .safe_label(lab)))
+    mk_path <- function(lab) .mk_cond_link_path(lab)
     name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
     specs <- data.frame(
@@ -799,8 +810,7 @@ build_cellwise_contrasts_from_index <- function(index_csv,
     return(tibble::tibble())
   }
 
-  mk_path <- function(lab) file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv",
-                                                      input_prefix, .safe_label(lab)))
+  mk_path <- function(lab) .mk_cond_link_path(lab)
   name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
   cond1_label <- pairs$stress
@@ -874,20 +884,26 @@ run_links_deltas_driver <- function(specs,
   }
 
   .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
+  .mk_cond_link_path <- function(lab) {
+    s_lab <- .safe_label(lab)
+    new_path <- file.path(input_dir, sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
+    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
+    old_path <- file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    if (file.exists(new_path)) return(new_path)
+    if (file.exists(new_path_sub)) return(new_path_sub)
+    if (file.exists(old_path_sub)) return(old_path_sub)
+    if (file.exists(old_path)) return(old_path)
+    new_path_sub
+  }
   name_fun <- if (isTRUE(clean_names)) janitor::make_clean_names else identity
 
   if (!all(c("cond1_source", "cond2_source", "cond1_name", "cond2_name", "out_file") %in% names(specs))) {
     if (is.null(input_dir) || is.null(out_dir)) {
       .log_abort("`specs` is missing path columns; set `input_dir` and `out_dir` to derive them.")
     }
-    specs$cond1_source <- file.path(
-      input_dir,
-      sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, .safe_label(specs$cond1_label))
-    )
-    specs$cond2_source <- file.path(
-      input_dir,
-      sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, .safe_label(specs$cond2_label))
-    )
+    specs$cond1_source <- vapply(specs$cond1_label, .mk_cond_link_path, character(1))
+    specs$cond2_source <- vapply(specs$cond2_label, .mk_cond_link_path, character(1))
     specs$cond1_name <- vapply(specs$cond1_label, function(z) name_fun(z), character(1))
     specs$cond2_name <- vapply(specs$cond2_label, function(z) name_fun(z), character(1))
     specs$out_file <- file.path(
@@ -933,12 +949,16 @@ run_links_deltas_driver <- function(specs,
 #' @param workers Integer; pass-through to delta computation.
 #' @param summary_tag Optional tag to insert into TF hub summary filenames.
 #' @param write_tf_hubs_fp If TRUE, write TF hub summaries using delta FP scores.
-#' @param overwrite_delta Logical; if TRUE, recompute `delta_links` even if files exist.
-#' @param overwrite_filtered Logical; if TRUE, recompute `filtered_delta_links` even if files exist.
+#' @param overwrite_delta Logical; if TRUE, recompute `diff_links` even if files exist.
+#' @param overwrite_filtered Logical; if TRUE, recompute `diff_links_filtered` even if files exist.
 #' @param overwrite_tf_hubs Logical; if TRUE, always regenerate `master_tf_summary` outputs.
 #' @param connectivity_min_degree Integer cutoff for TF inclusion in connectivity
 #'   heatmaps. A TF is shown only if it connects to at least this many other TFs
 #'   (undirected degree).
+#' @param summary_plot_format Output format for QC differential-link summary plots:
+#'   "pdf", "html", or "both".
+#' @param summary_html_selfcontained Logical; passed to
+#'   \code{htmlwidgets::saveWidget()} when writing HTML summaries.
 #' @export
 find_differential_links <- function(config,
                                     compar = NULL,
@@ -955,7 +975,9 @@ find_differential_links <- function(config,
                                     overwrite_delta = FALSE,
                                     overwrite_filtered = FALSE,
                                     overwrite_tf_hubs = TRUE,
-                                    connectivity_min_degree = 1L) {
+                                    connectivity_min_degree = 1L,
+                                    summary_plot_format = c("pdf", "html", "both"),
+                                    summary_html_selfcontained = TRUE) {
   if (is.character(config) && length(config) == 1L && file.exists(config)) {
     load_config(config)
   }
@@ -965,8 +987,28 @@ find_differential_links <- function(config,
 
   step2_out_dir <- if (!is.null(input_dir)) input_dir else file.path(base_dir, "connect_tf_target_genes")
   out_root <- if (grepl("^/", output_dir)) output_dir else file.path(base_dir, output_dir)
-  delta_dir <- file.path(out_root, "delta_links")
-  filtered_dir <- file.path(out_root, "filtered_delta_links")
+  delta_dir <- file.path(out_root, "diff_links")
+  filtered_dir <- file.path(out_root, "diff_links_filtered")
+
+  legacy_delta_dir <- file.path(out_root, "delta_links")
+  legacy_filtered_dir <- file.path(out_root, "filtered_delta_links")
+  if (!dir.exists(delta_dir) && dir.exists(legacy_delta_dir)) {
+    moved <- file.rename(legacy_delta_dir, delta_dir)
+    if (isTRUE(moved)) {
+      .log_inform("Migrated legacy folder {legacy_delta_dir} -> {delta_dir}.")
+    } else {
+      .log_warn("Could not migrate legacy folder {legacy_delta_dir}; continuing with {delta_dir}.")
+    }
+  }
+  if (!dir.exists(filtered_dir) && dir.exists(legacy_filtered_dir)) {
+    moved <- file.rename(legacy_filtered_dir, filtered_dir)
+    if (isTRUE(moved)) {
+      .log_inform("Migrated legacy folder {legacy_filtered_dir} -> {filtered_dir}.")
+    } else {
+      .log_warn("Could not migrate legacy folder {legacy_filtered_dir}; continuing with {filtered_dir}.")
+    }
+  }
+
   dir.create(delta_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(filtered_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -983,7 +1025,10 @@ find_differential_links <- function(config,
     }
     specs <- comp_tbl[, c("cond1_label", "cond2_label")]
   } else {
-    idx_csv <- file.path(step2_out_dir, "step2_per_condition_index.csv")
+    idx_csv <- file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv")
+    if (!file.exists(idx_csv)) {
+      idx_csv <- file.path(step2_out_dir, "step2_per_condition_index.csv")
+    }
     specs <- build_cellwise_contrasts_from_index(
       index_csv = idx_csv,
       out_dir = delta_dir,
@@ -1022,8 +1067,8 @@ find_differential_links <- function(config,
   delta_csvs <- list.files(delta_dir, "_delta_links.csv$", full.names = TRUE)
   if (!length(delta_csvs)) .log_abort("No *_delta_links.csv files found in {delta_dir}")
 
-  existing_filtered_manifest <- file.path(filtered_dir, "delta_links_filtered_manifest.csv")
-  existing_filtered_files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+  existing_filtered_manifest <- file.path(filtered_dir, "cache", "filtered_links_manifest.csv")
+  existing_filtered_files <- list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE)
   if (!isTRUE(overwrite_filtered) && file.exists(existing_filtered_manifest) && length(existing_filtered_files) > 0L) {
     .log_inform("Using existing filtered delta links from {filtered_dir} (set overwrite_filtered=TRUE to rebuild).")
   } else {
@@ -1048,13 +1093,18 @@ find_differential_links <- function(config,
   }
 
   if (isTRUE(qc)) {
-    .plot_fp_gene_volcanoes_from_filtered(filtered_dir, out_root)
+    .plot_fp_gene_volcanoes_from_filtered(
+      filtered_dir = filtered_dir,
+      out_root = out_root,
+      output_format = summary_plot_format,
+      html_selfcontained = summary_html_selfcontained
+    )
   }
 
   if (isTRUE(write_tf_hubs_fp)) {
     tf_hub_dir <- file.path(out_root, "master_tf_summary")
     dir.create(tf_hub_dir, recursive = TRUE, showWarnings = FALSE)
-    filtered_files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+    filtered_files <- list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE)
     if (length(filtered_files)) {
       base_ids <- unique(sub("_(up|down)\\.csv$", "", basename(filtered_files)))
       for (bid in base_ids) {
@@ -1071,15 +1121,21 @@ find_differential_links <- function(config,
         })
         df_all <- dplyr::bind_rows(df_list)
         if (!nrow(df_all)) next
-        contrast_id <- sub("_delta_links_filtered.*$", "", bid)
-        cp <- .contrast_parts(paste0(contrast_id, "_delta_links_filtered"))
+        contrast_id <- sub("_filtered_links.*$", "", bid)
+        cp <- .contrast_parts(contrast_id)
         summary_df <- .summarize_delta_fp_for_tf_hubs(df_all, cond1 = cp$cond1, cond2 = cp$cond2)
         if (!nrow(summary_df)) next
         tag <- if (is.null(summary_tag) || !nzchar(summary_tag)) "fp" else summary_tag
-        out_csv <- file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.csv"))
-        out_pdf <- file.path(tf_hub_dir, paste0(bid, "_master_tf_summary.pdf"))
-        if (!isTRUE(overwrite_tf_hubs) && file.exists(out_csv) && file.exists(out_pdf)) {
-          .log_inform("Skipping existing master_tf_summary for {bid} (set overwrite_tf_hubs=TRUE to rebuild).")
+        out_csv <- file.path(tf_hub_dir, paste0(contrast_id, "_master_tf_summary.csv"))
+        out_pdf <- file.path(tf_hub_dir, paste0(contrast_id, "_master_tf_summary.pdf"))
+        out_pdf_waterfall <- file.path(tf_hub_dir, paste0(contrast_id, "_tf_target_direction_waterfall.pdf"))
+        out_pdf_heatmap <- file.path(tf_hub_dir, paste0(contrast_id, "_tf_tf_connectivity_heatmap.pdf"))
+        if (!isTRUE(overwrite_tf_hubs) &&
+            file.exists(out_csv) &&
+            file.exists(out_pdf) &&
+            file.exists(out_pdf_waterfall) &&
+            file.exists(out_pdf_heatmap)) {
+          .log_inform("Skipping existing master_tf_summary for {contrast_id} (set overwrite_tf_hubs=TRUE to rebuild).")
           next
         }
         readr::write_csv(summary_df, out_csv)
@@ -1106,10 +1162,26 @@ find_differential_links <- function(config,
   ))
 }
 
-.plot_fp_gene_volcanoes_from_filtered <- function(filtered_dir, out_root) {
+.plot_fp_gene_volcanoes_from_filtered <- function(filtered_dir,
+                                                  out_root,
+                                                  output_format = c("pdf", "html", "both"),
+                                                  html_selfcontained = TRUE) {
   .assert_pkg("ggplot2")
   .assert_pkg("readr")
-  files <- list.files(filtered_dir, "_delta_links_filtered_(up|down)\\.csv$", full.names = TRUE)
+  output_format <- match.arg(output_format)
+  do_pdf <- output_format %in% c("pdf", "both")
+  do_html <- output_format %in% c("html", "both")
+  if (isTRUE(do_html) && !requireNamespace("plotly", quietly = TRUE)) {
+    if (identical(output_format, "html")) {
+      .log_abort("summary_plot_format='html' requires the `plotly` package.")
+    } else {
+      .log_warn("plotly not installed; skipping HTML differential link summaries.")
+      do_html <- FALSE
+    }
+  }
+  if (isTRUE(do_html)) .assert_pkg("htmlwidgets")
+
+  files <- list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE)
   if (!length(files)) return(invisible(NULL))
   base_ids <- unique(sub("_(up|down)\\.csv$", "", basename(files)))
   out_dir <- filtered_dir
@@ -1121,6 +1193,7 @@ find_differential_links <- function(config,
   for (bid in base_ids) {
     sel <- files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(files))]
     if (!length(sel)) next
+    contrast_id <- sub("_filtered_links$", "", bid)
     df_list <- lapply(sel, function(p) readr::read_csv(p, show_col_types = FALSE))
     df <- dplyr::bind_rows(df_list)
     if (!nrow(df)) next
@@ -1133,10 +1206,23 @@ find_differential_links <- function(config,
     df <- df[is.finite(df$log2FC_gene_expr) & is.finite(df$delta_fp_bed_score), , drop = FALSE]
     if (!nrow(df)) next
     df$direction <- ifelse(df$log2FC_gene_expr >= 0, "Up", "Down")
+    tf_col <- if ("tf" %in% names(df)) "tf" else if ("TF" %in% names(df)) "TF" else NULL
+    gene_col <- if ("gene_key" %in% names(df)) "gene_key" else if ("gene" %in% names(df)) "gene" else if ("target_gene" %in% names(df)) "target_gene" else NULL
+    if (!is.null(tf_col) && !is.null(gene_col)) {
+      df$tf_target <- paste0(as.character(df[[tf_col]]), "::", as.character(df[[gene_col]]))
+    } else {
+      df$tf_target <- "NA::NA"
+    }
+    df$hover_text <- paste0(
+      df$tf_target,
+      "<br>gene log2FC: ", signif(df$log2FC_gene_expr, 4),
+      "<br>delta FP: ", signif(df$delta_fp_bed_score, 4),
+      "<br>Direction: ", df$direction
+    )
     all_x <- c(all_x, df$log2FC_gene_expr)
     all_y <- c(all_y, df$delta_fp_bed_score)
-    contrast <- .contrast_from_file(paste0(bid, "_delta_links_filtered"))
-    p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_bed_score, color = direction)) +
+    contrast <- .contrast_from_file(bid)
+    p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_bed_score, color = direction, text = hover_text)) +
       ggplot2::geom_hline(yintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
       ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
       ggplot2::geom_point(alpha = 0.6, size = 0.7) +
@@ -1156,17 +1242,24 @@ find_differential_links <- function(config,
         legend.position = "none"
       )
     plot_list[[length(plot_list) + 1L]] <- p
-    out_pdf <- file.path(out_dir, paste0(bid, "_summary_plot.pdf"))
-    ggplot2::ggsave(out_pdf, p, width = 5.5, height = 4.2, dpi = 200)
+    if (isTRUE(do_pdf)) {
+      out_pdf <- file.path(out_dir, paste0(contrast_id, "_differential_links_summary.pdf"))
+      ggplot2::ggsave(out_pdf, p, width = 5.5, height = 4.2, dpi = 200)
+    }
+    if (isTRUE(do_html)) {
+      out_html <- file.path(out_dir, paste0(contrast_id, "_differential_links_summary.html"))
+      wp <- plotly::ggplotly(p, tooltip = "text")
+      htmlwidgets::saveWidget(wp, out_html, selfcontained = isTRUE(html_selfcontained))
+    }
   }
-  if (!length(plot_list)) return(invisible(TRUE))
+  if (!length(plot_list) || !isTRUE(do_pdf)) return(invisible(TRUE))
 
   xlim <- range(all_x, finite = TRUE)
   ylim <- range(all_y, finite = TRUE)
   if (!all(is.finite(xlim))) xlim <- c(-1, 1)
   if (!all(is.finite(ylim))) ylim <- c(-1, 1)
 
-  pdf_path <- file.path(out_dir, "filtered_delta_links_summary_plots.pdf")
+  pdf_path <- file.path(out_dir, "differential_links_summary_plots.pdf")
   grDevices::pdf(pdf_path, width = 16, height = 9.5)
   on.exit(grDevices::dev.off(), add = TRUE)
 
@@ -1197,14 +1290,22 @@ find_differential_links <- function(config,
 
 .contrast_from_file <- function(f) {
   b <- basename(f)
-  stem <- sub("_delta_links.*$", "", b)
+  stem <- sub("\\.(csv|pdf|html)$", "", b, ignore.case = TRUE)
+  stem <- sub("_master_tf_summary.*$", "", stem)
+  stem <- sub("_differential_links_summary.*$", "", stem)
+  stem <- sub("_filtered_links.*$", "", stem)
+  stem <- sub("_delta_links.*$", "", stem)
   parts <- strsplit(stem, "_vs_", fixed = TRUE)[[1]]
   if (length(parts) == 2) paste(parts[1], "vs", parts[2]) else stem
 }
 
 .contrast_parts <- function(f) {
   b <- basename(f)
-  stem <- sub("_delta_links.*$", "", b)
+  stem <- sub("\\.(csv|pdf|html)$", "", b, ignore.case = TRUE)
+  stem <- sub("_master_tf_summary.*$", "", stem)
+  stem <- sub("_differential_links_summary.*$", "", stem)
+  stem <- sub("_filtered_links.*$", "", stem)
+  stem <- sub("_delta_links.*$", "", stem)
   parts <- strsplit(stem, "_vs_", fixed = TRUE)[[1]]
   cond1 <- if (length(parts) >= 1) parts[1] else NA_character_
   cond2 <- if (length(parts) >= 2) parts[2] else NA_character_
@@ -1418,8 +1519,10 @@ find_differential_links <- function(config,
       axis.title.y = ggplot2::element_text(face = "bold")
     )
 
-  out_pdf_waterfall <- sub("\\.pdf$", "_tf_target_direction_waterfall.pdf", out_pdf)
-  out_pdf_heatmap <- sub("\\.pdf$", "_tf_tf_connectivity_heatmap.pdf", out_pdf)
+  out_base <- sub("\\.pdf$", "", basename(out_pdf))
+  out_base <- sub("_master_tf_summary$", "", out_base)
+  out_pdf_waterfall <- file.path(dirname(out_pdf), paste0(out_base, "_tf_target_direction_waterfall.pdf"))
+  out_pdf_heatmap <- file.path(dirname(out_pdf), paste0(out_base, "_tf_tf_connectivity_heatmap.pdf"))
 
   # Master summary: page 1 only.
   ggplot2::ggsave(out_pdf, p, width = width_in, height = height_in, dpi = dpi, limitsize = FALSE)

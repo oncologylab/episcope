@@ -19,6 +19,7 @@ Imports:
     igraph,
     jsonlite,
     magrittr,
+    plotly,
     purrr,
     readr,
     rlang,

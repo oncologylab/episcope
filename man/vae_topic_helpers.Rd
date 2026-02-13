@@ -42,7 +42,8 @@ run_vae_ctf_multivi(
 run_vae_doc_topic_heatmaps(
   topic_root,
   backend = c("vae", "warplda"),
-  vae_variant = "multivi_encoder"
+  vae_variant = "multivi_encoder",
+  doc_mode = c("tf_cluster", "tf")
 )
 
 run_vae_topic_delta_network_plots(
@@ -50,14 +51,21 @@ run_vae_topic_delta_network_plots(
   step2_out_dir,
   min_prob = 0.5,
   filter_same_direction = TRUE,
+  methods = c("peak_and_gene", "peak_and_gene_prob"),
   backend = c("vae", "warplda"),
-  vae_variant = "multivi_encoder"
+  vae_variant = "multivi_encoder",
+  doc_mode = c("tf_cluster", "tf")
 )
 
 run_vae_topic_delta_network_pathway(
   topic_root,
   backend = c("vae", "warplda"),
-  vae_variant = "multivi_encoder"
+  vae_variant = "multivi_encoder",
+  top_n_per_topic = Inf,
+  max_pathways = Inf,
+  per_comparison = TRUE,
+  split_direction = TRUE,
+  doc_mode = c("tf_cluster", "tf")
 )
 }
 \arguments{

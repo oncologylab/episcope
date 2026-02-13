@@ -61,7 +61,7 @@ direction contradicts expected gene direction given link_sign_* (default TRUE).}
 \item{save_csv}{logical; write filtered CSV. Default FALSE}
 
 \item{out_file}{optional character; output path. If NULL and `x` is a file,
-writes alongside input as "*_delta_links_filtered.csv".}
+writes alongside input as "*_filtered.csv".}
 
 \item{verbose}{logical; default TRUE}
 }

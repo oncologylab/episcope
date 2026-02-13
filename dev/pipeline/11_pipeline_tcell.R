@@ -35,7 +35,7 @@ verbose <- TRUE
 # Load footprint data and preprocess --------------------------------------
 if (do_load_footprints_preprocess == TRUE) {
   gene_symbol_col <- if (exists("gene_symbol_col")) gene_symbol_col else "HGNC"
-  omics_data <- load_multiomic_data(
+  omics_data <- load_prep_multiomic_data(
     config = "dev/config/GSE192390_tcell_jaspar2024.yaml",
     genome = ref_genome,
     gene_symbol_col = gene_symbol_col,
@@ -238,6 +238,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   )
   plot_link_activity_qc(
     summary_total = link_summary$summary_total,
+    summary_by_tf = link_summary$summary_by_tf,
     out_dir = step2_out_dir,
     db = db,
     prefix = "step2",

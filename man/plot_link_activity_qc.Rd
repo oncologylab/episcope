@@ -6,6 +6,7 @@
 \usage{
 plot_link_activity_qc(
   summary_total,
+  summary_by_tf = NULL,
   out_dir,
   db,
   prefix = "step2",
@@ -14,6 +15,9 @@ plot_link_activity_qc(
 }
 \arguments{
 \item{summary_total}{A data.frame with columns condition and n_links_active.}
+
+\item{summary_by_tf}{Optional wide table with TF in first column and
+per-condition active-link counts in remaining columns.}
 
 \item{out_dir}{Output directory for the PDF.}
 

@@ -10,6 +10,8 @@ extract_regulatory_topics(
   output_dir,
   backend = c("vae", "warplda"),
   vae_variant = "multivi_encoder",
+  doc_mode = c("tf_cluster", "tf"),
+  flatten_single_output = FALSE,
   topic_report_args = list()
 )
 }

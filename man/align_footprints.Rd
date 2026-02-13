@@ -17,7 +17,11 @@ align_footprints(
   write_cache = TRUE,
   log_file = NULL,
   parallel_by = c("atac_peak", "chromosome", "none"),
-  output_mode = c("full", "distinct")
+  output_mode = c("full", "distinct"),
+  save_prealign_score = FALSE,
+  prealign_score_path = NULL,
+  prealign_output_mode = c("distinct", "all"),
+  prealign_only = FALSE
 )
 }
 \arguments{
@@ -52,6 +56,20 @@ chromosomes, or \code{"none"} for sequential execution.}
 \code{"distinct"}; both return the 4-slot list with aligned, unique rows.
 In \code{"distinct"}, \code{fp_score} has one row per aligned \code{peak_ID}
 (no motif duplication) and \code{fp_bound} matches that row set.}
+
+\item{save_prealign_score}{Logical; if TRUE, write a merged footprint score
+table immediately after loading motif score files and before any alignment.}
+
+\item{prealign_score_path}{Optional CSV path for the pre-alignment score
+output. If NULL and \code{cache_dir} is set, defaults to
+\code{fp_scores_prealign_<cache_tag>.csv} in \code{cache_dir}.}
+
+\item{prealign_output_mode}{Output mode for pre-alignment score export:
+\code{"distinct"} (default; one row per \code{peak_ID}) or \code{"all"}
+(all rows as loaded from motif files).}
+
+\item{prealign_only}{Logical; if TRUE and \code{save_prealign_score = TRUE},
+return immediately after writing the pre-alignment score table (skip alignment).}
 }
 \value{
 List with tibbles: \code{fp_score}, \code{fp_bound},

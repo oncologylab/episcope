@@ -1,6 +1,6 @@
 #' Save a multi-omic data object to disk
 #'
-#' @param omics_data A multi-omic data list (e.g., output of load_multiomic_data()).
+#' @param omics_data A multi-omic data list (e.g., output of load_prep_multiomic_data()).
 #' @param file Optional full path to an RDS file. If NULL, uses out_dir/db/prefix.
 #' @param out_dir Output directory used when file is NULL.
 #' @param db Optional database tag appended to the filename when file is NULL.

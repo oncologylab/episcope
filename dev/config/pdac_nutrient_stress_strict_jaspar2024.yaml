@@ -5,6 +5,8 @@ db: JASPAR2024  # one of: JASPAR2024, HOCOMOCOv13
 
 # Module 1: Predict TF binding sites
 fp_root_dir: /data/homes/cy232/cutntag/humanPDAC/Nutrients_basal/TOBIAS_merged_peaks
+tf_binding_mode: all  # canonical | all
+all_mode_tf_chunk_size: 5  # used only when tf_binding_mode=all and tf_subset is not set
 
 # Module 2: Connect TFs to target genes
 metadata_path: /data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/data/sample_metadata_strict.csv

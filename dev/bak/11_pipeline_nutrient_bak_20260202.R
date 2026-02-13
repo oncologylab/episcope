@@ -101,7 +101,7 @@ if (do_load_footprints_preprocess == TRUE) {
   lenient_rna <- lenient_rna |> `names<-`(nm) |> dplyr::as_tibble()
 
   # Build combined multi-omic data object
-  grn_set <- load_multiomic_data(
+  grn_set <- load_prep_multiomic_data(
     fp_aligned = fp_aligned,
     atac_data = atac_data,
     rna_tbl = strict_rna,
@@ -356,6 +356,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   )
   plot_link_activity_qc(
     summary_total = link_summary$summary_total,
+    summary_by_tf = link_summary$summary_by_tf,
     out_dir = step2_out_dir,
     db = db,
     prefix = "step2",

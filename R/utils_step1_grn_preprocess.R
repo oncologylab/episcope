@@ -1085,7 +1085,11 @@ grn_add_fp_tf_corr <- function(
     }
   } else {
     rna_cond <- grn_set$rna_condition
-    tf_all <- unique(rna_cond$HGNC)
+    tf_all <- if (is.character(grn_set$tf_list) && length(grn_set$tf_list)) {
+      intersect(unique(rna_cond$HGNC), unique(as.character(grn_set$tf_list)))
+    } else {
+      unique(rna_cond$HGNC)
+    }
     tf_all <- tf_all[!is.na(tf_all) & nzchar(tf_all)]
     if (!is.null(tf_subset) && length(tf_subset)) {
       tf_all <- intersect(tf_all, tf_subset)
@@ -1099,7 +1103,8 @@ grn_add_fp_tf_corr <- function(
       return(grn_set)
     }
     base <- grn_set$fp_annotation[, c("fp_peak", "atac_peak", "motifs"), drop = FALSE]
-    base <- base[!duplicated(base[, c("fp_peak", "motifs")]), , drop = FALSE]
+    # all-mode expansion can be very large; keep one row per fp_peak to control memory.
+    base <- base[!duplicated(base[, c("fp_peak")]), , drop = FALSE]
     base <- base[!is.na(base$motifs) & nzchar(base$motifs), , drop = FALSE]
     n_peaks <- nrow(base)
     ann_exp <- data.frame(
@@ -1428,7 +1433,7 @@ grn_filter_fp_tf_corr <- function(
 #' generates QC outputs and per-TF overview tables. Designed as a simple
 #' user-facing wrapper for Module 1.
 #'
-#' @param omics_data A multi-omic data list from [load_multiomic_data()].
+#' @param omics_data A multi-omic data list from [load_prep_multiomic_data()].
 #' @param grn_set (Deprecated) Use `omics_data`.
 #' @param config Optional YAML config path used to load inputs when
 #'   \code{omics_data} is NULL.
@@ -1481,9 +1486,11 @@ correlate_tf_to_fp <- function(
     r_thr = 0.3,
     p_thr = 0.05,
     tf_subset = NULL,
-    cores_pearson = 20L,
-    cores_spearman = 36L,
+    cores_pearson = NULL,
+    cores_spearman = NULL,
     chunk_size = 5000L,
+    all_mode_tf_chunk_size = 5L,
+    canonical_mode_tf_chunk_size = 50L,
     min_non_na = 5L,
     qc = TRUE,
     write_bed = FALSE,
@@ -1493,6 +1500,17 @@ correlate_tf_to_fp <- function(
     verbose = TRUE
 ) {
   mode <- match.arg(mode)
+  default_cores <- max(1L, as.integer(floor(parallel::detectCores(logical = TRUE) * 0.8)))
+  cores_pearson <- if (is.null(cores_pearson) || !is.finite(as.numeric(cores_pearson))) {
+    default_cores
+  } else {
+    max(1L, as.integer(cores_pearson))
+  }
+  cores_spearman <- if (is.null(cores_spearman) || !is.finite(as.numeric(cores_spearman))) {
+    default_cores
+  } else {
+    max(1L, as.integer(cores_spearman))
+  }
   if (is.null(omics_data)) omics_data <- grn_set
   # Default config lookup helper (reads from globals set by load_config)
   cfg_val <- function(name) {
@@ -1597,7 +1615,7 @@ correlate_tf_to_fp <- function(
       )
     }
 
-    omics_data <- load_multiomic_data(
+    omics_data <- load_prep_multiomic_data(
       config = config,
       genome = genome,
       gene_symbol_col = gene_symbol_col,
@@ -1662,73 +1680,226 @@ correlate_tf_to_fp <- function(
 
   grn_set_base <- grn_set
 
-  # Pearson (set_active = TRUE)
-  ann_p <- .load_cache("pearson")
-  if (is.data.frame(ann_p)) {
-    grn_set$fp_annotation_pearson <- ann_p
-    grn_status_set(grn_set, paste0("fp_tf_corr_pearson_", mode))
-  } else {
-    grn_set <- grn_add_fp_tf_corr(
+  run_mode_chunked <- is.null(tf_subset) && mode %in% c("all", "canonical")
+
+  if (isTRUE(run_mode_chunked)) {
+    tf_pool <- if (identical(mode, "all")) {
+      if (is.character(grn_set_base$tf_list) && length(grn_set_base$tf_list)) {
+        intersect(unique(grn_set_base$rna_condition$HGNC), unique(as.character(grn_set_base$tf_list)))
+      } else {
+        unique(grn_set_base$rna_condition$HGNC)
+      }
+    } else {
+      ann <- grn_set_base$fp_annotation
+      tfs_raw <- if (is.data.frame(ann) && "tfs" %in% names(ann)) ann$tfs else character(0)
+      tf_vec <- unique(unlist(strsplit(paste(tfs_raw, collapse = ","), "\\s*,\\s*|\\s*::\\s*")))
+      tf_vec <- tf_vec[!is.na(tf_vec) & nzchar(tf_vec)]
+      if (is.character(grn_set_base$tf_list) && length(grn_set_base$tf_list)) {
+        intersect(tf_vec, unique(as.character(grn_set_base$tf_list)))
+      } else {
+        tf_vec
+      }
+    }
+    tf_pool <- tf_pool[!is.na(tf_pool) & nzchar(tf_pool)]
+    tf_pool <- sort(unique(tf_pool))
+    mode_tf_chunk_size <- if (identical(mode, "all")) all_mode_tf_chunk_size else canonical_mode_tf_chunk_size
+    mode_tf_chunk_size <- max(1L, as.integer(mode_tf_chunk_size))
+    tf_chunks <- split(tf_pool, ceiling(seq_along(tf_pool) / mode_tf_chunk_size))
+    if (isTRUE(verbose)) {
+      .log_inform(
+        "Running {mode}-mode in TF chunks: {length(tf_pool)} TFs in {length(tf_chunks)} chunks (chunk size {mode_tf_chunk_size})."
+      )
+    }
+
+    run_chunked_method <- function(method, cores_use) {
+      chunk_cache_dir <- file.path(cache_dir, sprintf("fp_tf_corr_%s_%s_chunks", method, mode))
+      dir.create(chunk_cache_dir, recursive = TRUE, showWarnings = FALSE)
+      chunk_meta_path <- file.path(chunk_cache_dir, "meta.rds")
+      chunk_meta <- list(
+        method = method,
+        mode = mode,
+        tf_pool = tf_pool,
+        mode_tf_chunk_size = mode_tf_chunk_size,
+        chunk_size = chunk_size,
+        min_non_na = min_non_na,
+        r_thr = r_thr,
+        p_thr = p_thr
+      )
+      reuse_chunk_cache <- FALSE
+      if (isTRUE(use_cache) && file.exists(chunk_meta_path)) {
+        old_meta <- tryCatch(readRDS(chunk_meta_path), error = function(e) NULL)
+        if (is.list(old_meta) && isTRUE(identical(old_meta, chunk_meta))) {
+          reuse_chunk_cache <- TRUE
+        } else if (isTRUE(verbose)) {
+          .log_inform("All-mode {method}: chunk cache meta changed; rebuilding chunk cache.")
+        }
+      }
+      if (!isTRUE(reuse_chunk_cache) && isTRUE(use_cache)) {
+        unlink(list.files(chunk_cache_dir, pattern = "^chunk_\\d+\\.rds$", full.names = TRUE), force = TRUE)
+        saveRDS(chunk_meta, chunk_meta_path)
+      }
+
+      keep_full <- identical(mode, "canonical")
+      out_filtered <- vector("list", length(tf_chunks))
+      out_full <- vector("list", length(tf_chunks))
+      for (k in seq_along(tf_chunks)) {
+        chunk_file <- file.path(chunk_cache_dir, sprintf("chunk_%05d.rds", k))
+        if (isTRUE(use_cache) && isTRUE(reuse_chunk_cache) && file.exists(chunk_file)) {
+          chunk_obj <- readRDS(chunk_file)
+          if (isTRUE(keep_full) && is.list(chunk_obj) && all(c("full", "filtered") %in% names(chunk_obj))) {
+            out_full[[k]] <- chunk_obj$full
+            out_filtered[[k]] <- chunk_obj$filtered
+          } else {
+            out_filtered[[k]] <- chunk_obj
+          }
+          if (isTRUE(verbose)) {
+            .log_inform("{mode}-mode {method}: chunk {k}/{length(tf_chunks)} loaded from cache.")
+          }
+          next
+        }
+        if (isTRUE(verbose)) {
+          .log_inform("{mode}-mode {method}: chunk {k}/{length(tf_chunks)} ({length(tf_chunks[[k]])} TFs).")
+        }
+        gs <- grn_set_base
+        gs <- grn_add_fp_tf_corr(
+          gs,
+          method = method,
+          mode = mode,
+          tf_subset = tf_chunks[[k]],
+          cores = cores_use,
+          chunk_size = chunk_size,
+          min_non_na = min_non_na,
+          force = TRUE,
+          verbose = FALSE
+        )
+        gs <- grn_filter_fp_tf_corr(
+          gs,
+          method = method,
+          mode = mode,
+          r_thr = r_thr,
+          p_thr = p_thr,
+          set_active = FALSE,
+          verbose = FALSE
+        )
+        out_filtered[[k]] <- gs[[paste0("fp_annotation_", method, "_filtered")]]
+        if (isTRUE(keep_full)) {
+          out_full[[k]] <- gs[[paste0("fp_annotation_", method)]]
+        }
+        if (isTRUE(use_cache)) {
+          if (isTRUE(keep_full)) {
+            saveRDS(list(full = out_full[[k]], filtered = out_filtered[[k]]), chunk_file)
+          } else {
+            saveRDS(out_filtered[[k]], chunk_file)
+          }
+        }
+      }
+      out_f <- data.table::rbindlist(out_filtered, use.names = TRUE, fill = TRUE)
+      if (nrow(out_f)) out_f <- unique(out_f)
+      if (!isTRUE(keep_full)) {
+        return(list(full = out_f, filtered = out_f))
+      }
+      out_a <- data.table::rbindlist(out_full, use.names = TRUE, fill = TRUE)
+      if (nrow(out_a)) out_a <- unique(out_a)
+      list(full = out_a, filtered = out_f)
+    }
+
+    ann_p_res <- run_chunked_method("pearson", cores_pearson)
+    grn_set$fp_annotation_pearson <- ann_p_res$full
+    grn_set$fp_annotation_pearson_filtered <- ann_p_res$filtered
+    if (identical(mode, "all")) {
+      grn_set$fp_annotation <- ann_p_res$filtered
+    }
+
+    ann_s_res <- run_chunked_method("spearman", cores_spearman)
+    grn_set$fp_annotation_spearman <- ann_s_res$full
+    grn_set$fp_annotation_spearman_filtered <- ann_s_res$filtered
+
+    out_bed <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s", db)) else NULL
+    out_bed_cond <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s_by_condition", db)) else NULL
+    grn_set <- grn_filter_fp_tf_corr(
       grn_set,
       method = "pearson",
       mode = mode,
-      tf_subset = tf_subset,
-      cores = cores_pearson,
-      chunk_size = chunk_size,
-      min_non_na = min_non_na,
+      r_thr = r_thr,
+      p_thr = p_thr,
+      set_active = TRUE,
+      output_bed = out_bed,
+      output_bed_condition = out_bed_cond,
+      label_col = label_col,
       verbose = verbose
     )
-    .save_cache("pearson", grn_set$fp_annotation_pearson)
-  }
-  out_bed <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s", db)) else NULL
-  out_bed_cond <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s_by_condition", db)) else NULL
-  grn_set <- grn_filter_fp_tf_corr(
-    grn_set,
-    method = "pearson",
-    mode = mode,
-    r_thr = r_thr,
-    p_thr = p_thr,
-    set_active = TRUE,
-    output_bed = out_bed,
-    output_bed_condition = out_bed_cond,
-    label_col = label_col,
-    verbose = verbose
-  )
-  if (isTRUE(write_outputs)) {
-    write_grn_tf_corr_outputs(grn_set, out_dir = out_dir, db = db)
-  }
-
-  # Spearman on full (unfiltered) set; preserve pearson-filtered fp_annotation in grn_set
-  grn_set_spearman <- grn_set_base
-  ann_s <- .load_cache("spearman")
-  if (is.data.frame(ann_s)) {
-    grn_set_spearman$fp_annotation_spearman <- ann_s
-    grn_status_set(grn_set_spearman, paste0("fp_tf_corr_spearman_", mode))
+    if (isTRUE(write_outputs)) {
+      write_grn_tf_corr_outputs(grn_set, out_dir = out_dir, db = db, mode = mode)
+    }
   } else {
-    grn_set_spearman <- grn_add_fp_tf_corr(
+    # Pearson (set_active = TRUE)
+    ann_p <- .load_cache("pearson")
+    if (is.data.frame(ann_p)) {
+      grn_set$fp_annotation_pearson <- ann_p
+      grn_status_set(grn_set, paste0("fp_tf_corr_pearson_", mode))
+    } else {
+      grn_set <- grn_add_fp_tf_corr(
+        grn_set,
+        method = "pearson",
+        mode = mode,
+        tf_subset = tf_subset,
+        cores = cores_pearson,
+        chunk_size = chunk_size,
+        min_non_na = min_non_na,
+        verbose = verbose
+      )
+      .save_cache("pearson", grn_set$fp_annotation_pearson)
+    }
+    out_bed <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s", db)) else NULL
+    out_bed_cond <- if (isTRUE(write_bed)) file.path(out_dir, sprintf("fp_predicted_tfbs_%s_by_condition", db)) else NULL
+    grn_set <- grn_filter_fp_tf_corr(
+      grn_set,
+      method = "pearson",
+      mode = mode,
+      r_thr = r_thr,
+      p_thr = p_thr,
+      set_active = TRUE,
+      output_bed = out_bed,
+      output_bed_condition = out_bed_cond,
+      label_col = label_col,
+      verbose = verbose
+    )
+    if (isTRUE(write_outputs)) {
+      write_grn_tf_corr_outputs(grn_set, out_dir = out_dir, db = db, mode = mode)
+    }
+
+    # Spearman on full (unfiltered) set; preserve pearson-filtered fp_annotation in grn_set
+    grn_set_spearman <- grn_set_base
+    ann_s <- .load_cache("spearman")
+    if (is.data.frame(ann_s)) {
+      grn_set_spearman$fp_annotation_spearman <- ann_s
+      grn_status_set(grn_set_spearman, paste0("fp_tf_corr_spearman_", mode))
+    } else {
+      grn_set_spearman <- grn_add_fp_tf_corr(
+        grn_set_spearman,
+        method = "spearman",
+        mode = mode,
+        tf_subset = tf_subset,
+        cores = cores_spearman,
+        chunk_size = chunk_size,
+        min_non_na = min_non_na,
+        verbose = verbose
+      )
+      .save_cache("spearman", grn_set_spearman$fp_annotation_spearman)
+    }
+    grn_set_spearman <- grn_filter_fp_tf_corr(
       grn_set_spearman,
       method = "spearman",
       mode = mode,
-      tf_subset = tf_subset,
-      cores = cores_spearman,
-      chunk_size = chunk_size,
-      min_non_na = min_non_na,
+      r_thr = r_thr,
+      p_thr = p_thr,
+      set_active = FALSE,
       verbose = verbose
     )
-    .save_cache("spearman", grn_set_spearman$fp_annotation_spearman)
-  }
-  grn_set_spearman <- grn_filter_fp_tf_corr(
-    grn_set_spearman,
-    method = "spearman",
-    mode = mode,
-    r_thr = r_thr,
-    p_thr = p_thr,
-    set_active = FALSE,
-    verbose = verbose
-  )
 
-  grn_set$fp_annotation_spearman <- grn_set_spearman$fp_annotation_spearman
-  grn_set$fp_annotation_spearman_filtered <- grn_set_spearman$fp_annotation_spearman_filtered
+    grn_set$fp_annotation_spearman <- grn_set_spearman$fp_annotation_spearman
+    grn_set$fp_annotation_spearman_filtered <- grn_set_spearman$fp_annotation_spearman_filtered
+  }
 
   if (isTRUE(qc)) {
     plot_tf_corr_stats_pdf(
@@ -1750,6 +1921,7 @@ correlate_tf_to_fp <- function(
       ann_spearman = grn_set$fp_annotation_spearman,
       out_dir = overview_dir,
       db = db,
+      mode = mode,
       label_col = label_col,
       r_thr = r_thr,
       p_thr = p_thr,
@@ -1762,7 +1934,8 @@ correlate_tf_to_fp <- function(
 
 #' @rdname grn_set_helpers
 #' @export
-write_grn_tf_corr_outputs <- function(grn_set, out_dir, db) {
+write_grn_tf_corr_outputs <- function(grn_set, out_dir, db, mode = c("canonical", "all")) {
+  mode <- match.arg(mode)
   if (!is.list(grn_set)) .log_abort("`grn_set` must be a list.")
   if (!is.character(out_dir) || !nzchar(out_dir)) .log_abort("`out_dir` must be a non-empty path.")
   if (!is.character(db) || !nzchar(db)) .log_abort("`db` must be a non-empty string.")
@@ -1777,15 +1950,15 @@ write_grn_tf_corr_outputs <- function(grn_set, out_dir, db) {
 
   readr::write_csv(
     grn_set$fp_score,
-    file.path(cache_dir, sprintf("fp_score_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_score_strict_tf_filtered_corr_%s_%s.csv", db, mode))
   )
   readr::write_csv(
     grn_set$fp_bound,
-    file.path(cache_dir, sprintf("fp_bound_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_bound_strict_tf_filtered_corr_%s_%s.csv", db, mode))
   )
   readr::write_csv(
     grn_set$fp_annotation,
-    file.path(cache_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s.csv", db))
+    file.path(cache_dir, sprintf("fp_annotation_strict_tf_filtered_corr_%s_%s.csv", db, mode))
   )
 
   invisible(out_dir)
@@ -1817,11 +1990,13 @@ write_tf_tfbs_overviews <- function(
     ann_spearman,
     out_dir,
     db,
+    mode = c("canonical", "all"),
     label_col = NULL,
     r_thr = 0.3,
     p_thr = 0.05,
     verbose = TRUE
 ) {
+  mode <- match.arg(mode)
   if (is.null(omics_data)) omics_data <- grn_set
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a list.")
   if (!is.data.frame(ann_pearson) && !is.data.frame(ann_spearman)) {
@@ -1989,7 +2164,7 @@ write_tf_tfbs_overviews <- function(
     summary_tbl <- all_dt[, lapply(.SD, function(x) sum(as.integer(x) > 0L, na.rm = TRUE)),
                           by = TF, .SDcols = bound_cols]
     data.table::setnames(summary_tbl, bound_cols, cond_cols)
-    summary_path <- file.path(dirname(out_dir), sprintf("06_tf_binding_site_counts_%s.csv", db))
+    summary_path <- file.path(dirname(out_dir), sprintf("06_tf_binding_site_counts_%s_%s.csv", db, mode))
     data.table::fwrite(summary_tbl, summary_path, sep = ",", col.names = TRUE)
   }
 
@@ -2004,7 +2179,7 @@ write_tf_tfbs_overviews <- function(
 #' Convenience wrapper around [correlate_tf_to_fp()] that writes
 #' per-condition TFBS BED files and returns the updated object.
 #'
-#' @param omics_data A multi-omic data list (output of [load_multiomic_data()]).
+#' @param omics_data A multi-omic data list (output of [load_prep_multiomic_data()]).
 #' @param out_dir Output directory for TFBS BED files.
 #' @param db Motif database tag used in output file names.
 #' @param label_col Metadata column used for condition labels.
@@ -2028,8 +2203,8 @@ output_per_condition_tfbs_bed_files <- function(
     mode = c("canonical", "all"),
     r_thr = 0.3,
     p_thr = 0.05,
-    cores_pearson = 20L,
-    cores_spearman = 36L,
+    cores_pearson = NULL,
+    cores_spearman = NULL,
     chunk_size = 5000L,
     min_non_na = 5L,
     use_cache = TRUE,
@@ -2061,7 +2236,7 @@ output_per_condition_tfbs_bed_files <- function(
 #' Runs TFBS correlation in \code{"all"} mode and writes outputs for inspection.
 #' Intended for exploratory benchmarking workflows.
 #'
-#' @param omics_data A multi-omic data list (output of [load_multiomic_data()]).
+#' @param omics_data A multi-omic data list (output of [load_prep_multiomic_data()]).
 #' @param out_dir Output directory for benchmarking artifacts.
 #' @param db Motif database tag used in output file names.
 #' @param label_col Metadata column used for condition labels.
@@ -2083,8 +2258,8 @@ experimental_benchmarking_of_tfbs_predictions <- function(
     label_col,
     r_thr = 0.3,
     p_thr = 0.05,
-    cores_pearson = 20L,
-    cores_spearman = 36L,
+    cores_pearson = NULL,
+    cores_spearman = NULL,
     chunk_size = 5000L,
     min_non_na = 5L,
     use_cache = TRUE,

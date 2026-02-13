@@ -65,7 +65,7 @@ if (do_load_footprints_preprocess == TRUE) {
   lenient_rna <- lenient_rna |> `names<-`(nm) |> dplyr::as_tibble()
 
   gene_symbol_col <- if (exists("gene_symbol_col")) gene_symbol_col else "HGNC"
-  grn_set <- load_multiomic_data(
+  grn_set <- load_prep_multiomic_data(
     config = "dev/config/pdac_nutrient_stress_HOCOMOCOv13.yaml",
     genome = ref_genome,
     gene_symbol_col = gene_symbol_col,
@@ -275,7 +275,7 @@ step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
 
 # Per-condition tables (per-cell vs 10_FBS)
 step2_specs <- build_cellwise_contrasts_from_index(
-  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
+  index_csv = file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv"),
   out_dir = step2_out_dir,
   prefix = "step2",
   ctrl_tag = "10_FBS",

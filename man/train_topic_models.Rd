@@ -10,6 +10,7 @@ train_topic_models(
   output_dir,
   celllines = c("AsPC1", "HPAFII", "Panc1"),
   tf_cluster_map,
+  doc_mode = c("tf_cluster", "tf"),
   tf_exclude = NULL,
   abs_log2fc_fp_min = 0,
   abs_delta_fp_min = 1,

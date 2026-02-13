@@ -64,7 +64,7 @@ light_by_condition(
 step3_out_dir <- file.path(base_dir, "diff_grn_lenient")
 
 step3_specs <- build_cellwise_contrasts_from_index(
-  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
+  index_csv = file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv"),
   out_dir = step2_out_dir,
   prefix = "step2",
   ctrl_tag = "Ctrl",

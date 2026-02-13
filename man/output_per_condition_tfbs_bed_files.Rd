@@ -12,8 +12,8 @@ output_per_condition_tfbs_bed_files(
   mode = c("canonical", "all"),
   r_thr = 0.3,
   p_thr = 0.05,
-  cores_pearson = 20L,
-  cores_spearman = 36L,
+  cores_pearson = NULL,
+  cores_spearman = NULL,
   chunk_size = 5000L,
   min_non_na = 5L,
   use_cache = TRUE,
@@ -21,7 +21,7 @@ output_per_condition_tfbs_bed_files(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list (output of [load_multiomic_data()]).}
+\item{omics_data}{A multi-omic data list (output of [load_prep_multiomic_data()]).}
 
 \item{out_dir}{Output directory for TFBS BED files.}
 

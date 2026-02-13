@@ -114,7 +114,7 @@ load_fp_aligned_from_cache <- function(cache_dir,
 #'
 #' @return Multi-omic data list produced by build_grn_set(), updated with condition matrices.
 #' @export
-load_multiomic_data <- function(
+load_prep_multiomic_data <- function(
     config = NULL,
     genome = NULL,
     gene_symbol_col = "HGNC",

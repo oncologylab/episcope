@@ -15,7 +15,7 @@ save_omics_data(
 )
 }
 \arguments{
-\item{omics_data}{A multi-omic data list (e.g., output of load_multiomic_data()).}
+\item{omics_data}{A multi-omic data list (e.g., output of load_prep_multiomic_data()).}
 
 \item{file}{Optional full path to an RDS file. If NULL, uses out_dir/db/prefix.}
 

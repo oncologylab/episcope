@@ -16,7 +16,13 @@ find_differential_links(
   parallel = TRUE,
   workers = NULL,
   summary_tag = NULL,
-  write_tf_hubs_fp = TRUE
+  write_tf_hubs_fp = TRUE,
+  overwrite_delta = FALSE,
+  overwrite_filtered = FALSE,
+  overwrite_tf_hubs = TRUE,
+  connectivity_min_degree = 1L,
+  summary_plot_format = c("pdf", "html", "both"),
+  summary_html_selfcontained = TRUE
 )
 }
 \arguments{
@@ -43,6 +49,22 @@ find_differential_links(
 \item{summary_tag}{Optional tag to insert into TF hub summary filenames.}
 
 \item{write_tf_hubs_fp}{If TRUE, write TF hub summaries using delta FP scores.}
+
+\item{overwrite_delta}{Logical; if TRUE, recompute `diff_links` even if files exist.}
+
+\item{overwrite_filtered}{Logical; if TRUE, recompute `diff_links_filtered` even if files exist.}
+
+\item{overwrite_tf_hubs}{Logical; if TRUE, always regenerate `master_tf_summary` outputs.}
+
+\item{connectivity_min_degree}{Integer cutoff for TF inclusion in connectivity
+heatmaps. A TF is shown only if it connects to at least this many other TFs
+(undirected degree).}
+
+\item{summary_plot_format}{Output format for QC differential-link summary plots:
+"pdf", "html", or "both".}
+
+\item{summary_html_selfcontained}{Logical; passed to
+\code{htmlwidgets::saveWidget()} when writing HTML summaries.}
 }
 \description{
 Runs link-delta comparisons and filtering using a config + comparison list.

@@ -2138,51 +2138,83 @@ run_fp_motif_clustering <- function(
     }
   )
 
-  cluster_sizes <- sort(table(cl_data), decreasing = TRUE)
-  if (do_qc) .save_plot_safe(
-    file.path(out_dir, "04_qc_cluster_sizes_data.pdf"),
-    function(ggplot2 = TRUE) {
-      df <- data.frame(size = as.integer(cluster_sizes))
-      if (ggplot2) {
-        ggplot2::ggplot(df, ggplot2::aes(x = size)) +
-          ggplot2::geom_histogram(bins = 60, fill = "#756bb1", color = "white", linewidth = 0.2) +
-          ggplot2::labs(
-            title = "Cluster size distribution (footprint similarity only)",
-            x = "Motifs per cluster",
-            y = "Cluster count",
-            caption = paste0("Target clusters: ", target_clusters)
-          ) +
-          .theme_pub()
-      } else {
-        hist(df$size, breaks = 60,
-             main = "Cluster size distribution (footprint similarity only)",
-             xlab = "Motifs per cluster", ylab = "Cluster count")
+  if (do_qc && mode %in% c("data", "both")) {
+    cluster_sizes <- sort(table(cl_data), decreasing = TRUE)
+    .save_plot_safe(
+      file.path(out_dir, "04_qc_cluster_sizes_data.pdf"),
+      function(ggplot2 = TRUE) {
+        df <- data.frame(size = as.integer(cluster_sizes))
+        if (!nrow(df)) {
+          if (ggplot2) {
+            return(
+              ggplot2::ggplot() +
+                ggplot2::annotate("text", x = 0, y = 0, label = "No cluster-size data available") +
+                ggplot2::labs(title = "Cluster size distribution (footprint similarity only)") +
+                ggplot2::theme_void()
+            )
+          } else {
+            plot.new()
+            title(main = "Cluster size distribution (footprint similarity only)")
+            text(0.5, 0.5, "No cluster-size data available")
+            return(invisible(NULL))
+          }
+        }
+        if (ggplot2) {
+          ggplot2::ggplot(df, ggplot2::aes(x = size)) +
+            ggplot2::geom_histogram(bins = 60, fill = "#756bb1", color = "white", linewidth = 0.2) +
+            ggplot2::labs(
+              title = "Cluster size distribution (footprint similarity only)",
+              x = "Motifs per cluster",
+              y = "Cluster count",
+              caption = paste0("Target clusters: ", target_clusters)
+            ) +
+            .theme_pub()
+        } else {
+          hist(df$size, breaks = 60,
+               main = "Cluster size distribution (footprint similarity only)",
+               xlab = "Motifs per cluster", ylab = "Cluster count")
+        }
       }
-    }
-  )
+    )
 
-  if (do_qc) .save_plot_safe(
-    file.path(out_dir, "04_qc_cluster_sizes_top20_data.pdf"),
-    function(ggplot2 = TRUE) {
-      top_sizes <- sort(as.integer(cluster_sizes), decreasing = TRUE)[seq_len(min(20L, length(cluster_sizes)))]
-      df <- data.frame(rank = seq_along(top_sizes), size = top_sizes)
-      if (ggplot2) {
-        ggplot2::ggplot(df, ggplot2::aes(x = factor(rank), y = size)) +
-          ggplot2::geom_col(fill = "#756bb1") +
-          ggplot2::labs(
-            title = "Top 20 cluster sizes (footprint similarity only)",
-            x = "Cluster rank (largest to smallest)",
-            y = "Motifs per cluster",
-            caption = paste0("Target clusters: ", target_clusters)
-          ) +
-          .theme_pub()
-      } else {
-        barplot(top_sizes, main = "Top 20 cluster sizes (footprint similarity only)",
-                xlab = "Cluster rank (largest to smallest)",
-                ylab = "Motifs per cluster")
+    .save_plot_safe(
+      file.path(out_dir, "04_qc_cluster_sizes_top20_data.pdf"),
+      function(ggplot2 = TRUE) {
+        top_sizes <- sort(as.integer(cluster_sizes), decreasing = TRUE)[seq_len(min(20L, length(cluster_sizes)))]
+        df <- data.frame(rank = seq_along(top_sizes), size = top_sizes)
+        if (!nrow(df)) {
+          if (ggplot2) {
+            return(
+              ggplot2::ggplot() +
+                ggplot2::annotate("text", x = 0, y = 0, label = "No cluster-size data available") +
+                ggplot2::labs(title = "Top 20 cluster sizes (footprint similarity only)") +
+                ggplot2::theme_void()
+            )
+          } else {
+            plot.new()
+            title(main = "Top 20 cluster sizes (footprint similarity only)")
+            text(0.5, 0.5, "No cluster-size data available")
+            return(invisible(NULL))
+          }
+        }
+        if (ggplot2) {
+          ggplot2::ggplot(df, ggplot2::aes(x = factor(rank), y = size)) +
+            ggplot2::geom_col(fill = "#756bb1") +
+            ggplot2::labs(
+              title = "Top 20 cluster sizes (footprint similarity only)",
+              x = "Cluster rank (largest to smallest)",
+              y = "Motifs per cluster",
+              caption = paste0("Target clusters: ", target_clusters)
+            ) +
+            .theme_pub()
+        } else {
+          barplot(top_sizes, main = "Top 20 cluster sizes (footprint similarity only)",
+                  xlab = "Cluster rank (largest to smallest)",
+                  ylab = "Motifs per cluster")
+        }
       }
-    }
-  )
+    )
+  }
 
   if (do_qc) {
     if (file.exists(file.path(out_dir, "04_qc_best_k_scores_data.csv"))) {

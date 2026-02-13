@@ -106,7 +106,7 @@ if (do_load_footprints_preprocess == TRUE) {
   lenient_rna <- lenient_rna |> `names<-`(nm) |> dplyr::as_tibble()
 
   # Build combined multi-omic data object
-  omics_data <- load_multiomic_data(
+  omics_data <- load_prep_multiomic_data(
     fp_aligned = fp_aligned,
     atac_data = atac_data,
     rna_tbl = strict_rna,
@@ -380,6 +380,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   )
   plot_link_activity_qc(
     summary_total = link_summary$summary_total,
+    summary_by_tf = link_summary$summary_by_tf,
     out_dir = step2_out_dir,
     db = db,
     prefix = "step2",
@@ -494,7 +495,7 @@ light_by_condition(
 step3_out_dir <- file.path(base_dir, "diff_grn_lenient")
 
 step3_specs <- build_cellwise_contrasts_from_index(
-  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
+  index_csv = file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv"),
   out_dir = step2_out_dir,
   prefix = "step2",
   ctrl_tag = "Ctrl",
@@ -534,7 +535,7 @@ step2_out_dir <- file.path(base_dir, "example_tf_target_genes")
 
 # Step 3/4 from Step 2 per-condition tables (per-cell vs 10_FBS)
 step2_specs <- build_cellwise_contrasts_from_index(
-  index_csv = file.path(step2_out_dir, "step2_per_condition_index.csv"),
+  index_csv = file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv"),
   out_dir = step2_out_dir,
   prefix = "step2",
   ctrl_tag = "10_FBS",

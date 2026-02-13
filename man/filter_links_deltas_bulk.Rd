@@ -81,7 +81,7 @@ direction contradicts expected gene direction given link_sign_* (default TRUE).}
 \item{write_manifest}{Logical; write a manifest CSV mapping source->filtered (default TRUE).}
 
 \item{manifest_file}{Optional path for manifest; if NULL, written to the common dir as
-"delta_links_filtered_manifest.csv".}
+"cache/filtered_links_manifest.csv".}
 
 \item{verbose}{logical; default TRUE}
 }

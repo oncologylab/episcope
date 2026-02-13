@@ -20,7 +20,7 @@ plot_gene_expr_qc(
 
 \item{out_dir}{Output directory for the PDF.}
 
-\item{db}{Database tag used in the output filename.}
+\item{db}{Database tag (kept for API compatibility; not used in filename).}
 
 \item{threshold_gene_expr}{Expression threshold used for flags.}
 

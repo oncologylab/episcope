@@ -13,7 +13,7 @@ NULL
 #'
 #' @param fp_aligned List returned by `align_footprints()`.
 #' @param out_dir Output directory for the PDF.
-#' @param db Database tag used in the output filename.
+#' @param db Database tag (kept for API compatibility; not used in filename).
 #' @param verbose Emit status messages.
 #'
 #' @return Path to the written PDF (invisible).
@@ -92,7 +92,7 @@ plot_fp_merge_summary <- function(
     ) +
     base_theme
 
-  pdf_path <- file.path(out_dir, sprintf("02_fp_merge_summary_%s.pdf", db))
+  pdf_path <- file.path(out_dir, "02_fp_merge_summary.pdf")
   grDevices::pdf(pdf_path, width = 8, height = 6)
   print(p_counts)
   print(p_hist)
@@ -109,9 +109,9 @@ plot_fp_merge_summary <- function(
 #'   fp_score_condition_qn, and fp_bound_condition.
 #' @param grn_set (Deprecated) Use `omics_data`.
 #' @param out_dir Output directory for the PDF.
-#' @param db Database tag used in the output filename.
+#' @param db Database tag (kept for API compatibility; not used in filename).
 #' @param threshold_fp_score Footprint score threshold used for bound calls.
-#' @param max_points Maximum peaks sampled for boxplots.
+#' @param max_points Maximum peaks sampled for violin plots.
 #' @param verbose Emit status messages.
 #'
 #' @return Path to the written PDF (invisible).
@@ -195,10 +195,24 @@ plot_fp_norm_bound_qc <- function(
       plot.caption = ggplot2::element_text(size = 9, hjust = 1)
     )
 
-  p_box <- ggplot2::ggplot(fp_long, ggplot2::aes(x = condition, y = score, fill = type)) +
-    ggplot2::geom_boxplot(outlier.size = 0.2, linewidth = 0.2) +
+  p_violin <- ggplot2::ggplot(fp_long, ggplot2::aes(x = condition, y = score, fill = type)) +
+    ggplot2::geom_violin(
+      position = ggplot2::position_dodge(width = 0.8),
+      trim = TRUE,
+      scale = "width",
+      alpha = 0.85,
+      color = "grey30",
+      linewidth = 0.25
+    ) +
+    ggplot2::geom_boxplot(
+      position = ggplot2::position_dodge(width = 0.8),
+      width = 0.12,
+      outlier.size = 0.1,
+      linewidth = 0.2,
+      alpha = 0.45
+    ) +
     ggplot2::labs(
-      title = "Footprint scores by condition (raw vs quantile-normalized)",
+      title = "Footprint score distributions by condition (raw vs quantile-normalized)",
       x = "Condition",
       y = "Footprint score",
       caption = paste0(
@@ -219,13 +233,13 @@ plot_fp_norm_bound_qc <- function(
     base_theme +
     ggplot2::coord_flip()
 
-  pdf_path <- file.path(out_dir, sprintf("03_fp_norm_bound_qc_%s.pdf", db))
+  pdf_path <- file.path(out_dir, "03_fp_norm_bound_summary.pdf")
   grDevices::pdf(pdf_path, width = 7, height = 10)
-  print(p_box)
+  print(p_violin)
   print(p_bound)
   grDevices::dev.off()
 
-  if (isTRUE(verbose)) .log_inform("FP normalization/bound QC saved: {pdf_path}")
+  if (isTRUE(verbose)) .log_inform("FP normalization/bound summary saved: {pdf_path}")
   invisible(pdf_path)
 }
 
@@ -234,7 +248,7 @@ plot_fp_norm_bound_qc <- function(
 #' @param omics_data Multi-omic data list containing rna_expressed.
 #' @param grn_set (Deprecated) Use `omics_data`.
 #' @param out_dir Output directory for the PDF.
-#' @param db Database tag used in the output filename.
+#' @param db Database tag (kept for API compatibility; not used in filename).
 #' @param threshold_gene_expr Expression threshold used for flags.
 #' @param verbose Emit status messages.
 #'
@@ -290,7 +304,7 @@ plot_gene_expr_qc <- function(
     base_theme +
     ggplot2::coord_flip()
 
-  pdf_path <- file.path(out_dir, sprintf("05_gene_expr_flag_summary_plot_%s.pdf", db))
+  pdf_path <- file.path(out_dir, "05_gene_expr_flag_summary.pdf")
   grDevices::pdf(pdf_path, width = 7, height = 9)
   print(p_expr)
   grDevices::dev.off()

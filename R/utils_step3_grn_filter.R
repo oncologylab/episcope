@@ -153,7 +153,7 @@
 #' @param abs_delta_min numeric; default 2
 #' @param save_csv logical; write filtered CSV. Default FALSE
 #' @param out_file optional character; output path. If NULL and `x` is a file,
-#'   writes alongside input as "*_delta_links_filtered.csv".
+#'   writes alongside input as "*_filtered.csv".
 #' @param verbose logical; default TRUE
 #' @param apply_de_gene logical; require |log2FC_gene_expr| ?de_gene_log2_abs_min
 #' @param apply_de_tf   logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min
@@ -362,7 +362,7 @@ filter_links_deltas <- function(x,
 #' @param save_csv Logical; write *_filtered.csv next to each input (default TRUE).
 #' @param write_manifest Logical; write a manifest CSV mapping source->filtered (default TRUE).
 #' @param manifest_file Optional path for manifest; if NULL, written to the common dir as
-#'        "delta_links_filtered_manifest.csv".
+#'        "cache/filtered_links_manifest.csv".
 #' @param split_direction Logical; write up/down filtered links per delta file.
 #' @param write_combined Logical; write combined filtered CSV (default TRUE).
 #' @return A list with fields: results (list of tibbles), filtered_paths, filtered_dirs, manifest (tibble), manifest_path.
@@ -491,8 +491,9 @@ filter_links_deltas_bulk <- function(delta_csvs,
     )
     if (isTRUE(split_direction)) {
       base <- sub("\\.csv$", "", basename(f), ignore.case = TRUE)
-      up_path <- file.path(out_dir_use, paste0(base, "_filtered_up.csv"))
-      down_path <- file.path(out_dir_use, paste0(base, "_filtered_down.csv"))
+      stem <- sub("_delta_links$", "", base, ignore.case = TRUE)
+      up_path <- file.path(out_dir_use, paste0(stem, "_filtered_links_up.csv"))
+      down_path <- file.path(out_dir_use, paste0(stem, "_filtered_links_down.csv"))
       split <- .split_links_by_direction(
         df,
         gene_log2_abs_min = de_gene_log2_abs_min,
@@ -545,10 +546,10 @@ filter_links_deltas_bulk <- function(delta_csvs,
   if (isTRUE(write_manifest)) {
     if (is.null(manifest_file)) {
       if (!is.null(filtered_dir) && nzchar(filtered_dir)) {
-        manifest_path <- file.path(filtered_dir, "delta_links_filtered_manifest.csv")
+        manifest_path <- file.path(filtered_dir, "cache", "filtered_links_manifest.csv")
       } else {
         common_dir <- .common_dir(delta_csvs)
-        manifest_path <- file.path(common_dir, "delta_links_filtered_manifest.csv")
+        manifest_path <- file.path(common_dir, "cache", "filtered_links_manifest.csv")
       }
     } else {
       manifest_path <- manifest_file

@@ -125,13 +125,18 @@ summarize_link_activity <- function(
   summary_by_tf <- dplyr::bind_rows(total_row, summary_by_tf)
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  total_path <- file.path(out_dir, sprintf("%s_link_activity_total_%s.csv", prefix, db))
-  by_tf_path <- file.path(out_dir, sprintf("%s_link_activity_by_tf_%s.csv", prefix, db))
-  readr::write_csv(summary_total, total_path)
+  by_tf_path <- file.path(out_dir, "link_activity_summary.csv")
   readr::write_csv(summary_by_tf, by_tf_path)
+  total_path_legacy <- file.path(out_dir, sprintf("%s_link_activity_total_%s.csv", prefix, db))
+  if (file.exists(total_path_legacy)) {
+    file.remove(total_path_legacy)
+  }
+  by_tf_legacy <- file.path(out_dir, sprintf("%s_link_activity_by_tf_%s.csv", prefix, db))
+  if (file.exists(by_tf_legacy)) {
+    file.remove(by_tf_legacy)
+  }
 
   if (isTRUE(verbose)) {
-    .log_inform("Link activity summary written: {total_path}")
     .log_inform("Link activity by TF written: {by_tf_path}")
   }
 
@@ -141,6 +146,8 @@ summarize_link_activity <- function(
 #' Plot total active links per condition
 #'
 #' @param summary_total A data.frame with columns condition and n_links_active.
+#' @param summary_by_tf Optional wide table with TF in first column and
+#'   per-condition active-link counts in remaining columns.
 #' @param out_dir Output directory for the PDF.
 #' @param db Database tag used in the output filename.
 #' @param prefix Prefix for output filename.
@@ -150,6 +157,7 @@ summarize_link_activity <- function(
 #' @export
 plot_link_activity_qc <- function(
   summary_total,
+  summary_by_tf = NULL,
   out_dir,
   db,
   prefix = "step2",
@@ -168,7 +176,6 @@ plot_link_activity_qc <- function(
 
   p <- ggplot2::ggplot(summary_total, ggplot2::aes(x = condition, y = n_links_active)) +
     ggplot2::geom_col(fill = "#3182bd") +
-    ggplot2::coord_flip() +
     ggplot2::labs(
       title = "Total active links per condition",
       x = "Condition",
@@ -177,15 +184,75 @@ plot_link_activity_qc <- function(
     ggplot2::theme_classic(base_size = 12) +
     ggplot2::theme(
       axis.title = ggplot2::element_text(face = "bold"),
-      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5)
+      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+      axis.text.x = ggplot2::element_text(angle = 45, hjust = 1, vjust = 1)
     )
 
-  pdf_path <- file.path(out_dir, sprintf("%s_link_activity_qc_%s.pdf", prefix, db))
-  grDevices::pdf(pdf_path, width = 8, height = 6)
+  p_tf <- NULL
+  if (is.data.frame(summary_by_tf) && ncol(summary_by_tf) >= 2L) {
+    tf_col <- names(summary_by_tf)[1]
+    tf_df <- summary_by_tf
+    if ("__TOTAL__" %in% tf_df[[tf_col]]) {
+      tf_df <- tf_df[tf_df[[tf_col]] != "__TOTAL__", , drop = FALSE]
+    }
+    if (nrow(tf_df)) {
+      cond_cols <- setdiff(names(tf_df), tf_col)
+      tf_long <- tidyr::pivot_longer(
+        tf_df,
+        cols = dplyr::all_of(cond_cols),
+        names_to = "condition",
+        values_to = "n_links_active"
+      )
+      tf_tot <- tf_long |>
+        dplyr::group_by(.data[[tf_col]]) |>
+        dplyr::summarise(total_links = sum(.data$n_links_active, na.rm = TRUE), .groups = "drop") |>
+        dplyr::arrange(dplyr::desc(.data$total_links))
+      tf_levels <- tf_tot[[tf_col]]
+      tf_long$TF_label <- factor(tf_long[[tf_col]], levels = rev(tf_levels))
+      mat <- stats::xtabs(n_links_active ~ TF_label + condition, data = tf_long)
+      if (nrow(mat) >= 2 && ncol(mat) >= 2) {
+        hc_row <- stats::hclust(stats::dist(mat), method = "complete")
+        hc_col <- stats::hclust(stats::dist(t(mat)), method = "complete")
+        row_ord <- rownames(mat)[hc_row$order]
+        col_ord <- colnames(mat)[hc_col$order]
+      } else {
+        row_ord <- rownames(mat)
+        col_ord <- colnames(mat)
+      }
+      tf_long$TF_label <- factor(tf_long$TF_label, levels = row_ord)
+      tf_long$condition <- factor(tf_long$condition, levels = col_ord)
+      p_tf <- ggplot2::ggplot(tf_long, ggplot2::aes(x = .data$condition, y = .data$TF_label, fill = .data$n_links_active)) +
+        ggplot2::geom_tile() +
+        ggplot2::scale_fill_gradient(low = "#f7fbff", high = "#08519c") +
+        ggplot2::labs(
+          title = "Active link counts per TF per condition (unsupervised clustering)",
+          x = "Condition",
+          y = "TF",
+          fill = "Active links"
+        ) +
+        ggplot2::theme_classic(base_size = 12) +
+        ggplot2::theme(
+          axis.title = ggplot2::element_text(face = "bold"),
+          plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+          axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5),
+          axis.line = ggplot2::element_blank(),
+          axis.ticks = ggplot2::element_blank()
+        )
+    }
+  }
+
+  pdf_path <- file.path(out_dir, "link_activity_summary.pdf")
+  n_cond <- max(1L, nrow(summary_total))
+  bar_w <- max(10, min(18, 7 + 0.15 * n_cond))
+  bar_h <- max(7, min(12, 5 + 0.08 * n_cond))
+  grDevices::pdf(pdf_path, width = bar_w, height = bar_h)
   print(p)
+  if (!is.null(p_tf)) {
+    print(p_tf)
+  }
   grDevices::dev.off()
 
-  if (isTRUE(verbose)) .log_inform("Link activity QC saved: {pdf_path}")
+  if (isTRUE(verbose)) .log_inform("Link activity summary saved: {pdf_path}")
   invisible(pdf_path)
 }
 
@@ -207,14 +274,23 @@ extract_link_info_by_condition <- function(
 ) {
   if (!is.character(out_dir) || !nzchar(out_dir)) .log_abort("`out_dir` must be a non-empty path.")
   if (!dir.exists(out_dir)) .log_abort("`out_dir` does not exist: {out_dir}")
+  matrices_dir <- file.path(out_dir, "per_condition_link_matrices")
+  search_dir <- if (dir.exists(matrices_dir)) matrices_dir else out_dir
 
-  pattern <- sprintf("^%s_cond-.*_tf_gene_links\\.csv$", prefix)
-  csvs <- list.files(out_dir, pattern = pattern, full.names = TRUE)
+  pattern_new <- sprintf("^%s_.*_tf_gene_links\\.csv$", prefix)
+  pattern_old <- sprintf("^%s_cond-.*_tf_gene_links\\.csv$", prefix)
+  csvs <- unique(c(
+    list.files(search_dir, pattern = pattern_new, full.names = TRUE),
+    list.files(search_dir, pattern = pattern_old, full.names = TRUE)
+  ))
   if (!length(csvs)) .log_abort("No per-condition link CSVs found in {out_dir} with prefix {prefix}.")
 
   parse_label <- function(path) {
     base <- basename(path)
-    sub(sprintf("^%s_cond-", prefix), "", sub("_tf_gene_links\\.csv$", "", base))
+    x <- sub("_tf_gene_links\\.csv$", "", base)
+    x <- sub(sprintf("^%s_cond-", prefix), "", x)
+    x <- sub(sprintf("^%s_", prefix), "", x)
+    x
   }
 
   manifest <- tibble::tibble(

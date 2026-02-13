@@ -11,6 +11,7 @@ write_tf_tfbs_overviews(
   ann_spearman,
   out_dir,
   db,
+  mode = c("canonical", "all"),
   label_col = NULL,
   r_thr = 0.3,
   p_thr = 0.05,
