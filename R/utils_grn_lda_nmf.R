@@ -49,8 +49,16 @@ standardize_delta_links_one_tbl <- function(df, source_csv) {
     link_score_ctrl     = as.numeric(get_by("link_score_", ctrl_tag, na_value = NA_real_)),
     link_sign_case      = as.character(get_by("link_sign_", case_tag, na_value = NA_character_)),
     link_sign_ctrl      = as.character(get_by("link_sign_", ctrl_tag, na_value = NA_character_)),
-    fp_bed_score_case   = as.numeric(get_by("fp_bed_score_", case_tag, na_value = NA_real_)),
-    fp_bed_score_ctrl   = as.numeric(get_by("fp_bed_score_", ctrl_tag, na_value = NA_real_)),
+    fp_score_case       = {
+      v <- get_by("fp_score_", case_tag, na_value = NA_real_)
+      if (all(is.na(v))) v <- get_by("fp_bed_score_", case_tag, na_value = NA_real_)
+      as.numeric(v)
+    },
+    fp_score_ctrl       = {
+      v <- get_by("fp_score_", ctrl_tag, na_value = NA_real_)
+      if (all(is.na(v))) v <- get_by("fp_bed_score_", ctrl_tag, na_value = NA_real_)
+      as.numeric(v)
+    },
     tf_expr_case        = as.numeric(get_by("tf_expr_", case_tag, na_value = NA_real_)),
     tf_expr_ctrl        = as.numeric(get_by("tf_expr_", ctrl_tag, na_value = NA_real_)),
     gene_expr_case      = as.numeric(get_by("gene_expr_", case_tag, na_value = NA_real_)),
@@ -67,7 +75,8 @@ standardize_delta_links_one_tbl <- function(df, source_csv) {
     r_tf_ctrl           = as.numeric(get_by("r_tf_", ctrl_tag, na_value = NA_real_)),
 
     delta_link_score    = as.numeric(df[["delta_link_score"]]),
-    delta_fp_bed_score  = if ("delta_fp_bed_score" %in% names(df)) as.numeric(df[["delta_fp_bed_score"]]) else NA_real_,
+    delta_fp_score      = if ("delta_fp_score" %in% names(df)) as.numeric(df[["delta_fp_score"]]) else if ("delta_fp_bed_score" %in% names(df)) as.numeric(df[["delta_fp_bed_score"]]) else NA_real_,
+    log2FC_fp_score     = if ("log2FC_fp_score" %in% names(df)) as.numeric(df[["log2FC_fp_score"]]) else if ("log2FC_fp_bed_score" %in% names(df)) as.numeric(df[["log2FC_fp_bed_score"]]) else NA_real_,
     delta_tf_expr       = if ("delta_tf_expr"      %in% names(df)) as.numeric(df[["delta_tf_expr"]])      else NA_real_,
     delta_gene_expr     = if ("delta_gene_expr"    %in% names(df)) as.numeric(df[["delta_gene_expr"]])    else NA_real_,
 
@@ -192,7 +201,7 @@ aggregate_edges_by_tf_gene <- function(edges_tbl,
 compute_log2fc_from_case_ctrl <- function(edges_tbl, eps = 1e-6) {
   stopifnot(is.data.frame(edges_tbl))
   need <- c("tf_expr_case", "tf_expr_ctrl", "gene_expr_case", "gene_expr_ctrl",
-            "fp_bed_score_case", "fp_bed_score_ctrl")
+            "fp_score_case", "fp_score_ctrl")
   miss <- setdiff(need, names(edges_tbl))
   if (length(miss)) {
     cli::cli_abort("edges_tbl missing: {paste(miss, collapse=', ')}")
@@ -203,7 +212,7 @@ compute_log2fc_from_case_ctrl <- function(edges_tbl, eps = 1e-6) {
   out <- edges_tbl
   out$log2fc_tf_expr <- log2((out$tf_expr_case + eps) / (out$tf_expr_ctrl + eps))
   out$log2fc_gene_expr <- log2((out$gene_expr_case + eps) / (out$gene_expr_ctrl + eps))
-  out$log2fc_fp_bed_score <- log2((out$fp_bed_score_case + eps) / (out$fp_bed_score_ctrl + eps))
+  out$log2fc_fp_score <- log2((out$fp_score_case + eps) / (out$fp_score_ctrl + eps))
   out
 }
 

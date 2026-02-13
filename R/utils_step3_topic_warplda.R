@@ -117,8 +117,8 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   tf_expr_ctrl_nm <- nm("tf_expr", ids$ctrl_id)
   gene_expr_case_nm <- nm("gene_expr", ids$case_id)
   gene_expr_ctrl_nm <- nm("gene_expr", ids$ctrl_id)
-  fp_score_case_nm <- nm("fp_bed_score", ids$case_id)
-  fp_score_ctrl_nm <- nm("fp_bed_score", ids$ctrl_id)
+  fp_score_case_nm <- nm("fp_score", ids$case_id)
+  fp_score_ctrl_nm <- nm("fp_score", ids$ctrl_id)
 
   has <- function(x) x %in% names(dt)
 
@@ -142,16 +142,19 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   dt[, tf_expr_ctrl := if (has(tf_expr_ctrl_nm)) .safe_num(get(tf_expr_ctrl_nm)) else NA_real_]
   dt[, gene_expr_case := if (has(gene_expr_case_nm)) .safe_num(get(gene_expr_case_nm)) else NA_real_]
   dt[, gene_expr_ctrl := if (has(gene_expr_ctrl_nm)) .safe_num(get(gene_expr_ctrl_nm)) else NA_real_]
-  dt[, fp_score_case := if (has(fp_score_case_nm)) .safe_num(get(fp_score_case_nm)) else NA_real_]
-  dt[, fp_score_ctrl := if (has(fp_score_ctrl_nm)) .safe_num(get(fp_score_ctrl_nm)) else NA_real_]
+  dt[, fp_score_case := if (has(fp_score_case_nm)) .safe_num(get(fp_score_case_nm)) else if (has(nm("fp_bed_score", ids$case_id))) .safe_num(get(nm("fp_bed_score", ids$case_id))) else NA_real_]
+  dt[, fp_score_ctrl := if (has(fp_score_ctrl_nm)) .safe_num(get(fp_score_ctrl_nm)) else if (has(nm("fp_bed_score", ids$ctrl_id))) .safe_num(get(nm("fp_bed_score", ids$ctrl_id))) else NA_real_]
 
   # standardized deltas/log2FC and FC-magnitude (gene/fp)
-  dt[, delta_fp := if (has("delta_fp_bed_score")) .safe_num(delta_fp_bed_score) else NA_real_]
+  dt[, delta_fp := if (has("delta_fp_score")) .safe_num(delta_fp_score) else if (has("delta_fp_bed_score")) .safe_num(delta_fp_bed_score) else NA_real_]
   dt[, delta_gene := if (has("delta_gene_expr")) .safe_num(delta_gene_expr) else NA_real_]
 
   dt[, log2fc_fp := {
-    if (has("log2FC_fp_bed_score")) .safe_num(log2FC_fp_bed_score)
+    if (has("log2FC_fp_score")) .safe_num(log2FC_fp_score)
+    else if (has("log2FC_fp_bed_score")) .safe_num(log2FC_fp_bed_score)
+    else if (has("fc_fp_score")) .safe_num(log2(fc_fp_score))
     else if (has("fc_fp_bed_score")) .safe_num(log2(fc_fp_bed_score))
+    else if (has("delta_fp_score")) .safe_num(delta_fp_score)
     else if (has("delta_fp_bed_score")) .safe_num(delta_fp_bed_score)
     else NA_real_
   }]
@@ -164,9 +167,9 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   }]
 
   dt[, fc_mag_fp := {
-    if (has("fc_fp_bed_score")) {
+    if (has("fc_fp_score") || has("fc_fp_bed_score")) {
       # symmetric magnitude
-      v <- .safe_num(fc_fp_bed_score)
+      v <- if (has("fc_fp_score")) .safe_num(fc_fp_score) else .safe_num(fc_fp_bed_score)
       v[v <= 0] <- NA_real_
       w <- pmax(v, 1 / v)
       w[!is.finite(w)] <- NA_real_
@@ -302,10 +305,12 @@ filter_edges_for_tf_topics <- function(edges,
   if (is.finite(abs_delta_fp_min) && abs_delta_fp_min > 0) {
     if ("delta_fp" %in% names(dt)) {
       dlt <- .safe_num(dt[["delta_fp"]])
+    } else if ("delta_fp_score" %in% names(dt)) {
+      dlt <- .safe_num(dt[["delta_fp_score"]])
     } else if ("delta_fp_bed_score" %in% names(dt)) {
       dlt <- .safe_num(dt[["delta_fp_bed_score"]])
     } else {
-      .log_abort("abs_delta_fp_min requires delta_fp or delta_fp_bed_score in edges.")
+      .log_abort("abs_delta_fp_min requires delta_fp or delta_fp_score in edges.")
     }
     keep <- keep & is.finite(dlt) & (abs(dlt) >= abs_delta_fp_min)
   }

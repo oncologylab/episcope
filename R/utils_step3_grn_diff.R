@@ -6,7 +6,7 @@
 #
 # Summary
 #   Load TF-gene link tables, harmonize columns, and compute per-link deltas
-#   for link_score, fp_bed_score, tf_expr, gene_expr, active (cond1 - cond2).
+#   for link_score, fp_score, tf_expr, gene_expr, active (cond1 - cond2).
 #   Includes bulk/driver helpers for per-cell contrasts.
 #
 # Conventions
@@ -264,15 +264,15 @@ load_links_table <- function(x, verbose = TRUE, keep_all_cols = TRUE) {
     }
   }
 
-  # Map fp_score -> fp_bed_score if needed
-  if (!("fp_bed_score" %in% names(tbl))) {
-    alts <- c("fp_score", "footprint_score", "fp")
+  # Canonicalize footprint score column to fp_score.
+  if (!("fp_score" %in% names(tbl))) {
+    alts <- c("fp_bed_score", "footprint_score", "fp")
     alt_hit <- alts[alts %in% names(tbl)]
     if (length(alt_hit)) {
-      tbl[["fp_bed_score"]] <- as.numeric(tbl[[alt_hit[1L]]])
-      .log(paste0("Mapped ", alt_hit[1L], " -> fp_bed_score"), verbose = verbose)
+      tbl[["fp_score"]] <- as.numeric(tbl[[alt_hit[1L]]])
+      .log(paste0("Mapped ", alt_hit[1L], " -> fp_score"), verbose = verbose)
     } else {
-      tbl[["fp_bed_score"]] <- NA_real_
+      tbl[["fp_score"]] <- NA_real_
     }
   }
 
@@ -280,7 +280,7 @@ load_links_table <- function(x, verbose = TRUE, keep_all_cols = TRUE) {
   for (cc in c("tf_expr", "gene_expr")) if (!(cc %in% names(tbl))) tbl[[cc]] <- NA_real_
 
   # Coerce numeric/logical for known fields
-  num_cols <- intersect(c("link_score","fp_bed_score","tf_expr","gene_expr",
+  num_cols <- intersect(c("link_score","fp_score","tf_expr","gene_expr",
                           "r_gene","p_gene","p_adj_gene","r_tf","p_tf","p_adj_tf"),
                         names(tbl))
   for (cc in num_cols) tbl[[cc]] <- as.numeric(tbl[[cc]])
@@ -335,7 +335,7 @@ load_links_table <- function(x, verbose = TRUE, keep_all_cols = TRUE) {
   }
 
   # Keep canonical columns (plus common stats if present); optionally preserve extras
-  keep <- c("tf","gene_key","peak_id","link_score","fp_bed_score","tf_expr","gene_expr","active",
+  keep <- c("tf","gene_key","peak_id","link_score","fp_score","tf_expr","gene_expr","active",
             "link_sign","r_gene","p_gene","p_adj_gene","r_tf","p_tf","p_adj_tf")
   keep <- intersect(keep, names(tbl))
   if (isTRUE(keep_all_cols)) {
@@ -353,7 +353,7 @@ load_links_table <- function(x, verbose = TRUE, keep_all_cols = TRUE) {
 
 #' Compare two conditions (cond1 - cond2) for TF-gene links
 #'
-#' Computes deltas for `link_score`, `fp_bed_score`, `tf_expr`, `gene_expr`,
+#' Computes deltas for `link_score`, `fp_score`, `tf_expr`, `gene_expr`,
 #' plus log2FC for expressions with a pseudocount. Enforces identical key sets
 #' (`tf,gene_key,peak_id`) when `strict = TRUE` and reconciles `link_sign`
 #' according to a chosen policy.
@@ -445,7 +445,7 @@ compare_links_two_conditions <- function(cond1, cond2,
   t1s <- data.frame(tf = t1$tf, gene_key = t1$gene_key, peak_id = t1$peak_id, check.names = FALSE)
   t1s[[paste0("link_score",   s1)]] <- t1$link_score
   t1s[[paste0("link_sign",    s1)]] <- t1$link_sign
-  t1s[[paste0("fp_bed_score", s1)]] <- t1$fp_bed_score
+  t1s[[paste0("fp_score", s1)]] <- t1$fp_score
   t1s[[paste0("tf_expr",      s1)]] <- t1$tf_expr
   t1s[[paste0("gene_expr",    s1)]] <- t1$gene_expr
   t1s[[paste0("active",       s1)]] <- t1$active
@@ -454,7 +454,7 @@ compare_links_two_conditions <- function(cond1, cond2,
   t2s <- data.frame(tf = t2$tf, gene_key = t2$gene_key, peak_id = t2$peak_id, check.names = FALSE)
   t2s[[paste0("link_score",   s2)]] <- t2$link_score
   t2s[[paste0("link_sign",    s2)]] <- t2$link_sign
-  t2s[[paste0("fp_bed_score", s2)]] <- t2$fp_bed_score
+  t2s[[paste0("fp_score", s2)]] <- t2$fp_score
   t2s[[paste0("tf_expr",      s2)]] <- t2$tf_expr
   t2s[[paste0("gene_expr",    s2)]] <- t2$gene_expr
   t2s[[paste0("active",       s2)]] <- t2$active
@@ -469,10 +469,10 @@ compare_links_two_conditions <- function(cond1, cond2,
     intersect(names(t1), names(t2))
   )
   base_cols <- c(key_cols,
-                 "link_score", "link_sign", "fp_bed_score", "tf_expr", "gene_expr", "active", "r_tf",
+                 "link_score", "link_sign", "fp_score", "tf_expr", "gene_expr", "active", "r_tf",
                  static_cols)
   extra_cols <- setdiff(intersect(names(t1), names(t2)), base_cols)
-  extra_cols <- setdiff(extra_cols, c("active_link", "fp_score", "footprint_score", "fp"))
+  extra_cols <- setdiff(extra_cols, c("active_link", "fp_score", "fp_bed_score", "footprint_score", "fp"))
 
   if (length(extra_cols)) {
     for (cc in extra_cols) {
@@ -486,7 +486,7 @@ compare_links_two_conditions <- function(cond1, cond2,
 
   # Assert the expected columns exist (prevents silent NULL -> numeric(0))
   lk1 <- paste0("link_score", s1); lk2 <- paste0("link_score", s2)
-  fp1 <- paste0("fp_bed_score", s1); fp2 <- paste0("fp_bed_score", s2)
+  fp1 <- paste0("fp_score", s1); fp2 <- paste0("fp_score", s2)
   tf1 <- paste0("tf_expr", s1); tf2 <- paste0("tf_expr", s2)
   ge1 <- paste0("gene_expr", s1); ge2 <- paste0("gene_expr", s2)
   must_have <- c(lk1, lk2, fp1, fp2, tf1, tf2, ge1, ge2)
@@ -513,13 +513,14 @@ compare_links_two_conditions <- function(cond1, cond2,
 
   # Deltas & log2FC
   jj[["delta_link_score"]]   <- as.numeric(jj[[lk1]]) - as.numeric(jj[[lk2]])
-  jj[["delta_fp_bed_score"]] <- as.numeric(jj[[fp1]]) - as.numeric(jj[[fp2]])
+  jj[["delta_fp_score"]]     <- as.numeric(jj[[fp1]]) - as.numeric(jj[[fp2]])
   jj[["delta_tf_expr"]]      <- as.numeric(jj[[tf1]]) - as.numeric(jj[[tf2]])
   jj[["delta_gene_expr"]]    <- as.numeric(jj[[ge1]]) - as.numeric(jj[[ge2]])
+  jj[["log2FC_fp_score"]]    <- .safe_log2fc(as.numeric(jj[[fp1]]), as.numeric(jj[[fp2]]), pc)
   jj[["log2FC_tf_expr"]]     <- .safe_log2fc(as.numeric(jj[[tf1]]), as.numeric(jj[[tf2]]), pc)
   jj[["log2FC_gene_expr"]]   <- .safe_log2fc(as.numeric(jj[[ge1]]), as.numeric(jj[[ge2]]), pc)
   jj[["fc_link_score"]]      <- .safe_fc(as.numeric(jj[[lk1]]), as.numeric(jj[[lk2]]), pc)
-  jj[["fc_fp_bed_score"]]    <- .safe_fc(as.numeric(jj[[fp1]]), as.numeric(jj[[fp2]]), pc)
+  jj[["fc_fp_score"]]        <- .safe_fc(as.numeric(jj[[fp1]]), as.numeric(jj[[fp2]]), pc)
   jj[["fc_tf_expr"]]         <- .safe_fc(as.numeric(jj[[tf1]]), as.numeric(jj[[tf2]]), pc)
   jj[["fc_gene_expr"]]       <- .safe_fc(as.numeric(jj[[ge1]]), as.numeric(jj[[ge2]]), pc)
 
@@ -550,13 +551,14 @@ compare_links_two_conditions <- function(cond1, cond2,
     idx_off <- !jj[["active_both"]]
     if (any(idx_off)) {
       jj[["delta_link_score"]][idx_off]   <- NA_real_
-      jj[["delta_fp_bed_score"]][idx_off] <- NA_real_
+      jj[["delta_fp_score"]][idx_off]     <- NA_real_
       jj[["delta_tf_expr"]][idx_off]      <- NA_real_
       jj[["delta_gene_expr"]][idx_off]    <- NA_real_
+      jj[["log2FC_fp_score"]][idx_off]    <- NA_real_
       jj[["log2FC_tf_expr"]][idx_off]     <- NA_real_
       jj[["log2FC_gene_expr"]][idx_off]   <- NA_real_
       jj[["fc_link_score"]][idx_off]      <- NA_real_
-      jj[["fc_fp_bed_score"]][idx_off]    <- NA_real_
+      jj[["fc_fp_score"]][idx_off]        <- NA_real_
       jj[["fc_tf_expr"]][idx_off]         <- NA_real_
       jj[["fc_gene_expr"]][idx_off]       <- NA_real_
       jj[["rank_shift_link_score"]][idx_off] <- NA_real_
@@ -581,9 +583,9 @@ compare_links_two_conditions <- function(cond1, cond2,
     paste0("rank_link_score", s1), paste0("rank_link_score", s2)
   )
   per_cond_extra <- unlist(lapply(extra_cols, function(z) c(paste0(z, s1), paste0(z, s2))))
-  delta_cols <- c("delta_link_score","delta_fp_bed_score","delta_tf_expr","delta_gene_expr")
-  log2_cols <- c("log2FC_tf_expr","log2FC_gene_expr")
-  fc_cols <- c("fc_link_score","fc_fp_bed_score","fc_tf_expr","fc_gene_expr")
+  delta_cols <- c("delta_link_score","delta_fp_score","delta_tf_expr","delta_gene_expr")
+  log2_cols <- c("log2FC_fp_score","log2FC_tf_expr","log2FC_gene_expr")
+  fc_cols <- c("fc_link_score","fc_fp_score","fc_tf_expr","fc_gene_expr")
   keep <- unique(c(left_cols, per_cond, per_cond_extra,
                    delta_cols, log2_cols, fc_cols,
                    "rank_shift_link_score", "edge_change",
@@ -1041,9 +1043,11 @@ find_differential_links <- function(config,
     )
   }
 
-  delta_fp_cutoff <- if (exists("delta_fp_cutoff")) delta_fp_cutoff else if (exists("fp_delta_min")) fp_delta_min else 0.5
-  de_gene_log2_abs_min <- if (exists("de_gene_log2_abs_min")) de_gene_log2_abs_min else 0.5
-  fp_delta_min <- delta_fp_cutoff
+  fp_delta_cutoff <- if (exists("fp_delta_cutoff")) fp_delta_cutoff else if (exists("delta_fp_cutoff")) delta_fp_cutoff else if (exists("fp_delta_min")) fp_delta_min else 0.5
+  fp_log2fc_cutoff <- if (exists("fp_log2fc_cutoff")) fp_log2fc_cutoff else fp_delta_cutoff
+  fp_filter_mode <- if (exists("fp_filter_mode")) as.character(fp_filter_mode)[1] else "delta"
+  gene_log2fc_cutoff <- if (exists("gene_log2fc_cutoff")) gene_log2fc_cutoff else if (exists("de_gene_log2_abs_min")) de_gene_log2_abs_min else 1
+  fp_delta_min <- fp_delta_cutoff
 
   existing_delta <- list.files(delta_dir, "_delta_links\\.csv$", full.names = TRUE)
   if (!isTRUE(overwrite_delta) && length(existing_delta) > 0L) {
@@ -1079,10 +1083,11 @@ find_differential_links <- function(config,
       link_min = -Inf,
       abs_delta_min = -Inf,
       apply_de_gene = TRUE,
-      de_gene_log2_abs_min = de_gene_log2_abs_min,
+      de_gene_log2_abs_min = gene_log2fc_cutoff,
       apply_de_tf = FALSE,
-      fp_delta_min = fp_delta_min,
-      tf_opposition_log2_abs_min = de_gene_log2_abs_min,
+      fp_delta_min = if (identical(fp_filter_mode, "delta")) fp_delta_min else fp_log2fc_cutoff,
+      fp_filter_by = fp_filter_mode,
+      tf_opposition_log2_abs_min = gene_log2fc_cutoff,
       split_direction = TRUE,
       write_combined = FALSE,
       enforce_link_expr_sign = FALSE,
@@ -1098,8 +1103,10 @@ find_differential_links <- function(config,
       out_root = out_root,
       output_format = summary_plot_format,
       html_selfcontained = summary_html_selfcontained,
-      de_gene_log2_abs_min = de_gene_log2_abs_min,
-      delta_fp_cutoff = delta_fp_cutoff
+      de_gene_log2_abs_min = gene_log2fc_cutoff,
+      delta_fp_cutoff = fp_delta_cutoff,
+      fp_filter_mode = fp_filter_mode,
+      fp_log2fc_cutoff = fp_log2fc_cutoff
     )
   }
 
@@ -1169,10 +1176,13 @@ find_differential_links <- function(config,
                                                   output_format = c("pdf", "html", "both"),
                                                   html_selfcontained = TRUE,
                                                   de_gene_log2_abs_min = 0.5,
-                                                  delta_fp_cutoff = 0.5) {
+                                                  delta_fp_cutoff = 0.5,
+                                                  fp_filter_mode = c("delta", "log2fc"),
+                                                  fp_log2fc_cutoff = 0.5) {
   .assert_pkg("ggplot2")
   .assert_pkg("readr")
   output_format <- match.arg(output_format)
+  fp_filter_mode <- match.arg(fp_filter_mode)
   do_pdf <- output_format %in% c("pdf", "both")
   do_html <- output_format %in% c("html", "both")
   if (isTRUE(do_html) && !requireNamespace("plotly", quietly = TRUE)) {
@@ -1244,13 +1254,21 @@ find_differential_links <- function(config,
     lfc <- suppressWarnings(as.numeric(delta_df$log2FC_gene_expr))
     direction <- ifelse(is.finite(lfc) & (lfc >= 0), "Up", ifelse(is.finite(lfc) & (lfc < 0), "Down", NA_character_))
 
-    fp_delta <- if ("delta_fp_bed_score" %in% names(delta_df)) {
+    fp_delta <- if ("delta_fp_score" %in% names(delta_df)) {
+      suppressWarnings(as.numeric(delta_df$delta_fp_score))
+    } else if ("delta_fp_bed_score" %in% names(delta_df)) {
       suppressWarnings(as.numeric(delta_df$delta_fp_bed_score))
     } else {
       rep(NA_real_, nrow(delta_df))
     }
+    fp_log2 <- if ("log2FC_fp_score" %in% names(delta_df)) {
+      suppressWarnings(as.numeric(delta_df$log2FC_fp_score))
+    } else {
+      rep(NA_real_, nrow(delta_df))
+    }
     thr_gene <- as.numeric(de_gene_log2_abs_min)
-    thr_fp <- as.numeric(delta_fp_cutoff)
+    thr_fp_delta <- as.numeric(delta_fp_cutoff)
+    thr_fp_log2 <- as.numeric(fp_log2fc_cutoff)
 
     keep_base <- !is.na(gene_vals) & nzchar(gene_vals) & !is.na(direction) & direction %in% c("Up", "Down")
     if (!any(keep_base)) return(data.frame())
@@ -1262,7 +1280,11 @@ find_differential_links <- function(config,
     )
     dir_sign <- ifelse(direction[keep_base] == "Up", 1, -1)
     rna_pass <- (abs(lfc[keep_base]) >= thr_gene)
-    fp_pass <- (dir_sign * fp_delta[keep_base]) >= thr_fp
+    fp_pass <- if (identical(fp_filter_mode, "log2fc")) {
+      (dir_sign * fp_log2[keep_base]) >= thr_fp_log2
+    } else {
+      (dir_sign * fp_delta[keep_base]) >= thr_fp_delta
+    }
     stage_list <- list(
       "No filter" = rep(TRUE, nrow(base_df)),
       "RNA" = rna_pass,
@@ -1290,13 +1312,14 @@ find_differential_links <- function(config,
     df_list <- lapply(sel, function(p) readr::read_csv(p, show_col_types = FALSE))
     df <- dplyr::bind_rows(df_list)
     if (!nrow(df)) next
-    if (!all(c("delta_fp_bed_score", "log2FC_gene_expr") %in% names(df))) {
-      .log_warn("Skipping volcano; missing delta_fp_bed_score or log2FC_gene_expr in {bid}.")
+    fp_delta_col <- if ("delta_fp_score" %in% names(df)) "delta_fp_score" else if ("delta_fp_bed_score" %in% names(df)) "delta_fp_bed_score" else NA_character_
+    if (!all(c("log2FC_gene_expr") %in% names(df)) || is.na(fp_delta_col)) {
+      .log_warn("Skipping volcano; missing delta_fp_score and/or log2FC_gene_expr in {bid}.")
       next
     }
     df$log2FC_gene_expr <- suppressWarnings(as.numeric(df$log2FC_gene_expr))
-    df$delta_fp_bed_score <- suppressWarnings(as.numeric(df$delta_fp_bed_score))
-    df <- df[is.finite(df$log2FC_gene_expr) & is.finite(df$delta_fp_bed_score), , drop = FALSE]
+    df$delta_fp_score <- suppressWarnings(as.numeric(df[[fp_delta_col]]))
+    df <- df[is.finite(df$log2FC_gene_expr) & is.finite(df$delta_fp_score), , drop = FALSE]
     if (!nrow(df)) next
     df$direction <- ifelse(df$log2FC_gene_expr >= 0, "Up", "Down")
     tf_col <- if ("tf" %in% names(df)) "tf" else if ("TF" %in% names(df)) "TF" else NULL
@@ -1309,13 +1332,13 @@ find_differential_links <- function(config,
     df$hover_text <- paste0(
       df$tf_target,
       "<br>gene log2FC: ", signif(df$log2FC_gene_expr, 4),
-      "<br>delta FP: ", signif(df$delta_fp_bed_score, 4),
+      "<br>delta FP: ", signif(df$delta_fp_score, 4),
       "<br>Direction: ", df$direction
     )
     all_x <- c(all_x, df$log2FC_gene_expr)
-    all_y <- c(all_y, df$delta_fp_bed_score)
+    all_y <- c(all_y, df$delta_fp_score)
     contrast <- .contrast_from_file(bid)
-    p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_bed_score, color = direction, text = hover_text)) +
+    p <- ggplot2::ggplot(df, ggplot2::aes(x = log2FC_gene_expr, y = delta_fp_score, color = direction, text = hover_text)) +
       ggplot2::geom_hline(yintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
       ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "grey50", linewidth = 0.4) +
       ggplot2::geom_point(alpha = 0.6, size = 0.7) +
@@ -1376,8 +1399,11 @@ find_differential_links <- function(config,
             caption = paste0(
               "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
               " (direction-specific sign). ",
-              "FP filter: |delta_fp_bed_score| >= ", signif(delta_fp_cutoff, 4),
-              " (direction-specific sign)."
+              if (identical(fp_filter_mode, "log2fc")) {
+                paste0("FP filter: |log2FC_fp_score| >= ", signif(fp_log2fc_cutoff, 4), " (direction-specific sign).")
+              } else {
+                paste0("FP filter: |delta_fp_score| >= ", signif(delta_fp_cutoff, 4), " (direction-specific sign).")
+              }
             )
           ) +
           ggplot2::theme_classic(base_size = 9) +
@@ -1457,8 +1483,11 @@ find_differential_links <- function(config,
           caption = paste0(
             "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
             " (direction-specific sign). ",
-            "FP filter: |delta_fp_bed_score| >= ", signif(delta_fp_cutoff, 4),
-            " (direction-specific sign)."
+            if (identical(fp_filter_mode, "log2fc")) {
+              paste0("FP filter: |log2FC_fp_score| >= ", signif(fp_log2fc_cutoff, 4), " (direction-specific sign).")
+            } else {
+              paste0("FP filter: |delta_fp_score| >= ", signif(delta_fp_cutoff, 4), " (direction-specific sign).")
+            }
           )
         ) +
         ggplot2::theme_classic(base_size = 9) +
@@ -1516,7 +1545,7 @@ find_differential_links <- function(config,
   gene_col <- if ("gene_key" %in% names(df)) "gene_key" else if ("gene" %in% names(df)) "gene" else if ("target_gene" %in% names(df)) "target_gene" else NULL
   if (is.null(tf_col) || is.null(gene_col)) return(tibble::tibble())
 
-  delta_col <- if ("delta_fp_bed_score" %in% names(df)) "delta_fp_bed_score" else if ("delta_fp" %in% names(df)) "delta_fp" else NULL
+  delta_col <- if ("delta_fp_score" %in% names(df)) "delta_fp_score" else if ("delta_fp_bed_score" %in% names(df)) "delta_fp_bed_score" else if ("delta_fp" %in% names(df)) "delta_fp" else NULL
   if (is.null(delta_col)) return(tibble::tibble())
 
   tf_expr_max <- NA_real_

@@ -36,8 +36,10 @@ link_score_threshold: 0.001
 fp_score_threshold: 0.001
 
 # Module 3: Differential links
-de_gene_log2_abs_min: 0.5
-delta_fp_cutoff: 0.5
+gene_log2fc_cutoff: 1
+fp_delta_cutoff: 0.5
+fp_log2fc_cutoff: 0.5
+fp_filter_mode: delta  # delta | log2fc
 
 # Module 3: Topics / reporting
 topic_k: 10

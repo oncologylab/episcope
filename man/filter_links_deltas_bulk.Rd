@@ -18,6 +18,7 @@ filter_links_deltas_bulk(
   de_gene_fc_min = NULL,
   de_tf_fc_min = NULL,
   fp_delta_min = NULL,
+  fp_filter_by = c("delta", "log2fc"),
   tf_opposition_log2_abs_min = NULL,
   split_direction = FALSE,
   write_combined = TRUE,
@@ -60,7 +61,7 @@ filter_links_deltas_bulk(
 \item{de_tf_fc_min}{numeric absolute fold-change threshold (non-log2) for TFs.}
 
 \item{fp_delta_min}{numeric absolute delta threshold for footprint scores
-(column `delta_fp_bed_score`).}
+(column `delta_fp_score`).}
 
 \item{split_direction}{Logical; write up/down filtered links per delta file.}
 

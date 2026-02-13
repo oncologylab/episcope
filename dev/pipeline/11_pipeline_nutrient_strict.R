@@ -323,30 +323,54 @@ if (do_tf_to_target_genes_prediction == TRUE) {
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 if (do_diff_grn == TRUE) {
+  .fmt_cut <- function(x) gsub("\\.", "p", as.character(signif(as.numeric(x), 4)))
+  diff_modes <- c("delta", "log2fc")
+  diff_res_by_mode <- list()
 
-  diff_res <- find_differential_links(
-    config = "dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml",
-    compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
-    output_dir = step3_root_dir,
-    overwrite_delta = FALSE,
-    overwrite_filtered = FALSE,
-    overwrite_tf_hubs = TRUE,
-    connectivity_min_degree = 5L,
-    summary_plot_format = "both"
-  )
+  for (mode_use in diff_modes) {
+    fp_filter_mode <- mode_use
+    mode_cutoff <- if (identical(mode_use, "delta")) fp_delta_cutoff else fp_log2fc_cutoff
+    step3_out_mode <- file.path(
+      base_dir,
+      paste0(
+        "diff_grn_and_regulatory_topics",
+        "_fp_", mode_use,
+        "_cutoff_", .fmt_cut(mode_cutoff),
+        "_gene_log2fc_", .fmt_cut(gene_log2fc_cutoff)
+      )
+    )
+
+    .log_inform(
+      "Running differential links with fp_filter_mode={mode_use}, cutoff={mode_cutoff}, gene_log2fc_cutoff={gene_log2fc_cutoff} -> {step3_out_mode}"
+    )
+    diff_res_by_mode[[mode_use]] <- find_differential_links(
+      config = NULL,
+      compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
+      output_dir = step3_out_mode,
+      overwrite_delta = FALSE,
+      overwrite_filtered = FALSE,
+      overwrite_tf_hubs = TRUE,
+      connectivity_min_degree = 5L,
+      summary_plot_format = "both"
+    )
+  }
+
+  diff_res <- diff_res_by_mode[["delta"]]
 
   # Optional: pathway enrichment from diff_links_filtered (minimal gene_key-based run).
   do_diff_links_pathway_enrichment <- TRUE
   if (isTRUE(do_diff_links_pathway_enrichment)) {
-    run_diff_links_pathway_grn(
-      diff_res = diff_res,
-      min_genes = 5L,
-      padj_cut = 0.05,
-      plot_subnetwork = TRUE,
-      top_n_pathways_plot = 10L,
-      overwrite = TRUE,
-      verbose = TRUE
-    )
+    for (mode_use in names(diff_res_by_mode)) {
+      run_diff_links_pathway_grn(
+        diff_res = diff_res_by_mode[[mode_use]],
+        min_genes = 5L,
+        padj_cut = 0.05,
+        plot_subnetwork = TRUE,
+        top_n_pathways_plot = 10L,
+        overwrite = TRUE,
+        verbose = TRUE
+      )
+    }
   }
 
   motif_path <- file.path("inst", "extdata", "genome", "JASPAR2024.txt")

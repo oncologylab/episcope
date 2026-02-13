@@ -52,7 +52,7 @@ filter_links_deltas(
 \item{de_tf_fc_min}{numeric absolute fold-change threshold (non-log2) for TFs.}
 
 \item{fp_delta_min}{numeric absolute delta threshold for footprint scores
-(column `delta_fp_bed_score`).}
+(column `delta_fp_score`).}
 
 \item{enforce_link_expr_sign}{logical; if TRUE, drop rows whose delta_link_score
 direction contradicts expected gene direction given link_sign_* (default TRUE).}
@@ -73,7 +73,7 @@ Tibble filtered to rows passing all criteria.
 Filter *_delta_links.csv (or in-memory tables) using:
   1) any gene_expr_*    > gene_expr_min
   2) any tf_expr_*      > tf_expr_min
-  3) any fp_bed_score_* > fp_min
+  3) any fp_score_* > fp_min
   4) any link_score_*   > link_min
   5) |delta_link_score| > abs_delta_min
   6) Optional absolute |log2FC| thresholds:

@@ -53,7 +53,7 @@ inputs and carry them through (default TRUE).}
 A tibble with IDs, per-condition values, deltas, and log2FC columns.
 }
 \description{
-Computes deltas for `link_score`, `fp_bed_score`, `tf_expr`, `gene_expr`,
+Computes deltas for `link_score`, `fp_score`, `tf_expr`, `gene_expr`,
 plus log2FC for expressions with a pseudocount. Enforces identical key sets
 (`tf,gene_key,peak_id`) when `strict = TRUE` and reconciles `link_sign`
 according to a chosen policy.

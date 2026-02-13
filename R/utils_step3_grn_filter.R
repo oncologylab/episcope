@@ -49,16 +49,22 @@
 # Split links into up/down by gene log2FC and footprint delta, with optional TF opposition filter
 .split_links_by_direction <- function(df,
                                       gene_log2_col = "log2FC_gene_expr",
-                                      fp_delta_col = "delta_fp_bed_score",
+                                      fp_delta_col = "delta_fp_score",
+                                      fp_log2_col = "log2FC_fp_score",
+                                      fp_filter_by = c("delta", "log2fc"),
                                       tf_log2_col = "log2FC_tf_expr",
                                       gene_log2_abs_min = NULL,
                                       fp_delta_min = NULL,
                                       tf_log2_abs_min = NULL,
                                       verbose = TRUE) {
+  fp_filter_by <- match.arg(fp_filter_by)
   if (!nrow(df)) return(list(up = df, down = df))
   nms <- names(df)
-  if (!gene_log2_col %in% nms || !fp_delta_col %in% nms) {
-    .log_warn("Missing {gene_log2_col} or {fp_delta_col}; skipping up/down split.")
+  if (!(fp_delta_col %in% nms) && "delta_fp_bed_score" %in% nms) fp_delta_col <- "delta_fp_bed_score"
+  if (!(fp_log2_col %in% nms) && "log2FC_fp_bed_score" %in% nms) fp_log2_col <- "log2FC_fp_bed_score"
+  fp_col_use <- if (identical(fp_filter_by, "log2fc")) fp_log2_col else fp_delta_col
+  if (!gene_log2_col %in% nms || !fp_col_use %in% nms) {
+    .log_warn("Missing {gene_log2_col} or {fp_col_use}; skipping up/down split.")
     return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
   }
   if (is.null(gene_log2_abs_min) || !is.finite(gene_log2_abs_min)) {
@@ -71,7 +77,7 @@
   }
 
   gene_l2 <- suppressWarnings(as.numeric(df[[gene_log2_col]]))
-  fp_del <- suppressWarnings(as.numeric(df[[fp_delta_col]]))
+  fp_del <- suppressWarnings(as.numeric(df[[fp_col_use]]))
   tf_l2 <- if (tf_log2_col %in% nms) suppressWarnings(as.numeric(df[[tf_log2_col]])) else NA_real_
 
   gene_pass <- is.finite(gene_l2) & (abs(gene_l2) >= gene_log2_abs_min)
@@ -135,7 +141,7 @@
 #' Filter *_delta_links.csv (or in-memory tables) using:
 #'   1) any gene_expr_*    > gene_expr_min
 #'   2) any tf_expr_*      > tf_expr_min
-#'   3) any fp_bed_score_* > fp_min
+#'   3) any fp_score_* > fp_min
 #'   4) any link_score_*   > link_min
 #'   5) |delta_link_score| > abs_delta_min
 #'   6) Optional absolute |log2FC| thresholds:
@@ -163,7 +169,7 @@
 #' @param de_tf_fc_min   numeric absolute fold-change threshold (non-log2) for TFs.
 #' @param fp_delta_min numeric absolute delta threshold for footprint scores.
 #' @param fp_delta_min numeric absolute delta threshold for footprint scores
-#'   (column `delta_fp_bed_score`).
+#'   (column `delta_fp_score`).
 #' @param enforce_link_expr_sign logical; if TRUE, drop rows whose delta_link_score
 #'   direction contradicts expected gene direction given link_sign_* (default TRUE).
 #' @param expr_dir_col character; gene-change column to use for direction; default "log2FC_gene_expr"
@@ -214,13 +220,14 @@ filter_links_deltas <- function(x,
   # Identify column groups by prefix
   cols_gene <- .cols_with_prefix(df, "gene_expr_")
   cols_tf   <- .cols_with_prefix(df, "tf_expr_")
-  cols_fp   <- .cols_with_prefix(df, "fp_bed_score_")
+  cols_fp <- .cols_with_prefix(df, "fp_score_")
+  if (!length(cols_fp)) cols_fp <- .cols_with_prefix(df, "fp_bed_score_")
   cols_link <- .cols_with_prefix(df, "link_score_")
   has_delta <- ("delta_link_score" %in% nms)
 
   .flog("Columns detected ?gene_expr_*: ", length(cols_gene),
         ", tf_expr_*: ", length(cols_tf),
-        ", fp_bed_score_*: ", length(cols_fp),
+        ", fp_score_*: ", length(cols_fp),
         ", link_score_*: ", length(cols_link),
         ", delta_link_score: ", has_delta, ".", verbose = verbose)
 
@@ -240,8 +247,8 @@ filter_links_deltas <- function(x,
   .flog("Pass tf_expr: ", sum(pass_tf), "/", n0, " rows.", verbose = verbose)
 
   pass_fp <- .any_gt(df, cols_fp, fp_min)
-  if (length(cols_fp) == 0L) warning("No fp_bed_score_* columns found; skipping FP filter.")
-  .flog("Pass fp_bed_score: ", sum(pass_fp), "/", n0, " rows.", verbose = verbose)
+  if (length(cols_fp) == 0L) warning("No fp_score_* columns found; skipping FP filter.")
+  .flog("Pass fp_score: ", sum(pass_fp), "/", n0, " rows.", verbose = verbose)
 
   pass_link <- .any_gt(df, cols_link, link_min)
   if (length(cols_link) == 0L) warning("No link_score_* columns found; skipping link_score filter.")
@@ -424,6 +431,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      de_gene_fc_min = NULL,
                                      de_tf_fc_min   = NULL,
                                      fp_delta_min = NULL,
+                                     fp_filter_by = c("delta", "log2fc"),
                                      tf_opposition_log2_abs_min = NULL,
                                      split_direction = FALSE,
                                      write_combined = TRUE,
@@ -438,6 +446,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      filtered_dir = NULL,
                                      verbose = TRUE) {
   # sanity
+  fp_filter_by <- match.arg(fp_filter_by)
   if (!is.character(delta_csvs) || length(delta_csvs) == 0L) {
     cli::cli_abort("`delta_csvs` must be a non-empty character vector of CSV paths.")
   }
@@ -527,6 +536,7 @@ filter_links_deltas_bulk <- function(delta_csvs,
         df,
         gene_log2_abs_min = de_gene_log2_abs_min,
         fp_delta_min = fp_delta_min,
+        fp_filter_by = fp_filter_by,
         tf_log2_abs_min = if (is.finite(tf_opposition_log2_abs_min)) tf_opposition_log2_abs_min else de_gene_log2_abs_min,
         verbose = worker_verbose
       )
