@@ -1190,6 +1190,47 @@ find_differential_links <- function(config,
   plot_list <- list()
   all_x <- numeric(0)
   all_y <- numeric(0)
+  all_gene_count_rows <- list()
+
+  .pick_gene_col <- function(nm) {
+    cands <- c("gene_key", "gene", "target_gene")
+    hit <- cands[cands %in% nm]
+    if (!length(hit)) return(NA_character_)
+    hit[[1]]
+  }
+
+  .count_unique_genes_by_dir <- function(df, stage, comparison_id, direction_hint = NULL) {
+    if (!is.data.frame(df) || !nrow(df)) return(data.frame())
+    gene_col <- .pick_gene_col(names(df))
+    if (is.na(gene_col)) return(data.frame())
+    gvals <- as.character(df[[gene_col]])
+    gvals[!is.na(gvals) & nzchar(gvals)]
+    dir_vals <- rep(NA_character_, length(gvals))
+    if (!is.null(direction_hint)) {
+      dir_vals <- rep(as.character(direction_hint), length(gvals))
+    } else if ("direction_group" %in% names(df)) {
+      dir_vals <- as.character(df$direction_group)
+    } else if ("direction" %in% names(df)) {
+      dir_vals <- as.character(df$direction)
+    } else if ("log2FC_gene_expr" %in% names(df)) {
+      lfc <- suppressWarnings(as.numeric(df$log2FC_gene_expr))
+      dir_vals <- ifelse(is.finite(lfc) & lfc >= 0, "Up", ifelse(is.finite(lfc) & lfc < 0, "Down", NA_character_))
+    }
+    keep <- !is.na(gvals) & nzchar(gvals) & !is.na(dir_vals) & dir_vals %in% c("Up", "Down")
+    if (!any(keep)) return(data.frame())
+    tmp <- data.frame(
+      comparison_id = comparison_id,
+      direction = dir_vals[keep],
+      gene_key = gvals[keep],
+      stage = stage,
+      stringsAsFactors = FALSE
+    )
+    out <- tmp |>
+      dplyr::distinct(.data$comparison_id, .data$direction, .data$stage, .data$gene_key) |>
+      dplyr::count(.data$comparison_id, .data$direction, .data$stage, name = "n_gene_unique")
+    as.data.frame(out)
+  }
+
   for (bid in base_ids) {
     sel <- files[grepl(paste0("^", gsub("([\\+\\-\\(\\)\\[\\]\\.\\^\\$\\|\\?\\*\\+])", "\\\\\\1", bid), "_(up|down)\\.csv$"), basename(files))]
     if (!length(sel)) next
@@ -1240,11 +1281,69 @@ find_differential_links <- function(config,
         axis.title.y = ggplot2::element_text(face = "bold", size = 8),
         axis.text = ggplot2::element_text(size = 7),
         legend.position = "none"
-      )
+    )
     plot_list[[length(plot_list) + 1L]] <- p
+
+    # Gene-key counts by direction: before = delta links, after = filtered links.
+    count_rows_this <- list()
+    for (p in sel) {
+      dlab <- if (grepl("_up\\.csv$", basename(p), ignore.case = TRUE)) "Up" else "Down"
+      dfi <- readr::read_csv(p, show_col_types = FALSE)
+      cr <- .count_unique_genes_by_dir(
+        df = dfi,
+        stage = "After filtering",
+        comparison_id = contrast_id,
+        direction_hint = dlab
+      )
+      if (nrow(cr)) count_rows_this[[length(count_rows_this) + 1L]] <- cr
+    }
+    delta_path <- file.path(out_root, "diff_links", paste0(contrast_id, "_delta_links.csv"))
+    if (!file.exists(delta_path)) {
+      delta_path <- file.path(out_root, "delta_links", paste0(contrast_id, "_delta_links.csv"))
+    }
+    if (file.exists(delta_path)) {
+      delta_df <- readr::read_csv(delta_path, show_col_types = FALSE)
+      crb <- .count_unique_genes_by_dir(
+        df = delta_df,
+        stage = "Before filtering",
+        comparison_id = contrast_id,
+        direction_hint = NULL
+      )
+      if (nrow(crb)) count_rows_this[[length(count_rows_this) + 1L]] <- crb
+    }
+    gene_counts_this <- if (length(count_rows_this)) dplyr::bind_rows(count_rows_this) else data.frame()
+    if (nrow(gene_counts_this)) {
+      gene_counts_this$direction <- factor(gene_counts_this$direction, levels = c("Up", "Down"))
+      gene_counts_this$stage <- factor(gene_counts_this$stage, levels = c("Before filtering", "After filtering"))
+      all_gene_count_rows[[length(all_gene_count_rows) + 1L]] <- gene_counts_this
+    }
+
     if (isTRUE(do_pdf)) {
       out_pdf <- file.path(out_dir, paste0(contrast_id, "_differential_links_summary.pdf"))
-      ggplot2::ggsave(out_pdf, p, width = 5.5, height = 4.2, dpi = 200)
+      grDevices::pdf(out_pdf, width = 6.2, height = 4.6, onefile = TRUE)
+      print(p)
+      if (nrow(gene_counts_this)) {
+        p_cnt <- ggplot2::ggplot(
+          gene_counts_this,
+          ggplot2::aes(x = .data$direction, y = .data$n_gene_unique, fill = .data$stage)
+        ) +
+          ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
+          ggplot2::scale_fill_manual(values = c("Before filtering" = "#9ecae1", "After filtering" = "#3182bd")) +
+          ggplot2::labs(
+            title = paste0(.contrast_from_file(bid), " | Unique gene_key counts"),
+            x = "Direction",
+            y = "Unique gene_key (N)",
+            fill = NULL
+          ) +
+          ggplot2::theme_classic(base_size = 9) +
+          ggplot2::theme(
+            plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
+            axis.title = ggplot2::element_text(face = "bold"),
+            legend.position = "top"
+          )
+        print(p_cnt)
+      }
+      grDevices::dev.off()
     }
     if (isTRUE(do_html)) {
       out_html <- file.path(out_dir, paste0(contrast_id, "_differential_links_summary.html"))
@@ -1284,6 +1383,48 @@ find_differential_links <- function(config,
       grid::popViewport()
     }
     grid::popViewport()
+  }
+
+  if (isTRUE(do_pdf) && length(all_gene_count_rows)) {
+    counts_all <- dplyr::bind_rows(all_gene_count_rows)
+    if (nrow(counts_all)) {
+      counts_all$comparison_direction <- paste0(counts_all$comparison_id, " | ", counts_all$direction)
+      counts_all$stage <- factor(counts_all$stage, levels = c("Before filtering", "After filtering"))
+      ord_tbl <- counts_all |>
+        dplyr::filter(.data$stage == "Before filtering") |>
+        dplyr::arrange(dplyr::desc(.data$n_gene_unique)) |>
+        dplyr::distinct(.data$comparison_direction, .keep_all = FALSE)
+      ord_levels <- ord_tbl$comparison_direction
+      if (!length(ord_levels)) ord_levels <- unique(counts_all$comparison_direction)
+      counts_all$comparison_direction <- factor(counts_all$comparison_direction, levels = ord_levels)
+      p_all_counts <- ggplot2::ggplot(
+        counts_all,
+        ggplot2::aes(x = .data$comparison_direction, y = .data$n_gene_unique, fill = .data$stage)
+      ) +
+        ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
+        ggplot2::scale_fill_manual(values = c("Before filtering" = "#9ecae1", "After filtering" = "#3182bd")) +
+        ggplot2::labs(
+          title = "Unique gene_key counts by comparison-direction",
+          x = "Comparison | Direction",
+          y = "Unique gene_key (N)",
+          fill = NULL
+        ) +
+        ggplot2::theme_classic(base_size = 9) +
+        ggplot2::theme(
+          plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
+          axis.title = ggplot2::element_text(face = "bold"),
+          axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+          legend.position = "top"
+        )
+      ggplot2::ggsave(
+        filename = file.path(out_dir, "differential_links_gene_key_counts_summary.pdf"),
+        plot = p_all_counts,
+        width = 14,
+        height = max(5, min(14, 2.8 + 0.18 * length(unique(counts_all$comparison_direction)))),
+        dpi = 200,
+        limitsize = FALSE
+      )
+    }
   }
   invisible(TRUE)
 }
@@ -1663,73 +1804,74 @@ find_differential_links <- function(config,
             }, error = function(e) {
               .log_warn("Failed writing cutoff-empty standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
             })
-            next
+            mat <- NULL
           }
 
-          mat_log <- log1p(mat)
-          tf_fs <- max(6.5, min(13, 320 / max(10, nrow(mat_log))))
-          cell_sz <- max(2, min(12, 240 / max(12, nrow(mat_log))))
-          # Build an undirected shortest-path connectivity score for indirect links.
-          # Score(i,j) = 1 / (1 + number of intermediate TF nodes on shortest path i->j),
-          # so direct links have score 1 and disconnected pairs have score 0.
-          adj_undir <- (mat > 0) | (t(mat) > 0)
-          diag(adj_undir) <- FALSE
-          n_tf <- nrow(adj_undir)
-          dist_mat <- matrix(Inf, n_tf, n_tf, dimnames = dimnames(adj_undir))
-          for (src in seq_len(n_tf)) {
-            d <- rep(Inf, n_tf)
-            d[src] <- 0
-            q <- src
-            while (length(q)) {
-              v <- q[[1]]
-              q <- q[-1]
-              nb <- which(adj_undir[v, ] & is.infinite(d))
-              if (length(nb)) {
-                d[nb] <- d[v] + 1
-                q <- c(q, nb)
+          if (!is.null(mat) && is.matrix(mat) && nrow(mat) >= 2L) {
+            mat_log <- log1p(mat)
+            tf_fs <- max(6.5, min(13, 320 / max(10, nrow(mat_log))))
+            cell_sz <- max(2, min(12, 240 / max(12, nrow(mat_log))))
+            # Build an undirected shortest-path connectivity score for indirect links.
+            # Score(i,j) = 1 / (1 + number of intermediate TF nodes on shortest path i->j),
+            # so direct links have score 1 and disconnected pairs have score 0.
+            adj_undir <- (mat > 0) | (t(mat) > 0)
+            diag(adj_undir) <- FALSE
+            n_tf <- nrow(adj_undir)
+            dist_mat <- matrix(Inf, n_tf, n_tf, dimnames = dimnames(adj_undir))
+            for (src in seq_len(n_tf)) {
+              d <- rep(Inf, n_tf)
+              d[src] <- 0
+              q <- src
+              while (length(q)) {
+                v <- q[[1]]
+                q <- q[-1]
+                nb <- which(adj_undir[v, ] & is.infinite(d))
+                if (length(nb)) {
+                  d[nb] <- d[v] + 1
+                  q <- c(q, nb)
+                }
               }
+              dist_mat[src, ] <- d
             }
-            dist_mat[src, ] <- d
-          }
-          nodes_needed <- pmax(dist_mat - 1, 0)
-          conn_indirect <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
-          conn_indirect[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
-          diag(conn_indirect) <- 1
+            nodes_needed <- pmax(dist_mat - 1, 0)
+            conn_indirect <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
+            conn_indirect[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
+            diag(conn_indirect) <- 1
 
-          # Third connectivity mode (one-layer composite):
-          # score(i,j) = I(i->j) + I(j->i) + 0.5 * |targets(i) ∩ targets(j)|
-          # where targets(.) are gene_key targets (including TF targets).
-          tf_levels_now <- rownames(mat)
-          edge_gene <- unique(link_dt[, .(TF = as.character(TF), gene_key = as.character(gene_key))])
-          edge_gene <- edge_gene[TF %in% tf_levels_now]
-          if (nrow(edge_gene)) {
-            gene_levels <- sort(unique(edge_gene$gene_key))
-            inc <- matrix(0L, nrow = length(tf_levels_now), ncol = length(gene_levels),
-                          dimnames = list(tf_levels_now, gene_levels))
-            r_idx <- match(edge_gene$TF, tf_levels_now)
-            c_idx <- match(edge_gene$gene_key, gene_levels)
-            keep_idx <- which(!is.na(r_idx) & !is.na(c_idx))
-            if (length(keep_idx)) {
-              inc[cbind(r_idx[keep_idx], c_idx[keep_idx])] <- 1L
+            # Third connectivity mode (one-layer composite):
+            # score(i,j) = I(i->j) + I(j->i) + 0.5 * |targets(i) ∩ targets(j)|
+            # where targets(.) are gene_key targets (including TF targets).
+            tf_levels_now <- rownames(mat)
+            edge_gene <- unique(link_dt[, .(TF = as.character(TF), gene_key = as.character(gene_key))])
+            edge_gene <- edge_gene[TF %in% tf_levels_now]
+            if (nrow(edge_gene)) {
+              gene_levels <- sort(unique(edge_gene$gene_key))
+              inc <- matrix(0L, nrow = length(tf_levels_now), ncol = length(gene_levels),
+                            dimnames = list(tf_levels_now, gene_levels))
+              r_idx <- match(edge_gene$TF, tf_levels_now)
+              c_idx <- match(edge_gene$gene_key, gene_levels)
+              keep_idx <- which(!is.na(r_idx) & !is.na(c_idx))
+              if (length(keep_idx)) {
+                inc[cbind(r_idx[keep_idx], c_idx[keep_idx])] <- 1L
+              }
+              shared_targets <- inc %*% t(inc)
+            } else {
+              shared_targets <- matrix(0, nrow = n_tf, ncol = n_tf, dimnames = dimnames(mat))
             }
-            shared_targets <- inc %*% t(inc)
-          } else {
-            shared_targets <- matrix(0, nrow = n_tf, ncol = n_tf, dimnames = dimnames(mat))
-          }
-          direct_bin <- (mat > 0) * 1L
-          conn_layer1 <- direct_bin + t(direct_bin) + 0.5 * shared_targets
-          conn_layer1 <- as.matrix(conn_layer1)
-          diag(conn_layer1) <- 0
+            direct_bin <- (mat > 0) * 1L
+            conn_layer1 <- direct_bin + t(direct_bin) + 0.5 * shared_targets
+            conn_layer1 <- as.matrix(conn_layer1)
+            diag(conn_layer1) <- 0
 
-          # Standalone square heatmap PDF with two pages: direct and indirect.
-          # Use ggplot tiles on a dedicated device to avoid no-page PDF issues.
-          tryCatch({
-            old_dev <- grDevices::dev.cur()
-            tf_n <- nrow(mat_log)
-            side_in <- max(10, min(24, 4 + 0.15 * tf_n))
-            grDevices::pdf(out_pdf_heatmap, width = side_in, height = side_in, onefile = TRUE)
-            pdf_dev <- grDevices::dev.cur()
-            grDevices::dev.set(pdf_dev)
+            # Standalone square heatmap PDF with two pages: direct and indirect.
+            # Use ggplot tiles on a dedicated device to avoid no-page PDF issues.
+            tryCatch({
+              old_dev <- grDevices::dev.cur()
+              tf_n <- nrow(mat_log)
+              side_in <- max(10, min(24, 4 + 0.15 * tf_n))
+              grDevices::pdf(out_pdf_heatmap, width = side_in, height = side_in, onefile = TRUE)
+              pdf_dev <- grDevices::dev.cur()
+              grDevices::dev.set(pdf_dev)
 
             .plot_mat_tile <- function(mat_in, title_in, fill_title, palette_fn, fill_transform = "none") {
               ord <- stats::hclust(stats::dist(mat_in), method = "complete")$order
@@ -1805,15 +1947,16 @@ find_differential_links <- function(config,
               function(n) heat_cols,
               fill_transform = "log1p"
             )
-            # Close standalone PDF immediately and return to the original device.
-            try(grDevices::dev.off(pdf_dev), silent = TRUE)
-            devs2 <- grDevices::dev.list()
-            if (!is.null(devs2) && old_dev %in% devs2) {
-              try(grDevices::dev.set(old_dev), silent = TRUE)
-            }
-          }, error = function(e) {
-            .log_warn("Failed writing standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
-          })
+              # Close standalone PDF immediately and return to the original device.
+              try(grDevices::dev.off(pdf_dev), silent = TRUE)
+              devs2 <- grDevices::dev.list()
+              if (!is.null(devs2) && old_dev %in% devs2) {
+                try(grDevices::dev.set(old_dev), silent = TRUE)
+              }
+            }, error = function(e) {
+              .log_warn("Failed writing standalone TF connectivity heatmap PDF: {conditionMessage(e)}")
+            })
+          }
         } else {
           # Ensure standalone connectivity PDF still has one explanatory page.
           tryCatch({
@@ -1834,48 +1977,13 @@ find_differential_links <- function(config,
   invisible(out_pdf)
 }
 
-#' #' Driver: run all cell-wise contrasts and write CSVs
-#' #'
-#' #' Convenience wrapper that builds specs from an index and runs
-#' #' `compare_links_bulk()` with your chosen parallel settings.
-#' #'
-#' #' @inheritParams compare_links_two_conditions
-#' #' @param out_dir Base directory with inputs and where outputs are written.
-#' #' @param prefix File prefix (default `"lighting"`).
-#' #' @param index_csv Path to index CSV (default `file.path(out_dir, "lighting_per_condition_index.csv")`).
-#' #' @param ctrl_tag Control tag (default `"10_FBS"`).
-#' #'
-#' #' @return (invisible) list of result tibbles.
-#' #' @export
-#' run_links_deltas_driver <- function(out_dir = "inst/extdata/lighting",
-#'                                     prefix = "lighting",
-#'                                     index_csv = file.path(out_dir, "lighting_per_condition_index.csv"),
-#'                                     ctrl_tag = "10_FBS",
-#'                                     clean_names = FALSE,
-#'                                     parallel = TRUE,
-#'                                     plan = "multisession",
-#'                                     workers = NULL,
-#'                                     dedupe = TRUE,
-#'                                     pseudocount = 1,
-#'                                     verbose = TRUE) {
-#'
-#'   specs <- build_cellwise_contrasts_from_index(index_csv, out_dir, prefix, ctrl_tag,
-#'                                                clean_names = clean_names, verbose = verbose)
-#'   if (!nrow(specs)) return(invisible(list()))
-#'
-#'   compare_links_bulk(specs,
-#'                      clean_names        = clean_names,
-#'                      parallel           = parallel,
-#'                      plan               = plan,
-#'                      workers            = workers,
-#'                      dedupe             = dedupe,
-#'                      pseudocount        = pseudocount,
-#'                      verbose            = verbose)
-#' }
-
 # ---------------------------------------------------------------------------
 # Examples (not run)
 # ---------------------------------------------------------------------------
+#' @title Run Pathway Enrichment and Optional Pathway Subnet Plots
+#' @description Minimal helper for `diff_links_filtered`: runs pathway enrichment
+#'   from distinct `gene_key` values per comparison-direction and optionally
+#'   renders pathway subnet HTML plots using existing network plotting utilities.
 #' Minimal pathway enrichment on filtered differential-link files
 #'
 #' For each `*_filtered_links_up.csv` / `*_filtered_links_down.csv` under

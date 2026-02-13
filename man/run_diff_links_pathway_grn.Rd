@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step3_grn_diff.R
 \name{run_diff_links_pathway_grn}
 \alias{run_diff_links_pathway_grn}
-\title{}
+\title{Run Pathway Enrichment and Optional Pathway Subnet Plots}
 \usage{
 run_diff_links_pathway_grn(
   diff_res = NULL,
@@ -54,10 +54,13 @@ pathway subnet HTML.}
 Invisible character vector of output CSV paths.
 }
 \description{
-specs <- build_cellwise_contrasts_from_index(index_csv, out_dir, prefix, ctrl_tag,
-                                               clean_names = clean_names, verbose = verbose)
-  if (!nrow(specs)) return(invisible(list()))
-}
-\details{
+Minimal helper for `diff_links_filtered`: runs pathway enrichment
+  from distinct `gene_key` values per comparison-direction and optionally
+  renders pathway subnet HTML plots using existing network plotting utilities.
+Minimal pathway enrichment on filtered differential-link files
 
+For each `*_filtered_links_up.csv` / `*_filtered_links_down.csv` under
+`diff_links_filtered`, reads distinct `gene_key`, runs Enrichr pathway
+enrichment (same DB defaults as later topic-pathway steps), sorts by adjusted
+p-value (small to large), and writes a CSV in the same folder.
 }
