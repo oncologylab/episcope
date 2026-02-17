@@ -1,0 +1,554 @@
+test_that("condition doc_tf applies condition thresholds and TF self terms", {
+  edges <- data.table::data.table(
+    comparison_id = c("C1", "C1"),
+    case_id = c("CondA", "CondA"),
+    ctrl_id = c("CondB", "CondB"),
+    tf = c("TF1", "TF1"),
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P2"),
+    fp_score_case = c(3, 1),
+    fp_score_ctrl = c(3, 3),
+    gene_expr_case = c(12, 9),
+    gene_expr_ctrl = c(12, 12),
+    tf_expr_case = c(11, 11),
+    tf_expr_ctrl = c(9, 9)
+  )
+
+  docs <- add_condition_tf_docs(edges, doc_mode = "tf")
+  terms <- build_doc_term_condition_union(
+    docs,
+    count_method = "log",
+    threshold_gene_expr = 10,
+    threshold_fp_score = 2,
+    threshold_tf_expr = 10,
+    include_tf_terms = TRUE,
+    require_tf_expr = TRUE
+  )
+
+  expect_true("CondA::TF1" %in% terms$doc_id)
+  expect_false("CondB::TF1" %in% terms$doc_id)
+
+  cond_terms <- terms[doc_id == "CondA::TF1", term_id]
+  expect_true("GENE:G1" %in% cond_terms)
+  expect_true("GENE:TF1" %in% cond_terms)
+  expect_true("PEAK:P1" %in% cond_terms)
+  expect_false("GENE:G2" %in% cond_terms)
+  expect_false("PEAK:P2" %in% cond_terms)
+})
+
+test_that("condition document terms use one condition-specific value per term", {
+  edges <- data.table::data.table(
+    condition_label = rep("CondA", 4),
+    tf_doc = rep("TF1", 4),
+    tf = rep("TF1", 4),
+    gene_key = c("G1", "G1", "G2", "G2"),
+    peak_id = c("P1", "P1", "P2", "P2"),
+    fp_score_condition = c(10, 10, 20, 20),
+    gene_expr_condition = c(10, 10, 10, 10),
+    tf_expr_condition = c(10, 10, 10, 10)
+  )
+
+  terms <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    threshold_tf_expr = 0,
+    include_tf_terms = TRUE,
+    require_tf_expr = TRUE
+  )
+
+  expect_equal(nrow(terms[term_id == "GENE:G1"]), 1L)
+  expect_equal(nrow(terms[term_id == "PEAK:P1"]), 1L)
+  expect_equal(nrow(terms[term_id == "GENE:TF1"]), 1L)
+  expect_equal(terms[term_id == "GENE:G1", weight], 10)
+  expect_equal(terms[term_id == "PEAK:P1", weight], 10)
+  expect_equal(terms[term_id == "PEAK:P2", weight], 20)
+  expect_equal(terms[term_id == "GENE:TF1", weight], 10)
+})
+
+test_that("condition document terms warn on inconsistent repeated values", {
+  gene_bad <- data.table::data.table(
+    condition_label = c("CondA", "CondA"),
+    tf_doc = c("TF1", "TF1"),
+    tf = c("TF1", "TF1"),
+    gene_key = c("G1", "G1"),
+    peak_id = c("P1", "P2"),
+    fp_score_condition = c(10, 10),
+    gene_expr_condition = c(10, 11),
+    tf_expr_condition = c(10, 10)
+  )
+  expect_warning(
+    build_doc_term_condition_union(gene_bad, threshold_gene_expr = 0, threshold_fp_score = 0),
+    "repeated gene document-term group"
+  )
+
+  peak_bad <- data.table::copy(gene_bad)
+  peak_bad[, `:=`(
+    gene_expr_condition = c(10, 10),
+    peak_id = c("P1", "P1"),
+    fp_score_condition = c(10, 11)
+  )]
+  expect_warning(
+    build_doc_term_condition_union(peak_bad, threshold_gene_expr = 0, threshold_fp_score = 0),
+    "repeated peak document-term group"
+  )
+
+  tf_bad <- data.table::copy(gene_bad)
+  tf_bad[, `:=`(
+    gene_expr_condition = c(10, 10),
+    tf_expr_condition = c(10, 11)
+  )]
+  expect_warning(
+    build_doc_term_condition_union(
+      tf_bad,
+      threshold_gene_expr = 0,
+      threshold_fp_score = 0,
+      threshold_tf_expr = 0,
+      include_tf_terms = TRUE,
+      require_tf_expr = TRUE
+    ),
+    "repeated TF self document-term group"
+  )
+})
+
+test_that("comparison doc_tf uses direction-relevant condition thresholds", {
+  edges <- data.table::data.table(
+    comparison_id = c("C1", "C1", "C1"),
+    tf = c("TF1", "TF1", "TF1"),
+    gene_key = c("G_up", "G_down", "G_low"),
+    peak_id = c("P_up", "P_down", "P_low"),
+    log2fc_gene = c(1.5, -1.4, 1.2),
+    log2fc_fp = c(1.2, -1.1, 1.1),
+    delta_fp = c(0.8, -0.7, 0.6),
+    fc_mag_fp = c(2.3, 2.1, 2.1),
+    fc_mag_gene = c(2.8, 2.6, 2.4),
+    fc_mag_tf = c(2.2, 2.2, 2.2),
+    tf_expr_case = c(11, 8, 11),
+    tf_expr_ctrl = c(8, 12, 8),
+    gene_expr_case = c(12, 8, 9),
+    gene_expr_ctrl = c(8, 13, 8),
+    fp_score_case = c(3, 1, 3),
+    fp_score_ctrl = c(1, 3, 1)
+  )
+
+  docs <- add_tf_docs(edges, doc_mode = "tf", direction_by = "gene")
+  terms <- build_doc_term_joint(
+    docs,
+    weight_type_peak = "log2fc_fp",
+    weight_type_gene = "log2fc_gene",
+    min_df = 1,
+    count_method = "log",
+    distinct_terms = TRUE,
+    gene_term_mode = "aggregate",
+    include_tf_terms = TRUE,
+    balance_mode = "min",
+    threshold_gene_expr = 10,
+    threshold_fp_score = 2,
+    threshold_tf_expr = 10,
+    require_condition_thresholds = TRUE
+  )
+
+  up_terms <- terms[doc_id == "C1::TF1::Target-Up", term_id]
+  down_terms <- terms[doc_id == "C1::TF1::Target-Down", term_id]
+
+  expect_true("GENE:G_up" %in% up_terms)
+  expect_true("PEAK:P_up" %in% up_terms)
+  expect_true("GENE:TF1" %in% up_terms)
+  expect_false("GENE:G_low" %in% up_terms)
+  expect_false("PEAK:P_low" %in% up_terms)
+
+  expect_true("GENE:G_down" %in% down_terms)
+  expect_true("PEAK:P_down" %in% down_terms)
+  expect_true("GENE:TF1" %in% down_terms)
+})
+
+test_that("comparison doc_tf drops zero-direction rows before threshold selection", {
+  edges <- data.table::data.table(
+    comparison_id = c("C1", "C1"),
+    tf = c("TF1", "TF1"),
+    gene_key = c("G0", "G1"),
+    peak_id = c("P0", "P1"),
+    log2fc_gene = c(0, 1),
+    tf_expr_case = c(10, 10),
+    tf_expr_ctrl = c(10, 10),
+    gene_expr_case = c(10, 10),
+    gene_expr_ctrl = c(10, 10),
+    fp_score_case = c(2, 2),
+    fp_score_ctrl = c(2, 2)
+  )
+
+  docs <- add_tf_docs(edges, doc_mode = "tf", direction_by = "gene")
+
+  expect_equal(nrow(docs), 1L)
+  expect_equal(docs$doc_id, "C1::TF1::Target-Up")
+  expect_equal(docs$gene_expr_condition, 10)
+})
+
+test_that("condition doc_ctf wrapper keeps cluster-level documents", {
+  edges <- data.table::data.table(
+    comparison_id = "C1",
+    case_id = "CondA",
+    ctrl_id = "CondB",
+    tf = "TF1",
+    gene_key = "G1",
+    peak_id = "P1",
+    fp_score_case = 3,
+    fp_score_ctrl = 3,
+    gene_expr_case = 12,
+    gene_expr_ctrl = 12,
+    tf_expr_case = 11,
+    tf_expr_ctrl = 11
+  )
+  cluster_map <- c(TF1 = "ClusterA")
+
+  docs <- add_condition_tf_cluster_docs(edges, tf_cluster_map = cluster_map)
+
+  expect_true(all(c("CondA::ClusterA", "CondB::ClusterA") %in% docs$doc_id))
+  expect_false(any(grepl("CondA::TF1", docs$doc_id, fixed = TRUE)))
+})
+
+test_that("condition FP term modes build unique, aggregated, and weighted terms", {
+  edges <- data.table::data.table(
+    condition_label = "CondA",
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = c("G1", "G1"),
+    peak_id = c("P1", "P2"),
+    fp_score_condition = c(2, 3),
+    gene_expr_condition = c(5, 5),
+    tf_expr_condition = c(10, 10)
+  )
+
+  uniq <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    fp_term_mode = "unique"
+  )
+  expect_true(all(c("PEAK:P1", "PEAK:P2", "GENE:G1") %in% uniq$term_id))
+
+  aggr <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    fp_term_mode = "aggregate"
+  )
+  expect_true(all(c("PEAK:G1", "GENE:G1") %in% aggr$term_id))
+  expect_false(any(c("PEAK:P1", "PEAK:P2") %in% aggr$term_id))
+  expect_equal(aggr[term_id == "GENE:G1", weight], 5)
+  expect_equal(aggr[term_id == "PEAK:G1", weight], 5)
+
+  weighted <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    fp_term_mode = "aggregate_weight"
+  )
+  expect_true("GENE:G1" %in% weighted$term_id)
+  expect_false(any(grepl("^PEAK:", weighted$term_id)))
+  expect_equal(weighted[term_id == "GENE:G1", weight], 25)
+})
+
+test_that("condition fp_aggr sanity check ignores expected TF self term only", {
+  edges <- data.table::data.table(
+    condition_label = "CondA",
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = c("G1", "TF1", "TF2"),
+    peak_id = c("P1", "P_self", "P2"),
+    fp_score_condition = c(2, 4, 3),
+    gene_expr_condition = c(5, 7, 6),
+    tf_expr_condition = c(10, 10, 10)
+  )
+
+  expect_warning(
+    terms <- build_doc_term_condition_union(
+      edges,
+      count_method = "log",
+      threshold_gene_expr = 0,
+      threshold_fp_score = 0,
+      threshold_tf_expr = 0,
+      include_tf_terms = TRUE,
+      require_tf_expr = TRUE,
+      fp_term_mode = "aggregate"
+    ),
+    NA
+  )
+  expect_true(all(c("GENE:TF1", "GENE:TF2", "PEAK:TF1", "PEAK:TF2") %in% terms$term_id))
+})
+
+test_that("VAE variant aliases normalize to Python variants", {
+  expect_equal(.normalize_vae_python_variant("vmlp"), "vae_mlp")
+  expect_equal(.normalize_vae_python_variant("model_vmlp"), "vae_mlp")
+  expect_equal(.normalize_vae_python_variant("mve"), "multivi_encoder")
+  expect_equal(.normalize_vae_python_variant("model_mve"), "multivi_encoder")
+  expect_equal(.normalize_vae_python_variant("moetm"), "moetm_encoder_decoder")
+  expect_equal(.normalize_vae_python_variant("model_moetm"), "moetm_encoder_decoder")
+  expect_equal(.normalize_vae_python_variant("vae_mlp"), "vae_mlp")
+  expect_error(.normalize_vae_python_variant("bad_variant"), "Unsupported VAE variant")
+})
+
+test_that("gammafit topic-term scope preserves existing topic-group behavior", {
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.3, 0.2,
+      0.8, 0.7, 0.95, 0.1
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2"))
+  )
+
+  default_terms <- binarize_topics(score_mat, method = "gammafit", min_terms = 1L)
+  explicit_terms <- binarize_topics(
+    score_mat,
+    method = "gammafit",
+    min_terms = 1L,
+    gammafit_scope = "topic_term_group"
+  )
+
+  expect_equal(default_terms, explicit_terms)
+  expect_equal(names(default_terms), c("topic", "term_id", "score", "in_topic"))
+  expect_true(default_terms[default_terms$topic == 1L & default_terms$term_id == "PEAK:P1", "in_topic"])
+  expect_true(default_terms[default_terms$topic == 2L & default_terms$term_id == "PEAK:P1", "in_topic"])
+  expect_true(default_terms[default_terms$topic == 1L & default_terms$term_id == "GENE:G1", "in_topic"])
+  expect_true(default_terms[default_terms$topic == 2L & default_terms$term_id == "GENE:G1", "in_topic"])
+})
+
+test_that("gammafit global term-group scope pools scores across topics", {
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.3, 0.2,
+      0.8, 0.7, 0.95, 0.1
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2"))
+  )
+
+  cutoffs <- .gammafit_cutoffs_by_termclass(
+    score_mat,
+    min_terms = 1L,
+    gammafit_scope = "global_term_group"
+  )
+  expect_equal(unique(cutoffs$peaks_gamma_cutoff), 0.9)
+  expect_equal(unique(cutoffs$gene_gamma_cutoff), 0.95)
+
+  global_terms <- binarize_topics(
+    score_mat,
+    method = "gammafit",
+    min_terms = 1L,
+    gammafit_scope = "global_term_group"
+  )
+  expect_true(global_terms[global_terms$topic == 1L & global_terms$term_id == "PEAK:P1", "in_topic"])
+  expect_false(global_terms[global_terms$topic == 2L & global_terms$term_id == "PEAK:P1", "in_topic"])
+  expect_false(global_terms[global_terms$topic == 1L & global_terms$term_id == "GENE:G1", "in_topic"])
+  expect_true(global_terms[global_terms$topic == 2L & global_terms$term_id == "GENE:G1", "in_topic"])
+  expect_true(all(c("term_group", "gammafit_scope", "gamma_cutoff") %in% names(global_terms)))
+})
+
+test_that("topic link gammafit scope is passed through to gene-only links", {
+  edges <- data.table::data.table(
+    doc_id = "D1",
+    tf = "TF1",
+    peak_id = "P1",
+    gene_key = "G1"
+  )
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.3,
+      0.8, 0.7, 0.95
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("PEAK:P1", "PEAK:P2", "GENE:G1"))
+  )
+
+  topic_scope <- compute_topic_links(
+    edges,
+    score_mat,
+    fp_term_mode = "aggregate_weight",
+    binarize_method = "gammafit",
+    gammafit_scope = "topic_term_group",
+    link_method = "gammafit",
+    min_terms = 1L,
+    overwrite = TRUE
+  )
+  global_scope <- compute_topic_links(
+    edges,
+    score_mat,
+    fp_term_mode = "aggregate_weight",
+    binarize_method = "gammafit",
+    gammafit_scope = "global_term_group",
+    link_method = "gammafit",
+    min_terms = 1L,
+    overwrite = TRUE
+  )
+
+  expect_equal(sort(topic_scope$topic_num), c(1L, 2L))
+  expect_equal(global_scope$topic_num, 2L)
+  expect_equal(unique(global_scope$gene_gamma_cutoff), 0.95)
+})
+
+test_that("TF document topic assignment data aligns document and term panels", {
+  theta <- matrix(
+    c(0.8, 0.2, 0.1, 0.9, 0.6, 0.4),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::TF1", "CondA::TF2", "CondB::TF1"),
+      c("Topic1", "Topic2")
+    )
+  )
+  phi <- matrix(
+    c(0.7, 0.3, 0.2, 0.8),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:TF1", "GENE:TF2"))
+  )
+  topic_terms <- data.table::data.table(
+    topic = c("Topic1", "Topic2"),
+    topic_num = c(1L, 2L),
+    term_id = c("GENE:TF1", "GENE:TF2"),
+    in_topic = TRUE
+  )
+
+  plot_dt <- .prepare_tf_doc_topic_assignment_heatmap_data(
+    theta = theta,
+    phi = phi,
+    topic_terms = topic_terms,
+    doc_design = "condition",
+    aggregate_fun = "max"
+  )
+
+  expect_true(all(c("Aggregate", "CondA", "CondB") %in% plot_dt$page_label))
+  expect_true(all(c("TF doc score", "TF term score") %in% plot_dt$panel))
+  expect_equal(unique(plot_dt[page_label == "Aggregate" & tf == "TF1" & topic == "Topic1" & panel == "TF doc score", value]), 1)
+  expect_true(plot_dt[page_label == "CondA" & tf == "TF1" & topic == "Topic1" & panel == "TF term score", term_pass])
+  expect_equal(
+    unique(plot_dt[page_label == "CondA" & panel == "TF doc score", as.character(topic)]),
+    unique(plot_dt[page_label == "CondA" & panel == "TF term score", as.character(topic)])
+  )
+})
+
+test_that("comparison FP term modes build aggregated peak and weighted gene terms", {
+  edges <- data.table::data.table(
+    comparison_id = "C1",
+    tf = "TF1",
+    gene_key = c("G1", "G1"),
+    peak_id = c("P1", "P2"),
+    log2fc_gene = c(1, 1),
+    log2fc_fp = c(1, 1),
+    delta_fp = c(2, 3),
+    fc_mag_fp = c(2, 3),
+    fc_mag_gene = c(5, 5),
+    fc_mag_tf = c(10, 10),
+    tf_expr_case = c(10, 10),
+    tf_expr_ctrl = c(10, 10),
+    gene_expr_case = c(10, 10),
+    gene_expr_ctrl = c(10, 10),
+    fp_score_case = c(2, 3),
+    fp_score_ctrl = c(2, 3)
+  )
+  docs <- add_tf_docs(edges, doc_mode = "tf", direction_by = "gene")
+
+  aggr <- build_doc_term_joint(
+    docs,
+    weight_type_peak = "log2fc_fp",
+    weight_type_gene = "log2fc_gene",
+    min_df = 1,
+    count_method = "log",
+    fp_term_mode = "aggregate",
+    balance_mode = "min"
+  )
+  expect_true(all(c("PEAK:G1", "GENE:G1") %in% aggr$term_id))
+  expect_false(any(c("PEAK:P1", "PEAK:P2") %in% aggr$term_id))
+
+  weighted <- build_doc_term_joint(
+    docs,
+    weight_type_peak = "log2fc_fp",
+    weight_type_gene = "log2fc_gene",
+    min_df = 1,
+    count_method = "log",
+    fp_term_mode = "aggregate_weight",
+    balance_mode = "min"
+  )
+  expect_true("GENE:G1" %in% weighted$term_id)
+  expect_false(any(grepl("^PEAK:", weighted$term_id)))
+  expect_equal(weighted[term_id == "GENE:G1", weight], 2)
+})
+
+test_that("doc-term cache writes preview and optional full CSV", {
+  tmp <- tempfile("doc_term_cache_")
+  dir.create(tmp)
+  dt <- data.table::data.table(
+    doc_id = paste0("D", 1:120),
+    term_id = paste0("GENE:G", 1:120),
+    weight = 1,
+    pseudo_count = 1,
+    pseudo_count_bin = 1,
+    pseudo_count_log = 1
+  )
+  paths <- write_doc_term_cache(dt, tmp, save_full_doc_term_csv = FALSE)
+  expect_true(file.exists(paths$preview))
+  expect_false(file.exists(file.path(tmp, "doc_term.csv")))
+  expect_equal(nrow(data.table::fread(paths$preview)), 100L)
+
+  paths_full <- write_doc_term_cache(dt, tmp, save_full_doc_term_csv = TRUE)
+  expect_true(file.exists(paths_full$csv))
+})
+
+test_that("parallel topic link scoring matches serial scoring", {
+  skip_on_os("windows")
+  edges <- data.table::data.table(
+    doc_id = c("D1", "D1", "D2", "D2"),
+    tf = c("TF1", "TF1", "TF2", "TF2"),
+    peak_id = c("P1", "P2", "P1", "P2"),
+    gene_key = c("G1", "G2", "G1", "G2")
+  )
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.8, 0.2,
+      0.2, 0.7, 0.1, 0.9
+    ),
+    nrow = 2,
+    byrow = TRUE
+  )
+  rownames(score_mat) <- c("topic_1", "topic_2")
+  colnames(score_mat) <- c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2")
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 2L, 2L),
+    term_id = c("PEAK:P1", "GENE:G1", "PEAK:P2", "GENE:G2"),
+    in_topic = TRUE
+  )
+
+  serial <- compute_topic_links(
+    edges,
+    score_mat,
+    topic_terms = topic_terms,
+    binarize_method = "topn",
+    link_method = "gammafit",
+    chunk_size = 1L,
+    n_cores = 1L,
+    overwrite = TRUE
+  )
+  parallel <- compute_topic_links(
+    edges,
+    score_mat,
+    topic_terms = topic_terms,
+    binarize_method = "topn",
+    link_method = "gammafit",
+    chunk_size = 1L,
+    n_cores = 2L,
+    overwrite = TRUE
+  )
+
+  key_cols <- c("doc_id", "tf", "peak_id", "gene_key", "topic_num")
+  data.table::setorderv(serial, key_cols)
+  data.table::setorderv(parallel, key_cols)
+  expect_equal(parallel, serial, ignore_attr = TRUE)
+})
