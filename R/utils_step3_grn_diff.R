@@ -1743,6 +1743,32 @@ find_differential_links <- function(config,
       dynamic_h <- max(5.5, min(28, 2.8 + 0.24 * length(unique(counts_all$comparison_direction))))
       grDevices::pdf(summary_pdf, width = 11.2, height = dynamic_h, onefile = TRUE)
       print(p_all_counts)
+      graphics::plot.new()
+      graphics::par(mar = c(1.5, 1.5, 2.2, 1.5))
+      note_fp_cut <- if (identical(fp_filter_mode, "log2fc")) {
+        paste0("abs(log2FC_fp_score) >= ", signif(fp_log2fc_cutoff, 4))
+      } else {
+        paste0("abs(delta_fp_score) >= ", signif(fp_delta_cutoff, 4))
+      }
+      note_lines <- c(
+        "How to read the 4 bars in this summary",
+        "",
+        paste0("1) Total diff genes: from RNA only. Keep genes with abs(log2FC_gene_expr) >= ",
+               signif(gene_log2fc_cutoff, 4),
+               " and higher-group gene expression > ", signif(threshold_gene_expr_use, 4), "."),
+        "2) GRN filtered: genes that appear in the unfiltered differential link table.",
+        paste0("3) FP filtered: GRN links where gene and FP move in the same direction, ",
+               note_fp_cut, ", and higher-group FP score > ", signif(threshold_fp_score_use, 4), "."),
+        paste0("4) TF filtered: FP-filtered links after TF rule and TF expression filter. ",
+               "TF is removed only when it is significantly opposite to target direction; ",
+               "higher-group TF expression must be > ", signif(threshold_tf_expr_use, 4), "."),
+        "",
+        "Counts are unique gene_key values per comparison-direction."
+      )
+      graphics::text(
+        x = 0.03, y = 0.96, labels = paste(note_lines, collapse = "\n"),
+        adj = c(0, 1), cex = 1.0, font = 2
+      )
       if (length(all_gene_filter_rows)) {
         cutoff_caption <- paste0(
           "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
