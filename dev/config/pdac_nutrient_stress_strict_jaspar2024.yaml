@@ -20,7 +20,7 @@ link_gene_id_col: HGNC
 
 # Module 2: Basal network thresholds
 threshold_tf_expr: 10
-threshold_gene_expr: 4
+threshold_gene_expr: 10
 threshold_fp_score: 2
 threshold_link_score: 2
 atac_score_threshold: 0
@@ -38,8 +38,9 @@ fp_score_threshold: 0.001
 # Module 3: Differential links
 gene_log2fc_cutoff: 1
 fp_delta_cutoff: 0.5
-fp_log2fc_cutoff: 0.5
+fp_log2fc_cutoff: 0.2
 fp_filter_mode: delta  # delta | log2fc
+waterfall_min_abs_net: 20
 
 # Module 3: Topics / reporting
 topic_k: 10

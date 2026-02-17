@@ -989,17 +989,20 @@ find_differential_links <- function(config,
 
   step2_out_dir <- if (!is.null(input_dir)) input_dir else file.path(base_dir, "connect_tf_target_genes")
   out_root <- if (grepl("^/", output_dir)) output_dir else file.path(base_dir, output_dir)
-  delta_dir <- file.path(out_root, "diff_links")
+  delta_dir <- file.path(out_root, "cache", "diff_links")
   filtered_dir <- file.path(out_root, "diff_links_filtered")
 
   legacy_delta_dir <- file.path(out_root, "delta_links")
+  legacy_delta_dir2 <- file.path(out_root, "diff_links")
   legacy_filtered_dir <- file.path(out_root, "filtered_delta_links")
-  if (!dir.exists(delta_dir) && dir.exists(legacy_delta_dir)) {
-    moved <- file.rename(legacy_delta_dir, delta_dir)
+  if (!dir.exists(delta_dir) && (dir.exists(legacy_delta_dir) || dir.exists(legacy_delta_dir2))) {
+    src_delta_dir <- if (dir.exists(legacy_delta_dir2)) legacy_delta_dir2 else legacy_delta_dir
+    dir.create(dirname(delta_dir), recursive = TRUE, showWarnings = FALSE)
+    moved <- file.rename(src_delta_dir, delta_dir)
     if (isTRUE(moved)) {
-      .log_inform("Migrated legacy folder {legacy_delta_dir} -> {delta_dir}.")
+      .log_inform("Migrated legacy folder {src_delta_dir} -> {delta_dir}.")
     } else {
-      .log_warn("Could not migrate legacy folder {legacy_delta_dir}; continuing with {delta_dir}.")
+      .log_warn("Could not migrate legacy folder {src_delta_dir}; continuing with {delta_dir}.")
     }
   }
   if (!dir.exists(filtered_dir) && dir.exists(legacy_filtered_dir)) {
@@ -1043,11 +1046,14 @@ find_differential_links <- function(config,
     )
   }
 
-  fp_delta_cutoff <- if (exists("fp_delta_cutoff")) fp_delta_cutoff else if (exists("delta_fp_cutoff")) delta_fp_cutoff else if (exists("fp_delta_min")) fp_delta_min else 0.5
+  fp_delta_cutoff <- if (exists("fp_delta_cutoff")) fp_delta_cutoff else 0.5
   fp_log2fc_cutoff <- if (exists("fp_log2fc_cutoff")) fp_log2fc_cutoff else fp_delta_cutoff
   fp_filter_mode <- if (exists("fp_filter_mode")) as.character(fp_filter_mode)[1] else "delta"
-  gene_log2fc_cutoff <- if (exists("gene_log2fc_cutoff")) gene_log2fc_cutoff else if (exists("de_gene_log2_abs_min")) de_gene_log2_abs_min else 1
-  fp_delta_min <- fp_delta_cutoff
+  gene_log2fc_cutoff <- if (exists("gene_log2fc_cutoff")) gene_log2fc_cutoff else 1
+  threshold_gene_expr <- if (exists("threshold_gene_expr")) threshold_gene_expr else 10
+  threshold_fp_score <- if (exists("threshold_fp_score")) threshold_fp_score else 2
+  threshold_tf_expr <- if (exists("threshold_tf_expr")) threshold_tf_expr else 10
+  waterfall_min_abs_net <- if (exists("waterfall_min_abs_net")) waterfall_min_abs_net else 20L
 
   existing_delta <- list.files(delta_dir, "_delta_links\\.csv$", full.names = TRUE)
   if (!isTRUE(overwrite_delta) && length(existing_delta) > 0L) {
@@ -1083,11 +1089,14 @@ find_differential_links <- function(config,
       link_min = -Inf,
       abs_delta_min = -Inf,
       apply_de_gene = TRUE,
-      de_gene_log2_abs_min = gene_log2fc_cutoff,
+      gene_log2fc_cutoff = gene_log2fc_cutoff,
+      gene_expr_min_high = threshold_gene_expr,
       apply_de_tf = FALSE,
-      fp_delta_min = if (identical(fp_filter_mode, "delta")) fp_delta_min else fp_log2fc_cutoff,
+      fp_cutoff = if (identical(fp_filter_mode, "delta")) fp_delta_cutoff else fp_log2fc_cutoff,
       fp_filter_by = fp_filter_mode,
-      tf_opposition_log2_abs_min = gene_log2fc_cutoff,
+      fp_bound_min = threshold_fp_score,
+      tf_opposition_log2fc_cutoff = gene_log2fc_cutoff,
+      tf_expr_min_high = threshold_tf_expr,
       split_direction = TRUE,
       write_combined = FALSE,
       enforce_link_expr_sign = FALSE,
@@ -1103,8 +1112,9 @@ find_differential_links <- function(config,
       out_root = out_root,
       output_format = summary_plot_format,
       html_selfcontained = summary_html_selfcontained,
-      de_gene_log2_abs_min = gene_log2fc_cutoff,
-      delta_fp_cutoff = fp_delta_cutoff,
+      omics_data = if (exists("omics_data")) omics_data else NULL,
+      gene_log2fc_cutoff = gene_log2fc_cutoff,
+      fp_delta_cutoff = fp_delta_cutoff,
       fp_filter_mode = fp_filter_mode,
       fp_log2fc_cutoff = fp_log2fc_cutoff
     )
@@ -1159,7 +1169,8 @@ find_differential_links <- function(config,
           min_y_for_label = 3,
           size_min = 1,
           size_max = 4,
-          connectivity_min_degree = connectivity_min_degree
+          connectivity_min_degree = connectivity_min_degree,
+          waterfall_min_abs_net = waterfall_min_abs_net
         )
       }
     }
@@ -1175,8 +1186,10 @@ find_differential_links <- function(config,
                                                   out_root,
                                                   output_format = c("pdf", "html", "both"),
                                                   html_selfcontained = TRUE,
-                                                  de_gene_log2_abs_min = 0.5,
-                                                  delta_fp_cutoff = 0.5,
+                                                  omics_data = NULL,
+                                                  write_individual_pdf = FALSE,
+                                                  gene_log2fc_cutoff = 0.5,
+                                                  fp_delta_cutoff = 0.5,
                                                   fp_filter_mode = c("delta", "log2fc"),
                                                   fp_log2fc_cutoff = 0.5) {
   .assert_pkg("ggplot2")
@@ -1205,6 +1218,25 @@ find_differential_links <- function(config,
   all_x <- numeric(0)
   all_y <- numeric(0)
   all_gene_count_rows <- list()
+  all_gene_filter_rows <- list()
+
+  .get_omics_for_counts <- function() {
+    if (is.list(omics_data) && !is.null(omics_data$rna) && !is.null(omics_data$sample_metadata_used)) {
+      return(omics_data)
+    }
+    if (exists("omics_data", envir = .GlobalEnv, inherits = FALSE)) {
+      od <- get("omics_data", envir = .GlobalEnv, inherits = FALSE)
+      if (is.list(od) && !is.null(od$rna) && !is.null(od$sample_metadata_used)) return(od)
+    }
+    NULL
+  }
+  omics_for_counts <- .get_omics_for_counts()
+  threshold_gene_expr_use <- if (exists("threshold_gene_expr")) suppressWarnings(as.numeric(threshold_gene_expr)[1]) else 10
+  if (!is.finite(threshold_gene_expr_use)) threshold_gene_expr_use <- 10
+  threshold_fp_score_use <- if (exists("threshold_fp_score")) suppressWarnings(as.numeric(threshold_fp_score)[1]) else 2
+  if (!is.finite(threshold_fp_score_use)) threshold_fp_score_use <- 2
+  threshold_tf_expr_use <- if (exists("threshold_tf_expr")) suppressWarnings(as.numeric(threshold_tf_expr)[1]) else 10
+  if (!is.finite(threshold_tf_expr_use)) threshold_tf_expr_use <- 10
 
   .pick_gene_col <- function(nm) {
     cands <- c("gene_key", "gene", "target_gene")
@@ -1245,14 +1277,75 @@ find_differential_links <- function(config,
     as.data.frame(out)
   }
 
-  .gene_count_stages_from_delta <- function(delta_df, comparison_id) {
+  .resolve_rna_diff_sets <- function(comparison_id) {
+    if (is.null(omics_for_counts)) return(NULL)
+    if (!is.data.frame(omics_for_counts$rna) || !is.data.frame(omics_for_counts$sample_metadata_used)) return(NULL)
+    parts <- strsplit(as.character(comparison_id), "_vs_", fixed = TRUE)[[1]]
+    if (length(parts) != 2L) return(NULL)
+    cond1 <- parts[[1]]
+    cond2 <- parts[[2]]
+
+    sm <- omics_for_counts$sample_metadata_used
+    rna_tbl <- omics_for_counts$rna
+
+    id_col <- if ("id" %in% names(sm)) "id" else names(sm)[1]
+    label_col <- if ("strict_match_rna" %in% names(sm)) {
+      "strict_match_rna"
+    } else if ("name" %in% names(sm)) {
+      "name"
+    } else if ("broad_match_rna" %in% names(sm)) {
+      "broad_match_rna"
+    } else {
+      NULL
+    }
+    if (is.null(label_col)) return(NULL)
+
+    ids1 <- as.character(sm[[id_col]][as.character(sm[[label_col]]) == cond1])
+    ids2 <- as.character(sm[[id_col]][as.character(sm[[label_col]]) == cond2])
+    ids1 <- ids1[ids1 %in% names(rna_tbl)]
+    ids2 <- ids2[ids2 %in% names(rna_tbl)]
+    if (!length(ids1) || !length(ids2)) return(NULL)
+
+    gene_col <- c("gene_key", "HGNC", "gene_symbol", "gene", "target_gene")
+    gene_col <- gene_col[gene_col %in% names(rna_tbl)]
+    if (!length(gene_col)) return(NULL)
+    gene_col <- gene_col[[1]]
+    genes <- as.character(rna_tbl[[gene_col]])
+
+    m1 <- suppressWarnings(as.matrix(rna_tbl[, ids1, drop = FALSE]))
+    m2 <- suppressWarnings(as.matrix(rna_tbl[, ids2, drop = FALSE]))
+    mode(m1) <- "numeric"
+    mode(m2) <- "numeric"
+    v1 <- if (ncol(m1) == 1L) as.numeric(m1[, 1]) else rowMeans(m1, na.rm = TRUE)
+    v2 <- if (ncol(m2) == 1L) as.numeric(m2[, 1]) else rowMeans(m2, na.rm = TRUE)
+    lfc <- suppressWarnings(log2((v1 + 1) / (v2 + 1)))
+    thr <- as.numeric(gene_log2fc_cutoff)
+
+    up <- unique(genes[
+      is.finite(lfc) & !is.na(genes) & nzchar(genes) &
+        (lfc >= thr) & is.finite(v1) & (v1 > threshold_gene_expr_use)
+    ])
+    down <- unique(genes[
+      is.finite(lfc) & !is.na(genes) & nzchar(genes) &
+        (lfc <= -thr) & is.finite(v2) & (v2 > threshold_gene_expr_use)
+    ])
+    list(up = up, down = down)
+  }
+
+  .gene_filter_sets_from_delta <- function(delta_df, comparison_id) {
     if (!is.data.frame(delta_df) || !nrow(delta_df)) return(data.frame())
     gene_col <- .pick_gene_col(names(delta_df))
-    if (is.na(gene_col) || !("log2FC_gene_expr" %in% names(delta_df))) return(data.frame())
+    if (is.na(gene_col)) return(data.frame())
 
+    rna_sets <- .resolve_rna_diff_sets(comparison_id)
+    if (is.null(rna_sets)) {
+      .log_warn("Could not resolve RNA baseline from omics_data for {comparison_id}; skipping count stages for this comparison.")
+      return(data.frame())
+    }
     gene_vals <- as.character(delta_df[[gene_col]])
-    lfc <- suppressWarnings(as.numeric(delta_df$log2FC_gene_expr))
-    direction <- ifelse(is.finite(lfc) & (lfc >= 0), "Up", ifelse(is.finite(lfc) & (lfc < 0), "Down", NA_character_))
+    in_gene <- !is.na(gene_vals) & nzchar(gene_vals)
+    delta_df <- delta_df[in_gene, , drop = FALSE]
+    gene_vals <- as.character(delta_df[[gene_col]])
 
     fp_delta <- if ("delta_fp_score" %in% names(delta_df)) {
       suppressWarnings(as.numeric(delta_df$delta_fp_score))
@@ -1266,36 +1359,117 @@ find_differential_links <- function(config,
     } else {
       rep(NA_real_, nrow(delta_df))
     }
-    thr_gene <- as.numeric(de_gene_log2_abs_min)
-    thr_fp_delta <- as.numeric(delta_fp_cutoff)
+    thr_fp_delta <- as.numeric(fp_delta_cutoff)
     thr_fp_log2 <- as.numeric(fp_log2fc_cutoff)
 
-    keep_base <- !is.na(gene_vals) & nzchar(gene_vals) & !is.na(direction) & direction %in% c("Up", "Down")
-    if (!any(keep_base)) return(data.frame())
-    base_df <- data.frame(
-      comparison_id = comparison_id,
-      direction = direction[keep_base],
-      gene_key = gene_vals[keep_base],
-      stringsAsFactors = FALSE
-    )
-    dir_sign <- ifelse(direction[keep_base] == "Up", 1, -1)
-    rna_pass <- (abs(lfc[keep_base]) >= thr_gene)
-    fp_pass <- if (identical(fp_filter_mode, "log2fc")) {
-      (dir_sign * fp_log2[keep_base]) >= thr_fp_log2
-    } else {
-      (dir_sign * fp_delta[keep_base]) >= thr_fp_delta
+    .dir_df <- function(dir_label, rna_genes) {
+      rna_genes <- unique(as.character(rna_genes))
+      rna_genes <- rna_genes[!is.na(rna_genes) & nzchar(rna_genes)]
+      if (!length(rna_genes)) return(data.frame())
+
+      dir_sign <- if (identical(dir_label, "Up")) 1 else -1
+      in_baseline <- gene_vals %in% rna_genes
+      if (!any(in_baseline)) {
+        return(data.frame(
+          comparison_id = comparison_id,
+          direction = dir_label,
+          gene_key = rna_genes,
+          in_grn_links = FALSE,
+          fp_pass = FALSE,
+          tf_pass = FALSE,
+          stringsAsFactors = FALSE
+        ))
+      }
+      g_sub <- gene_vals[in_baseline]
+      fp_metric <- if (identical(fp_filter_mode, "log2fc")) fp_log2[in_baseline] else fp_delta[in_baseline]
+      tf_l2 <- if ("log2FC_tf_expr" %in% names(delta_df)) suppressWarnings(as.numeric(delta_df$log2FC_tf_expr[in_baseline])) else rep(NA_real_, sum(in_baseline))
+
+      parts <- strsplit(as.character(comparison_id), "_vs_", fixed = TRUE)[[1]]
+      cond1 <- if (length(parts) >= 1L) parts[[1]] else NA_character_
+      cond2 <- if (length(parts) >= 2L) parts[[2]] else NA_character_
+      fp_c1 <- paste0("fp_score_", cond1)
+      fp_c2 <- paste0("fp_score_", cond2)
+      if (!(fp_c1 %in% names(delta_df) && fp_c2 %in% names(delta_df))) {
+        fp_c1 <- paste0("fp_bed_score_", cond1)
+        fp_c2 <- paste0("fp_bed_score_", cond2)
+      }
+      tf_c1 <- paste0("tf_expr_", cond1)
+      tf_c2 <- paste0("tf_expr_", cond2)
+      fp_high <- rep(NA_real_, sum(in_baseline))
+      tf_high <- rep(NA_real_, sum(in_baseline))
+      if (fp_c1 %in% names(delta_df) && fp_c2 %in% names(delta_df)) {
+        f1 <- suppressWarnings(as.numeric(delta_df[[fp_c1]][in_baseline]))
+        f2 <- suppressWarnings(as.numeric(delta_df[[fp_c2]][in_baseline]))
+        fp_high <- if (identical(dir_label, "Up")) f1 else f2
+      }
+      if (tf_c1 %in% names(delta_df) && tf_c2 %in% names(delta_df)) {
+        t1 <- suppressWarnings(as.numeric(delta_df[[tf_c1]][in_baseline]))
+        t2 <- suppressWarnings(as.numeric(delta_df[[tf_c2]][in_baseline]))
+        tf_high <- if (identical(dir_label, "Up")) t1 else t2
+      }
+
+      is_right <- is.finite(fp_metric) & ((dir_sign * fp_metric) > 0)
+      is_fp_cut <- if (identical(fp_filter_mode, "log2fc")) {
+        is.finite(fp_metric) & ((dir_sign * fp_metric) >= thr_fp_log2)
+      } else {
+        is.finite(fp_metric) & ((dir_sign * fp_metric) >= thr_fp_delta)
+      }
+      is_fp_bound <- is.finite(fp_high) & (fp_high > threshold_fp_score_use)
+      is_fp <- is_right & is_fp_cut & is_fp_bound
+      tf_thr <- as.numeric(gene_log2fc_cutoff)
+      is_tf_dir <- if (identical(dir_label, "Up")) {
+        is.finite(tf_l2) & (tf_l2 > -tf_thr)
+      } else {
+        is.finite(tf_l2) & (tf_l2 < tf_thr)
+      }
+      is_tf_expr <- is.finite(tf_high) & (tf_high > threshold_tf_expr_use)
+      is_tf <- is_fp & is_tf_dir & is_tf_expr
+      agg <- data.frame(gene_key = g_sub, is_fp = is_fp, is_tf = is_tf, stringsAsFactors = FALSE) |>
+        dplyr::group_by(.data$gene_key) |>
+        dplyr::summarise(
+          fp_pass = any(.data$is_fp, na.rm = TRUE),
+          tf_pass = any(.data$is_tf, na.rm = TRUE),
+          .groups = "drop"
+        ) |>
+        as.data.frame()
+
+      out <- data.frame(
+        comparison_id = comparison_id,
+        direction = dir_label,
+        gene_key = rna_genes,
+        stringsAsFactors = FALSE
+      )
+      out <- dplyr::left_join(out, agg, by = "gene_key")
+      out$in_grn_links <- out$gene_key %in% unique(g_sub)
+      out$fp_pass[is.na(out$fp_pass)] <- FALSE
+      out$tf_pass[is.na(out$tf_pass)] <- FALSE
+      out
     }
+
+    out <- dplyr::bind_rows(
+      .dir_df("Up", rna_sets$up),
+      .dir_df("Down", rna_sets$down)
+    )
+    out$rna_diff <- TRUE
+    out$in_grn_links <- as.logical(out$in_grn_links)
+    out$fp_pass <- as.logical(out$fp_pass & out$in_grn_links)
+    out$tf_pass <- as.logical(out$tf_pass & out$fp_pass)
+    out
+  }
+
+  .gene_count_stages_from_sets <- function(gene_sets_df) {
+    if (!is.data.frame(gene_sets_df) || !nrow(gene_sets_df)) return(data.frame())
     stage_list <- list(
-      "No filter" = rep(TRUE, nrow(base_df)),
-      "RNA" = rna_pass,
-      "FP" = fp_pass,
-      "RNA & FP" = rna_pass & fp_pass
+      "Total diff genes" = gene_sets_df$rna_diff,
+      "GRN filtered" = gene_sets_df$in_grn_links,
+      "FP filtered" = gene_sets_df$fp_pass,
+      "TF filtered" = gene_sets_df$tf_pass
     )
     out_rows <- lapply(names(stage_list), function(stage_name) {
       idx <- as.logical(stage_list[[stage_name]])
       idx[is.na(idx)] <- FALSE
-      if (!any(idx, na.rm = TRUE)) return(data.frame())
-      tmp <- base_df[idx, , drop = FALSE]
+      if (!any(idx)) return(data.frame())
+      tmp <- gene_sets_df[idx, c("comparison_id", "direction", "gene_key"), drop = FALSE]
       tmp$stage <- stage_name
       tmp |>
         dplyr::distinct(.data$comparison_id, .data$direction, .data$stage, .data$gene_key) |>
@@ -1303,6 +1477,54 @@ find_differential_links <- function(config,
         as.data.frame()
     })
     dplyr::bind_rows(out_rows)
+  }
+
+  .plot_two_way_venn <- function(set_rna, set_fp, title_text) {
+    set_rna <- unique(as.character(set_rna))
+    set_fp <- unique(as.character(set_fp))
+    set_rna <- set_rna[!is.na(set_rna) & nzchar(set_rna)]
+    set_fp <- set_fp[!is.na(set_fp) & nzchar(set_fp)]
+
+    nA <- length(set_rna)
+    nB <- length(set_fp)
+    nAB <- length(intersect(set_rna, set_fp))
+
+    title_wrapped <- paste(utils::head(strwrap(as.character(title_text), width = 30), 2L), collapse = "\n")
+    graphics::plot.new()
+    graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1))
+    graphics::title(main = title_wrapped, cex.main = 0.82, font.main = 2, line = 0.2)
+    if ((nA + nB) <= 0) {
+      graphics::text(0.5, 0.5, "No genes available for overlap plot.")
+      return(invisible(NULL))
+    }
+
+    vals <- c(nA, nB)
+    rr <- sqrt(pmax(vals, 1) / pi)
+    rr <- rr / max(rr, na.rm = TRUE) * 0.28
+    centers <- data.frame(
+      x = c(0.42, 0.58),
+      y = c(0.52, 0.52),
+      stringsAsFactors = FALSE
+    )
+    # Okabe-Ito palette (color-blind safe)
+    cols <- c("#0072B280", "#E69F0080")
+    graphics::symbols(
+      centers$x, centers$y,
+      circles = rr,
+      inches = FALSE,
+      bg = cols,
+      fg = c("#0072B2", "#E69F00"),
+      add = TRUE
+    )
+    graphics::text(
+      x = c(0.16, 0.84),
+      y = c(0.90, 0.90),
+      labels = c(paste0("FP filtered\nN=", nA), paste0("TF filtered\nN=", nB)),
+      cex = 0.68,
+      font = 2
+    )
+    graphics::text(0.50, 0.52, labels = paste0("Overlap\nN=", nAB), cex = 0.80, font = 2)
+    invisible(NULL)
   }
 
   for (bid in base_ids) {
@@ -1361,49 +1583,58 @@ find_differential_links <- function(config,
 
     # Gene-key counts by direction using thresholded stage filters from delta links.
     count_rows_this <- list()
-    delta_path <- file.path(out_root, "diff_links", paste0(contrast_id, "_delta_links.csv"))
-    if (!file.exists(delta_path)) {
-      delta_path <- file.path(out_root, "delta_links", paste0(contrast_id, "_delta_links.csv"))
-    }
+    delta_path <- file.path(out_root, "cache", "diff_links", paste0(contrast_id, "_delta_links.csv"))
+    if (!file.exists(delta_path)) delta_path <- file.path(out_root, "diff_links", paste0(contrast_id, "_delta_links.csv"))
+    if (!file.exists(delta_path)) delta_path <- file.path(out_root, "delta_links", paste0(contrast_id, "_delta_links.csv"))
     if (file.exists(delta_path)) {
       delta_df <- readr::read_csv(delta_path, show_col_types = FALSE)
-      crb <- .gene_count_stages_from_delta(
+      gene_sets_df <- .gene_filter_sets_from_delta(
         delta_df = delta_df,
         comparison_id = contrast_id
       )
+      crb <- .gene_count_stages_from_sets(gene_sets_df)
       if (nrow(crb)) count_rows_this[[length(count_rows_this) + 1L]] <- crb
+      if (nrow(gene_sets_df)) all_gene_filter_rows[[length(all_gene_filter_rows) + 1L]] <- gene_sets_df
     }
     gene_counts_this <- if (length(count_rows_this)) dplyr::bind_rows(count_rows_this) else data.frame()
     if (nrow(gene_counts_this)) {
       gene_counts_this$direction <- factor(gene_counts_this$direction, levels = c("Up", "Down"))
-      gene_counts_this$stage <- factor(gene_counts_this$stage, levels = c("No filter", "RNA", "FP", "RNA & FP"))
+      gene_counts_this$stage <- factor(
+        gene_counts_this$stage,
+        levels = c("Total diff genes", "GRN filtered", "FP filtered", "TF filtered")
+      )
       all_gene_count_rows[[length(all_gene_count_rows) + 1L]] <- gene_counts_this
     }
 
-    if (isTRUE(do_pdf)) {
+    if (isTRUE(do_pdf) && isTRUE(write_individual_pdf)) {
       out_pdf <- file.path(out_dir, paste0(contrast_id, "_differential_links_summary.pdf"))
       grDevices::pdf(out_pdf, width = 6.2, height = 4.6, onefile = TRUE)
       print(p)
       if (nrow(gene_counts_this)) {
         p_cnt <- ggplot2::ggplot(
           gene_counts_this,
-          ggplot2::aes(x = .data$direction, y = .data$n_gene_unique, fill = .data$stage)
+          ggplot2::aes(y = .data$direction, x = .data$n_gene_unique, fill = .data$stage)
         ) +
           ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
-          ggplot2::scale_fill_manual(values = c("No filter" = "#bdbdbd", "RNA" = "#9ecae1", "FP" = "#6baed6", "RNA & FP" = "#2171b5")) +
+          ggplot2::scale_fill_manual(values = c(
+            "Total diff genes" = "#bdbdbd",
+            "GRN filtered" = "#9ecae1",
+            "FP filtered" = "#6baed6",
+            "TF filtered" = "#2171b5"
+          )) +
           ggplot2::labs(
             title = paste0(.contrast_from_file(bid), " | Unique gene_key counts"),
-            x = "Direction",
-            y = "Unique gene_key (N)",
+            x = "Unique gene_key (N)",
+            y = "Direction",
             fill = NULL,
             caption = paste0(
-              "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
-              " (direction-specific sign). ",
+              "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
               if (identical(fp_filter_mode, "log2fc")) {
-                paste0("FP filter: |log2FC_fp_score| >= ", signif(fp_log2fc_cutoff, 4), " (direction-specific sign).")
+                paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
               } else {
-                paste0("FP filter: |delta_fp_score| >= ", signif(delta_fp_cutoff, 4), " (direction-specific sign).")
-              }
+                paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
+              },
+              "TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
             )
           ) +
           ggplot2::theme_classic(base_size = 9) +
@@ -1461,51 +1692,106 @@ find_differential_links <- function(config,
     counts_all <- dplyr::bind_rows(all_gene_count_rows)
     if (nrow(counts_all)) {
       counts_all$comparison_direction <- paste0(counts_all$comparison_id, " | ", counts_all$direction)
-      counts_all$stage <- factor(counts_all$stage, levels = c("No filter", "RNA", "FP", "RNA & FP"))
+      counts_all$stage <- factor(
+        counts_all$stage,
+        levels = c("Total diff genes", "GRN filtered", "FP filtered", "TF filtered")
+      )
       ord_tbl <- counts_all |>
-        dplyr::filter(.data$stage == "No filter") |>
+        dplyr::filter(.data$stage == "Total diff genes") |>
         dplyr::arrange(dplyr::desc(.data$n_gene_unique)) |>
         dplyr::distinct(.data$comparison_direction, .keep_all = FALSE)
       ord_levels <- ord_tbl$comparison_direction
       if (!length(ord_levels)) ord_levels <- unique(counts_all$comparison_direction)
-      counts_all$comparison_direction <- factor(counts_all$comparison_direction, levels = ord_levels)
+        counts_all$comparison_direction <- factor(counts_all$comparison_direction, levels = ord_levels)
       p_all_counts <- ggplot2::ggplot(
         counts_all,
-        ggplot2::aes(x = .data$comparison_direction, y = .data$n_gene_unique, fill = .data$stage)
+        ggplot2::aes(y = .data$comparison_direction, x = .data$n_gene_unique, fill = .data$stage)
       ) +
         ggplot2::geom_col(position = ggplot2::position_dodge(width = 0.75), width = 0.68) +
-        ggplot2::scale_fill_manual(values = c("No filter" = "#bdbdbd", "RNA" = "#9ecae1", "FP" = "#6baed6", "RNA & FP" = "#2171b5")) +
+        ggplot2::scale_fill_manual(values = c(
+          "Total diff genes" = "#bdbdbd",
+          "GRN filtered" = "#9ecae1",
+          "FP filtered" = "#6baed6",
+          "TF filtered" = "#2171b5"
+        )) +
         ggplot2::labs(
           title = "Unique gene_key counts by comparison-direction",
-          x = "Comparison | Direction",
-          y = "Unique gene_key (N)",
+          x = "Unique gene_key (N)",
+          y = "Comparison | Direction",
           fill = NULL,
           caption = paste0(
-            "RNA filter: |log2FC_gene_expr| >= ", signif(de_gene_log2_abs_min, 4),
-            " (direction-specific sign). ",
+            "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
             if (identical(fp_filter_mode, "log2fc")) {
-              paste0("FP filter: |log2FC_fp_score| >= ", signif(fp_log2fc_cutoff, 4), " (direction-specific sign).")
+              paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
             } else {
-              paste0("FP filter: |delta_fp_score| >= ", signif(delta_fp_cutoff, 4), " (direction-specific sign).")
-            }
+              paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
+            },
+            "TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
           )
         ) +
         ggplot2::theme_classic(base_size = 9) +
         ggplot2::theme(
-          plot.title = ggplot2::element_text(hjust = 0.5, size = 10, face = "bold"),
-          axis.title = ggplot2::element_text(face = "bold"),
-          axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+          plot.title = ggplot2::element_text(hjust = 0.5, size = 13, face = "bold"),
+          axis.title = ggplot2::element_text(face = "bold", size = 12),
+          axis.text.x = ggplot2::element_text(size = 10, face = "bold"),
+          axis.text.y = ggplot2::element_text(size = 9, face = "bold"),
+          legend.text = ggplot2::element_text(size = 10, face = "bold"),
           legend.position = "top",
-          plot.caption = ggplot2::element_text(hjust = 0, size = 7)
+          plot.caption = ggplot2::element_text(hjust = 0, size = 9, face = "bold")
         )
-      ggplot2::ggsave(
-        filename = file.path(out_dir, "differential_links_gene_key_counts_summary.pdf"),
-        plot = p_all_counts,
-        width = 14,
-        height = max(5, min(14, 2.8 + 0.18 * length(unique(counts_all$comparison_direction)))),
-        dpi = 200,
-        limitsize = FALSE
-      )
+      summary_pdf <- file.path(out_dir, "differential_links_gene_key_counts_summary.pdf")
+      dynamic_h <- max(5.5, min(28, 2.8 + 0.24 * length(unique(counts_all$comparison_direction))))
+      grDevices::pdf(summary_pdf, width = 11.2, height = dynamic_h, onefile = TRUE)
+      print(p_all_counts)
+      if (length(all_gene_filter_rows)) {
+        cutoff_caption <- paste0(
+          "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
+          if (identical(fp_filter_mode, "log2fc")) {
+            paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4))
+          } else {
+            paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4))
+          },
+          "; TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
+        )
+        gf_all <- dplyr::bind_rows(all_gene_filter_rows)
+        if (nrow(gf_all)) {
+          venn_items <- list()
+          venn_items[[1L]] <- list(
+            title = "All comparisons",
+            rna = gf_all$gene_key[gf_all$fp_pass],
+            fp = gf_all$gene_key[gf_all$tf_pass]
+          )
+          split_key <- paste0(gf_all$comparison_id, " | ", gf_all$direction)
+          split_idx <- split(seq_len(nrow(gf_all)), split_key)
+          for (nm in names(split_idx)) {
+            idx <- split_idx[[nm]]
+            gsub <- gf_all[idx, , drop = FALSE]
+            venn_items[[length(venn_items) + 1L]] <- list(
+              title = nm,
+              rna = gsub$gene_key[gsub$fp_pass],
+              fp = gsub$gene_key[gsub$tf_pass]
+            )
+          }
+
+          n_per_page_venn <- 20L
+          page_chunks <- split(seq_along(venn_items), ceiling(seq_along(venn_items) / n_per_page_venn))
+          for (chunk in page_chunks) {
+            graphics::par(mfrow = c(4, 5), mar = c(1.1, 1.1, 2.6, 0.8), oma = c(1.6, 0.5, 1.2, 0.5), font = 2)
+            for (ii in chunk) {
+              itm <- venn_items[[ii]]
+              .plot_two_way_venn(
+                set_rna = itm$rna,
+                set_fp = itm$fp,
+                title_text = itm$title
+              )
+            }
+            for (kk in seq_len(n_per_page_venn - length(chunk))) graphics::plot.new()
+            graphics::mtext(cutoff_caption, side = 1, outer = TRUE, line = 0.2, cex = 0.80, font = 2)
+            graphics::mtext("Unique gene_key overlap: FP filtered vs TF filtered", side = 3, outer = TRUE, line = 0.2, cex = 0.84, font = 2)
+          }
+        }
+      }
+      grDevices::dev.off()
     }
   }
   invisible(TRUE)
@@ -1652,7 +1938,8 @@ find_differential_links <- function(config,
                              width_in = 10,
                              height_in = 6.5,
                              dpi = 200,
-                             connectivity_min_degree = 1L) {
+                             connectivity_min_degree = 1L,
+                             waterfall_min_abs_net = 20L) {
   .assert_pkg("ggplot2")
   .assert_pkg("ggrepel")
   .assert_pkg("scales")
@@ -1785,16 +2072,26 @@ find_differential_links <- function(config,
         tf_upper <- toupper(tf_universe)
         link_dt[, target_type := ifelse(toupper(gene_key) %in% tf_upper, "TF target", "Gene target")]
 
-        # Waterfall uses unique gene counts (not link counts), with TF-level display cutoff.
+        # Waterfall uses unique target counts (not link counts), with TF-level display cutoff.
         gene_dt <- unique(link_dt[, .(TF, gene_key, direction, target_type)])
-        tf_gene_totals <- gene_dt[, .(n_unique_genes = data.table::uniqueN(gene_key)), by = TF]
-        tf_keep <- tf_gene_totals[n_unique_genes > 10, TF]
+        tf_net_totals <- gene_dt[
+          ,
+          .(
+            n_up_total = sum(direction == "Up", na.rm = TRUE),
+            n_down_total = sum(direction == "Down", na.rm = TRUE)
+          ),
+          by = TF
+        ][, net_n := n_up_total - n_down_total]
+        tf_keep_tbl <- tf_net_totals
+        tf_keep <- tf_keep_tbl[
+          abs(net_n) > as.numeric(waterfall_min_abs_net),
+          TF
+        ]
         gene_dt_plot <- gene_dt[TF %in% tf_keep]
 
-        # Sort TFs from largest net positive to largest net negative by unique-gene counts.
-        tf_order <- gene_dt_plot[
-          , .(net_n = sum(ifelse(direction == "Up", 1L, -1L), na.rm = TRUE)),
-          by = TF
+        # Sort TFs by (Up total - Down total), large to small.
+        tf_order <- tf_keep_tbl[
+          TF %in% tf_keep
         ][order(net_n, decreasing = TRUE)]$TF
         bar_dt_all <- gene_dt_plot[
           , .(n = ifelse(.BY$direction == "Up", .N, -.N)),
@@ -1804,7 +2101,7 @@ find_differential_links <- function(config,
         # Stacked waterfall data prep by TF.
         x_max_abs <- suppressWarnings(max(abs(bar_dt_all$n), na.rm = TRUE))
         if (!is.finite(x_max_abs) || x_max_abs <= 0) x_max_abs <- 1
-        x_lim <- c(-x_max_abs, x_max_abs)
+        x_lim <- c(-1.05 * x_max_abs, 1.05 * x_max_abs)
         tf_per_page <- 45L
         tf_chunks <- split(tf_order, ceiling(seq_along(tf_order) / tf_per_page))
         n_pages <- length(tf_chunks)
@@ -1812,49 +2109,69 @@ find_differential_links <- function(config,
         # Standalone waterfall PDF as a single page with dynamic height and fixed x-axis.
         if (length(tf_order) > 0L) {
           n_tf_total <- length(tf_order)
-          tf_axis_size_single <- max(4, min(8, 260 / max(10, n_tf_total)))
-          waterfall_height <- max(height_in, min(28, 2.8 + 0.11 * n_tf_total))
+          tf_axis_size_single <- max(base_size, 12)
+          waterfall_height <- max(height_in, min(34, 3.2 + 0.14 * n_tf_total))
           bar_dt_single <- data.table::copy(bar_dt_all)
+          bar_dt_single[, n_plot := pmax(pmin(n, x_lim[2]), x_lim[1])]
+          n_capped <- sum(abs(bar_dt_single$n) > max(abs(x_lim)), na.rm = TRUE)
+          bar_dt_single[, fill_group := paste0(direction, " | ", target_type)]
           bar_dt_single[, TF := factor(TF, levels = rev(tf_order))]
-          p2_single <- ggplot2::ggplot(bar_dt_single, ggplot2::aes(x = n, y = TF, fill = direction, alpha = target_type)) +
-            ggplot2::geom_col(width = 0.82) +
-            ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "grey45") +
-            ggplot2::scale_fill_manual(values = c("Up" = "#C21807", "Down" = "#1565C0")) +
-            ggplot2::scale_alpha_manual(values = c("TF target" = 1.0, "Gene target" = 0.45)) +
-            ggplot2::labs(
-              title = paste0(
-                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                " | TF target-gene waterfall"
+          title_text_waterfall <- paste0(
+            sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+            "\nTF target-gene waterfall"
+          )
+          caption_text_waterfall <- paste0(
+            "Counts are unique targets per TF.\n",
+            "TFs shown only if abs(unique(Up targets) - unique(Down targets)) > ", as.numeric(waterfall_min_abs_net), ".",
+            if (isTRUE(n_capped > 0)) paste0("\n", n_capped, " bar(s) capped to x-axis limits.") else ""
+          )
+          p2_single <- ggplot2::ggplot(
+            bar_dt_single,
+            ggplot2::aes(x = n_plot, y = TF, fill = fill_group)
+          ) +
+            ggplot2::geom_col(width = 0.76, color = "grey30", linewidth = 0.2) +
+            ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "grey45", linewidth = 0.25) +
+            ggplot2::scale_fill_manual(
+              values = c(
+                "Up | TF target" = "#B2182B",
+                "Up | Gene target" = "#EF8A62",
+                "Down | TF target" = "#2166AC",
+                "Down | Gene target" = "#67A9CF"
               ),
-              x = "Signed unique-gene count (Up positive, Down negative)",
-              y = "TF",
-              fill = "Direction",
-              alpha = "Target class",
-              caption = "Counts are unique genes per TF. TFs shown: >10 unique genes. Red=Up, Blue=Down; shading encodes target class."
+              breaks = c("Up | TF target", "Up | Gene target", "Down | TF target", "Down | Gene target")
             ) +
-            ggplot2::coord_cartesian(xlim = x_lim, clip = "off") +
+            ggplot2::labs(
+              title = title_text_waterfall,
+              x = "Signed unique-gene count",
+              y = "TF",
+              fill = "Direction | Target",
+              caption = caption_text_waterfall
+            ) +
+            ggplot2::coord_cartesian(xlim = x_lim, clip = "on") +
+            ggplot2::scale_y_discrete(drop = FALSE) +
             ggplot2::theme_classic(base_size = base_size) +
             ggplot2::theme(
               text = ggplot2::element_text(face = "bold"),
-              plot.title = ggplot2::element_text(hjust = 0.5, margin = ggplot2::margin(b = 10), face = "bold"),
+              plot.title = ggplot2::element_text(hjust = 0.5, margin = ggplot2::margin(b = 8), face = "bold", lineheight = 0.95),
               axis.title.x = ggplot2::element_text(face = "bold"),
               axis.title.y = ggplot2::element_text(face = "bold"),
               axis.text.y = ggplot2::element_text(size = tf_axis_size_single, face = "bold"),
-              axis.text.x = ggplot2::element_text(face = "bold"),
+              axis.text.x = ggplot2::element_text(size = max(7, base_size - 3), face = "bold"),
               legend.position = "right",
-              plot.caption = ggplot2::element_text(size = max(7, base_size - 3), margin = ggplot2::margin(t = 8)),
-              plot.margin = ggplot2::margin(t = 16, r = 40, b = 22, l = 14)
+              plot.caption = ggplot2::element_text(size = max(6.5, base_size - 4), margin = ggplot2::margin(t = 8), hjust = 0, lineheight = 0.95),
+              plot.margin = ggplot2::margin(t = 18, r = 28, b = 22, l = 14)
             )
-          ggplot2::ggsave(out_pdf_waterfall, p2_single, width = width_in, height = waterfall_height, dpi = dpi, limitsize = FALSE)
+          waterfall_width <- max(6.0, min(8.0, width_in * 0.65))
+          ggplot2::ggsave(out_pdf_waterfall, p2_single, width = waterfall_width, height = waterfall_height, dpi = dpi, limitsize = FALSE)
         } else {
           grDevices::pdf(out_pdf_waterfall, width = width_in, height = height_in, onefile = TRUE)
           graphics::plot.new()
           graphics::title(main = paste0(title_text, " | TF target-direction waterfall"))
-          graphics::text(0.5, 0.5, "No TFs pass cutoff: unique gene count > 10")
+          graphics::text(0.5, 0.5, paste0("No TFs pass cutoff: abs(unique(Up targets)-unique(Down targets)) > ", as.numeric(waterfall_min_abs_net)))
           grDevices::dev.off()
         }
 
-        # Page 3: TF-to-TF connectivity clustered heatmap.
+        # Page 3: TF-to-TF min-distance connectivity heatmap.
         tf2tf <- link_dt[toupper(gene_key) %in% tf_upper, .(TF_src = TF, TF_tgt = gene_key)]
         if (nrow(tf2tf)) {
           conn <- tf2tf[, .N, by = .(TF_src, TF_tgt)]
@@ -1890,10 +2207,7 @@ find_differential_links <- function(config,
           }
 
           if (!is.null(mat) && is.matrix(mat) && nrow(mat) >= 2L) {
-            mat_log <- log1p(mat)
-            tf_fs <- max(6.5, min(13, 320 / max(10, nrow(mat_log))))
-            cell_sz <- max(2, min(12, 240 / max(12, nrow(mat_log))))
-            # Build an undirected shortest-path connectivity score for indirect links.
+            # Build an undirected shortest-path connectivity score.
             # Score(i,j) = 1 / (1 + number of intermediate TF nodes on shortest path i->j),
             # so direct links have score 1 and disconnected pairs have score 0.
             adj_undir <- (mat > 0) | (t(mat) > 0)
@@ -1916,62 +2230,44 @@ find_differential_links <- function(config,
               dist_mat[src, ] <- d
             }
             nodes_needed <- pmax(dist_mat - 1, 0)
-            conn_indirect <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
-            conn_indirect[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
-            diag(conn_indirect) <- 1
+            conn_mindist <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
+            conn_mindist[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
+            self_reg <- as.numeric(diag(mat) > 0)
+            diag(conn_mindist) <- self_reg
 
-            # Third connectivity mode (one-layer composite):
-            # score(i,j) = I(i->j) + I(j->i) + 0.5 * |targets(i) ∩ targets(j)|
-            # where targets(.) are gene_key targets (including TF targets).
-            tf_levels_now <- rownames(mat)
-            edge_gene <- unique(link_dt[, .(TF = as.character(TF), gene_key = as.character(gene_key))])
-            edge_gene <- edge_gene[TF %in% tf_levels_now]
-            if (nrow(edge_gene)) {
-              gene_levels <- sort(unique(edge_gene$gene_key))
-              inc <- matrix(0L, nrow = length(tf_levels_now), ncol = length(gene_levels),
-                            dimnames = list(tf_levels_now, gene_levels))
-              r_idx <- match(edge_gene$TF, tf_levels_now)
-              c_idx <- match(edge_gene$gene_key, gene_levels)
-              keep_idx <- which(!is.na(r_idx) & !is.na(c_idx))
-              if (length(keep_idx)) {
-                inc[cbind(r_idx[keep_idx], c_idx[keep_idx])] <- 1L
-              }
-              shared_targets <- inc %*% t(inc)
-            } else {
-              shared_targets <- matrix(0, nrow = n_tf, ncol = n_tf, dimnames = dimnames(mat))
+            # Drop TFs that are all-zero in both source and target dimensions.
+            keep_nonzero_mindist <- (rowSums(abs(conn_mindist), na.rm = TRUE) > 0) |
+              (colSums(abs(conn_mindist), na.rm = TRUE) > 0)
+            if (any(!keep_nonzero_mindist)) {
+              conn_mindist <- conn_mindist[keep_nonzero_mindist, keep_nonzero_mindist, drop = FALSE]
             }
-            direct_bin <- (mat > 0) * 1L
-            conn_layer1 <- direct_bin + t(direct_bin) + 0.5 * shared_targets
-            conn_layer1 <- as.matrix(conn_layer1)
-            diag(conn_layer1) <- 0
 
-            # Standalone square heatmap PDF with two pages: direct and indirect.
-            # Use ggplot tiles on a dedicated device to avoid no-page PDF issues.
+            # Standalone square heatmap PDF with one page (min-distance connectivity).
             tryCatch({
               old_dev <- grDevices::dev.cur()
-              tf_n <- nrow(mat_log)
+              tf_n <- nrow(conn_mindist)
               side_in <- max(10, min(24, 4 + 0.15 * tf_n))
               grDevices::pdf(out_pdf_heatmap, width = side_in, height = side_in, onefile = TRUE)
               pdf_dev <- grDevices::dev.cur()
               grDevices::dev.set(pdf_dev)
 
-            .plot_mat_tile <- function(mat_in, title_in, fill_title, palette_fn, fill_transform = "none") {
+            .plot_mat_tile <- function(mat_in, title_in, fill_title, fill_limits = NULL, fill_breaks = NULL, fill_labels = NULL) {
               ord <- stats::hclust(stats::dist(mat_in), method = "complete")$order
               mat_ord <- mat_in[ord, ord, drop = FALSE]
               dt <- data.table::as.data.table(as.table(mat_ord))
               names(dt) <- c("TF_row", "TF_col", "value")
-              dt[, value_raw := as.numeric(value)]
-              if (identical(fill_transform, "log1p")) {
-                dt[, value_fill := log1p(pmax(value_raw, 0))]
-                max_raw <- max(dt$value_raw, na.rm = TRUE)
-                raw_breaks <- pretty(c(0, max_raw), n = 5)
-                raw_breaks <- raw_breaks[is.finite(raw_breaks) & raw_breaks >= 0]
-                fill_breaks <- log1p(raw_breaks)
-                fill_labels <- format(round(raw_breaks, 2), trim = TRUE, scientific = FALSE)
-              } else {
-                dt[, value_fill := value_raw]
-                fill_breaks <- ggplot2::waiver()
-                fill_labels <- ggplot2::waiver()
+              dt[, value_fill := as.numeric(value)]
+              vmax <- suppressWarnings(max(dt$value_fill, na.rm = TRUE))
+              if (!is.finite(vmax) || vmax <= 0) vmax <- 1
+              if (is.null(fill_limits) || length(fill_limits) != 2L || !all(is.finite(fill_limits))) {
+                fill_limits <- c(0, vmax)
+              }
+              if (is.null(fill_breaks) || !length(fill_breaks)) {
+                fill_breaks <- pretty(fill_limits, n = 4)
+                fill_breaks <- fill_breaks[fill_breaks >= fill_limits[1] & fill_breaks <= fill_limits[2]]
+              }
+              if (is.null(fill_labels) || length(fill_labels) != length(fill_breaks)) {
+                fill_labels <- as.character(signif(fill_breaks, 3))
               }
               dt[, TF_row := factor(as.character(TF_row), levels = rev(rownames(mat_ord)))]
               dt[, TF_col := factor(as.character(TF_col), levels = colnames(mat_ord))]
@@ -1979,10 +2275,14 @@ find_differential_links <- function(config,
               p_hm <- ggplot2::ggplot(dt, ggplot2::aes(x = TF_col, y = TF_row, fill = value_fill)) +
                 ggplot2::geom_tile() +
                 ggplot2::scale_fill_gradientn(
-                  colors = palette_fn(128),
+                  colors = c("#2166AC", "#FEE08B", "#B2182B"),
+                  values = scales::rescale(c(fill_limits[1], mean(fill_limits), fill_limits[2])),
+                  limits = fill_limits,
                   name = fill_title,
                   breaks = fill_breaks,
-                  labels = fill_labels
+                  labels = fill_labels,
+                  oob = scales::squish,
+                  na.value = "grey90"
                 ) +
                 ggplot2::coord_fixed() +
                 ggplot2::labs(
@@ -2005,30 +2305,67 @@ find_differential_links <- function(config,
               print(p_hm)
             }
 
-            heat_cols <- grDevices::colorRampPalette(
-              rev(RColorBrewer::brewer.pal(7, "RdYlBu"))
-            )(100)
+            if (nrow(conn_mindist) >= 2L) {
+              .plot_mat_tile(
+                conn_mindist,
+                paste0(
+                  sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                  " | TF-to-TF min-distance connectivity\nScore(i,j)=1/(1 + # intermediate TFs); direct=1; disconnected=0; self=1 only when self-regulated."
+                ),
+                "connectivity score",
+                fill_limits = c(0, 1),
+                fill_breaks = c(0, 0.5, 1),
+                fill_labels = c("0", "0.5", "1")
+              )
 
-            .plot_mat_tile(
-              conn_indirect,
-              paste0(
-                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                " | TF-to-TF indirect connectivity (clustered)\nScore(i,j)=1/(1 + # min nodes); direct=1, disconnected=0."
-              ),
-              "indirect score",
-              function(n) heat_cols,
-              fill_transform = "none"
-            )
-            .plot_mat_tile(
-              conn_layer1,
-              paste0(
-                sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                " | TF-to-TF one-layer composite connectivity (clustered)\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets (color uses log1p(score))"
-              ),
-              "composite score",
-              function(n) heat_cols,
-              fill_transform = "log1p"
-            )
+              # Page 2: composite TF-to-TF score:
+              # Score(i,j) = I(i->j) + I(j->i) + 0.5 * #shared targets(i,j)
+              tf_nodes <- rownames(conn_mindist)
+              n_tf2 <- length(tf_nodes)
+              targets_by_tf <- lapply(tf_nodes, function(tf_i) {
+                unique(gene_dt[TF == tf_i, gene_key])
+              })
+              names(targets_by_tf) <- tf_nodes
+              conn_composite <- matrix(0, n_tf2, n_tf2, dimnames = list(tf_nodes, tf_nodes))
+              for (ii in seq_len(n_tf2)) {
+                for (jj in seq_len(n_tf2)) {
+                  if (ii == jj) next
+                  tf_i <- tf_nodes[[ii]]
+                  tf_j <- tf_nodes[[jj]]
+                  i_to_j <- as.numeric(mat[tf_i, tf_j] > 0)
+                  j_to_i <- as.numeric(mat[tf_j, tf_i] > 0)
+                  shared_targets <- length(intersect(targets_by_tf[[tf_i]], targets_by_tf[[tf_j]]))
+                  conn_composite[ii, jj] <- i_to_j + j_to_i + 0.5 * shared_targets
+                }
+              }
+              diag(conn_composite) <- as.numeric(diag(mat[tf_nodes, tf_nodes, drop = FALSE]) > 0)
+              keep_nonzero_comp <- (rowSums(abs(conn_composite), na.rm = TRUE) > 0) |
+                (colSums(abs(conn_composite), na.rm = TRUE) > 0)
+              if (any(!keep_nonzero_comp)) {
+                conn_composite <- conn_composite[keep_nonzero_comp, keep_nonzero_comp, drop = FALSE]
+              }
+              if (nrow(conn_composite) >= 2L) {
+                .plot_mat_tile(
+                  conn_composite,
+                  paste0(
+                    sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
+                    " | TF-to-TF composite connectivity\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets; self=1 only when self-regulated."
+                  ),
+                  "composite score",
+                  fill_limits = c(0, suppressWarnings(max(conn_composite, na.rm = TRUE)))
+                )
+              } else {
+                graphics::plot.new()
+                graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF composite connectivity"))
+                graphics::text(0.5, 0.56, "All TFs became zero-score after filtering")
+                graphics::text(0.5, 0.47, paste0("Cutoff: undirected degree >= ", deg_cut))
+              }
+            } else {
+              graphics::plot.new()
+              graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF min-distance connectivity"))
+              graphics::text(0.5, 0.56, "All TFs became zero-score after filtering")
+              graphics::text(0.5, 0.47, paste0("Cutoff: undirected degree >= ", deg_cut))
+            }
               # Close standalone PDF immediately and return to the original device.
               try(grDevices::dev.off(pdf_dev), silent = TRUE)
               devs2 <- grDevices::dev.list()
@@ -2084,10 +2421,15 @@ find_differential_links <- function(config,
 #'   plot per comparison-direction.
 #' @param pathway_gene_overlap_thresh Overlap threshold (relative to smaller
 #'   gene set) used to treat pathways as redundant before plotting.
-#' @param subnetwork_dirname Output subfolder (under \code{filtered_dir}) for
-#'   pathway subnetworks.
+#' @param subnetwork_dirname Output subfolder (under step3 root, sibling to
+#'   \code{diff_links_filtered} and \code{master_tf_summary}) for pathway
+#'   subnetworks.
 #' @param html_selfcontained Passed to \code{htmlwidgets::saveWidget()} for
 #'   pathway subnet HTML.
+#' @param gene_log2fc_cutoff Optional target-gene \code{|log2FC|} cutoff used to
+#'   set \code{gene_fc_thresh} in pathway subnet plots. If \code{NULL}, the
+#'   function uses global \code{gene_log2fc_cutoff} when available; otherwise
+#'   defaults to \code{0.5}.
 #' @param overwrite Overwrite existing enrichment CSVs.
 #' @param verbose Emit concise messages.
 #'
@@ -2105,8 +2447,9 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
                                        plot_subnetwork = TRUE,
                                        top_n_pathways_plot = 10L,
                                        pathway_gene_overlap_thresh = 0.8,
-                                       subnetwork_dirname = "subnet_pathway",
+                                       subnetwork_dirname = "pathway_enrichment_grn",
                                        html_selfcontained = FALSE,
+                                       gene_log2fc_cutoff = NULL,
                                        overwrite = FALSE,
                                        verbose = TRUE) {
   if (is.null(filtered_dir) && is.list(diff_res) && !is.null(diff_res$filtered_dir)) {
@@ -2122,6 +2465,15 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     .log_abort("Missing internal helper `.ensure_enrichr_ready()`. In source()-based runs, source('R/utils_helpers.R') before this file.")
   }
   .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
+  if (is.null(gene_log2fc_cutoff)) {
+    gene_log2fc_cutoff <- if (exists("gene_log2fc_cutoff")) get("gene_log2fc_cutoff", envir = .GlobalEnv) else 0.5
+  }
+  gene_log2fc_cutoff <- suppressWarnings(as.numeric(gene_log2fc_cutoff)[1])
+  if (!is.finite(gene_log2fc_cutoff) || gene_log2fc_cutoff < 0) {
+    .log_warn("Invalid gene_log2fc_cutoff={gene_log2fc_cutoff}; using 0.5 for pathway subnet plotting.")
+    gene_log2fc_cutoff <- 0.5
+  }
+  gene_fc_thresh_use <- 2 ^ gene_log2fc_cutoff
 
   files <- list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE)
   if (!length(files)) {
@@ -2135,7 +2487,8 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
   if (isTRUE(plot_subnetwork) && !isTRUE(can_plot) && isTRUE(verbose)) {
     .log_warn("Pathway subnetwork plotting skipped: need htmlwidgets and plot_tf_network_delta().")
   }
-  subnetwork_root <- file.path(filtered_dir, subnetwork_dirname)
+  step3_root <- dirname(filtered_dir)
+  subnetwork_root <- file.path(step3_root, subnetwork_dirname)
   if (isTRUE(can_plot)) dir.create(subnetwork_root, recursive = TRUE, showWarnings = FALSE)
   summary_rows <- list()
 
@@ -2169,13 +2522,63 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     if (!all(unlist(m[need]) %in% names(df))) return(NULL)
     m
   }
+
+  .augment_pathway_links_with_tf_tf <- function(sub_links, links_full, verbose = TRUE) {
+    if (!is.data.frame(sub_links) || !nrow(sub_links) || !is.data.frame(links_full) || !nrow(links_full)) {
+      return(sub_links)
+    }
+    tf_col_sub <- .pick_col(names(sub_links), c("tf", "TF"))
+    gene_col_sub <- .pick_col(names(sub_links), c("gene_key", "gene", "target_gene"))
+    tf_col_full <- .pick_col(names(links_full), c("tf", "TF"))
+    gene_col_full <- .pick_col(names(links_full), c("gene_key", "gene", "target_gene"))
+    if (is.na(tf_col_sub) || is.na(gene_col_sub) || is.na(tf_col_full) || is.na(gene_col_full)) {
+      return(sub_links)
+    }
+
+    sub_tf <- as.character(sub_links[[tf_col_sub]])
+    sub_gene <- as.character(sub_links[[gene_col_sub]])
+    node_set <- unique(c(sub_tf, sub_gene))
+    node_set <- node_set[!is.na(node_set) & nzchar(node_set)]
+    if (!length(node_set)) return(sub_links)
+
+    tf_universe <- unique(as.character(links_full[[tf_col_full]]))
+    tf_universe <- tf_universe[!is.na(tf_universe) & nzchar(tf_universe)]
+    tf_set <- intersect(node_set, tf_universe)
+    if (!length(tf_set)) return(sub_links)
+
+    add_tf_tf <- links_full[
+      as.character(links_full[[tf_col_full]]) %in% tf_set &
+        as.character(links_full[[gene_col_full]]) %in% tf_set,
+      ,
+      drop = FALSE
+    ]
+    if (!nrow(add_tf_tf)) return(sub_links)
+
+    out <- rbind(sub_links, add_tf_tf)
+    key_tf <- .pick_col(names(out), c("tf", "TF"))
+    key_gene <- .pick_col(names(out), c("gene_key", "gene", "target_gene"))
+    key_peak <- .pick_col(names(out), c("peak_id", "peak_ID", "fp_peak"))
+    if (!is.na(key_tf) && !is.na(key_gene)) {
+      if (!is.na(key_peak)) {
+        out <- out[!duplicated(paste(out[[key_tf]], out[[key_gene]], out[[key_peak]], sep = "||")), , drop = FALSE]
+      } else {
+        out <- out[!duplicated(paste(out[[key_tf]], out[[key_gene]], sep = "||")), , drop = FALSE]
+      }
+    } else {
+      out <- unique(out)
+    }
+
+    if (isTRUE(verbose)) {
+      .log_inform("Augmented pathway subset with TF->TF edges: +{nrow(out) - nrow(sub_links)} row(s), TF set size={length(tf_set)}.")
+    }
+    out
+  }
   .merge_with_delta_links <- function(sub_links, comparison_id) {
     if (sum(grepl("^link_score_", names(sub_links))) >= 2L) return(sub_links)
-    delta_dir <- file.path(dirname(filtered_dir), "diff_links")
-    raw_path <- file.path(delta_dir, paste0(comparison_id, "_delta_links.csv"))
-    if (!file.exists(raw_path)) {
-      raw_path <- file.path(dirname(filtered_dir), "delta_links", paste0(comparison_id, "_delta_links.csv"))
-    }
+    out_root_local <- dirname(filtered_dir)
+    raw_path <- file.path(out_root_local, "cache", "diff_links", paste0(comparison_id, "_delta_links.csv"))
+    if (!file.exists(raw_path)) raw_path <- file.path(out_root_local, "diff_links", paste0(comparison_id, "_delta_links.csv"))
+    if (!file.exists(raw_path)) raw_path <- file.path(out_root_local, "delta_links", paste0(comparison_id, "_delta_links.csv"))
     if (!file.exists(raw_path)) return(sub_links)
     raw_df <- readr::read_csv(raw_path, show_col_types = FALSE)
     fdt <- data.table::as.data.table(sub_links)
@@ -2333,6 +2736,11 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
       if (!length(p_genes)) next
       sub_links <- links_full[as.character(links_full$gene_key) %in% p_genes, , drop = FALSE]
       if (!nrow(sub_links)) next
+      sub_links <- .augment_pathway_links_with_tf_tf(
+        sub_links = sub_links,
+        links_full = links_full,
+        verbose = verbose
+      )
       sub_links <- .merge_with_delta_links(sub_links, comparison_id = comparison_id)
 
       p_slug <- .safe_label(p_name)
@@ -2352,6 +2760,11 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
           "Pathway subnet mapping for {comparison_id}: case={plot_col_map$score_str_col}, ctrl={plot_col_map$score_ctrl_col} (delta = case - ctrl)."
         )
       }
+      if (isTRUE(verbose)) {
+        .log_inform(
+          "Pathway subnet gene threshold for {comparison_id}: gene_log2fc_cutoff={gene_log2fc_cutoff}, gene_fc_thresh={signif(gene_fc_thresh_use, 4)}."
+        )
+      }
       w <- try(
         do.call(
           plot_tf_network_delta,
@@ -2366,7 +2779,8 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
           keep_top_edges_per_tf = 6000,
           peak_mode = "show_all",
           show_peaks = FALSE,
-          gene_fc_thresh = 1.5,
+          size_by = "expr_max",
+          gene_fc_thresh = gene_fc_thresh_use,
           de_reference = "str_over_ctrl",
           motif_db = "jaspar2024"
           ),

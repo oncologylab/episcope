@@ -53,9 +53,12 @@
                                       fp_log2_col = "log2FC_fp_score",
                                       fp_filter_by = c("delta", "log2fc"),
                                       tf_log2_col = "log2FC_tf_expr",
-                                      gene_log2_abs_min = NULL,
-                                      fp_delta_min = NULL,
-                                      tf_log2_abs_min = NULL,
+                                      gene_log2fc_cutoff = NULL,
+                                      gene_expr_min_high = NULL,
+                                      fp_cutoff = NULL,
+                                      fp_bound_min = NULL,
+                                      tf_log2fc_cutoff = NULL,
+                                      tf_expr_min_high = NULL,
                                       verbose = TRUE) {
   fp_filter_by <- match.arg(fp_filter_by)
   if (!nrow(df)) return(list(up = df, down = df))
@@ -67,23 +70,55 @@
     .log_warn("Missing {gene_log2_col} or {fp_col_use}; skipping up/down split.")
     return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
   }
-  if (is.null(gene_log2_abs_min) || !is.finite(gene_log2_abs_min)) {
-    .log_warn("gene_log2_abs_min not set; skipping up/down split.")
+  if (is.null(gene_log2fc_cutoff) || !is.finite(gene_log2fc_cutoff)) {
+    .log_warn("gene_log2fc_cutoff not set; skipping up/down split.")
     return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
   }
-  if (is.null(fp_delta_min) || !is.finite(fp_delta_min)) {
-    .log_warn("fp_delta_min not set; skipping up/down split.")
+  if (is.null(fp_cutoff) || !is.finite(fp_cutoff)) {
+    .log_warn("fp_cutoff not set; skipping up/down split.")
     return(list(up = df[0, , drop = FALSE], down = df[0, , drop = FALSE]))
   }
 
   gene_l2 <- suppressWarnings(as.numeric(df[[gene_log2_col]]))
   fp_del <- suppressWarnings(as.numeric(df[[fp_col_use]]))
   tf_l2 <- if (tf_log2_col %in% nms) suppressWarnings(as.numeric(df[[tf_log2_col]])) else NA_real_
+  fp_bound_min <- suppressWarnings(as.numeric(fp_bound_min)[1])
+  tf_expr_min_high <- suppressWarnings(as.numeric(tf_expr_min_high)[1])
+  gene_expr_min_high <- suppressWarnings(as.numeric(gene_expr_min_high)[1])
 
-  gene_pass <- is.finite(gene_l2) & (abs(gene_l2) >= gene_log2_abs_min)
+  .pick_pair_cols <- function(prefix_a, prefix_b = NULL) {
+    cols <- grep(paste0("^", prefix_a), nms, value = TRUE)
+    if (!length(cols) && !is.null(prefix_b)) cols <- grep(paste0("^", prefix_b), nms, value = TRUE)
+    if (length(cols) < 2L) return(NULL)
+    cols <- cols[order(match(cols, nms))]
+    cols[1:2]
+  }
+  fp_pair <- .pick_pair_cols("fp_score_", "fp_bed_score_")
+  tf_pair <- .pick_pair_cols("tf_expr_")
+  gene_pair <- .pick_pair_cols("gene_expr_")
+  fp_high <- rep(NA_real_, nrow(df))
+  tf_high <- rep(NA_real_, nrow(df))
+  gene_high <- rep(NA_real_, nrow(df))
+  if (!is.null(fp_pair)) {
+    fp_c1 <- suppressWarnings(as.numeric(df[[fp_pair[1]]]))
+    fp_c2 <- suppressWarnings(as.numeric(df[[fp_pair[2]]]))
+    fp_high <- ifelse(gene_l2 >= 0, fp_c1, fp_c2)
+  }
+  if (!is.null(tf_pair)) {
+    tf_c1 <- suppressWarnings(as.numeric(df[[tf_pair[1]]]))
+    tf_c2 <- suppressWarnings(as.numeric(df[[tf_pair[2]]]))
+    tf_high <- ifelse(gene_l2 >= 0, tf_c1, tf_c2)
+  }
+  if (!is.null(gene_pair)) {
+    g_c1 <- suppressWarnings(as.numeric(df[[gene_pair[1]]]))
+    g_c2 <- suppressWarnings(as.numeric(df[[gene_pair[2]]]))
+    gene_high <- ifelse(gene_l2 >= 0, g_c1, g_c2)
+  }
 
-  if (is.finite(tf_log2_abs_min) && tf_log2_col %in% nms) {
-    tf_pass <- is.finite(tf_l2) & (abs(tf_l2) >= tf_log2_abs_min)
+  gene_pass <- is.finite(gene_l2) & (abs(gene_l2) >= gene_log2fc_cutoff)
+
+  if (is.finite(tf_log2fc_cutoff) && tf_log2_col %in% nms) {
+    tf_pass <- is.finite(tf_l2) & (abs(tf_l2) >= tf_log2fc_cutoff)
     opp_dir <- tf_pass & gene_pass & (sign(tf_l2) == -sign(gene_l2))
     if (any(opp_dir, na.rm = TRUE)) {
       df <- df[!opp_dir, , drop = FALSE]
@@ -93,8 +128,24 @@
     }
   }
 
-  up <- gene_pass & (gene_l2 > 0) & is.finite(fp_del) & (fp_del >= fp_delta_min)
-  down <- gene_pass & (gene_l2 < 0) & is.finite(fp_del) & (fp_del <= -fp_delta_min)
+  fp_bound_pass <- if (is.finite(fp_bound_min)) {
+    is.finite(fp_high) & (fp_high > fp_bound_min)
+  } else {
+    rep(TRUE, nrow(df))
+  }
+  gene_expr_pass <- if (is.finite(gene_expr_min_high)) {
+    is.finite(gene_high) & (gene_high > gene_expr_min_high)
+  } else {
+    rep(TRUE, nrow(df))
+  }
+  tf_expr_pass <- if (is.finite(tf_expr_min_high)) {
+    is.finite(tf_high) & (tf_high > tf_expr_min_high)
+  } else {
+    rep(TRUE, nrow(df))
+  }
+
+  up <- gene_pass & (gene_l2 > 0) & is.finite(fp_del) & (fp_del >= fp_cutoff) & gene_expr_pass & fp_bound_pass & tf_expr_pass
+  down <- gene_pass & (gene_l2 < 0) & is.finite(fp_del) & (fp_del <= -fp_cutoff) & gene_expr_pass & fp_bound_pass & tf_expr_pass
 
   list(
     up = df[which(up), , drop = FALSE],
@@ -145,8 +196,8 @@
 #'   4) any link_score_*   > link_min
 #'   5) |delta_link_score| > abs_delta_min
 #'   6) Optional absolute |log2FC| thresholds:
-#'      - log2FC_gene_expr (via apply_de_gene + de_gene_log2_abs_min)
-#'      - log2FC_tf_expr   (via apply_de_tf   + de_tf_log2_abs_min)
+#'      - log2FC_gene_expr (via apply_de_gene + gene_log2fc_cutoff)
+#'      - log2FC_tf_expr   (via apply_de_tf   + tf_log2fc_cutoff)
 #'
 #' Columns are NOT renamed; output preserves original names. If a criterions
 #' columns are missing, it is skipped with a warning.
@@ -161,14 +212,14 @@
 #' @param out_file optional character; output path. If NULL and `x` is a file,
 #'   writes alongside input as "*_filtered.csv".
 #' @param verbose logical; default TRUE
-#' @param apply_de_gene logical; require |log2FC_gene_expr| ?de_gene_log2_abs_min
-#' @param apply_de_tf   logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min
-#' @param de_gene_log2_abs_min numeric absolute log2FC threshold.
-#' @param de_tf_log2_abs_min   numeric absolute log2FC threshold.
-#' @param de_gene_fc_min numeric absolute fold-change threshold (non-log2) for genes.
-#' @param de_tf_fc_min   numeric absolute fold-change threshold (non-log2) for TFs.
-#' @param fp_delta_min numeric absolute delta threshold for footprint scores.
-#' @param fp_delta_min numeric absolute delta threshold for footprint scores
+#' @param apply_de_gene logical; require |log2FC_gene_expr| ?gene_log2fc_cutoff
+#' @param apply_de_tf   logical; require |log2FC_tf_expr|   ?tf_log2fc_cutoff
+#' @param gene_log2fc_cutoff numeric absolute log2FC threshold.
+#' @param tf_log2fc_cutoff   numeric absolute log2FC threshold.
+#' @param fp_cutoff numeric absolute delta threshold for footprint scores.
+#' @param tf_opposition_log2fc_cutoff numeric absolute log2FC threshold used to
+#'   define significant TF expression change for opposite-direction removal.
+#' @param fp_cutoff numeric absolute threshold for footprint score change
 #'   (column `delta_fp_score`).
 #' @param enforce_link_expr_sign logical; if TRUE, drop rows whose delta_link_score
 #'   direction contradicts expected gene direction given link_sign_* (default TRUE).
@@ -183,7 +234,7 @@
 #' out <- episcope::filter_links_deltas(
 #'   "path/to/HPAFII_0_FBS_vs_HPAFII_10_FBS_delta_links.csv",
 #'   gene_expr_min = 4, tf_expr_min = 4, fp_min = 4, link_min = 2, abs_delta_min = 2,
-#'   apply_de_gene = TRUE, de_gene_log2_abs_min = 0.585, save_csv = TRUE
+#'   apply_de_gene = TRUE, gene_log2fc_cutoff = 0.585, save_csv = TRUE
 #' )
 #' }
 filter_links_deltas <- function(x,
@@ -194,13 +245,11 @@ filter_links_deltas <- function(x,
                                 abs_delta_min = 2,
                                 apply_de_gene = FALSE,
                                 apply_de_tf   = FALSE,
-                                de_gene_log2_abs_min = NULL,
-                                de_tf_log2_abs_min   = NULL,
-                                de_gene_fc_min = NULL,
-                                de_tf_fc_min   = NULL,
-                                fp_delta_min = NULL,
+                                gene_log2fc_cutoff = NULL,
+                                tf_log2fc_cutoff   = NULL,
+                                fp_cutoff = NULL,
                                 enforce_link_expr_sign = TRUE,
-                                tf_opposition_log2_abs_min = NULL,
+                                tf_opposition_log2fc_cutoff = NULL,
                                 expr_dir_col = "log2FC_gene_expr",
                                 save_csv = FALSE,
                                 out_file = NULL,
@@ -210,11 +259,12 @@ filter_links_deltas <- function(x,
   n0 <- nrow(df)
   nms <- names(df)
 
-  if (is.null(de_gene_log2_abs_min) && !is.null(de_gene_fc_min)) {
-    de_gene_log2_abs_min <- log2(as.numeric(de_gene_fc_min))
-  }
-  if (is.null(de_tf_log2_abs_min) && !is.null(de_tf_fc_min)) {
-    de_tf_log2_abs_min <- log2(as.numeric(de_tf_fc_min))
+  if (is.null(gene_log2fc_cutoff)) {
+    gl2 <- suppressWarnings(as.numeric(if (exists("gene_log2fc_cutoff", inherits = TRUE)) get("gene_log2fc_cutoff", inherits = TRUE) else NA_real_))
+    if (is.finite(gl2)) {
+      gene_log2fc_cutoff <- gl2
+      .flog("Using gene_log2fc_cutoff: ", signif(gl2, 4), verbose = verbose)
+    }
   }
 
   # Identify column groups by prefix
@@ -297,25 +347,26 @@ filter_links_deltas <- function(x,
 
   # Opposite TF-vs-target removal:
   # drop rows where TF change is significant and TF sign is opposite to target-gene sign.
-  if (is.null(tf_opposition_log2_abs_min) || !is.finite(tf_opposition_log2_abs_min)) {
-    tf_opposition_log2_abs_min <- de_gene_log2_abs_min
+  if (is.null(tf_opposition_log2fc_cutoff) || !is.finite(tf_opposition_log2fc_cutoff)) {
+    tf_opposition_log2fc_cutoff <- gene_log2fc_cutoff
   }
   if ("log2FC_tf_expr" %in% nms && "log2FC_gene_expr" %in% nms &&
-      is.finite(tf_opposition_log2_abs_min)) {
+      is.finite(tf_opposition_log2fc_cutoff)) {
     lt <- suppressWarnings(as.numeric(df[["log2FC_tf_expr"]]))
     lg <- suppressWarnings(as.numeric(df[["log2FC_gene_expr"]]))
-    tf_sig <- is.finite(lt) & (abs(lt) >= as.numeric(tf_opposition_log2_abs_min))
+    tf_sig <- is.finite(lt) & (abs(lt) >= as.numeric(tf_opposition_log2fc_cutoff))
     opp <- tf_sig & is.finite(lg) & (sign(lt) == -sign(lg))
     pass_tf_gene_dir <- !opp
     .flog(
       "Pass TF-vs-target direction check (drop TF-significant opposite direction): ",
-      sum(pass_tf_gene_dir), "/", n0, " rows.",
+      sum(pass_tf_gene_dir), "/", n0, " rows. ",
+      "TF significance cutoff |log2FC_tf_expr| >= ", signif(as.numeric(tf_opposition_log2fc_cutoff), 4), ".",
       verbose = verbose
     )
   } else {
     pass_tf_gene_dir <- rep(TRUE, n0)
     .flog(
-      "Skipping TF-vs-target direction check (missing log2FC_tf_expr/log2FC_gene_expr or tf_opposition_log2_abs_min).",
+      "Skipping TF-vs-target direction check (missing log2FC_tf_expr/log2FC_gene_expr or tf_opposition_log2fc_cutoff).",
       verbose = verbose
     )
   }
@@ -325,12 +376,12 @@ filter_links_deltas <- function(x,
     if (!("log2FC_gene_expr" %in% nms)) {
       warning("Column 'log2FC_gene_expr' not found; skipping differential GENE filter.")
       pass_de_gene <- rep(TRUE, n0)
-    } else if (is.null(de_gene_log2_abs_min)) {
-      warning("apply_de_gene=TRUE but de_gene_log2_abs_min is NULL; skipping differential GENE filter.")
+    } else if (is.null(gene_log2fc_cutoff)) {
+      warning("apply_de_gene=TRUE but gene_log2fc_cutoff is NULL; skipping differential GENE filter.")
       pass_de_gene <- rep(TRUE, n0)
     } else {
       lg <- suppressWarnings(as.numeric(df[["log2FC_gene_expr"]]))
-      thr_abs <- as.numeric(de_gene_log2_abs_min)
+      thr_abs <- as.numeric(gene_log2fc_cutoff)
       pass_de_gene <- is.finite(lg) & (abs(lg) >= thr_abs)
       .flog("Pass DE gene (|log2FC| ?", thr_abs, "): ",
             sum(pass_de_gene), "/", n0, " rows.", verbose = verbose)
@@ -343,12 +394,12 @@ filter_links_deltas <- function(x,
     if (!("log2FC_tf_expr" %in% nms)) {
       warning("Column 'log2FC_tf_expr' not found; skipping differential TF filter.")
       pass_de_tf <- rep(TRUE, n0)
-    } else if (is.null(de_tf_log2_abs_min)) {
-      warning("apply_de_tf=TRUE but de_tf_log2_abs_min is NULL; skipping differential TF filter.")
+    } else if (is.null(tf_log2fc_cutoff)) {
+      warning("apply_de_tf=TRUE but tf_log2fc_cutoff is NULL; skipping differential TF filter.")
       pass_de_tf <- rep(TRUE, n0)
     } else {
       lt <- suppressWarnings(as.numeric(df[["log2FC_tf_expr"]]))
-      thr_abs <- as.numeric(de_tf_log2_abs_min)
+      thr_abs <- as.numeric(tf_log2fc_cutoff)
       pass_de_tf <- is.finite(lt) & (abs(lt) >= thr_abs)
       .flog("Pass DE TF (|log2FC| ?", thr_abs, "): ",
             sum(pass_de_tf), "/", n0, " rows.", verbose = verbose)
@@ -405,12 +456,12 @@ filter_links_deltas <- function(x,
 #' @examples
 #' \dontrun{
 #' delta_csvs <- list.files("inst/extdata/lighting", "_delta_links.csv", full.names = TRUE)
-#' de_gene_log2_abs_min <- 0.585
+#' gene_log2fc_cutoff <- 0.585
 #' bulk <- episcope::filter_links_deltas_bulk(
 #'   delta_csvs,
 #'   gene_expr_min = 4, tf_expr_min = 4, fp_min = 4, link_min = 2, abs_delta_min = 2,
 #'   apply_de_gene = TRUE,
-#'   de_gene_log2_abs_min = de_gene_log2_abs_min,
+#'   gene_log2fc_cutoff = gene_log2fc_cutoff,
 #'   enforce_link_expr_sign = TRUE,
 #'   expr_dir_col = "log2FC_gene_expr",
 #'   workers = 20
@@ -426,13 +477,14 @@ filter_links_deltas_bulk <- function(delta_csvs,
                                      abs_delta_min = 2,
                                      apply_de_gene = FALSE,
                                      apply_de_tf   = FALSE,
-                                     de_gene_log2_abs_min = NULL,
-                                     de_tf_log2_abs_min   = NULL,
-                                     de_gene_fc_min = NULL,
-                                     de_tf_fc_min   = NULL,
-                                     fp_delta_min = NULL,
+                                     gene_log2fc_cutoff = NULL,
+                                     gene_expr_min_high = NULL,
+                                     tf_log2fc_cutoff   = NULL,
+                                     fp_cutoff = NULL,
                                      fp_filter_by = c("delta", "log2fc"),
-                                     tf_opposition_log2_abs_min = NULL,
+                                     fp_bound_min = NULL,
+                                     tf_opposition_log2fc_cutoff = NULL,
+                                     tf_expr_min_high = NULL,
                                      split_direction = FALSE,
                                      write_combined = TRUE,
                                      enforce_link_expr_sign = FALSE,
@@ -469,16 +521,35 @@ filter_links_deltas_bulk <- function(delta_csvs,
   }
   filtered_dirs  <- unique(dirname(filtered_paths))
 
-  if (is.null(de_gene_log2_abs_min) && !is.null(de_gene_fc_min)) {
-    de_gene_log2_abs_min <- log2(as.numeric(de_gene_fc_min))
+  if (is.null(gene_log2fc_cutoff)) {
+    gl2 <- suppressWarnings(as.numeric(if (exists("gene_log2fc_cutoff", inherits = TRUE)) get("gene_log2fc_cutoff", inherits = TRUE) else NA_real_))
+    if (is.finite(gl2)) {
+      gene_log2fc_cutoff <- gl2
+      if (isTRUE(verbose)) .log_inform("Using gene_log2fc_cutoff: {signif(gl2, 4)}")
+    }
   }
-  if (is.null(de_tf_log2_abs_min) && !is.null(de_tf_fc_min)) {
-    de_tf_log2_abs_min <- log2(as.numeric(de_tf_fc_min))
+  if (is.null(tf_opposition_log2fc_cutoff) || !is.finite(tf_opposition_log2fc_cutoff)) {
+    tf_opposition_log2fc_cutoff <- gene_log2fc_cutoff
   }
 
   n_files <- length(delta_csvs)
   if (isTRUE(verbose)) {
     .log_inform("Filtering {n_files} delta-link file{?s}...", n_files = n_files)
+    if (is.finite(gene_log2fc_cutoff)) {
+      .log_inform("Directional gene cutoff |log2FC_gene_expr| >= {signif(as.numeric(gene_log2fc_cutoff), 4)}")
+    }
+    if (is.finite(gene_expr_min_high)) {
+      .log_inform("Gene expression cutoff in high group gene_expr > {signif(as.numeric(gene_expr_min_high), 4)}")
+    }
+    if (is.finite(tf_opposition_log2fc_cutoff)) {
+      .log_inform("TF-opposition significance cutoff |log2FC_tf_expr| >= {signif(as.numeric(tf_opposition_log2fc_cutoff), 4)}")
+    }
+    if (is.finite(fp_bound_min)) {
+      .log_inform("FP bound cutoff in high group fp_score > {signif(as.numeric(fp_bound_min), 4)}")
+    }
+    if (is.finite(tf_expr_min_high)) {
+      .log_inform("TF expression cutoff in high group tf_expr > {signif(as.numeric(tf_expr_min_high), 4)}")
+    }
     if (isTRUE(split_direction)) {
       .log_inform("Writing up/down filtered links per delta file.")
     }
@@ -515,13 +586,11 @@ filter_links_deltas_bulk <- function(delta_csvs,
       abs_delta_min = abs_delta_min,
       apply_de_gene = apply_de_gene,
       apply_de_tf   = apply_de_tf,
-      de_gene_log2_abs_min = de_gene_log2_abs_min,
-      de_tf_log2_abs_min   = de_tf_log2_abs_min,
-      de_gene_fc_min = de_gene_fc_min,
-      de_tf_fc_min   = de_tf_fc_min,
-      fp_delta_min = fp_delta_min,
+      gene_log2fc_cutoff = gene_log2fc_cutoff,
+      tf_log2fc_cutoff   = tf_log2fc_cutoff,
+      fp_cutoff = fp_cutoff,
       enforce_link_expr_sign = enforce_link_expr_sign,
-      tf_opposition_log2_abs_min = tf_opposition_log2_abs_min,
+      tf_opposition_log2fc_cutoff = tf_opposition_log2fc_cutoff,
       expr_dir_col = expr_dir_col,
       save_csv = isTRUE(save_csv) && isTRUE(write_combined),
       out_file = out_path,
@@ -534,10 +603,13 @@ filter_links_deltas_bulk <- function(delta_csvs,
       down_path <- file.path(out_dir_use, paste0(stem, "_filtered_links_down.csv"))
       split <- .split_links_by_direction(
         df,
-        gene_log2_abs_min = de_gene_log2_abs_min,
-        fp_delta_min = fp_delta_min,
+        gene_log2fc_cutoff = gene_log2fc_cutoff,
+        gene_expr_min_high = gene_expr_min_high,
+        fp_cutoff = fp_cutoff,
+        fp_bound_min = fp_bound_min,
         fp_filter_by = fp_filter_by,
-        tf_log2_abs_min = if (is.finite(tf_opposition_log2_abs_min)) tf_opposition_log2_abs_min else de_gene_log2_abs_min,
+        tf_log2fc_cutoff = if (is.finite(tf_opposition_log2fc_cutoff)) tf_opposition_log2fc_cutoff else gene_log2fc_cutoff,
+        tf_expr_min_high = tf_expr_min_high,
         verbose = worker_verbose
       )
       readr::write_csv(split$up, up_path)

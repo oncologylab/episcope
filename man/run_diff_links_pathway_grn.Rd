@@ -16,6 +16,7 @@ run_diff_links_pathway_grn(
   pathway_gene_overlap_thresh = 0.8,
   subnetwork_dirname = "subnet_pathway",
   html_selfcontained = FALSE,
+  gene_log2fc_cutoff = NULL,
   overwrite = FALSE,
   verbose = TRUE
 )
@@ -45,6 +46,11 @@ pathway subnetworks.}
 
 \item{html_selfcontained}{Passed to \code{htmlwidgets::saveWidget()} for
 pathway subnet HTML.}
+
+\item{gene_log2fc_cutoff}{Optional target-gene \code{|log2FC|} cutoff used to
+set \code{gene_fc_thresh} in pathway subnet plots. If \code{NULL}, the
+function uses global \code{gene_log2fc_cutoff} when available; otherwise
+defaults to \code{0.5}.}
 
 \item{overwrite}{Overwrite existing enrichment CSVs.}
 

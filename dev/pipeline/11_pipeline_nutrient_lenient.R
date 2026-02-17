@@ -71,7 +71,7 @@ step3_specs <- build_cellwise_contrasts_from_index(
   clean_names = FALSE
 )
 
-delta_fp_cutoff <- 0.5
+fp_delta_cutoff <- 0.5
 regulated_genes <- 1.5 # 1.5 2
 
 run_links_deltas_driver(
@@ -84,7 +84,7 @@ run_links_deltas_driver(
 )
 
 step3_delta_csvs <- list.files(step2_out_dir, "_delta_links.csv", full.names = TRUE)
-step3_de_gene_log2_abs_min <- if (regulated_genes == 1.5) 0.585 else if (regulated_genes == 2) 1 else NA_real_
+step3_gene_log2fc_cutoff <- if (regulated_genes == 1.5) 0.585 else if (regulated_genes == 2) 1 else NA_real_
 
 step3_bulk <- episcope::filter_links_deltas_bulk(
   step3_delta_csvs,
@@ -94,9 +94,9 @@ step3_bulk <- episcope::filter_links_deltas_bulk(
   link_min = -Inf,
   abs_delta_min = -Inf,
   apply_de_gene = TRUE,
-  de_gene_log2_abs_min = step3_de_gene_log2_abs_min,
-  fp_delta_min = delta_fp_cutoff,
-  tf_opposition_log2_abs_min = step3_de_gene_log2_abs_min,
+  gene_log2fc_cutoff = step3_gene_log2fc_cutoff,
+  fp_cutoff = fp_delta_cutoff,
+  tf_opposition_log2fc_cutoff = step3_gene_log2fc_cutoff,
   enforce_link_expr_sign = FALSE,
   expr_dir_col = "log2FC_gene_expr",
   workers = 20

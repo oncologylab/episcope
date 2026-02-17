@@ -13,13 +13,11 @@ filter_links_deltas_bulk(
   abs_delta_min = 2,
   apply_de_gene = FALSE,
   apply_de_tf = FALSE,
-  de_gene_log2_abs_min = NULL,
-  de_tf_log2_abs_min = NULL,
-  de_gene_fc_min = NULL,
-  de_tf_fc_min = NULL,
-  fp_delta_min = NULL,
+  gene_log2fc_cutoff = NULL,
+  tf_log2fc_cutoff = NULL,
+  fp_cutoff = NULL,
   fp_filter_by = c("delta", "log2fc"),
-  tf_opposition_log2_abs_min = NULL,
+  tf_opposition_log2fc_cutoff = NULL,
   split_direction = FALSE,
   write_combined = TRUE,
   enforce_link_expr_sign = FALSE,
@@ -48,20 +46,19 @@ filter_links_deltas_bulk(
 
 \item{abs_delta_min}{numeric; default 2}
 
-\item{apply_de_gene}{logical; require |log2FC_gene_expr| ?de_gene_log2_abs_min}
+\item{apply_de_gene}{logical; require |log2FC_gene_expr| ?gene_log2fc_cutoff}
 
-\item{apply_de_tf}{logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min}
+\item{apply_de_tf}{logical; require |log2FC_tf_expr|   ?tf_log2fc_cutoff}
 
-\item{de_gene_log2_abs_min}{numeric absolute log2FC threshold.}
+\item{gene_log2fc_cutoff}{numeric absolute log2FC threshold.}
 
-\item{de_tf_log2_abs_min}{numeric absolute log2FC threshold.}
+\item{tf_log2fc_cutoff}{numeric absolute log2FC threshold.}
 
-\item{de_gene_fc_min}{numeric absolute fold-change threshold (non-log2) for genes.}
-
-\item{de_tf_fc_min}{numeric absolute fold-change threshold (non-log2) for TFs.}
-
-\item{fp_delta_min}{numeric absolute delta threshold for footprint scores
+\item{fp_cutoff}{numeric absolute threshold for footprint score change
 (column `delta_fp_score`).}
+
+\item{tf_opposition_log2fc_cutoff}{numeric absolute log2FC threshold used to
+define significant TF expression change for opposite-direction removal.}
 
 \item{split_direction}{Logical; write up/down filtered links per delta file.}
 
@@ -97,12 +94,12 @@ optionally in parallel, and writes a manifest mapping source -> filtered outputs
 \examples{
 \dontrun{
 delta_csvs <- list.files("inst/extdata/lighting", "_delta_links.csv", full.names = TRUE)
-de_gene_log2_abs_min <- 0.585
+gene_log2fc_cutoff <- 0.585
 bulk <- episcope::filter_links_deltas_bulk(
   delta_csvs,
   gene_expr_min = 4, tf_expr_min = 4, fp_min = 4, link_min = 2, abs_delta_min = 2,
   apply_de_gene = TRUE,
-  de_gene_log2_abs_min = de_gene_log2_abs_min,
+  gene_log2fc_cutoff = gene_log2fc_cutoff,
   enforce_link_expr_sign = TRUE,
   expr_dir_col = "log2FC_gene_expr",
   workers = 20

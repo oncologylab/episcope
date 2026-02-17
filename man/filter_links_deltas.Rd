@@ -13,13 +13,11 @@ filter_links_deltas(
   abs_delta_min = 2,
   apply_de_gene = FALSE,
   apply_de_tf = FALSE,
-  de_gene_log2_abs_min = NULL,
-  de_tf_log2_abs_min = NULL,
-  de_gene_fc_min = NULL,
-  de_tf_fc_min = NULL,
-  fp_delta_min = NULL,
+  gene_log2fc_cutoff = NULL,
+  tf_log2fc_cutoff = NULL,
+  fp_cutoff = NULL,
   enforce_link_expr_sign = TRUE,
-  tf_opposition_log2_abs_min = NULL,
+  tf_opposition_log2fc_cutoff = NULL,
   expr_dir_col = "log2FC_gene_expr",
   save_csv = FALSE,
   out_file = NULL,
@@ -39,23 +37,22 @@ filter_links_deltas(
 
 \item{abs_delta_min}{numeric; default 2}
 
-\item{apply_de_gene}{logical; require |log2FC_gene_expr| ?de_gene_log2_abs_min}
+\item{apply_de_gene}{logical; require |log2FC_gene_expr| ?gene_log2fc_cutoff}
 
-\item{apply_de_tf}{logical; require |log2FC_tf_expr|   ?de_tf_log2_abs_min}
+\item{apply_de_tf}{logical; require |log2FC_tf_expr|   ?tf_log2fc_cutoff}
 
-\item{de_gene_log2_abs_min}{numeric absolute log2FC threshold.}
+\item{gene_log2fc_cutoff}{numeric absolute log2FC threshold.}
 
-\item{de_tf_log2_abs_min}{numeric absolute log2FC threshold.}
+\item{tf_log2fc_cutoff}{numeric absolute log2FC threshold.}
 
-\item{de_gene_fc_min}{numeric absolute fold-change threshold (non-log2) for genes.}
-
-\item{de_tf_fc_min}{numeric absolute fold-change threshold (non-log2) for TFs.}
-
-\item{fp_delta_min}{numeric absolute delta threshold for footprint scores
+\item{fp_cutoff}{numeric absolute threshold for footprint score change
 (column `delta_fp_score`).}
 
 \item{enforce_link_expr_sign}{logical; if TRUE, drop rows whose delta_link_score
 direction contradicts expected gene direction given link_sign_* (default TRUE).}
+
+\item{tf_opposition_log2fc_cutoff}{numeric absolute log2FC threshold used to
+define significant TF expression change for opposite-direction removal.}
 
 \item{expr_dir_col}{character; gene-change column to use for direction; default "log2FC_gene_expr"}
 
@@ -77,8 +74,8 @@ Filter *_delta_links.csv (or in-memory tables) using:
   4) any link_score_*   > link_min
   5) |delta_link_score| > abs_delta_min
   6) Optional absolute |log2FC| thresholds:
-     - log2FC_gene_expr (via apply_de_gene + de_gene_log2_abs_min)
-     - log2FC_tf_expr   (via apply_de_tf   + de_tf_log2_abs_min)
+     - log2FC_gene_expr (via apply_de_gene + gene_log2fc_cutoff)
+     - log2FC_tf_expr   (via apply_de_tf   + tf_log2fc_cutoff)
 }
 \details{
 Columns are NOT renamed; output preserves original names. If a criterions
@@ -90,7 +87,7 @@ columns are missing, it is skipped with a warning.
 out <- episcope::filter_links_deltas(
   "path/to/HPAFII_0_FBS_vs_HPAFII_10_FBS_delta_links.csv",
   gene_expr_min = 4, tf_expr_min = 4, fp_min = 4, link_min = 2, abs_delta_min = 2,
-  apply_de_gene = TRUE, de_gene_log2_abs_min = 0.585, save_csv = TRUE
+  apply_de_gene = TRUE, gene_log2fc_cutoff = 0.585, save_csv = TRUE
 )
 }
 }

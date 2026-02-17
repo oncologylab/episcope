@@ -40,5 +40,5 @@ fp_root_dir: /data/homes/yl814/fptools_test/GSE192390_ATAC_T_Cells/TOBIAS_merged
 # Module 3: Differential links
 gene_log2fc_cutoff: 1
 fp_delta_cutoff: 0.5
-fp_log2fc_cutoff: 0.5
+fp_log2fc_cutoff: 0.2
 fp_filter_mode: delta  # delta | log2fc

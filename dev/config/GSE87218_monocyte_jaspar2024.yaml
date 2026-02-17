@@ -43,5 +43,5 @@ force_rebuild_fp_manifest: true
 # Module 3: Differential links
 gene_log2fc_cutoff: 1
 fp_delta_cutoff: 0.5
-fp_log2fc_cutoff: 0.5
+fp_log2fc_cutoff: 0.2
 fp_filter_mode: delta  # delta | log2fc

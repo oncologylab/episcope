@@ -20,9 +20,11 @@ source("R/utils_step3_grn_diff.R")
 source("R/utils_step3_topic_warplda.R")
 
 load_config("dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml")
+# Testing only
+tf_binding_mode <- "all"
+omics_data_rds_path <- "/data/homes/yl814/episcope_test/nutrient_stress_strict_JASPAR2024/predict_tf_binding_sites_all/01_multiomic_data_object_JASPAR2024.rds"
 
 expected_n <- if (exists("expected_n")) expected_n else NULL
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Turn modules ON/OFF
 # ──────────────────────────────────────────────────────────────────────────────
@@ -80,7 +82,61 @@ if (do_tf_binding_sites_prediction == TRUE) {
 
 # Connect TFs to target genes ---------------------------------------------
 if (do_tf_to_target_genes_prediction == TRUE) {
-  step2_out_dir <- file.path(base_dir, "connect_tf_target_genes")
+  tf_binding_mode_step2 <- if (exists("tf_binding_mode")) as.character(tf_binding_mode) else "canonical"
+  tf_binding_mode_step2 <- match.arg(tf_binding_mode_step2, c("canonical", "all"))
+  if (!exists("omics_data") || is.null(omics_data)) {
+    omics_data_rds <- if (exists("omics_data_rds_path")) {
+      omics_data_rds_path
+    } else {
+      file.path(
+        base_dir,
+        paste0("predict_tf_binding_sites_", tf_binding_mode_step2),
+        sprintf("01_multiomic_data_object_%s.rds", db)
+      )
+    }
+    if (!file.exists(omics_data_rds)) {
+      .log_abort(
+        paste0(
+          "Step 2 requires `omics_data`. Expected RDS not found at: ",
+          omics_data_rds,
+          ". Set `omics_data_rds_path` to a valid file."
+        )
+      )
+    }
+    .log_inform(sprintf("Loading omics_data from %s", omics_data_rds))
+    omics_data <- readRDS(omics_data_rds)
+  }
+  if (!is.data.frame(omics_data$rna_condition)) {
+    .log_inform("`omics_data$rna_condition` missing; building from `omics_data$rna` using label_col = strict_match_rna.")
+    omics_data <- grn_add_rna_condition(
+      grn_set = omics_data,
+      label_col = "strict_match_rna",
+      verbose = TRUE
+    )
+  }
+  if (!("tfs" %in% names(omics_data$fp_annotation) || "TF" %in% names(omics_data$fp_annotation))) {
+    step1_tfbs_out_dir <- file.path(base_dir, paste0("predict_tf_binding_sites_", tf_binding_mode_step2))
+    fp_ann_tf_path <- file.path(
+      step1_tfbs_out_dir,
+      "cache",
+      sprintf("fp_annotation_strict_tf_filtered_corr_%s_%s.csv", db, tf_binding_mode_step2)
+    )
+    if (!file.exists(fp_ann_tf_path)) {
+      .log_abort(
+        paste0(
+          "`omics_data$fp_annotation` has no TF column (tfs/TF), and TF-annotated file was not found at: ",
+          fp_ann_tf_path
+        )
+      )
+    }
+    .log_inform(sprintf("Loading TF-annotated fp_annotation from %s", fp_ann_tf_path))
+    omics_data$fp_annotation <- readr::read_csv(fp_ann_tf_path, show_col_types = FALSE)
+  }
+  step2_out_dir <- if (identical(tf_binding_mode_step2, "all")) {
+    file.path(base_dir, "connect_tf_target_genes_all")
+  } else {
+    file.path(base_dir, "connect_tf_target_genes")
+  }
   dir.create(step2_out_dir, recursive = TRUE, showWarnings = FALSE)
 
   # Link TFBS to candidate target genes (GeneHancer / window / loops)
@@ -133,7 +189,10 @@ if (do_tf_to_target_genes_prediction == TRUE) {
   }
 
   # Correlate TF->gene and FP->gene (Spearman then Pearson)
-  options(future.globals.maxSize = 64 * 1024^3)
+  options(future.globals.maxSize = 196 * 1024^3)
+  fp_gene_workers <- if (exists("fp_gene_workers")) as.integer(fp_gene_workers) else {
+    if (identical(tf_binding_mode_step2, "all")) 8L else 20L
+  }
   fp_res_full_pearson <- correlate_fp_to_genes(
     grn_set          = omics_data,
     atac_gene_corr_kept = atac_gene_pairs,
@@ -144,9 +203,9 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     fdr              = threshold_fp_gene_corr_p,
     r_abs_min        = threshold_fp_gene_corr_abs_r,
     method           = "pearson",
-    workers          = 20,
+    workers          = fp_gene_workers,
     cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
-    cache_tag        = paste0("nutrient_", link_mode, "_pearson"),
+    cache_tag        = paste0("nutrient_", tf_binding_mode_step2, "_", link_mode, "_pearson"),
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
@@ -161,9 +220,9 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     fdr              = threshold_fp_gene_corr_p,
     r_abs_min        = threshold_fp_gene_corr_abs_r,
     method           = "spearman",
-    workers          = 30,
+    workers          = fp_gene_workers,
     cache_dir        = file.path(base_dir, "cache", "fp_gene_corr"),
-    cache_tag        = paste0("nutrient_", link_mode, "_spearman"),
+    cache_tag        = paste0("nutrient_", tf_binding_mode_step2, "_", link_mode, "_spearman"),
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
@@ -367,6 +426,7 @@ if (do_diff_grn == TRUE) {
         padj_cut = 0.05,
         plot_subnetwork = TRUE,
         top_n_pathways_plot = 10L,
+        gene_log2fc_cutoff = gene_log2fc_cutoff,
         overwrite = TRUE,
         verbose = TRUE
       )
@@ -382,6 +442,8 @@ if (do_diff_grn == TRUE) {
   }
 
 }
+
+
 
 if (isTRUE(do_topic_combo_run)) {
   # k_grid_default <- c(2:15, 20, 25, 35, 40, 45, 50, 60, 70, 80, 90, 100)

@@ -1006,6 +1006,45 @@ correlate_fp_to_genes <- function(
   stopifnot(is.data.frame(rna), all(c("ensembl_gene_id","HGNC") %in% names(rna)))
   stopifnot(is.data.frame(ann))
 
+  # Normalize fp_annotation schema across canonical/all pipelines.
+  fp_col <- if ("fp_peak" %in% names(ann)) {
+    "fp_peak"
+  } else if ("peak_ID" %in% names(ann)) {
+    "peak_ID"
+  } else {
+    NA_character_
+  }
+  atac_col <- if ("atac_peak" %in% names(ann)) "atac_peak" else NA_character_
+  tf_col <- if ("tfs" %in% names(ann)) {
+    "tfs"
+  } else if ("TF" %in% names(ann)) {
+    "TF"
+  } else {
+    NA_character_
+  }
+  motif_col <- if ("motifs" %in% names(ann)) {
+    "motifs"
+  } else if ("motif" %in% names(ann)) {
+    "motif"
+  } else {
+    NA_character_
+  }
+  if (is.na(fp_col) || is.na(atac_col) || is.na(tf_col)) {
+    cli::cli_abort(
+      paste0(
+        "`grn_set$fp_annotation` must contain fp/atac/TF columns. ",
+        "Accepted names: fp_peak or peak_ID; atac_peak; tfs or TF."
+      )
+    )
+  }
+  ann <- ann |>
+    dplyr::mutate(
+      fp_peak = as.character(.data[[fp_col]]),
+      atac_peak = as.character(.data[[atac_col]]),
+      tfs = as.character(.data[[tf_col]]),
+      motifs = if (is.na(motif_col)) NA_character_ else as.character(.data[[motif_col]])
+    )
+
   if (!is.null(atac_gene_corr_kept)) {
     stopifnot(is.data.frame(atac_gene_corr_kept))
     stopifnot(all(c("atac_peak","gene_key") %in% names(atac_gene_corr_kept)))
@@ -1322,6 +1361,64 @@ correlate_fp_to_genes <- function(
           file     = character(),
           chunk_id = integer()
         )
+      }
+    }
+
+    # Recover/augment index from on-disk chunk files (useful after interrupted runs).
+    if (isTRUE(cache_resume)) {
+      chunk_files <- list.files(
+        cache_root,
+        pattern = "^chunk_[0-9]+\\.csv\\.gz$",
+        full.names = TRUE
+      )
+      if (length(chunk_files)) {
+        files_missing_from_index <- setdiff(chunk_files, unique(cache_index$file))
+        if (length(files_missing_from_index)) {
+          if (cache_verbose) {
+            cli::cli_inform(
+              "Recovering FP cache index from {length(files_missing_from_index)} unindexed chunk file(s)."
+            )
+          }
+          recovered_idx <- lapply(files_missing_from_index, function(ff) {
+            id_chr <- sub("^chunk_([0-9]+)\\.csv\\.gz$", "\\1", basename(ff))
+            chunk_id <- suppressWarnings(as.integer(id_chr))
+            df <- tryCatch(
+              readr::read_csv(
+                ff,
+                col_select = c("fp_peak", "gene_key"),
+                show_col_types = FALSE,
+                progress = FALSE
+              ),
+              error = function(e) NULL
+            )
+            if (is.null(df) || !all(c("fp_peak", "gene_key") %in% names(df))) {
+              return(tibble::tibble(
+                fp_peak = character(),
+                gene_key = character(),
+                file = character(),
+                chunk_id = integer()
+              ))
+            }
+            tibble::tibble(
+              fp_peak = as.character(df$fp_peak),
+              gene_key = as.character(df$gene_key),
+              file = ff,
+              chunk_id = chunk_id
+            )
+          })
+          recovered_idx <- dplyr::bind_rows(recovered_idx)
+          if (nrow(recovered_idx)) {
+            cache_index <- dplyr::bind_rows(cache_index, recovered_idx) |>
+              dplyr::arrange(fp_peak, gene_key) |>
+              dplyr::distinct(fp_peak, gene_key, .keep_all = TRUE)
+            saveRDS(cache_index, index_file)
+            if (cache_verbose) {
+              cli::cli_inform(
+                "Recovered FP cache index now tracks {nrow(cache_index)} pairs across {length(unique(cache_index$chunk_id))} chunks."
+              )
+            }
+          }
+        }
       }
     }
 
