@@ -1611,6 +1611,18 @@ find_differential_links <- function(config,
       grDevices::pdf(out_pdf, width = 6.2, height = 4.6, onefile = TRUE)
       print(p)
       if (nrow(gene_counts_this)) {
+        caption_short <- paste0(
+          "Diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4),
+          ", high gene expr > ", signif(threshold_gene_expr_use, 4), ". ",
+          if (identical(fp_filter_mode, "log2fc")) {
+            paste0("FP: right direction + |log2FC_fp| >= ", signif(fp_log2fc_cutoff, 4),
+                   ", high fp > ", signif(threshold_fp_score_use, 4), ". ")
+          } else {
+            paste0("FP: right direction + |delta_fp| >= ", signif(fp_delta_cutoff, 4),
+                   ", high fp > ", signif(threshold_fp_score_use, 4), ". ")
+          },
+          "TF: not significant opposite direction, high TF expr > ", signif(threshold_tf_expr_use, 4), "."
+        )
         p_cnt <- ggplot2::ggplot(
           gene_counts_this,
           ggplot2::aes(y = .data$direction, x = .data$n_gene_unique, fill = .data$stage)
@@ -1627,15 +1639,7 @@ find_differential_links <- function(config,
             x = "Unique gene_key (N)",
             y = "Direction",
             fill = NULL,
-            caption = paste0(
-              "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
-              if (identical(fp_filter_mode, "log2fc")) {
-                paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
-              } else {
-                paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
-              },
-              "TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
-            )
+            caption = paste(caption_short, collapse = "\n")
           ) +
           ggplot2::theme_classic(base_size = 9) +
           ggplot2::theme(
@@ -1703,6 +1707,18 @@ find_differential_links <- function(config,
       ord_levels <- ord_tbl$comparison_direction
       if (!length(ord_levels)) ord_levels <- unique(counts_all$comparison_direction)
         counts_all$comparison_direction <- factor(counts_all$comparison_direction, levels = ord_levels)
+      caption_short_all <- paste0(
+        "Diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4),
+        ", high gene expr > ", signif(threshold_gene_expr_use, 4), ". ",
+        if (identical(fp_filter_mode, "log2fc")) {
+          paste0("FP: right direction + |log2FC_fp| >= ", signif(fp_log2fc_cutoff, 4),
+                 ", high fp > ", signif(threshold_fp_score_use, 4), ". ")
+        } else {
+          paste0("FP: right direction + |delta_fp| >= ", signif(fp_delta_cutoff, 4),
+                 ", high fp > ", signif(threshold_fp_score_use, 4), ". ")
+        },
+        "TF: not significant opposite direction, high TF expr > ", signif(threshold_tf_expr_use, 4), "."
+      )
       p_all_counts <- ggplot2::ggplot(
         counts_all,
         ggplot2::aes(y = .data$comparison_direction, x = .data$n_gene_unique, fill = .data$stage)
@@ -1719,15 +1735,7 @@ find_differential_links <- function(config,
           x = "Unique gene_key (N)",
           y = "Comparison | Direction",
           fill = NULL,
-          caption = paste0(
-            "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
-            if (identical(fp_filter_mode, "log2fc")) {
-              paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
-            } else {
-              paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4), ". ")
-            },
-            "TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
-          )
+          caption = paste(caption_short_all, collapse = "\n")
         ) +
         ggplot2::theme_classic(base_size = 9) +
         ggplot2::theme(
@@ -1744,7 +1752,7 @@ find_differential_links <- function(config,
       grDevices::pdf(summary_pdf, width = 11.2, height = dynamic_h, onefile = TRUE)
       print(p_all_counts)
       graphics::plot.new()
-      graphics::par(mar = c(1.5, 1.5, 2.2, 1.5))
+      graphics::par(mar = c(1.8, 1.8, 2.2, 1.8))
       note_fp_cut <- if (identical(fp_filter_mode, "log2fc")) {
         paste0("abs(log2FC_fp_score) >= ", signif(fp_log2fc_cutoff, 4))
       } else {
@@ -1753,31 +1761,52 @@ find_differential_links <- function(config,
       note_lines <- c(
         "How to read the 4 bars in this summary",
         "",
-        paste0("1) Total diff genes: from RNA only. Keep genes with abs(log2FC_gene_expr) >= ",
-               signif(gene_log2fc_cutoff, 4),
-               " and higher-group gene expression > ", signif(threshold_gene_expr_use, 4), "."),
-        "2) GRN filtered: genes that appear in the unfiltered differential link table.",
-        paste0("3) FP filtered: GRN links where gene and FP move in the same direction, ",
-               note_fp_cut, ", and higher-group FP score > ", signif(threshold_fp_score_use, 4), "."),
-        paste0("4) TF filtered: FP-filtered links after TF rule and TF expression filter. ",
-               "TF is removed only when it is significantly opposite to target direction; ",
-               "higher-group TF expression must be > ", signif(threshold_tf_expr_use, 4), "."),
+        strwrap(
+          paste0(
+            "1) Total diff genes: from RNA only. Keep genes with abs(log2FC_gene_expr) >= ",
+            signif(gene_log2fc_cutoff, 4),
+            " and higher-group gene expression > ", signif(threshold_gene_expr_use, 4), "."
+          ),
+          width = 115
+        ),
+        strwrap(
+          "2) GRN filtered: genes that appear in the unfiltered differential link table.",
+          width = 115
+        ),
+        strwrap(
+          paste0(
+            "3) FP filtered: GRN links where gene and FP move in the same direction, ",
+            note_fp_cut, ", and higher-group FP score > ", signif(threshold_fp_score_use, 4), "."
+          ),
+          width = 115
+        ),
+        strwrap(
+          paste0(
+            "4) TF filtered: FP-filtered links after TF rule and TF expression filter. ",
+            "TF is removed only when it is significantly opposite to target direction; ",
+            "higher-group TF expression must be > ", signif(threshold_tf_expr_use, 4), "."
+          ),
+          width = 115
+        ),
         "",
-        "Counts are unique gene_key values per comparison-direction."
+        strwrap("Counts are unique gene_key values per comparison-direction.", width = 115)
       )
       graphics::text(
         x = 0.03, y = 0.96, labels = paste(note_lines, collapse = "\n"),
-        adj = c(0, 1), cex = 1.0, font = 2
+        adj = c(0, 1), cex = 0.92, font = 2
       )
       if (length(all_gene_filter_rows)) {
         cutoff_caption <- paste0(
-          "Total diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4), " and high-group gene expr > ", signif(threshold_gene_expr_use, 4), "; ",
+          "Diff genes: |gene log2FC| >= ", signif(gene_log2fc_cutoff, 4),
+          ", high gene expr > ", signif(threshold_gene_expr_use, 4),
           if (identical(fp_filter_mode, "log2fc")) {
-            paste0("FP filtered: right direction + fp log2FC >= ", signif(fp_log2fc_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4))
+            paste0(" | FP: right direction + |log2FC_fp| >= ", signif(fp_log2fc_cutoff, 4),
+                   ", high fp > ", signif(threshold_fp_score_use, 4))
           } else {
-            paste0("FP filtered: right direction + fp delta >= ", signif(fp_delta_cutoff, 4), " + high-group fp > ", signif(threshold_fp_score_use, 4))
+            paste0(" | FP: right direction + |delta_fp| >= ", signif(fp_delta_cutoff, 4),
+                   ", high fp > ", signif(threshold_fp_score_use, 4))
           },
-          "; TF filtered: not significant wrong TF direction + high-group TF expr > ", signif(threshold_tf_expr_use, 4), "."
+          "\nTF: not significant opposite direction, high TF expr > ", signif(threshold_tf_expr_use, 4), "."
         )
         gf_all <- dplyr::bind_rows(all_gene_filter_rows)
         if (nrow(gf_all)) {
@@ -1802,7 +1831,7 @@ find_differential_links <- function(config,
           n_per_page_venn <- 20L
           page_chunks <- split(seq_along(venn_items), ceiling(seq_along(venn_items) / n_per_page_venn))
           for (chunk in page_chunks) {
-            graphics::par(mfrow = c(4, 5), mar = c(1.1, 1.1, 2.6, 0.8), oma = c(1.6, 0.5, 1.2, 0.5), font = 2)
+            graphics::par(mfrow = c(4, 5), mar = c(1.1, 1.1, 2.6, 0.8), oma = c(2.7, 0.5, 1.2, 0.5), font = 2)
             for (ii in chunk) {
               itm <- venn_items[[ii]]
               .plot_two_way_venn(
@@ -1812,7 +1841,7 @@ find_differential_links <- function(config,
               )
             }
             for (kk in seq_len(n_per_page_venn - length(chunk))) graphics::plot.new()
-            graphics::mtext(cutoff_caption, side = 1, outer = TRUE, line = 0.2, cex = 0.80, font = 2)
+            graphics::mtext(cutoff_caption, side = 1, outer = TRUE, line = 0.7, cex = 0.70, font = 2)
             graphics::mtext("Unique gene_key overlap: FP filtered vs TF filtered", side = 3, outer = TRUE, line = 0.2, cex = 0.84, font = 2)
           }
         }
