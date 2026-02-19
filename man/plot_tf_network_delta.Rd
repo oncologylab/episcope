@@ -42,7 +42,9 @@ plot_tf_network_delta(
   tf_expr_ctrl_col = NULL,
   tf_expr_str_col = NULL,
   gene_expr_ctrl_col = NULL,
-  gene_expr_str_col = NULL
+  gene_expr_str_col = NULL,
+  log2fc_tf_col = "log2FC_tf_expr",
+  log2fc_gene_col = "log2FC_gene_expr"
 )
 }
 \arguments{
@@ -97,6 +99,9 @@ link scores (e.g., \code{link_score_*}). Signs/expressions are optional.}
 \item{sign_ctrl_col, sign_str_col}{Optional explicit column names of per-condition link signs.}
 
 \item{tf_expr_ctrl_col, tf_expr_str_col, gene_expr_ctrl_col, gene_expr_str_col}{Optional expression columns.}
+
+\item{log2fc_tf_col, log2fc_gene_col}{Precomputed log2FC columns used for node direction/color and TF tooltip.
+Defaults are `log2FC_tf_expr` and `log2FC_gene_expr`. This function will not recompute these values.}
 }
 \value{
 A \code{visNetwork} htmlwidget (or, invisibly, \code{out_html} path if saved).

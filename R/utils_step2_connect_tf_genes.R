@@ -2691,6 +2691,7 @@ make_basal_links <- function(fp_gene_corr_kept, fp_annotation,
 #' @param rna_variance_tbl Optional RNA variance table (ensembl_gene_id/HGNC + mean_raw/var_raw/rsd).
 #' @param use_parallel Whether to parallelize across conditions.
 #' @param workers Number of worker processes when `use_parallel = TRUE`.
+#' @param reuse_existing If TRUE, skip conditions with existing output files.
 #' @param verbose Verbose messages.
 #'
 #' @export
@@ -2712,6 +2713,7 @@ light_by_condition <- function(ds, basal_links,
                                filter_active        = FALSE,
                                use_parallel = TRUE,
                                workers = max(1L, round(parallel::detectCores(logical = TRUE)/2)),
+                               reuse_existing = TRUE,
                                verbose = TRUE,
                                fp_variance_tbl = NULL,
                                rna_variance_tbl = NULL) {
@@ -2955,6 +2957,18 @@ light_by_condition <- function(ds, basal_links,
 
   # ------- one condition -------
   build_one <- function(cond_id, cond_label) {
+    out_file <- file.path(matrices_dir, .cond_file(cond_label))
+    if (isTRUE(reuse_existing) && file.exists(out_file)) {
+      n_existing <- tryCatch(
+        nrow(readr::read_csv(out_file, show_col_types = FALSE)),
+        error = function(e) NA_integer_
+      )
+      if (isTRUE(verbose)) {
+        .log_inform("[light_by_condition] Reusing existing file: {basename(out_file)}")
+      }
+      return(tibble::tibble(label = cond_label, n_links_rows = n_existing))
+    }
+
     # dynamic pulls via base subsetting to avoid NSE/rlang
     fp_score_one <- fp_u[, c("peak_ID", cond_id), drop = FALSE]
     names(fp_score_one) <- c("peak_ID", "fp_score")
@@ -3103,10 +3117,7 @@ light_by_condition <- function(ds, basal_links,
         dplyr::filter(.data$active_link)
     }
 
-    readr::write_csv(
-      links,
-      file.path(matrices_dir, .cond_file(cond_label))
-    )
+    readr::write_csv(links, out_file)
     tibble::tibble(label = cond_label, n_links_rows = nrow(links))
   }
 
@@ -3123,7 +3134,12 @@ light_by_condition <- function(ds, basal_links,
     index <- purrr::map2_dfr(ids, labs, build_one)
   }
 
-  readr::write_csv(index, file.path(matrices_dir, sprintf("%s_per_condition_index.csv", prefix)))
+  idx_file <- if (is.character(prefix) && nzchar(prefix)) {
+    sprintf("%s_per_condition_index.csv", prefix)
+  } else {
+    "per_condition_index.csv"
+  }
+  readr::write_csv(index, file.path(matrices_dir, idx_file))
   .log("Wrote per-condition index: %s rows.", format(nrow(index), big.mark = ","))
   invisible(index)
 }

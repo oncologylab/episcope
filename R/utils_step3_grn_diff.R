@@ -229,7 +229,30 @@ load_links_table <- function(x, verbose = TRUE, keep_all_cols = TRUE) {
 
   tbl <- if (is.character(x) && length(x) == 1L) {
     .log(paste0("from CSV: ", x), verbose = verbose)
-    readr::read_csv(x, show_col_types = FALSE)
+    if (isTRUE(keep_all_cols)) {
+      readr::read_csv(x, show_col_types = FALSE)
+    } else {
+      # Memory-safe fast path for very large per-condition tables:
+      # load only columns needed by differential-link computations.
+      readr::read_csv(
+        x,
+        show_col_types = FALSE,
+        col_select = dplyr::any_of(c(
+          "TF", "gene_key", "peak_ID",
+          "link_score", "edge_weight", "link_weight", "weight",
+          "fp_score", "fp_bed_score", "footprint_score", "fp",
+          "tf_expr", "gene_expr",
+          "active", "active_link",
+          "link_sign",
+          "r_gene", "p_gene", "p_adj_gene",
+          "r_tf", "p_tf", "p_adj_tf",
+          "motif", "n_used_tf",
+          "r_rna_gene", "p_rna_gene", "p_rna_adj_gene",
+          "fp_mean_raw", "fp_var_raw", "fp_rsd",
+          "gene_mean_raw", "gene_var_raw", "gene_rsd"
+        ))
+      )
+    }
   } else if (inherits(x, "data.frame")) {
     .log("from in-memory tibble/data.frame", verbose = verbose)
     x
@@ -739,10 +762,12 @@ build_cellwise_contrasts_from_index <- function(index_csv,
   .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
   .mk_cond_link_path <- function(lab) {
     s_lab <- .safe_label(lab)
-    new_path <- file.path(input_dir, sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
-    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
-    old_path <- file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
-    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    pre <- if (is.character(input_prefix) && nzchar(input_prefix)) paste0(input_prefix, "_") else ""
+    old_pre <- if (is.character(input_prefix) && nzchar(input_prefix)) paste0(input_prefix, "_cond-") else "cond-"
+    new_path <- file.path(input_dir, sprintf("%s%s_tf_gene_links.csv", pre, s_lab))
+    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s%s_tf_gene_links.csv", pre, s_lab))
+    old_path <- file.path(input_dir, sprintf("%s%s_tf_gene_links.csv", old_pre, s_lab))
+    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s%s_tf_gene_links.csv", old_pre, s_lab))
     if (file.exists(new_path)) return(new_path)
     if (file.exists(new_path_sub)) return(new_path_sub)
     if (file.exists(old_path_sub)) return(old_path_sub)
@@ -888,10 +913,12 @@ run_links_deltas_driver <- function(specs,
   .safe_label <- function(x) gsub("[^A-Za-z0-9_.-]+", "_", x)
   .mk_cond_link_path <- function(lab) {
     s_lab <- .safe_label(lab)
-    new_path <- file.path(input_dir, sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
-    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_%s_tf_gene_links.csv", input_prefix, s_lab))
-    old_path <- file.path(input_dir, sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
-    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s_cond-%s_tf_gene_links.csv", input_prefix, s_lab))
+    pre <- if (is.character(input_prefix) && nzchar(input_prefix)) paste0(input_prefix, "_") else ""
+    old_pre <- if (is.character(input_prefix) && nzchar(input_prefix)) paste0(input_prefix, "_cond-") else "cond-"
+    new_path <- file.path(input_dir, sprintf("%s%s_tf_gene_links.csv", pre, s_lab))
+    new_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s%s_tf_gene_links.csv", pre, s_lab))
+    old_path <- file.path(input_dir, sprintf("%s%s_tf_gene_links.csv", old_pre, s_lab))
+    old_path_sub <- file.path(input_dir, "per_condition_link_matrices", sprintf("%s%s_tf_gene_links.csv", old_pre, s_lab))
     if (file.exists(new_path)) return(new_path)
     if (file.exists(new_path_sub)) return(new_path_sub)
     if (file.exists(old_path_sub)) return(old_path_sub)
@@ -949,6 +976,8 @@ run_links_deltas_driver <- function(specs,
 #' @param clean_names Logical; pass-through to comparisons builder.
 #' @param parallel Logical; pass-through to delta computation.
 #' @param workers Integer; pass-through to delta computation.
+#' @param keep_all_cols_delta Logical; if TRUE, retain all per-condition input
+#'   columns in delta tables. Default FALSE to reduce memory usage.
 #' @param summary_tag Optional tag to insert into TF hub summary filenames.
 #' @param write_tf_hubs_fp If TRUE, write TF hub summaries using delta FP scores.
 #' @param overwrite_delta Logical; if TRUE, recompute `diff_links` even if files exist.
@@ -972,6 +1001,7 @@ find_differential_links <- function(config,
                                     clean_names = FALSE,
                                     parallel = TRUE,
                                     workers = NULL,
+                                    keep_all_cols_delta = FALSE,
                                     summary_tag = NULL,
                                     write_tf_hubs_fp = TRUE,
                                     overwrite_delta = FALSE,
@@ -1031,9 +1061,9 @@ find_differential_links <- function(config,
     specs <- comp_tbl[, c("cond1_label", "cond2_label")]
   } else {
     idx_csv <- file.path(step2_out_dir, "per_condition_link_matrices", "step2_per_condition_index.csv")
-    if (!file.exists(idx_csv)) {
-      idx_csv <- file.path(step2_out_dir, "step2_per_condition_index.csv")
-    }
+    if (!file.exists(idx_csv)) idx_csv <- file.path(step2_out_dir, "step2_per_condition_index.csv")
+    if (!file.exists(idx_csv)) idx_csv <- file.path(step2_out_dir, "per_condition_link_matrices", "per_condition_index.csv")
+    if (!file.exists(idx_csv)) idx_csv <- file.path(step2_out_dir, "per_condition_index.csv")
     specs <- build_cellwise_contrasts_from_index(
       index_csv = idx_csv,
       out_dir = delta_dir,
@@ -1066,7 +1096,7 @@ find_differential_links <- function(config,
       workers = workers,
       restrict_to_active_both = FALSE,
       edge_change_min = 0,
-      keep_all_cols = TRUE,
+      keep_all_cols = keep_all_cols_delta,
       input_dir = step2_out_dir,
       input_prefix = input_prefix,
       out_dir = delta_dir
@@ -2237,12 +2267,12 @@ find_differential_links <- function(config,
             mat[conn$TF_src[ii], conn$TF_tgt[ii]] <- conn$N[ii]
           }
 
-          deg_cut <- suppressWarnings(as.integer(connectivity_min_degree))
-          if (!is.finite(deg_cut) || is.na(deg_cut) || deg_cut < 0L) deg_cut <- 1L
+          direct_link_min <- 1L
+          cutoff_caption_text <- "TF inclusion cutoff: rows have >=1 outgoing TF->TF link; columns have >=1 incoming TF->TF link"
           adj_undir_keep <- (mat > 0) | (t(mat) > 0)
           diag(adj_undir_keep) <- FALSE
           deg_vec <- rowSums(adj_undir_keep, na.rm = TRUE)
-          tf_keep <- names(deg_vec)[deg_vec >= deg_cut]
+          tf_keep <- names(deg_vec)[deg_vec >= direct_link_min]
           if (length(tf_keep) >= 2L) {
             mat <- mat[tf_keep, tf_keep, drop = FALSE]
           } else {
@@ -2252,7 +2282,7 @@ find_differential_links <- function(config,
               graphics::plot.new()
               graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF connectivity heatmap"))
               graphics::text(0.5, 0.58, "No TFs pass connectivity cutoff")
-              graphics::text(0.5, 0.50, paste0("Cutoff: undirected degree >= ", deg_cut))
+              graphics::text(0.5, 0.50, cutoff_caption_text)
               graphics::text(0.5, 0.42, paste0("TFs passing cutoff: ", length(tf_keep)))
               try(grDevices::dev.off(pdf_dev), silent = TRUE)
             }, error = function(e) {
@@ -2262,13 +2292,13 @@ find_differential_links <- function(config,
           }
 
           if (!is.null(mat) && is.matrix(mat) && nrow(mat) >= 2L) {
-            # Build an undirected shortest-path connectivity score.
-            # Score(i,j) = 1 / (1 + number of intermediate TF nodes on shortest path i->j),
-            # so direct links have score 1 and disconnected pairs have score 0.
-            adj_undir <- (mat > 0) | (t(mat) > 0)
-            diag(adj_undir) <- FALSE
-            n_tf <- nrow(adj_undir)
-            dist_mat <- matrix(Inf, n_tf, n_tf, dimnames = dimnames(adj_undir))
+            # Build a directed shortest-path connectivity score.
+            # Score(i,j) = 1 / (# directed TF->TF steps from regulator i to target j).
+            # Direct links have score 1, two-step paths have 0.5, and unreachable pairs are 0.
+            adj_dir <- (mat > 0)
+            diag(adj_dir) <- FALSE
+            n_tf <- nrow(adj_dir)
+            dist_mat <- matrix(Inf, n_tf, n_tf, dimnames = dimnames(adj_dir))
             for (src in seq_len(n_tf)) {
               d <- rep(Inf, n_tf)
               d[src] <- 0
@@ -2276,7 +2306,7 @@ find_differential_links <- function(config,
               while (length(q)) {
                 v <- q[[1]]
                 q <- q[-1]
-                nb <- which(adj_undir[v, ] & is.infinite(d))
+                nb <- which(adj_dir[v, ] & is.infinite(d))
                 if (length(nb)) {
                   d[nb] <- d[v] + 1
                   q <- c(q, nb)
@@ -2284,31 +2314,39 @@ find_differential_links <- function(config,
               }
               dist_mat[src, ] <- d
             }
-            nodes_needed <- pmax(dist_mat - 1, 0)
             conn_mindist <- matrix(0, n_tf, n_tf, dimnames = dimnames(dist_mat))
-            conn_mindist[is.finite(nodes_needed)] <- 1 / (1 + nodes_needed[is.finite(nodes_needed)])
+            valid_path <- is.finite(dist_mat) & dist_mat > 0
+            conn_mindist[valid_path] <- 1 / dist_mat[valid_path]
             self_reg <- as.numeric(diag(mat) > 0)
             diag(conn_mindist) <- self_reg
 
-            # Drop TFs that are all-zero in both source and target dimensions.
-            keep_nonzero_mindist <- (rowSums(abs(conn_mindist), na.rm = TRUE) > 0) |
-              (colSums(abs(conn_mindist), na.rm = TRUE) > 0)
-            if (any(!keep_nonzero_mindist)) {
-              conn_mindist <- conn_mindist[keep_nonzero_mindist, keep_nonzero_mindist, drop = FALSE]
+            # Keep rows/columns separately:
+            # rows must have >=1 outgoing direct TF->TF link; columns must have >=1 incoming direct TF->TF link.
+            keep_rows <- rowSums(adj_dir, na.rm = TRUE) > 0
+            keep_cols <- colSums(adj_dir, na.rm = TRUE) > 0
+            if (any(!keep_rows) || any(!keep_cols)) {
+              conn_mindist <- conn_mindist[keep_rows, keep_cols, drop = FALSE]
             }
 
             # Standalone square heatmap PDF with one page (min-distance connectivity).
             tryCatch({
               old_dev <- grDevices::dev.cur()
-              tf_n <- nrow(conn_mindist)
+              tf_n <- max(nrow(conn_mindist), ncol(conn_mindist))
               side_in <- max(10, min(24, 4 + 0.15 * tf_n))
               grDevices::pdf(out_pdf_heatmap, width = side_in, height = side_in, onefile = TRUE)
               pdf_dev <- grDevices::dev.cur()
               grDevices::dev.set(pdf_dev)
 
-            .plot_mat_tile <- function(mat_in, title_in, fill_title, fill_limits = NULL, fill_breaks = NULL, fill_labels = NULL) {
-              ord <- stats::hclust(stats::dist(mat_in), method = "complete")$order
-              mat_ord <- mat_in[ord, ord, drop = FALSE]
+            .plot_mat_tile <- function(mat_in, title_in, fill_title, fill_limits = NULL, fill_breaks = NULL, fill_labels = NULL, x_lab = "TF target", y_lab = "TF source", caption_text = cutoff_caption_text) {
+              row_ord <- seq_len(nrow(mat_in))
+              col_ord <- seq_len(ncol(mat_in))
+              if (nrow(mat_in) >= 2L) {
+                row_ord <- tryCatch(stats::hclust(stats::dist(mat_in), method = "complete")$order, error = function(e) row_ord)
+              }
+              if (ncol(mat_in) >= 2L) {
+                col_ord <- tryCatch(stats::hclust(stats::dist(t(mat_in)), method = "complete")$order, error = function(e) col_ord)
+              }
+              mat_ord <- mat_in[row_ord, col_ord, drop = FALSE]
               dt <- data.table::as.data.table(as.table(mat_ord))
               names(dt) <- c("TF_row", "TF_col", "value")
               dt[, value_fill := as.numeric(value)]
@@ -2326,7 +2364,7 @@ find_differential_links <- function(config,
               }
               dt[, TF_row := factor(as.character(TF_row), levels = rev(rownames(mat_ord)))]
               dt[, TF_col := factor(as.character(TF_col), levels = colnames(mat_ord))]
-              fs <- max(6.5, min(13, 340 / max(10, nrow(mat_ord))))
+              fs <- max(10, min(20, 460 / max(10, max(nrow(mat_ord), ncol(mat_ord)))))
               p_hm <- ggplot2::ggplot(dt, ggplot2::aes(x = TF_col, y = TF_row, fill = value_fill)) +
                 ggplot2::geom_tile() +
                 ggplot2::scale_fill_gradientn(
@@ -2342,16 +2380,16 @@ find_differential_links <- function(config,
                 ggplot2::coord_fixed() +
                 ggplot2::labs(
                   title = title_in,
-                  x = "TF target",
-                  y = "TF source",
-                  caption = paste0("TF inclusion cutoff: undirected degree >= ", deg_cut)
+                  x = x_lab,
+                  y = y_lab,
+                  caption = caption_text
                 ) +
                 ggplot2::theme_minimal(base_size = 11) +
                 ggplot2::theme(
                   text = ggplot2::element_text(face = "bold"),
                   plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
-                  axis.title.x = ggplot2::element_text(face = "bold"),
-                  axis.title.y = ggplot2::element_text(face = "bold"),
+                  axis.title.x = ggplot2::element_text(face = "bold", size = max(14, fs + 1)),
+                  axis.title.y = ggplot2::element_text(face = "bold", size = max(14, fs + 1)),
                   axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5, size = fs, face = "bold"),
                   axis.text.y = ggplot2::element_text(size = fs, face = "bold"),
                   plot.caption = ggplot2::element_text(face = "bold", hjust = 0, size = max(8, fs * 0.9)),
@@ -2360,22 +2398,25 @@ find_differential_links <- function(config,
               print(p_hm)
             }
 
-            if (nrow(conn_mindist) >= 2L) {
+            if (nrow(conn_mindist) >= 1L && ncol(conn_mindist) >= 1L) {
               .plot_mat_tile(
                 conn_mindist,
                 paste0(
                   sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                  " | TF-to-TF min-distance connectivity\nScore(i,j)=1/(1 + # intermediate TFs); direct=1; disconnected=0; self=1 only when self-regulated."
+                  " | TF-to-TF min-distance connectivity (directed)\nScore(i,j)=1/# directed TF->TF steps; direct=1; two-step=0.5; unreachable=0."
                 ),
                 "connectivity score",
                 fill_limits = c(0, 1),
                 fill_breaks = c(0, 0.5, 1),
-                fill_labels = c("0", "0.5", "1")
+                fill_labels = c("0", "0.5", "1"),
+                x_lab = "TF targets",
+                y_lab = "TF regulators",
+                caption_text = cutoff_caption_text
               )
 
               # Page 2: composite TF-to-TF score:
               # Score(i,j) = I(i->j) + I(j->i) + 0.5 * #shared targets(i,j)
-              tf_nodes <- rownames(conn_mindist)
+              tf_nodes <- intersect(rownames(conn_mindist), colnames(conn_mindist))
               n_tf2 <- length(tf_nodes)
               targets_by_tf <- lapply(tf_nodes, function(tf_i) {
                 unique(gene_dt[TF == tf_i, gene_key])
@@ -2394,32 +2435,54 @@ find_differential_links <- function(config,
                 }
               }
               diag(conn_composite) <- as.numeric(diag(mat[tf_nodes, tf_nodes, drop = FALSE]) > 0)
-              keep_nonzero_comp <- (rowSums(abs(conn_composite), na.rm = TRUE) > 0) |
-                (colSums(abs(conn_composite), na.rm = TRUE) > 0)
+              # Page-2 specific cutoff: keep TFs with max off-diagonal composite
+              # score >= 5, then retain composite scores >= 5 in the matrix.
+              comp_min_cut <- 5
+              offdiag_raw <- conn_composite
+              diag(offdiag_raw) <- 0
+              row_max <- apply(offdiag_raw, 1, function(x) {
+                m <- suppressWarnings(max(x, na.rm = TRUE))
+                if (is.finite(m)) m else 0
+              })
+              col_max <- apply(offdiag_raw, 2, function(x) {
+                m <- suppressWarnings(max(x, na.rm = TRUE))
+                if (is.finite(m)) m else 0
+              })
+              keep_nonzero_comp <- pmax(row_max, col_max) >= comp_min_cut
+              if (nrow(conn_composite) >= 2L) {
+                offdiag <- conn_composite
+                diag(offdiag) <- 0
+                offdiag[offdiag < comp_min_cut] <- 0
+                conn_composite <- offdiag
+              }
               if (any(!keep_nonzero_comp)) {
                 conn_composite <- conn_composite[keep_nonzero_comp, keep_nonzero_comp, drop = FALSE]
               }
               if (nrow(conn_composite) >= 2L) {
+                conn_composite_plot <- log2(conn_composite + 1)
                 .plot_mat_tile(
-                  conn_composite,
+                  conn_composite_plot,
                   paste0(
                     sub("^TF hubs \\(delta fp_score\\) - ", "", title_text),
-                    " | TF-to-TF composite connectivity\nScore(i,j)=I(i->j)+I(j->i)+0.5*#shared targets; self=1 only when self-regulated."
+                    " | TF-to-TF composite connectivity\nScore(i,j)=(i->j)+(j->i)+0.5*#shared targets; fill=log2(1+score)"
                   ),
-                  "composite score",
-                  fill_limits = c(0, suppressWarnings(max(conn_composite, na.rm = TRUE)))
+                  "log2(1+composite score)",
+                  fill_limits = c(0, suppressWarnings(max(conn_composite_plot, na.rm = TRUE))),
+                  x_lab = "",
+                  y_lab = "",
+                  caption_text = "TF inclusion cutoff: max(scores)>=5"
                 )
               } else {
                 graphics::plot.new()
                 graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF composite connectivity"))
                 graphics::text(0.5, 0.56, "All TFs became zero-score after filtering")
-                graphics::text(0.5, 0.47, paste0("Cutoff: undirected degree >= ", deg_cut))
+                graphics::text(0.5, 0.47, "TF inclusion cutoff: max(scores)>=5")
               }
             } else {
               graphics::plot.new()
               graphics::title(main = paste0(sub("^TF hubs \\(delta fp_score\\) - ", "", title_text), " | TF-to-TF min-distance connectivity"))
               graphics::text(0.5, 0.56, "All TFs became zero-score after filtering")
-              graphics::text(0.5, 0.47, paste0("Cutoff: undirected degree >= ", deg_cut))
+              graphics::text(0.5, 0.47, cutoff_caption_text)
             }
               # Close standalone PDF immediately and return to the original device.
               try(grDevices::dev.off(pdf_dev), silent = TRUE)
@@ -2502,7 +2565,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
                                        plot_subnetwork = TRUE,
                                        top_n_pathways_plot = 10L,
                                        pathway_gene_overlap_thresh = 0.8,
-                                       subnetwork_dirname = "pathway_enrichment_grn",
+                                       subnetwork_dirname = "pathway_enrichment",
                                        html_selfcontained = FALSE,
                                        gene_log2fc_cutoff = NULL,
                                        overwrite = FALSE,
@@ -2544,7 +2607,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
   }
   step3_root <- dirname(filtered_dir)
   subnetwork_root <- file.path(step3_root, subnetwork_dirname)
-  if (isTRUE(can_plot)) dir.create(subnetwork_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(subnetwork_root, recursive = TRUE, showWarnings = FALSE)
   summary_rows <- list()
 
   .split_genes <- function(x) {
@@ -2724,7 +2787,10 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
     comparison_id <- sub("_(up|down)$", "", file_base, ignore.case = TRUE)
     comparison_id <- sub("_filtered_links$", "", comparison_id, ignore.case = TRUE)
 
-    out_csv <- sub("\\.csv$", "_pathway_enrichment.csv", csv, ignore.case = TRUE)
+    out_csv <- file.path(
+      subnetwork_root,
+      basename(sub("\\.csv$", "_pathway_enrichment.csv", csv, ignore.case = TRUE))
+    )
     if (!isTRUE(overwrite) && file.exists(out_csv)) {
       out_files <- c(out_files, out_csv)
       res <- readr::read_csv(out_csv, show_col_types = FALSE)
@@ -2856,6 +2922,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
         pathway_rank = i,
         pathway = p_name,
         adjusted_p = as.numeric(plot_rows$adjusted_p[i]),
+        pathway_genes = as.character(plot_rows$genes[i]),
         n_links = nrow(sub_links),
         html = out_html,
         stringsAsFactors = FALSE
@@ -2865,7 +2932,7 @@ run_diff_links_pathway_grn <- function(diff_res = NULL,
 
   if (isTRUE(can_plot) && length(summary_rows)) {
     summary_tbl <- dplyr::bind_rows(summary_rows)
-    readr::write_csv(summary_tbl, file.path(subnetwork_root, "pathway_sub_network_summary.csv"))
+    readr::write_csv(summary_tbl, file.path(subnetwork_root, "pathway_summary.csv"))
   } else if (isTRUE(can_plot) && isTRUE(verbose)) {
     .log_inform("Pathway subnet plotting: no pathway subnet HTML files were produced.")
   }

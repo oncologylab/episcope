@@ -25,6 +25,7 @@ light_by_condition(
   filter_active = FALSE,
   use_parallel = TRUE,
   workers = max(1L, round(parallel::detectCores(logical = TRUE)/2)),
+  reuse_existing = TRUE,
   verbose = TRUE,
   fp_variance_tbl = NULL,
   rna_variance_tbl = NULL
@@ -73,6 +74,8 @@ c("strict_match_rna","cell_stress_type") for backward-compatibility.}
 \item{use_parallel}{Whether to parallelize across conditions.}
 
 \item{workers}{Number of worker processes when `use_parallel = TRUE`.}
+
+\item{reuse_existing}{If TRUE, skip conditions with existing output files.}
 
 \item{verbose}{Verbose messages.}
 

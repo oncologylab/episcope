@@ -14,7 +14,7 @@ run_diff_links_pathway_grn(
   plot_subnetwork = TRUE,
   top_n_pathways_plot = 10L,
   pathway_gene_overlap_thresh = 0.8,
-  subnetwork_dirname = "subnet_pathway",
+  subnetwork_dirname = "pathway_enrichment",
   html_selfcontained = FALSE,
   gene_log2fc_cutoff = NULL,
   overwrite = FALSE,
@@ -41,8 +41,9 @@ plot per comparison-direction.}
 \item{pathway_gene_overlap_thresh}{Overlap threshold (relative to smaller
 gene set) used to treat pathways as redundant before plotting.}
 
-\item{subnetwork_dirname}{Output subfolder (under \code{filtered_dir}) for
-pathway subnetworks.}
+\item{subnetwork_dirname}{Output subfolder (under step3 root, sibling to
+\code{diff_links_filtered} and \code{master_tf_summary}) for pathway
+subnetworks.}
 
 \item{html_selfcontained}{Passed to \code{htmlwidgets::saveWidget()} for
 pathway subnet HTML.}

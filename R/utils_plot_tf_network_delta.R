@@ -1,6 +1,6 @@
 # utils_plot_tf_network_delta.R ?Simplified -network plot (all links) w/ crowd controls
 # Author: Yaoxiang Li
-# Updated: 2025-12-05
+# Updated: 2026-02-17
 
 #' Plot an interactive -network for all TFpeakgene links
 #' (single-panel  = case ?control) with crowd-control options.
@@ -37,6 +37,8 @@
 #' @param score_ctrl_col,score_str_col Optional explicit column names of per-condition link scores.
 #' @param sign_ctrl_col,sign_str_col Optional explicit column names of per-condition link signs.
 #' @param tf_expr_ctrl_col,tf_expr_str_col,gene_expr_ctrl_col,gene_expr_str_col Optional expression columns.
+#' @param log2fc_tf_col,log2fc_gene_col Precomputed log2FC columns used for node direction/color and TF tooltip.
+#'   Defaults are `log2FC_tf_expr` and `log2FC_gene_expr`. This function will not recompute these values.
 #'
 #' @return A \code{visNetwork} htmlwidget (or, invisibly, \code{out_html} path if saved).
 #'
@@ -78,7 +80,9 @@ plot_tf_network_delta <- function(
     tf_expr_ctrl_col   = NULL,
     tf_expr_str_col    = NULL,
     gene_expr_ctrl_col = NULL,
-    gene_expr_str_col  = NULL
+    gene_expr_str_col  = NULL,
+    log2fc_tf_col      = "log2FC_tf_expr",
+    log2fc_gene_col    = "log2FC_gene_expr"
 ){
   layout_algo  <- match.arg(layout_algo)
   de_reference <- match.arg(de_reference)
@@ -88,7 +92,7 @@ plot_tf_network_delta <- function(
   if (identical(show_peaks, FALSE)) peak_mode <- "hide"
   set.seed(as.integer(seed) %% .Machine$integer.max)
 
-  #  Styling 
+  #  Styling
   col_edge_pos    <- "#df1d16"  #  > 0
   col_edge_neg    <- "#255dae"  #  < 0
   col_edge_zero   <- "#C8C8C8"
@@ -183,7 +187,7 @@ plot_tf_network_delta <- function(
     x %in% (get_tf_syms() %||% character(0))
   }
 
-  #  Load & map data 
+  #  Load & map data
   if (is.character(data) && length(data) == 1L && file.exists(data)) {
     if (verbose) message("[net] Reading: ", data)
     ext <- tolower(tools::file_ext(data))
@@ -262,13 +266,20 @@ plot_tf_network_delta <- function(
   if (!score_ctrl_col %in% ns || !score_str_col %in% ns) {
     .log_abort("Missing score columns: {score_ctrl_col} / {score_str_col}. Provide correct values via score_ctrl_col / score_str_col.")
   }
+  if (!is.character(log2fc_tf_col) || length(log2fc_tf_col) != 1L || !nzchar(log2fc_tf_col) || !(log2fc_tf_col %in% ns)) {
+    .log_abort("Missing required precomputed TF log2FC column: {log2fc_tf_col}. Provide correct `log2fc_tf_col`; this plot does not recompute TF log2FC.")
+  }
+  if (!is.character(log2fc_gene_col) || length(log2fc_gene_col) != 1L || !nzchar(log2fc_gene_col) || !(log2fc_gene_col %in% ns)) {
+    .log_abort("Missing required precomputed gene log2FC column: {log2fc_gene_col}. Provide correct `log2fc_gene_col`; this plot does not recompute gene log2FC.")
+  }
 
   take <- unique(na.omit(c(
     tf_col, gene_col, peak_col,
     score_ctrl_col, score_str_col,
     sign_ctrl_col, sign_str_col,
     tf_expr_ctrl_col, tf_expr_str_col,
-    gene_expr_ctrl_col, gene_expr_str_col
+    gene_expr_ctrl_col, gene_expr_str_col,
+    log2fc_tf_col, log2fc_gene_col
   )))
   ed <- DF[, take, drop = FALSE]
   names(ed)[match(tf_col,   names(ed))] <- "TF"
@@ -294,6 +305,12 @@ plot_tf_network_delta <- function(
   if (!is.na(gene_expr_str_col)  && gene_expr_str_col  %in% names(ed)) {
     names(ed)[match(gene_expr_str_col,  names(ed))] <- "gene_expr_str"
   }
+  if (!is.na(log2fc_tf_col)   && log2fc_tf_col   %in% names(ed)) {
+    names(ed)[match(log2fc_tf_col,   names(ed))] <- "log2fc_tf_expr"
+  }
+  if (!is.na(log2fc_gene_col) && log2fc_gene_col %in% names(ed)) {
+    names(ed)[match(log2fc_gene_col, names(ed))] <- "log2fc_gene_expr"
+  }
 
   ed$TF        <- trimws(as.character(ed$TF))
   ed$gene_key  <- trimws(as.character(ed$gene_key))
@@ -306,6 +323,10 @@ plot_tf_network_delta <- function(
   if (!"tf_expr_str"    %in% names(ed)) ed$tf_expr_str    <- NA_real_
   if (!"gene_expr_ctrl" %in% names(ed)) ed$gene_expr_ctrl <- NA_real_
   if (!"gene_expr_str"  %in% names(ed)) ed$gene_expr_str  <- NA_real_
+  if (!"log2fc_tf_expr" %in% names(ed)) .log_abort("Missing required precomputed TF log2FC values after mapping.")
+  if (!"log2fc_gene_expr" %in% names(ed)) .log_abort("Missing required precomputed gene log2FC values after mapping.")
+  ed$log2fc_tf_expr <- suppressWarnings(as.numeric(ed$log2fc_tf_expr))
+  ed$log2fc_gene_expr <- suppressWarnings(as.numeric(ed$log2fc_gene_expr))
 
   ed$sign_ctrl <- parse_sign(ed$sign_ctrl)
   ed$sign_str  <- parse_sign(ed$sign_str)
@@ -358,7 +379,7 @@ plot_tf_network_delta <- function(
     if (!is.finite(q) || q <= 0) 1 else q
   }
 
-  #  Nodes (TF/gene/peak) 
+  #  Nodes (TF/gene/peak)
   load_tf_universe(motif_db)
   node_ids   <- unique(c(ed$TF, ed$gene_key))
   node_types <- ifelse(is_known_tf(node_ids), "TF", "gene")
@@ -369,24 +390,43 @@ plot_tf_network_delta <- function(
     nodes <- dplyr::bind_rows(nodes, peak_nodes)
   }
 
+  .median_finite <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    x <- x[is.finite(x)]
+    if (!length(x)) return(NA_real_)
+    stats::median(x)
+  }
+
   tf_ctrl <- dplyr::summarise(dplyr::group_by(ed, TF),
-                              tf_expr_ctrl = stats::median(tf_expr_ctrl, na.rm = TRUE))
+                              tf_expr_ctrl = .median_finite(tf_expr_ctrl))
   names(tf_ctrl)[1] <- "id"
   tf_str  <- dplyr::summarise(dplyr::group_by(ed, TF),
-                              tf_expr_str  = stats::median(tf_expr_str,  na.rm = TRUE))
+                              tf_expr_str  = .median_finite(tf_expr_str))
   names(tf_str)[1] <- "id"
   g_ctrl  <- dplyr::summarise(dplyr::group_by(ed, gene_key),
-                              gene_expr_ctrl = stats::median(gene_expr_ctrl, na.rm = TRUE))
+                              gene_expr_ctrl = .median_finite(gene_expr_ctrl))
   names(g_ctrl)[1] <- "id"
   g_str   <- dplyr::summarise(dplyr::group_by(ed, gene_key),
-                              gene_expr_str  = stats::median(gene_expr_str,  na.rm = TRUE))
+                              gene_expr_str  = .median_finite(gene_expr_str))
   names(g_str)[1] <- "id"
+  tf_l2fc <- dplyr::summarise(
+    dplyr::group_by(ed, TF),
+    l2fc_tf = .median_finite(log2fc_tf_expr)
+  )
+  names(tf_l2fc)[1] <- "id"
+  g_l2fc <- dplyr::summarise(
+    dplyr::group_by(ed, gene_key),
+    l2fc_gene = .median_finite(log2fc_gene_expr)
+  )
+  names(g_l2fc)[1] <- "id"
 
   nodes <- nodes |>
     dplyr::left_join(tf_ctrl, by = "id") |>
     dplyr::left_join(tf_str,  by = "id") |>
     dplyr::left_join(g_ctrl,  by = "id") |>
     dplyr::left_join(g_str,   by = "id") |>
+    dplyr::left_join(tf_l2fc, by = "id") |>
+    dplyr::left_join(g_l2fc,  by = "id") |>
     dplyr::mutate(
       # For nodes classified as TF by motif_db but never used as TF in `ed$TF`,
       # borrow gene_expr_* as TF expression so we don't end up with NA.
@@ -403,19 +443,9 @@ plot_tf_network_delta <- function(
       node_raw_ctrl = dplyr::if_else(type == "TF", tf_expr_ctrl, gene_expr_ctrl),
       node_raw_str  = dplyr::if_else(type == "TF", tf_expr_str,  gene_expr_str),
       node_z_ctrl   = robust_z(node_raw_ctrl),
-      node_z_str    = robust_z(node_raw_str)
+      node_z_str    = robust_z(node_raw_str),
+      l2fc = dplyr::if_else(type == "TF", l2fc_tf, l2fc_gene)
     )
-
-
-  eps <- 1e-9
-  if (de_reference == "ctrl_over_str") {
-    l2fc_gene <- log2((nodes$gene_expr_ctrl + eps)/(nodes$gene_expr_str + eps))
-    l2fc_tf   <- log2((nodes$tf_expr_ctrl  + eps)/(nodes$tf_expr_str  + eps))
-  } else {
-    l2fc_gene <- log2((nodes$gene_expr_str + eps)/(nodes$gene_expr_ctrl + eps))
-    l2fc_tf   <- log2((nodes$tf_expr_str  + eps)/(nodes$tf_expr_ctrl  + eps))
-  }
-  nodes$l2fc <- ifelse(nodes$type == "TF", l2fc_tf, l2fc_gene)
 
   # TF font size based on |log2FC| ---------------------------------
 
@@ -616,7 +646,7 @@ plot_tf_network_delta <- function(
     }
   }
 
-  #  Edges 
+  #  Edges
   mag <- pmin(abs(ed$.delta), cap) / max(cap, 1e-9)
   alpha <- 0.10 + mag * (0.78 - 0.10)
 
@@ -680,7 +710,7 @@ plot_tf_network_delta <- function(
 
   vn_edges$dashes <- as.logical(vn_edges$dashes)
 
-  #  Layout via igraph 
+  #  Layout via igraph
   g <- igraph::graph_from_data_frame(
     d = vn_edges[, c("from","to")],
     directed = TRUE,
@@ -789,4 +819,3 @@ plot_tf_network_delta <- function(
   writeLines(html_txt, html_path)
   invisible(TRUE)
 }
-

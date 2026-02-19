@@ -3,6 +3,7 @@ library(episcope)
 source("R/utils_config.R")
 source("R/utils_logging.R")
 source("R/utils_helpers.R")
+source("R/utils_plot_tf_network_delta.R")
 
 source("R/utils_step1_footprints.R")
 source("R/utils_step1_align_footprints.R")
@@ -18,6 +19,7 @@ source("R/utils_step2_qc.R")
 source("R/utils_step3_grn_filter.R")
 source("R/utils_step3_grn_diff.R")
 source("R/utils_step3_topic_warplda.R")
+
 
 load_config("dev/config/pdac_nutrient_stress_strict_jaspar2024.yaml")
 # Testing only
@@ -209,6 +211,10 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
+  fp_gene_corr_pearson_filt <- fp_res_full_pearson$fp_gene_corr_kept
+  fp_gene_corr_full_pearson <- fp_res_full_pearson$fp_gene_corr_full
+  rm(fp_res_full_pearson)
+  invisible(gc())
 
   fp_res_full_spearman <- correlate_fp_to_genes(
     grn_set          = omics_data,
@@ -226,27 +232,16 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     cache_chunk_size = 5000L,
     cache_verbose    = TRUE
   )
-
-  fp_gene_corr_pearson_filt <- filter_fp_gene_corr_by_tf_annotation(
-    fp_gene_corr_full = fp_res_full_pearson$fp_gene_corr_full,
-    fp_annotation = omics_data$fp_annotation,
-    r_thr = threshold_fp_gene_corr_abs_r,
-    p_adj_thr = threshold_fp_gene_corr_p
-  )
-
-  fp_gene_corr_spearman_filt <- filter_fp_gene_corr_by_tf_annotation(
-    fp_gene_corr_full = fp_res_full_spearman$fp_gene_corr_full,
-    fp_annotation = omics_data$fp_annotation,
-    r_thr = threshold_fp_gene_corr_abs_r,
-    p_adj_thr = threshold_fp_gene_corr_p
-  )
+  fp_gene_corr_spearman_filt <- fp_res_full_spearman$fp_gene_corr_kept
+  rm(fp_res_full_spearman)
+  invisible(gc())
 
   fp_links_combined <- combine_fp_gene_corr_methods(
     fp_pearson  = fp_gene_corr_pearson_filt,
     fp_spearman = fp_gene_corr_spearman_filt,
     rna_tbl     = omics_data$rna_condition,
     rna_method  = "pearson",
-    rna_cores   = 20
+    rna_cores   = 2
   )
 
   fp_links_filtered <- filter_links_by_fp_rna_criteria(
@@ -255,6 +250,8 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     fp_r_thr = threshold_fp_gene_corr_abs_r,
     require_pos_rna = TRUE
   )
+  rm(fp_gene_corr_pearson_filt, fp_gene_corr_spearman_filt, fp_links_combined)
+  invisible(gc())
 
   fp_score_thr <- if (exists("fp_score_threshold")) fp_score_threshold else threshold_fp_score
   atac_score_thr <- if (exists("atac_score_threshold")) atac_score_threshold else 0
@@ -304,7 +301,7 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     link_status = status_res$status_tbl,
     out_dir = step2_out_dir,
     db = db,
-    prefix = "step2",
+    prefix = "",
     verbose = TRUE
   )
   plot_link_activity_qc(
@@ -312,15 +309,17 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     summary_by_tf = link_summary$summary_by_tf,
     out_dir = step2_out_dir,
     db = db,
-    prefix = "step2",
+    prefix = "",
     verbose = TRUE
   )
 
-  fp_gene_corr_use <- fp_res_full_pearson$fp_gene_corr_full |>
+  fp_gene_corr_use <- fp_gene_corr_full_pearson |>
     dplyr::semi_join(
       fp_links_kept |> dplyr::select(peak_ID, gene_key),
       by = c("fp_peak" = "peak_ID", "gene_key" = "gene_key")
     )
+  rm(fp_gene_corr_full_pearson)
+  invisible(gc())
 
   if (is.null(omics_data$fp_variance) || is.null(omics_data$rna_variance)) {
     hv_variance <- precompute_hvf_hvg_variance(omics_data, cores = 20, chunk_size = 50000L)
@@ -328,62 +327,70 @@ if (do_tf_to_target_genes_prediction == TRUE) {
     omics_data$rna_variance <- hv_variance$rna_variance
   }
 
-  basal_links_step2 <- make_basal_links(
-    fp_gene_corr_kept = fp_gene_corr_use,
-    fp_annotation     = omics_data$fp_annotation,
-    out_dir           = file.path(step2_out_dir, "basal_links_tmp"),
-    prefix            = "step2",
-    rna_tbl           = omics_data$rna_condition,
-    rna_method        = "pearson",
-    rna_cores         = 20,
-    fp_variance       = omics_data$fp_variance,
-    rna_variance      = omics_data$rna_variance
-  )
-
-  omics_data_cond <- prepare_grn_set_for_light_by_condition(
-    omics_data,
-    label_col = "strict_match_rna"
-  )
-
-  light_by_condition(
-    ds = omics_data_cond,
-    basal_links = basal_links_step2,
-    out_dir = step2_out_dir,
-    prefix = "step2",
-    label_col = "strict_match_rna",
-    link_score_threshold = link_score_threshold,
-    fp_score_threshold = fp_score_thr,
-    tf_expr_threshold = threshold_tf_expr,
-    fp_bound_tbl = omics_data$fp_bound_condition,
-    rna_expressed_tbl = omics_data$rna_expressed,
-    atac_score_tbl = atac_score_tbl_use,
-    atac_score_threshold = atac_score_thr,
-    require_atac_score = require_atac_score,
-    fp_annotation_tbl = omics_data$fp_annotation,
-    require_fp_bound = TRUE,
-    require_gene_expr = TRUE,
-    gene_expr_threshold = 1L,
-    filter_active = FALSE,
-    use_parallel = TRUE,
-    workers = 8,
-    fp_variance_tbl = omics_data$fp_variance,
-    rna_variance_tbl = omics_data$rna_variance
-  )
-
-  extract_link_info_by_condition(
-    out_dir = step2_out_dir,
-    prefix = "step2",
-    read_tables = FALSE,
-    verbose = TRUE
-  )
+  per_cond_index <- file.path(step2_out_dir, "per_condition_link_matrices", "per_condition_index.csv")
+  if (file.exists(per_cond_index)) {
+    .log_inform(sprintf("Per-condition links already exist at %s; loading manifest only.", per_cond_index))
+    extract_link_info_by_condition(
+      out_dir = step2_out_dir,
+      prefix = "",
+      read_tables = FALSE,
+      verbose = TRUE
+    )
+  } else {
+    extract_link_info_by_condition(
+      omics_data = omics_data,
+      links = fp_gene_corr_use,
+      out_dir = step2_out_dir,
+      prefix = "",
+      read_tables = FALSE,
+      verbose = TRUE,
+      qc = TRUE,
+      label_col = "strict_match_rna",
+      link_score_threshold = link_score_threshold,
+      fp_score_threshold = fp_score_thr,
+      tf_expr_threshold = threshold_tf_expr,
+      fp_bound_tbl = omics_data$fp_bound_condition,
+      rna_expressed_tbl = omics_data$rna_expressed,
+      atac_score_tbl = atac_score_tbl_use,
+      atac_score_threshold = atac_score_thr,
+      require_atac_score = require_atac_score,
+      fp_annotation_tbl = omics_data$fp_annotation,
+      require_fp_bound = TRUE,
+      require_gene_expr = TRUE,
+      gene_expr_threshold = 1L,
+      filter_active = FALSE,
+      use_parallel = FALSE,
+      workers = 1,
+      fp_variance_tbl = omics_data$fp_variance,
+      rna_variance_tbl = omics_data$rna_variance,
+      rna_tbl_for_basal = omics_data$rna_condition,
+      rna_method_for_basal = "pearson",
+      rna_cores_for_basal = 20,
+      tf_gene_cache_dir = file.path(base_dir, "cache", "tf_gene_corr"),
+      tf_gene_cache_tag = paste0("nutrient_", tf_binding_mode_step2, "_", link_mode, "_pearson"),
+      tf_gene_cache_resume = TRUE,
+      tf_gene_cache_verbose = TRUE
+    )
+  }
 }
 
 # Diff GRN and regulatory topics ------------------------------------------
 step3_root_dir <- file.path(base_dir, "diff_grn_and_regulatory_topics")
 
 if (do_diff_grn == TRUE) {
+  tf_binding_mode_step3 <- if (exists("tf_binding_mode")) as.character(tf_binding_mode) else "canonical"
+  tf_binding_mode_step3 <- match.arg(tf_binding_mode_step3, c("canonical", "all"))
+  step2_input_dir_for_diff <- if (identical(tf_binding_mode_step3, "all")) {
+    file.path(base_dir, "connect_tf_target_genes_all")
+  } else {
+    file.path(base_dir, "connect_tf_target_genes")
+  }
+  step3_mode_suffix <- if (identical(tf_binding_mode_step3, "all")) "_all" else ""
+
   .fmt_cut <- function(x) gsub("\\.", "p", as.character(signif(as.numeric(x), 4)))
   diff_modes <- c("delta", "log2fc")
+  diff_parallel <- FALSE
+  diff_workers <- 1L
   diff_res_by_mode <- list()
 
   for (mode_use in diff_modes) {
@@ -395,7 +402,8 @@ if (do_diff_grn == TRUE) {
         "diff_grn_and_regulatory_topics",
         "_fp_", mode_use,
         "_cutoff_", .fmt_cut(mode_cutoff),
-        "_gene_log2fc_", .fmt_cut(gene_log2fc_cutoff)
+        "_gene_log2fc_", .fmt_cut(gene_log2fc_cutoff),
+        step3_mode_suffix
       )
     )
 
@@ -406,6 +414,10 @@ if (do_diff_grn == TRUE) {
       config = NULL,
       compar = file.path(base_dir, "data", "episcope_comparisons.csv"),
       output_dir = step3_out_mode,
+      input_dir = step2_input_dir_for_diff,
+      input_prefix = "",
+      parallel = diff_parallel,
+      workers = diff_workers,
       overwrite_delta = FALSE,
       overwrite_filtered = FALSE,
       overwrite_tf_hubs = TRUE,
@@ -417,7 +429,7 @@ if (do_diff_grn == TRUE) {
   diff_res <- diff_res_by_mode[["delta"]]
 
   # Optional: pathway enrichment from diff_links_filtered (minimal gene_key-based run).
-  do_diff_links_pathway_enrichment <- TRUE
+  do_diff_links_pathway_enrichment <- FALSE
   if (isTRUE(do_diff_links_pathway_enrichment)) {
     for (mode_use in names(diff_res_by_mode)) {
       run_diff_links_pathway_grn(
