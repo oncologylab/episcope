@@ -12,6 +12,10 @@ $run_dev.*
 ^Meta$
 ^workspace\.RData$
 ^\.vscode$
+^_pkgdown\.yml$
+^pkgdown$
+^docs$
+^\.github$
 ^AGENTS\.md$
 ^figures$
 ^R_bak$

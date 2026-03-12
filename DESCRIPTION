@@ -43,5 +43,6 @@ Config/testthat/edition: 3
 Encoding: UTF-8
 Language: en-US
 RoxygenNote: 7.3.3
-URL: https://github.com/oncologylab/craftgrn
+URL: https://oncologylab.github.io/craftgrn/, https://github.com/oncologylab/craftgrn
 BugReports: https://github.com/oncologylab/craftgrn/issues
+Config/Needs/website: r-lib/pkgdown

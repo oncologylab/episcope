@@ -1,0 +1,89 @@
+url: https://oncologylab.github.io/craftgrn/
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+
+navbar:
+  structure:
+    left: [intro, reference, articles, news]
+    right: [search, github]
+  components:
+    github:
+      icon: fa-github
+      href: https://github.com/oncologylab/craftgrn
+      aria-label: GitHub
+
+home:
+  title: CraftGRN
+  description: Integrative ATAC-RNA framework for condition-specific gene regulatory networks.
+  links:
+  - text: Report a bug
+    href: https://github.com/oncologylab/craftgrn/issues
+
+reference:
+- title: App and configuration
+  desc: Start the app and load project configuration files.
+  contents:
+  - run_app
+  - load_config
+  - validate_config
+
+- title: Multiomic data preparation
+  desc: Load, save, and prepare matched ATAC and RNA inputs.
+  contents:
+  - load_omics_data
+  - save_omics_data
+  - load_prep_multiomic_data
+
+- title: TF binding site and motif utilities
+  desc: Work with motif resources, footprints, and TF-footprint correlations.
+  contents:
+  - correlate_tf_to_fp
+  - starts_with("read_")
+  - starts_with("parse_")
+  - starts_with("load_motif")
+  - starts_with("build_motif")
+  - starts_with("compute_motif")
+  - starts_with("best_pwm")
+  - starts_with("pwm_")
+
+- title: Regulatory topic modeling
+  desc: Build topic model inputs, train models, and extract regulatory topics.
+  contents:
+  - train_topic_models
+  - extract_regulatory_topics
+  - starts_with("build_doc_term")
+  - starts_with("run_vae")
+  - load_delta_links_many
+  - build_tf_cluster_map_from_motif
+  - weight_to_count
+
+- title: Differential GRN pathway analysis
+  desc: Run pathway enrichment and visualize differential regulatory programs.
+  contents:
+  - default_diff_grn_pathway_databases
+  - run_diff_grn_pathway_analysis
+  - run_diff_grn_pathway_enrichment
+  - read_diff_grn_pathway_enrichment
+  - select_diff_grn_pathway_terms
+  - plot_diff_grn_pathway_dotplot
+  - plot_diff_grn_pathway_network
+
+- title: Master TF summaries
+  desc: Summarize and plot master TF connectivity in differential GRNs.
+  contents:
+  - run_diff_grn_master_tf_summary
+  - summarize_diff_grn_master_tf_links
+  - starts_with("plot_diff_grn_master_tf")
+
+- title: Internal documentation helpers
+  desc: Helper topics used by generated documentation.
+  contents:
+  - ends_with("_docs")
+  - cutree_to_k
+  - pairwise_comparisons
+  - "%>%"
+
+development:
+  mode: auto
