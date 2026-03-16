@@ -47,6 +47,7 @@ reference:
   - starts_with("compute_motif")
   - starts_with("best_pwm")
   - starts_with("pwm_")
+  - utils_motif_clustering
 
 - title: Regulatory topic modeling
   desc: Build topic model inputs, train models, and extract regulatory topics.
