@@ -1,12 +1,12 @@
 url: https://oncologylab.github.io/craftgrn/
 
 template:
+  package: tidytemplate
   bootstrap: 5
-  bootswatch: flatly
 
 navbar:
   structure:
-    left: [intro, reference, articles, news]
+    left: [intro, reference, news, articles]
     right: [search, github]
   components:
     github:
@@ -20,6 +20,12 @@ home:
   links:
   - text: Report a bug
     href: https://github.com/oncologylab/craftgrn/issues
+
+articles:
+- title: Get started
+  navbar: ~
+  contents:
+  - craftgrn
 
 reference:
 - title: App and configuration
