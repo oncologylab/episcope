@@ -40,7 +40,7 @@ scores, and correlates TF expression with footprint or peak signal across
 matched conditions.
 
 ```{r module-1-figure, echo = FALSE, out.width = "100%", eval = TRUE}
-knitr::include_graphics("../figures/module_1.svg")
+knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg")
 ```
 
 ### Inputs
@@ -92,7 +92,7 @@ user-supplied 3D chromatin interaction loops. Links are retained when they pass
 expression, binding, footprint or peak signal, and correlation filters.
 
 ```{r module-2-figure, echo = FALSE, out.width = "100%", eval = TRUE}
-knitr::include_graphics("../figures/module_2.svg")
+knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg")
 ```
 
 ### Inputs
@@ -127,7 +127,7 @@ footprint document-term matrices, trains topic models, assigns links to topics,
 and summarizes topic-specific pathway and master TF programs.
 
 ```{r module-3-figure, echo = FALSE, out.width = "100%", eval = TRUE}
-knitr::include_graphics("../figures/module_3.svg")
+knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg")
 ```
 
 ### Inputs

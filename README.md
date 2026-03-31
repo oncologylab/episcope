@@ -29,7 +29,7 @@ CraftGRN helps users:
 - Generate summaries and visualizations for topic- and condition-specific
   regulatory programs.
 
-<img src="figures/pipeline_full.svg" alt="CraftGRN pipeline" width="800">
+<img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/pipeline_full.svg" alt="CraftGRN pipeline" width="800">
 
 ## Installation
 
@@ -66,7 +66,7 @@ Primary package functions:
 - `correlate_tf_to_fp()` correlates TF expression with footprint or peak signal
   across matched conditions to nominate condition-specific TF binding sites.
 
-<img src="figures/module_1.svg" alt="Module 1 workflow" width="800">
+<img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg" alt="Module 1 workflow" width="800">
 
 ### Module 2: Connect TFs to Target Genes
 
@@ -75,7 +75,7 @@ maps, genomic distance windows, or 3D chromatin interaction priors. Candidate
 TF->TFBS->target links are filtered by condition-specific expression, binding,
 footprint or peak signal, and cross-condition correlation evidence.
 
-<img src="figures/module_2.svg" alt="Module 2 workflow" width="800">
+<img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg" alt="Module 2 workflow" width="800">
 
 ### Module 3: Learn Regulatory Topics and Visualize Differential GRNs
 
@@ -94,7 +94,7 @@ Primary package functions:
 - `run_diff_grn_master_tf_summary()` and related plotting functions summarize
   master TF connectivity.
 
-<img src="figures/module_3.svg" alt="Module 3 workflow" width="800">
+<img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 
 ## Get Started
 
