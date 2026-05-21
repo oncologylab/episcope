@@ -1,10 +1,18 @@
 # CraftGRN <img src="man/figures/logo.png" align="right" height="139" alt="CraftGRN logo" />
 
-[![Version](https://img.shields.io/badge/version-0.1.2-blue.svg?style=plastic)](https://github.com/oncologylab/craftgrn)
-[![License](https://img.shields.io/badge/license-GPLv3-green.svg?style=plastic)](https://github.com/oncologylab/craftgrn/blob/main/LICENSE.md)
-[![Documentation](https://img.shields.io/badge/docs-pkgdown-blue.svg?style=plastic)](https://oncologylab.github.io/craftgrn/)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=plastic)](https://github.com/oncologylab/craftgrn/graphs/commit-activity)
-[![Publication](https://img.shields.io/badge/publication-in%20prep-blue.svg?style=plastic)]()
+[![Version](https://img.shields.io/badge/version-0.1.2-2C3E50.svg?style=flat-square)](https://github.com/oncologylab/craftgrn)
+[![License](https://img.shields.io/badge/license-GPLv3-16A085.svg?style=flat-square)](https://github.com/oncologylab/craftgrn/blob/main/LICENSE.md)
+[![Documentation](https://img.shields.io/badge/docs-pkgdown-4DBBD5.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
+[![pkgdown](https://img.shields.io/github/actions/workflow/status/oncologylab/craftgrn/pkgdown.yaml?branch=main&label=pkgdown&style=flat-square&color=27AE60)](https://github.com/oncologylab/craftgrn/actions/workflows/pkgdown.yaml)
+[![Last commit](https://img.shields.io/github/last-commit/oncologylab/craftgrn.svg?style=flat-square&color=9B59B6)](https://github.com/oncologylab/craftgrn/commits/main)
+[![Publication](https://img.shields.io/badge/publication-in%20prep-E67E22.svg?style=flat-square)]()
+
+[![ATAC-seq](https://img.shields.io/badge/ATAC--seq-footprints-00A087.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
+[![RNA-seq](https://img.shields.io/badge/RNA--seq-expression-4DBBD5.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
+[![Module 1](https://img.shields.io/badge/module%201-TFBS-9B59B6.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/articles/craftgrn.html)
+[![Module 2](https://img.shields.io/badge/module%202-TF--target-27AE60.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/articles/craftgrn.html)
+[![Module 3](https://img.shields.io/badge/module%203-regulatory%20topics-E74C3C.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/articles/craftgrn.html)
+[![GRN](https://img.shields.io/badge/output-condition--specific%20GRNs-2C3E50.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
 
 ## Introduction
 
