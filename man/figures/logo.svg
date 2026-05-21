@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 1000 1000">
+  <!-- Generator: Adobe Illustrator 30.3.0, SVG Export Plug-In . SVG Version: 2.1.3 Build 182)  -->
+  <defs>
+    <style>
+      .st0, .st1 {
+        stroke: #9b59b6;
+      }
+
+      .st0, .st1, .st2, .st3, .st4, .st5, .st6, .st7, .st8, .st9, .st10, .st11, .st12 {
+        fill: none;
+      }
+
+      .st0, .st1, .st3, .st4, .st6, .st7, .st8, .st9, .st11, .st12 {
+        stroke-linecap: round;
+      }
+
+      .st0, .st3, .st5, .st8, .st9, .st11, .st12 {
+        stroke-linejoin: round;
+      }
+
+      .st0, .st4 {
+        stroke-width: 12px;
+      }
+
+      .st13 {
+        font-size: 104px;
+      }
+
+      .st13, .st14 {
+        fill: #2c3e50;
+      }
+
+      .st13, .st15, .st16, .st17 {
+        font-family: Arial-BoldMT, Arial;
+        font-weight: 700;
+        isolation: isolate;
+      }
+
+      .st18 {
+        fill: #e67e22;
+      }
+
+      .st15, .st19 {
+        fill: #9b59b6;
+      }
+
+      .st15, .st17 {
+        font-size: 24px;
+      }
+
+      .st1, .st2 {
+        stroke-width: 5px;
+      }
+
+      .st20 {
+        fill: #e74c3c;
+      }
+
+      .st2, .st6 {
+        stroke: #fff;
+      }
+
+      .st21, .st17 {
+        fill: #27ae60;
+      }
+
+      .st3 {
+        stroke-width: 14px;
+      }
+
+      .st3, .st5, .st8, .st12 {
+        stroke: #2c3e50;
+      }
+
+      .st4, .st7 {
+        stroke: #27ae60;
+      }
+
+      .st5 {
+        stroke-width: 30px;
+      }
+
+      .st6, .st10 {
+        stroke-width: 6px;
+      }
+
+      .st16 {
+        fill: #fff;
+        font-size: 48px;
+      }
+
+      .st22 {
+        fill: #00a087;
+      }
+
+      .st7, .st8 {
+        stroke-width: 10px;
+      }
+
+      .st9 {
+        stroke: #4dbbd5;
+      }
+
+      .st9, .st12 {
+        stroke-width: 8px;
+      }
+
+      .st10 {
+        stroke: #d7dde2;
+      }
+
+      .st23 {
+        fill: #4dbbd5;
+      }
+
+      .st11 {
+        stroke: #00a087;
+        stroke-width: 9px;
+      }
+    </style>
+  </defs>
+  <path class="st5" d="M500,58l368,212v460l-368,212-368-212v-460L500,58Z"/>
+  <g id="module-1-footprint">
+    <path class="st0" d="M520,256c74-66,202-48,233,63"/>
+    <line class="st3" x1="198" y1="385" x2="802" y2="385"/>
+    <circle class="st14" cx="802" cy="385" r="8"/>
+    <circle class="st14" cx="828" cy="385" r="8"/>
+    <path class="st22" d="M205,385c17-2,25-18,35-41,9-21,22-18,31,10,10,31,28,30,36-2,13-51,27-102,48-102s36,56,48,104c9,32,28,30,39-1,9-24,22-24,32-1,10,21,19,31,38,33H205Z"/>
+    <g id="tfbs-symbol">
+      <rect class="st19" x="467" y="373" width="76" height="36" rx="7" ry="7"/>
+      <line class="st1" x1="465" y1="356" x2="465" y2="414"/>
+      <line class="st1" x1="545" y1="356" x2="545" y2="414"/>
+      <path class="st6" d="M474,392c11-14,21-14,32,0s21,14,32,0"/>
+      <text class="st15" transform="translate(473.67 431)"><tspan x="0" y="0">TFBS</tspan></text>
+    </g>
+    <circle class="st18" cx="482" cy="252" r="47"/>
+    <text class="st16" transform="translate(453.68 271)"><tspan x="0" y="0">TF</tspan></text>
+    <path class="st8" d="M482,305v34"/>
+    <path class="st14" d="M462,332l20,27,20-27h-40Z"/>
+    <g id="tss-symbol">
+      <line class="st7" x1="718" y1="338" x2="718" y2="430"/>
+      <line class="st4" x1="723.97" y1="385" x2="804" y2="385"/>
+      <path class="st21" d="M790,363l40,22-40,22v-44Z"/>
+      <text class="st17" transform="translate(734.66 429)"><tspan x="0" y="0">TSS</tspan></text>
+    </g>
+    <path class="st0" d="M733,311l21,24,14.52-28.5"/>
+  </g>
+  <g id="module-2-correlation">
+    <rect class="st10" x="579.5" y="245" width="126" height="108" rx="17" ry="17"/>
+    <circle class="st23" cx="607.5" cy="321" r="7.5"/>
+    <circle class="st23" cx="625.5" cy="299" r="7.5"/>
+    <circle class="st23" cx="645.5" cy="279" r="7.5"/>
+    <circle class="st23" cx="666.5" cy="307" r="7.5"/>
+    <circle class="st23" cx="687.5" cy="265" r="7.5"/>
+    <path class="st9" d="M605.5,331l83-72"/>
+    <path class="st11" d="M650.5,321l18,18,30-38"/>
+  </g>
+  <g id="module-3-network">
+    <line class="st12" x1="337" y1="475" x2="499" y2="518"/>
+    <line class="st12" x1="499" y1="518" x2="663" y2="475"/>
+    <line class="st12" x1="337" y1="475" x2="377" y2="590"/>
+    <line class="st12" x1="377" y1="590" x2="499" y2="518"/>
+    <line class="st12" x1="499" y1="518" x2="622" y2="590"/>
+    <line class="st12" x1="622" y1="590" x2="663" y2="475"/>
+    <line class="st12" x1="377" y1="590" x2="500" y2="657"/>
+    <line class="st12" x1="622" y1="590" x2="500" y2="657"/>
+    <line class="st12" x1="500" y1="657" x2="499" y2="518"/>
+    <circle class="st22" cx="337" cy="475" r="35"/>
+    <circle class="st21" cx="663" cy="475" r="35"/>
+    <circle class="st19" cx="499" cy="518" r="45"/>
+    <circle class="st20" cx="377" cy="590" r="35"/>
+    <circle class="st18" cx="622" cy="590" r="35"/>
+    <circle class="st23" cx="500" cy="657" r="35"/>
+    <circle class="st2" cx="499" cy="518" r="45"/>
+  </g>
+  <text class="st13" transform="translate(263.11 778)"><tspan x="0" y="0">CraftGRN</tspan></text>
+</svg>

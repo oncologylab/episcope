@@ -1,5 +1,4 @@
-CraftGRN
-========
+# CraftGRN <img src="man/figures/logo.png" align="right" height="139" alt="CraftGRN logo" />
 
 [![Version](https://img.shields.io/badge/version-0.1.2-blue.svg?style=plastic)](https://github.com/oncologylab/craftgrn)
 [![License](https://img.shields.io/badge/license-GPLv3-green.svg?style=plastic)](https://github.com/oncologylab/craftgrn/blob/main/LICENSE.md)
