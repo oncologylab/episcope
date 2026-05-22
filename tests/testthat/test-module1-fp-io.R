@@ -1,0 +1,220 @@
+test_that("aligned footprint cache loader skips id_map by default", {
+  cache_dir <- file.path(tempdir(), paste0("craftgrn-fp-cache-", as.integer(stats::runif(1L, 1, 1e9))))
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_tag <- "TEST"
+
+  readr::write_csv(
+    tibble::tibble(peak_ID = c("chr1:1-10", "chr1:1-10", "chr1:20-30"), sample_a = c(1, 1, 2)),
+    file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag))
+  )
+  readr::write_csv(
+    tibble::tibble(peak_ID = c("chr1:1-10", "chr1:1-10", "chr1:20-30"), sample_a = c(1L, 1L, 0L)),
+    file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag))
+  )
+  readr::write_csv(
+    tibble::tibble(
+      fp_peak = c("chr1:1-10", "chr1:20-30"),
+      atac_peak = c("chr1:1-50", "chr1:1-50"),
+      motifs = c("M1", "M2")
+    ),
+    file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag))
+  )
+  readr::write_csv(
+    tibble::tibble(
+      peak_ID = c("chr1:1-10", "chr1:20-30"),
+      fp_peak_bak = c("chr1:1-10", "chr1:20-30"),
+      atac_peak = c("chr1:1-50", "chr1:1-50"),
+      group_size = c(1, 1)
+    ),
+    file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag))
+  )
+
+  out <- load_fp_aligned_from_cache(
+    cache_dir = cache_dir,
+    cache_tag = cache_tag,
+    output_mode = "distinct",
+    verbose = FALSE
+  )
+
+  expect_equal(nrow(out$fp_score), 2L)
+  expect_equal(nrow(out$fp_bound), 2L)
+  expect_equal(nrow(out$fp_annotation), 2L)
+  expect_equal(nrow(out$id_map), 0L)
+})
+
+test_that("aligned footprint cache loader loads id_map only when requested", {
+  cache_dir <- file.path(tempdir(), paste0("craftgrn-fp-cache-", as.integer(stats::runif(1L, 1, 1e9))))
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_tag <- "TEST"
+
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1), file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag)))
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1L), file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag)))
+  readr::write_csv(tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "M1"), file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag)))
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", fp_peak_bak = "chr1:1-10", atac_peak = "chr1:1-50", group_size = 1), file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag)))
+
+  out <- load_fp_aligned_from_cache(
+    cache_dir = cache_dir,
+    cache_tag = cache_tag,
+    output_mode = "distinct",
+    load_id_map = TRUE,
+    verbose = FALSE
+  )
+
+  expect_equal(nrow(out$id_map), 1L)
+  expect_equal(out$id_map$group_size, 1)
+})
+
+test_that("aligned footprint cache loader reads Parquet cache when available", {
+  testthat::skip_if_not_installed("arrow")
+  cache_dir <- file.path(tempdir(), paste0("craftgrn-fp-cache-parquet-", as.integer(stats::runif(1L, 1, 1e9))))
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_tag <- "TEST"
+
+  arrow::write_parquet(
+    tibble::tibble(peak_ID = c("chr1:1-10", "chr1:20-30"), sample_a = c(1, 2)),
+    file.path(cache_dir, sprintf("fp_scores_%s.parquet", cache_tag))
+  )
+  arrow::write_parquet(
+    tibble::tibble(peak_ID = c("chr1:1-10", "chr1:20-30"), sample_a = c(1L, 0L)),
+    file.path(cache_dir, sprintf("fp_bounds_%s.parquet", cache_tag))
+  )
+  arrow::write_parquet(
+    tibble::tibble(
+      fp_peak = c("chr1:1-10", "chr1:20-30"),
+      atac_peak = c("chr1:1-50", "chr1:1-50"),
+      motifs = c("M1", "M2")
+    ),
+    file.path(cache_dir, sprintf("fp_annotation_%s.parquet", cache_tag))
+  )
+
+  out <- load_fp_aligned_from_cache(
+    cache_dir = cache_dir,
+    cache_tag = cache_tag,
+    output_mode = "distinct",
+    cache_format = "auto",
+    verbose = FALSE
+  )
+
+  expect_equal(nrow(out$fp_score), 2L)
+  expect_equal(out$fp_annotation$motifs, c("M1", "M2"))
+  expect_equal(nrow(out$id_map), 0L)
+})
+
+test_that("footprint alignment can write Parquet cache", {
+  testthat::skip_if_not_installed("arrow")
+  bench_dir <- file.path(tempdir(), paste0("craftgrn-align-parquet-", as.integer(stats::runif(1L, 1, 1e9))))
+  raw_dir <- file.path(bench_dir, "raw")
+  cache_dir <- file.path(bench_dir, "cache")
+  dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+  score_path <- file.path(raw_dir, "M1_score.csv")
+  bound_path <- file.path(raw_dir, "M1_bound.csv")
+  annot_path <- file.path(raw_dir, "M1_annotation.csv")
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:10-20", sample_a = 1.1), score_path)
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:10-20", sample_a = 1L), bound_path)
+  readr::write_csv(tibble::tibble(fp_peak = "chr1:10-20", atac_peak = "chr1:1-100", motifs = "M1"), annot_path)
+  manifest <- tibble::tibble(motif = "M1", n_peaks = 1L, score = score_path, bound = bound_path, annot = annot_path)
+
+  aligned <- align_footprints(
+    manifest,
+    mid_slop = 10L,
+    round_digits = 1L,
+    score_match_pct = 1,
+    threads = 1L,
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = TRUE,
+    output_mode = "distinct",
+    return_id_map = FALSE,
+    write_id_map = FALSE,
+    cache_format = "parquet",
+    verbose = FALSE
+  )
+  from_cache <- load_fp_aligned_from_cache(
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    output_mode = "distinct",
+    cache_format = "parquet",
+    verbose = FALSE
+  )
+
+  expect_true(file.exists(file.path(cache_dir, "fp_scores_TEST.parquet")))
+  expect_false(file.exists(file.path(cache_dir, "fp_scores_TEST.csv")))
+  expect_equal(from_cache$fp_score, aligned$fp_score)
+  expect_equal(from_cache$fp_annotation, aligned$fp_annotation)
+})
+
+test_that("raw footprint loader reuses a complete manifest before scanning raw folders", {
+  root_dir <- file.path(tempdir(), paste0("craftgrn-missing-root-", as.integer(stats::runif(1L, 1, 1e9))))
+  out_dir <- file.path(tempdir(), paste0("craftgrn-fp-raw-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  score_path <- file.path(out_dir, "M1_score.csv")
+  bound_path <- file.path(out_dir, "M1_bound.csv")
+  annot_path <- file.path(out_dir, "M1_annotation.csv")
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1), score_path)
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1L), bound_path)
+  readr::write_csv(tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "M1"), annot_path)
+  readr::write_csv(
+    tibble::tibble(motif = "M1", n_peaks = 1L, score = score_path, bound = bound_path, annot = annot_path),
+    file.path(dirname(out_dir), paste0(basename(out_dir), "_manifest.csv"))
+  )
+
+  manifest <- load_footprints(
+    root_dir = root_dir,
+    db_name = "TEST",
+    out_dir = out_dir,
+    skip_existing = TRUE,
+    verbose = FALSE
+  )
+
+  expect_true(isTRUE(attr(manifest, "from_cache")))
+  expect_equal(manifest$motif, "M1")
+})
+
+test_that("footprint alignment can skip returning and writing id_map", {
+  bench_dir <- file.path(tempdir(), paste0("craftgrn-align-cache-", as.integer(stats::runif(1L, 1, 1e9))))
+  raw_dir <- file.path(bench_dir, "raw")
+  cache_dir <- file.path(bench_dir, "cache")
+  dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+  score_path <- file.path(raw_dir, "M1_score.csv")
+  bound_path <- file.path(raw_dir, "M1_bound.csv")
+  annot_path <- file.path(raw_dir, "M1_annotation.csv")
+  readr::write_csv(
+    tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1.1, 1.1)),
+    score_path
+  )
+  readr::write_csv(
+    tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1L, 1L)),
+    bound_path
+  )
+  readr::write_csv(
+    tibble::tibble(
+      fp_peak = c("chr1:10-20", "chr1:12-22"),
+      atac_peak = c("chr1:1-100", "chr1:1-100"),
+      motifs = c("M1", "M1")
+    ),
+    annot_path
+  )
+  manifest <- tibble::tibble(motif = "M1", n_peaks = 2L, score = score_path, bound = bound_path, annot = annot_path)
+
+  aligned <- align_footprints(
+    manifest,
+    mid_slop = 10L,
+    round_digits = 1L,
+    score_match_pct = 1,
+    threads = 1L,
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = TRUE,
+    output_mode = "distinct",
+    return_id_map = FALSE,
+    verbose = FALSE
+  )
+
+  expect_equal(nrow(aligned$id_map), 0L)
+  expect_false(file.exists(file.path(cache_dir, "fp_id_map_TEST.csv")))
+  expect_true(file.exists(file.path(cache_dir, "fp_scores_TEST.csv")))
+})

@@ -38,7 +38,10 @@ align_footprints <- function(
     save_prealign_score = FALSE,
     prealign_score_path = NULL,
     prealign_output_mode = c("distinct", "all"),
-    prealign_only = FALSE
+    prealign_only = FALSE,
+    return_id_map = TRUE,
+    write_id_map = return_id_map,
+    cache_format = c("csv", "parquet", "both")
 ) {
   stopifnot(
     is.data.frame(fp_filtered_manifest),
@@ -54,6 +57,7 @@ align_footprints <- function(
 
   stopifnot(is.numeric(score_match_pct), length(score_match_pct) == 1L, score_match_pct > 0, score_match_pct <= 1)
   prealign_output_mode <- match.arg(prealign_output_mode)
+  cache_format <- match.arg(cache_format)
 
   prealign_path_use <- prealign_score_path
   if (is.null(prealign_path_use) && !is.null(cache_dir)) {
@@ -63,47 +67,38 @@ align_footprints <- function(
 
   cache_paths <- NULL
   if (!is.null(cache_dir) && !is.null(cache_tag)) {
-    cache_paths <- list(
-      fp_bound = file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag)),
-      fp_score = file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag)),
-      fp_annotation = file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag)),
-      id_map = file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag))
-    )
+    cache_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "csv")
+  }
+
+  if (!is.null(cache_paths) && isTRUE(use_cache)) {
+    cache_read_format <- if (identical(cache_format, "csv")) "csv" else "auto"
+    cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, cache_read_format)
+    if (!isTRUE(cache_info$exists)) {
+      cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, "csv")
+    }
+    if (isTRUE(cache_info$exists)) {
+      return(load_fp_aligned_from_cache(
+        cache_dir = cache_dir,
+        cache_tag = cache_tag,
+        output_mode = output_mode,
+        load_id_map = return_id_map,
+        cache_format = cache_info$format,
+        verbose = verbose
+      ))
+    }
   }
 
   if (!is.null(cache_paths) && isTRUE(use_cache) &&
       all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")])))
   ) {
-    if (isTRUE(verbose)) .log_inform("Using cached aligned footprints from {.path {cache_dir}} (tag = {cache_tag}).")
-    fp_bound <- readr::read_csv(cache_paths$fp_bound, show_col_types = FALSE)
-    fp_score <- readr::read_csv(cache_paths$fp_score, show_col_types = FALSE)
-    fp_annotation <- readr::read_csv(cache_paths$fp_annotation, show_col_types = FALSE)
-    id_map <- if (file.exists(cache_paths$id_map)) {
-      readr::read_csv(cache_paths$id_map, show_col_types = FALSE)
-    } else if (all(c("fp_peak", "atac_peak") %in% names(fp_annotation))) {
-      tibble::tibble(
-        peak_ID = fp_annotation$fp_peak,
-        fp_peak_bak = fp_annotation$fp_peak,
-        atac_peak = fp_annotation$atac_peak,
-        group_size = NA_real_
-      )
-    } else {
-      tibble::tibble()
-    }
-    out_cached <- list(
-      fp_score = tibble::as_tibble(fp_score),
-      fp_bound = tibble::as_tibble(fp_bound),
-      fp_annotation = tibble::as_tibble(fp_annotation),
-      id_map = tibble::as_tibble(id_map)
-    )
-    if (identical(output_mode, "distinct")) {
-      out_cached$fp_score <- out_cached$fp_score[!duplicated(out_cached$fp_score$peak_ID), , drop = FALSE]
-      out_cached$fp_bound <- out_cached$fp_bound[!duplicated(out_cached$fp_bound$peak_ID), , drop = FALSE]
-    }
-    if (!identical(out_cached$fp_score$peak_ID, out_cached$fp_bound$peak_ID)) {
-      .log_abort("fp_score and fp_bound peak_ID rows are not in the same order.")
-    }
-    return(out_cached)
+    return(load_fp_aligned_from_cache(
+      cache_dir = cache_dir,
+      cache_tag = cache_tag,
+      output_mode = output_mode,
+      load_id_map = return_id_map,
+      cache_format = "csv",
+      verbose = verbose
+    ))
   }
 
   use <- fp_filtered_manifest[
@@ -346,17 +341,21 @@ align_footprints <- function(
 
   gs_new <- map_old_new[, .(group_size = max(group_size, na.rm = TRUE)), by = .(new_peak_ID, atac_peak)]
   data.table::setnames(gs_new, "new_peak_ID", "peak_ID")
-  id_map_aligned <- data.table::data.table(
-    peak_ID = annot_dt$fp_peak,
-    fp_peak_bak = annot_dt$fp_peak_bak,
-    atac_peak = annot_dt$atac_peak
-  )[gs_new, group_size := i.group_size, on = .(peak_ID)]
+  id_map_aligned <- if (isTRUE(return_id_map) || isTRUE(write_id_map)) {
+    data.table::data.table(
+      peak_ID = annot_dt$fp_peak,
+      fp_peak_bak = annot_dt$fp_peak_bak,
+      atac_peak = annot_dt$atac_peak
+    )[gs_new, group_size := i.group_size, on = .(peak_ID)]
+  } else {
+    data.table::data.table()
+  }
 
   out <- list(
     fp_score = tibble::as_tibble(fp_score_out),
     fp_bound = tibble::as_tibble(fp_bound_out),
     fp_annotation = tibble::as_tibble(annot_dt),
-    id_map = tibble::as_tibble(id_map_aligned)
+    id_map = if (isTRUE(return_id_map)) tibble::as_tibble(id_map_aligned) else tibble::tibble()
   )
   if (identical(output_mode, "distinct")) {
     out$fp_score <- out$fp_score[!duplicated(out$fp_score$peak_ID), , drop = FALSE]
@@ -368,10 +367,16 @@ align_footprints <- function(
 
   if (!is.null(cache_paths) && isTRUE(write_cache)) {
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
-    readr::write_csv(out$fp_bound, cache_paths$fp_bound)
-    readr::write_csv(out$fp_score, cache_paths$fp_score)
-    readr::write_csv(out$fp_annotation, cache_paths$fp_annotation)
-    readr::write_csv(out$id_map, cache_paths$id_map)
+    formats <- if (identical(cache_format, "both")) c("csv", "parquet") else cache_format
+    for (fmt in formats) {
+      paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, fmt)
+      .aligned_fp_write_table(out$fp_bound, paths$fp_bound, fmt)
+      .aligned_fp_write_table(out$fp_score, paths$fp_score, fmt)
+      .aligned_fp_write_table(out$fp_annotation, paths$fp_annotation, fmt)
+      if (isTRUE(write_id_map)) {
+        .aligned_fp_write_table(tibble::as_tibble(id_map_aligned), paths$id_map, fmt)
+      }
+    }
   }
   out
 }

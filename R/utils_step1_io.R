@@ -22,6 +22,69 @@
 #' @noRd
 NULL
 
+.aligned_fp_cache_paths <- function(cache_dir, cache_tag, format = c("csv", "parquet")) {
+  format <- match.arg(format)
+  ext <- if (identical(format, "parquet")) "parquet" else "csv"
+  list(
+    fp_bound = file.path(cache_dir, sprintf("fp_bounds_%s.%s", cache_tag, ext)),
+    fp_score = file.path(cache_dir, sprintf("fp_scores_%s.%s", cache_tag, ext)),
+    fp_annotation = file.path(cache_dir, sprintf("fp_annotation_%s.%s", cache_tag, ext)),
+    id_map = file.path(cache_dir, sprintf("fp_id_map_%s.%s", cache_tag, ext))
+  )
+}
+
+.aligned_fp_cache_required_exists <- function(cache_paths) {
+  all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
+}
+
+.aligned_fp_cache_choose_format <- function(cache_dir,
+                                            cache_tag,
+                                            cache_format = c("auto", "parquet", "csv"),
+                                            require_arrow = FALSE) {
+  cache_format <- match.arg(cache_format)
+  csv_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "csv")
+  parquet_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "parquet")
+  has_csv <- .aligned_fp_cache_required_exists(csv_paths)
+  has_parquet <- .aligned_fp_cache_required_exists(parquet_paths)
+  has_arrow <- requireNamespace("arrow", quietly = TRUE)
+
+  if (identical(cache_format, "parquet")) {
+    if (!has_arrow && isTRUE(require_arrow)) .log_abort("Package {.pkg arrow} is required to read Parquet aligned footprint cache.")
+    return(list(format = "parquet", paths = parquet_paths, exists = has_parquet, arrow = has_arrow))
+  }
+  if (identical(cache_format, "csv")) {
+    return(list(format = "csv", paths = csv_paths, exists = has_csv, arrow = has_arrow))
+  }
+  if (has_parquet && has_arrow) {
+    return(list(format = "parquet", paths = parquet_paths, exists = TRUE, arrow = TRUE))
+  }
+  list(format = "csv", paths = csv_paths, exists = has_csv, arrow = has_arrow)
+}
+
+.aligned_fp_read_table <- function(path, format) {
+  if (identical(format, "parquet")) {
+    if (!requireNamespace("arrow", quietly = TRUE)) {
+      .log_abort("Package {.pkg arrow} is required to read {.path {path}}.")
+    }
+    return(data.table::as.data.table(arrow::read_parquet(path)))
+  }
+  data.table::fread(path, showProgress = FALSE)
+}
+
+.aligned_fp_write_table <- function(x, path, format) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  if (identical(format, "parquet")) {
+    if (!requireNamespace("arrow", quietly = TRUE)) {
+      .log_warn("Package {.pkg arrow} is not installed; skipping Parquet cache {.path {path}}.")
+      return(invisible(FALSE))
+    }
+    arrow::write_parquet(x, path, compression = "zstd")
+    return(invisible(TRUE))
+  }
+  data.table::fwrite(data.table::as.data.table(x), path)
+  invisible(TRUE)
+}
+
 #' Load aligned footprint outputs from cache
 #'
 #' Reads cached aligned footprint tables produced by `align_footprints()`.
@@ -29,6 +92,9 @@ NULL
 #' @param cache_dir Directory containing cached aligned footprint files.
 #' @param cache_tag Cache tag used in aligned footprint file names.
 #' @param output_mode Output mode. One of `"full"` or `"distinct"`.
+#' @param load_id_map Logical; if `TRUE`, load the optional footprint ID map.
+#' @param cache_format Cache format. `"auto"` prefers Parquet when available,
+#'   then falls back to CSV.
 #' @param verbose Logical; if `TRUE`, emit concise status messages.
 #'
 #' @return A list with `fp_score`, `fp_bound`, `fp_annotation`, and `id_map`.
@@ -37,44 +103,36 @@ load_fp_aligned_from_cache <- function(
     cache_dir,
     cache_tag,
     output_mode = c("full", "distinct"),
+    load_id_map = FALSE,
+    cache_format = c("auto", "parquet", "csv"),
     verbose = TRUE
 ) {
-  .assert_pkg("readr")
+  .assert_pkg("data.table")
 
   output_mode <- match.arg(output_mode)
-  cache_paths <- list(
-    fp_bound = file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag)),
-    fp_score = file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag)),
-    fp_annotation = file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag)),
-    id_map = file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag))
-  )
+  cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, cache_format)
+  cache_paths <- cache_info$paths
 
-  required_paths <- unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)
-  if (!all(file.exists(required_paths))) {
+  if (!isTRUE(cache_info$exists)) {
     .log_abort("Cached aligned footprints not found for tag={cache_tag} in {cache_dir}.")
   }
 
   if (isTRUE(verbose)) {
-    .log_inform("Using cached aligned footprints from {.path {cache_dir}} (tag = {cache_tag}).")
+    .log_inform("Using {cache_info$format} cached aligned footprints from {.path {cache_dir}} (tag = {cache_tag}).")
   }
 
-  fp_bound <- readr::read_csv(cache_paths$fp_bound, show_col_types = FALSE)
-  fp_score <- readr::read_csv(cache_paths$fp_score, show_col_types = FALSE)
-  fp_annotation <- readr::read_csv(cache_paths$fp_annotation, show_col_types = FALSE)
+  fp_bound <- .aligned_fp_read_table(cache_paths$fp_bound, cache_info$format)
+  fp_score <- .aligned_fp_read_table(cache_paths$fp_score, cache_info$format)
+  fp_annotation <- .aligned_fp_read_table(cache_paths$fp_annotation, cache_info$format)
   if (identical(cache_tag, "HOCOMOCOv13") && "motifs" %in% names(fp_annotation)) {
     fp_annotation$motifs <- .normalize_motif_id(fp_annotation$motifs, db_name = cache_tag)
   }
-  id_map <- if (file.exists(cache_paths$id_map)) {
-    readr::read_csv(cache_paths$id_map, show_col_types = FALSE)
+  id_map <- if (isTRUE(load_id_map) && file.exists(cache_paths$id_map)) {
+    .aligned_fp_read_table(cache_paths$id_map, cache_info$format)
   } else if (all(c("fp_peak", "atac_peak") %in% names(fp_annotation))) {
-    tibble::tibble(
-      peak_ID = fp_annotation$fp_peak,
-      fp_peak_bak = fp_annotation$fp_peak,
-      atac_peak = fp_annotation$atac_peak,
-      group_size = NA_real_
-    )
+    data.table::data.table()
   } else {
-    tibble::tibble()
+    data.table::data.table()
   }
 
   out_cached <- list(
@@ -368,6 +426,31 @@ load_footprints <- function(
   .assert_pkg("future")
   .assert_pkg("future.apply")
   .assert_pkg("readr")
+
+  can_use_manifest_before_scan <- isTRUE(skip_existing) &&
+    !is.null(out_dir) &&
+    is.null(sample_ids) &&
+    is.null(n_samples) &&
+    is.null(motif_ids) &&
+    is.null(n_motifs)
+  if (can_use_manifest_before_scan) {
+    manifest_path <- file.path(dirname(out_dir), paste0(basename(out_dir), "_manifest.csv"))
+    if (file.exists(manifest_path)) {
+      man <- tryCatch(readr::read_csv(manifest_path, show_col_types = FALSE), error = function(e) NULL)
+      required_cols <- c("motif", "n_peaks", "score", "bound", "annot")
+      if (!is.null(man) &&
+          all(required_cols %in% names(man)) &&
+          nrow(man) > 0 &&
+          !any(is.na(man$n_peaks)) &&
+          all(file.exists(man$score)) &&
+          all(file.exists(man$bound)) &&
+          all(file.exists(man$annot))) {
+        if (isTRUE(verbose)) .log_inform("Found existing manifest at {.path {manifest_path}}; returning cached summary.")
+        attr(man, "from_cache") <- TRUE
+        return(man)
+      }
+    }
+  }
 
   all_samples <- base::list.dirs(root_dir, recursive = FALSE, full.names = FALSE)
   if (!length(all_samples)) .log_abort("No subfolders under {root_dir}.")

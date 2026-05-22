@@ -46,3 +46,49 @@
   }
   cli::cli_abort(msg, ..., .envir = .envir)
 }
+
+.progress_env <- new.env(parent = emptyenv())
+.progress_env$id <- NULL
+.progress_env$verbose <- FALSE
+
+#' @noRd
+.progress_start <- function(total = NULL, message = NULL, verbose = TRUE) {
+  .progress_env$verbose <- isTRUE(verbose)
+  .progress_env$id <- NULL
+  if (!isTRUE(verbose)) return(invisible(NULL))
+  total <- if (is.null(total)) NA_integer_ else as.integer(total)[[1L]]
+  if (!is.finite(total) || total < 0L) total <- NA_integer_
+  message <- if (is.null(message) || !nzchar(message)) "progress" else as.character(message)[[1L]]
+  .progress_env$id <- cli::cli_progress_bar(
+    name = message,
+    total = total,
+    clear = TRUE
+  )
+  invisible(.progress_env$id)
+}
+
+#' @noRd
+.progress_update <- function(increment = 1L) {
+  if (!isTRUE(.progress_env$verbose) || is.null(.progress_env$id)) return(invisible(NULL))
+  increment <- as.integer(increment)[[1L]]
+  if (!is.finite(increment) || increment < 0L) increment <- 1L
+  cli::cli_progress_update(id = .progress_env$id, inc = increment)
+  invisible(NULL)
+}
+
+#' @noRd
+.progress_done <- function() {
+  if (isTRUE(.progress_env$verbose) && !is.null(.progress_env$id)) {
+    cli::cli_progress_done(id = .progress_env$id)
+  }
+  .progress_env$id <- NULL
+  .progress_env$verbose <- FALSE
+  invisible(NULL)
+}
+
+#' @noRd
+.with_progress <- function(total = NULL, message = NULL, verbose = TRUE, code) {
+  .progress_start(total = total, message = message, verbose = verbose)
+  on.exit(.progress_done(), add = TRUE)
+  force(code)
+}
