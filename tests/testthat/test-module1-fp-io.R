@@ -100,6 +100,50 @@ test_that("aligned footprint cache loader reads Parquet cache when available", {
   expect_equal(nrow(out$id_map), 0L)
 })
 
+test_that("aligned footprint cache loader defaults to CSV when both formats exist", {
+  testthat::skip_if_not_installed("arrow")
+  cache_dir <- file.path(tempdir(), paste0("craftgrn-fp-cache-default-csv-", as.integer(stats::runif(1L, 1, 1e9))))
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  cache_tag <- "TEST"
+
+  readr::write_csv(
+    tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1),
+    file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag))
+  )
+  readr::write_csv(
+    tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1L),
+    file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag))
+  )
+  readr::write_csv(
+    tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "CSV"),
+    file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag))
+  )
+
+  arrow::write_parquet(
+    tibble::tibble(peak_ID = "chr1:1-10", sample_a = 2),
+    file.path(cache_dir, sprintf("fp_scores_%s.parquet", cache_tag))
+  )
+  arrow::write_parquet(
+    tibble::tibble(peak_ID = "chr1:1-10", sample_a = 0L),
+    file.path(cache_dir, sprintf("fp_bounds_%s.parquet", cache_tag))
+  )
+  arrow::write_parquet(
+    tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "PARQUET"),
+    file.path(cache_dir, sprintf("fp_annotation_%s.parquet", cache_tag))
+  )
+
+  out <- load_fp_aligned_from_cache(
+    cache_dir = cache_dir,
+    cache_tag = cache_tag,
+    output_mode = "distinct",
+    verbose = FALSE
+  )
+
+  expect_equal(out$fp_score$sample_a, 1)
+  expect_equal(out$fp_bound$sample_a, 1L)
+  expect_equal(out$fp_annotation$motifs, "CSV")
+})
+
 test_that("footprint alignment can write Parquet cache", {
   testthat::skip_if_not_installed("arrow")
   bench_dir <- file.path(tempdir(), paste0("craftgrn-align-parquet-", as.integer(stats::runif(1L, 1, 1e9))))

@@ -93,8 +93,9 @@ NULL
 #' @param cache_tag Cache tag used in aligned footprint file names.
 #' @param output_mode Output mode. One of `"full"` or `"distinct"`.
 #' @param load_id_map Logical; if `TRUE`, load the optional footprint ID map.
-#' @param cache_format Cache format. `"auto"` prefers Parquet when available,
-#'   then falls back to CSV.
+#' @param cache_format Cache format. The default `"csv"` reads CSV caches.
+#'   Use `"parquet"` to read Parquet caches, or `"auto"` to prefer Parquet
+#'   when available and fall back to CSV.
 #' @param verbose Logical; if `TRUE`, emit concise status messages.
 #'
 #' @return A list with `fp_score`, `fp_bound`, `fp_annotation`, and `id_map`.
@@ -104,12 +105,13 @@ load_fp_aligned_from_cache <- function(
     cache_tag,
     output_mode = c("full", "distinct"),
     load_id_map = FALSE,
-    cache_format = c("auto", "parquet", "csv"),
+    cache_format = c("csv", "parquet", "auto"),
     verbose = TRUE
 ) {
   .assert_pkg("data.table")
 
   output_mode <- match.arg(output_mode)
+  cache_format <- match.arg(cache_format)
   cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, cache_format)
   cache_paths <- cache_info$paths
 
