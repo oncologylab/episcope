@@ -92,11 +92,64 @@ run_vae_topic_delta_network_pathway(
 
 \item{k_single_map}{Named list of per-cellline K values.}
 
+\item{abs_log2fc_fp_min}{Minimum absolute footprint log2 fold-change.}
+
+\item{abs_delta_fp_min}{Minimum absolute footprint delta.}
+
+\item{abs_log2fc_gene_min}{Minimum absolute gene log2 fold-change.}
+
+\item{require_fp_bound_either}{Require footprint binding in either condition.}
+
+\item{require_tf_expr_either}{Require TF expression in either condition.}
+
+\item{require_gene_expr_either}{Require gene expression in either condition.}
+
+\item{direction_consistency}{Direction-consistency filter mode.}
+
+\item{top_terms_per_doc}{Maximum number of terms retained per document.}
+
+\item{min_df}{Minimum document frequency for retained terms.}
+
+\item{count_method}{Count conversion method.}
+
+\item{count_scale}{Count conversion scale factor.}
+
+\item{binarize_method}{Binarization method for topic inputs.}
+
+\item{thrP}{Probability threshold used by gamma-fit binarization.}
+
+\item{top_n_terms}{Number of top terms reported per topic.}
+
+\item{in_topic_min_terms}{Minimum number of topic terms required for a link.}
+
+\item{topic_report_args}{Additional arguments passed to topic report helpers.}
+
 \item{topic_root}{Root directory containing VAE outputs.}
+
+\item{backend}{Topic-model backend.}
+
+\item{vae_variant}{VAE model variant.}
+
+\item{doc_mode}{Document construction mode.}
 
 \item{step2_out_dir}{Directory with delta link CSV files.}
 
 \item{min_prob}{Minimum link-score probability for subnet plots.}
+
+\item{filter_same_direction}{Keep TF and target changes with the same
+direction for raw delta links.}
+
+\item{methods}{Topic network plotting methods.}
+
+\item{top_n_per_topic}{Maximum pathway rows per topic.}
+
+\item{dot_top_n_per_topic}{Maximum pathway rows shown in dot plots.}
+
+\item{max_pathways}{Maximum pathways retained in pathway summaries.}
+
+\item{per_comparison}{Split pathway summaries by comparison.}
+
+\item{split_direction}{Split pathway summaries by direction.}
 }
 \value{
 Most helpers return \code{invisible(TRUE)} and write outputs to disk.

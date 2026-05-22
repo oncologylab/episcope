@@ -3,6 +3,7 @@
 ^data-raw$
 dev_history.R
 ^dev$
+^dev-plan\.MD$
 $run_dev.*
 ^.here$
 ^LICENSE\.md$
@@ -19,6 +20,7 @@ $run_dev.*
 ^AGENTS\.md$
 ^figures$
 ^figure$
+^Rplots\.pdf$
 ^R_bak$
 ^tmp$
 ^output/doc$

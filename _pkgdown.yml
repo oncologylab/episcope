@@ -45,6 +45,7 @@ reference:
 - title: TF binding site and motif utilities
   desc: Work with motif resources, footprints, and TF-footprint correlations.
   contents:
+  - predict_tfbs
   - correlate_tf_to_fp
   - starts_with("read_")
   - starts_with("parse_")

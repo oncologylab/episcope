@@ -24,6 +24,17 @@ extract_regulatory_topics(
 
 \item{output_dir}{Directory to write final topic reports.}
 
+\item{backend}{Topic model backend, either `"vae"` or `"warplda"`.}
+
+\item{vae_variant}{VAE variant name used in trained output directories.}
+
+\item{doc_mode}{Document mode used during training.}
+
+\item{weight_label}{Weight label used in trained output directories.}
+
+\item{flatten_single_output}{If `TRUE` and only one trained output directory
+is matched, write reports directly under `output_dir`.}
+
 \item{topic_report_args}{Optional list of overrides for report settings.}
 }
 \description{

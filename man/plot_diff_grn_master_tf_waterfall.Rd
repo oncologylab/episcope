@@ -19,9 +19,6 @@ plot_diff_grn_master_tf_waterfall(
 \item{title_text}{Plot title prefix.}
 
 \item{waterfall_min_abs_net}{Minimum absolute net target count for display.}
-
-\item{png_path}{Optional PNG output path. When provided, a matching PNG
-sidecar is written with the same fixed panel dimensions.}
 }
 \value{
 Invisibly returns \code{out_pdf}.

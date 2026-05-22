@@ -412,7 +412,7 @@ load_one_motif_wide <- function(
   data.table::setnames(bound_wide, sample_bound_cols, paste0(sample_bound_cols, "_ATAC_bound"))
   acc <- merge(score_wide, bound_wide, by = key_cols, all = TRUE, sort = FALSE)
   desired <- c(key_cols, paste0(samples_present, "_ATAC_score"), paste0(samples_present, "_ATAC_bound"))
-  acc <- acc[, ..desired]
+  acc <- acc[, desired, with = FALSE]
   tibble::as_tibble(acc)
 }
 

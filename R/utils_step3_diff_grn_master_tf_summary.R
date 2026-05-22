@@ -355,8 +355,6 @@ plot_diff_grn_master_tf_summary <- function(summary_dt,
 #'
 #' @param links_dt Filtered links table.
 #' @param out_pdf PDF output path.
-#' @param png_path Optional PNG output path. When provided, a matching PNG
-#'   sidecar is written with the same fixed panel dimensions.
 #' @param title_text Plot title prefix.
 #' @param waterfall_min_abs_net Minimum absolute net target count for display.
 #'
@@ -574,6 +572,14 @@ plot_diff_grn_master_tf_connectivity <- function(links_dt,
 #'   are the same TF universe.
 #' @param cluster_gap_size Gap size, in tile units, inserted at each cluster
 #'   boundary.
+#' @param tile_border_color Color used for heatmap tile borders.
+#' @param tile_border_linewidth Line width used for heatmap tile borders.
+#' @param row_annotation_style Row annotation style, either legend based or
+#'   inline cluster IDs.
+#' @param row_annotation_side Side used for the row annotation strip.
+#' @param row_annotation_width Width of the row annotation strip.
+#' @param row_annotation_label_size Optional label size for inline row
+#'   annotation IDs.
 #' @param col_annotation_height Height of the column cluster annotation strip.
 #' @param col_annotation_label_size Optional label size for inline column
 #'   annotation IDs.
@@ -581,6 +587,7 @@ plot_diff_grn_master_tf_connectivity <- function(links_dt,
 #'   reclustering inside the plotting helper.
 #' @param x_label Optional x-axis title.
 #' @param y_label Optional y-axis title.
+#' @param png_path Optional PNG output path written in addition to the PDF.
 #'
 #' @return Invisibly returns \code{out_pdf}.
 #' @export

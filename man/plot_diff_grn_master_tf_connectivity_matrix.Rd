@@ -90,6 +90,20 @@ are the same TF universe.}
 \item{cluster_gap_size}{Gap size, in tile units, inserted at each cluster
 boundary.}
 
+\item{tile_border_color}{Color used for heatmap tile borders.}
+
+\item{tile_border_linewidth}{Line width used for heatmap tile borders.}
+
+\item{row_annotation_style}{Row annotation style, either legend based or
+inline cluster IDs.}
+
+\item{row_annotation_side}{Side used for the row annotation strip.}
+
+\item{row_annotation_width}{Width of the row annotation strip.}
+
+\item{row_annotation_label_size}{Optional label size for inline row
+annotation IDs.}
+
 \item{col_annotation_height}{Height of the column cluster annotation strip.}
 
 \item{col_annotation_label_size}{Optional label size for inline column
@@ -101,6 +115,8 @@ reclustering inside the plotting helper.}
 \item{x_label}{Optional x-axis title.}
 
 \item{y_label}{Optional y-axis title.}
+
+\item{png_path}{Optional PNG output path written in addition to the PDF.}
 }
 \value{
 Invisibly returns \code{out_pdf}.

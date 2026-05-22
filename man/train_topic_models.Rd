@@ -55,6 +55,10 @@ train_topic_models(
 
 \item{tf_cluster_map}{Named vector mapping TFs to motif clusters.}
 
+\item{doc_mode}{Document mode, either `"tf_cluster"` or `"tf"`.}
+
+\item{doc_design}{Document design, either `"comparison"` or `"condition"`.}
+
 \item{tf_exclude}{Optional TFs to exclude.}
 
 \item{abs_log2fc_fp_min}{Minimum |log2FC| footprint change for QC filtering.}
@@ -78,6 +82,33 @@ train_topic_models(
 \item{count_method}{Count method ("bin" or "log").}
 
 \item{count_scale}{Count scaling factor.}
+
+\item{threshold_gene_expr}{Minimum condition-level target-gene expression.}
+
+\item{threshold_fp_score}{Minimum condition-level footprint score.}
+
+\item{threshold_tf_expr}{Minimum condition-level TF expression.}
+
+\item{gene_term_mode}{Gene term mode.}
+
+\item{fp_term_mode}{Footprint term mode.}
+
+\item{include_tf_terms}{Whether to include TF self-terms.}
+
+\item{count_input}{Count column passed to the topic backend.}
+
+\item{vae_variant}{VAE variant name.}
+
+\item{backend}{Topic model backend, either `"vae"` or `"warplda"`.}
+
+\item{reuse_if_exists}{Reuse existing model outputs when all requested K
+values are present.}
+
+\item{save_full_doc_term_csv}{Whether to save the full document-term CSV.}
+
+\item{local_threads}{Optional local thread count for data.table and BLAS.}
+
+\item{check_repeated_values}{Warn about repeated inconsistent term values.}
 
 \item{binarize_method}{Topic binarization method.}
 

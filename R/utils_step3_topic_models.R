@@ -109,6 +109,15 @@ if (!exists(".log_abort", mode = "function")) {
   x
 }
 
+.safe_log2fc <- function(num, den) {
+  num <- .safe_num(num)
+  den <- .safe_num(den)
+  out <- rep(NA_real_, length(num))
+  ok <- is.finite(num) & is.finite(den) & num > 0 & den > 0
+  out[ok] <- log2(num[ok] / den[ok])
+  out
+}
+
 .safe_sign <- function(x) {
   x <- .safe_num(x)
   x[!is.finite(x)] <- 0
@@ -302,6 +311,33 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
 #' @param topic_root Root directory containing VAE outputs.
 #' @param step2_out_dir Directory with delta link CSV files.
 #' @param min_prob Minimum link-score probability for subnet plots.
+#' @param abs_log2fc_fp_min Minimum absolute footprint log2 fold-change.
+#' @param abs_delta_fp_min Minimum absolute footprint delta.
+#' @param abs_log2fc_gene_min Minimum absolute gene log2 fold-change.
+#' @param require_fp_bound_either Require footprint binding in either condition.
+#' @param require_tf_expr_either Require TF expression in either condition.
+#' @param require_gene_expr_either Require gene expression in either condition.
+#' @param direction_consistency Direction-consistency filter mode.
+#' @param top_terms_per_doc Maximum number of terms retained per document.
+#' @param min_df Minimum document frequency for retained terms.
+#' @param count_method Count conversion method.
+#' @param count_scale Count conversion scale factor.
+#' @param binarize_method Binarization method for topic inputs.
+#' @param thrP Probability threshold used by gamma-fit binarization.
+#' @param top_n_terms Number of top terms reported per topic.
+#' @param in_topic_min_terms Minimum number of topic terms required for a link.
+#' @param topic_report_args Additional arguments passed to topic report helpers.
+#' @param vae_variant VAE model variant.
+#' @param backend Topic-model backend.
+#' @param doc_mode Document construction mode.
+#' @param filter_same_direction Keep TF and target changes with the same
+#'   direction for raw delta links.
+#' @param methods Topic network plotting methods.
+#' @param top_n_per_topic Maximum pathway rows per topic.
+#' @param dot_top_n_per_topic Maximum pathway rows shown in dot plots.
+#' @param max_pathways Maximum pathways retained in pathway summaries.
+#' @param per_comparison Split pathway summaries by comparison.
+#' @param split_direction Split pathway summaries by direction.
 #' @return Most helpers return \code{invisible(TRUE)} and write outputs to disk.
 #' @rdname vae_topic_helpers
 #' @export
@@ -467,7 +503,8 @@ fit_warplda_one <- function(dtm,
 
   set.seed(as.integer(seed))
   if (has_warplda) {
-    model <- text2vec::WarpLDA$new(
+    warplda_class <- get("WarpLDA", envir = asNamespace("text2vec"))
+    model <- warplda_class$new(
       n_topics = as.integer(K),
       n_iter = as.integer(iterations),
       alpha = alpha,
@@ -7034,10 +7071,15 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
     .log_inform("Skipping topic delta network plots: htmlwidgets not installed.")
     return(invisible(NULL))
   }
-  if (!exists("plot_tf_network_delta")) {
+  plot_tf_network_delta_fn <- get0("plot_tf_network_delta", mode = "function")
+  if (is.null(plot_tf_network_delta_fn)) {
     cand <- file.path("R", "utils_plot_tf_network_delta.R")
     if (!file.exists(cand)) .log_abort("Missing utils_plot_tf_network_delta.R")
     source(cand)
+    plot_tf_network_delta_fn <- get0("plot_tf_network_delta", mode = "function")
+  }
+  if (is.null(plot_tf_network_delta_fn)) {
+    .log_abort("Missing plot_tf_network_delta() after sourcing network helper.")
   }
 
   link_dt <- data.table::as.data.table(link_scores)
@@ -7311,12 +7353,13 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
           gene_expr_str_col = if (mp$gene_expr_str_col %in% ns) mp$gene_expr_str_col else NULL,
           size_by = size_by
         )
-        w <- try(do.call(plot_tf_network_delta, args), silent = TRUE)
+        w <- try(do.call(plot_tf_network_delta_fn, args), silent = TRUE)
         if (inherits(w, "try-error")) next
         out_html <- file.path(out_dir, paste0("Topic", topic_id, ".html"))
         htmlwidgets::saveWidget(w, out_html, selfcontained = TRUE)
-        if (exists(".set_html_title")) {
-          .set_html_title(out_html, plot_title)
+        set_html_title_fn <- get0(".set_html_title", mode = "function")
+        if (!is.null(set_html_title_fn)) {
+          set_html_title_fn(out_html, plot_title)
         }
 
         tf_vals <- unique(as.character(sub_links[[tf_col]]))
@@ -7481,6 +7524,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param output_dir Directory to write topic model outputs.
 #' @param celllines Character vector of cell line prefixes.
 #' @param tf_cluster_map Named vector mapping TFs to motif clusters.
+#' @param doc_mode Document mode, either `"tf_cluster"` or `"tf"`.
+#' @param doc_design Document design, either `"comparison"` or `"condition"`.
 #' @param tf_exclude Optional TFs to exclude.
 #' @param abs_log2fc_fp_min Minimum |log2FC| footprint change for QC filtering.
 #' @param abs_delta_fp_min Minimum |delta_fp| for QC filtering.
@@ -7493,6 +7538,20 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param min_df Minimum document frequency for terms.
 #' @param count_method Count method ("bin" or "log").
 #' @param count_scale Count scaling factor.
+#' @param threshold_gene_expr Minimum condition-level target-gene expression.
+#' @param threshold_fp_score Minimum condition-level footprint score.
+#' @param threshold_tf_expr Minimum condition-level TF expression.
+#' @param gene_term_mode Gene term mode.
+#' @param fp_term_mode Footprint term mode.
+#' @param include_tf_terms Whether to include TF self-terms.
+#' @param count_input Count column passed to the topic backend.
+#' @param vae_variant VAE variant name.
+#' @param backend Topic model backend, either `"vae"` or `"warplda"`.
+#' @param reuse_if_exists Reuse existing model outputs when all requested K
+#'   values are present.
+#' @param save_full_doc_term_csv Whether to save the full document-term CSV.
+#' @param local_threads Optional local thread count for data.table and BLAS.
+#' @param check_repeated_values Warn about repeated inconsistent term values.
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.
 #' @param top_n_terms Number of terms per topic.
@@ -7826,6 +7885,12 @@ train_topic_models <- function(Kgrid,
 #' @param k Integer K selected by the user.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write final topic reports.
+#' @param backend Topic model backend, either `"vae"` or `"warplda"`.
+#' @param vae_variant VAE variant name used in trained output directories.
+#' @param doc_mode Document mode used during training.
+#' @param weight_label Weight label used in trained output directories.
+#' @param flatten_single_output If `TRUE` and only one trained output directory
+#'   is matched, write reports directly under `output_dir`.
 #' @param topic_report_args Optional list of overrides for report settings.
 #' @export
 extract_regulatory_topics <- function(k,
