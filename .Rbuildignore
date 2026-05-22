@@ -18,6 +18,7 @@ $run_dev.*
 ^\.github$
 ^AGENTS\.md$
 ^figures$
+^figure$
 ^R_bak$
 ^tmp$
 ^output/doc$

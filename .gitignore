@@ -17,6 +17,8 @@ R_bak/
 tmp/
 output/doc/
 docs/
+Rplots.pdf
+figure/
 inst/doc
 inst/extdata
 inst/extdata/GeneHancer_v5.24_elite_panc.csv
