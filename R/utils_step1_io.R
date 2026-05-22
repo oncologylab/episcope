@@ -258,8 +258,9 @@ load_atac <- function(
   if (!"peak_ATAC" %in% names(x)) .log_abort("Input must contain a `peak_ATAC` column.")
   if (!"TFBS_name" %in% names(x)) .log_abort("Input must contain a `TFBS_name` column.")
   out <- x[, c("peak_ID", "peak_ATAC", "TFBS_name"), drop = FALSE]
-  out <- tibble::as_tibble(out)
-  dplyr::rename(out, fp_peak = .data$peak_ID, atac_peak = .data$peak_ATAC, motifs = .data$TFBS_name)
+  out <- data.table::as.data.table(out)
+  data.table::setnames(out, c("peak_ID", "peak_ATAC", "TFBS_name"), c("fp_peak", "atac_peak", "motifs"))
+  tibble::as_tibble(out)
 }
 
 
@@ -326,26 +327,37 @@ load_one_motif_wide <- function(
   data.table::setDTthreads(1L)
 
   read_one_overview_dt <- function(file, sid) {
-    hdr <- data.table::fread(file, nrows = 0L, showProgress = FALSE)
-    nm <- names(hdr)
-
-    sc <- nm[grepl(paste0("^", sid, "_ATAC_score$"), nm)]
-    bd <- nm[grepl(paste0("^", sid, "_ATAC_bound$"), nm)]
-    if (!length(sc)) sc <- nm[grepl("_ATAC_score$", nm)]
-    if (!length(bd)) bd <- nm[grepl("_ATAC_bound$", nm)]
-    if (!length(sc)) sc <- nm[grepl(paste0("^", sid, ".*footprints_score$"), nm)]
-    if (!length(bd)) bd <- nm[grepl(paste0("^", sid, ".*footprints_bound$"), nm)]
-    if (!length(sc)) sc <- nm[grepl("footprints_score$", nm)]
-    if (!length(bd)) bd <- nm[grepl("footprints_bound$", nm)]
-    if (length(sc) != 1L || length(bd) != 1L) return(NULL)
-
-    need <- c(
+    fixed <- c(
       "TFBS_chr", "TFBS_start", "TFBS_end", "TFBS_name",
-      "peak_chr", "peak_start", "peak_end", sc, bd
+      "peak_chr", "peak_start", "peak_end"
     )
-    if (!all(need %in% nm)) return(NULL)
+    sc <- paste0(sid, "_ATAC_score")
+    bd <- paste0(sid, "_ATAC_bound")
+    need <- c(fixed, sc, bd)
 
-    dt <- data.table::fread(file, select = match(need, nm), showProgress = FALSE)
+    dt <- tryCatch(
+      data.table::fread(file, select = need, showProgress = FALSE),
+      error = function(e) NULL
+    )
+    if (is.null(dt)) {
+      hdr <- data.table::fread(file, nrows = 0L, showProgress = FALSE)
+      nm <- names(hdr)
+
+      sc <- nm[grepl(paste0("^", sid, "_ATAC_score$"), nm)]
+      bd <- nm[grepl(paste0("^", sid, "_ATAC_bound$"), nm)]
+      if (!length(sc)) sc <- nm[grepl("_ATAC_score$", nm)]
+      if (!length(bd)) bd <- nm[grepl("_ATAC_bound$", nm)]
+      if (!length(sc)) sc <- nm[grepl(paste0("^", sid, ".*footprints_score$"), nm)]
+      if (!length(bd)) bd <- nm[grepl(paste0("^", sid, ".*footprints_bound$"), nm)]
+      if (!length(sc)) sc <- nm[grepl("footprints_score$", nm)]
+      if (!length(bd)) bd <- nm[grepl("footprints_bound$", nm)]
+      if (length(sc) != 1L || length(bd) != 1L) return(NULL)
+
+      need <- c(fixed, sc, bd)
+      if (!all(need %in% nm)) return(NULL)
+      dt <- data.table::fread(file, select = need, showProgress = FALSE)
+    }
+
     data.table::setnames(dt, old = sc, new = "ATAC_score")
     data.table::setnames(dt, old = bd, new = "ATAC_bound")
     dt[, peak_ID := paste0(TFBS_chr, ":", TFBS_start, "-", TFBS_end)]
@@ -354,8 +366,8 @@ load_one_motif_wide <- function(
     dt[, .(sample_id, TFBS_name, peak_ID, peak_ATAC, ATAC_score, ATAC_bound)]
   }
 
-  acc <- NULL
-  samples_present <- character(0)
+  chunks <- list()
+  samples_present <- character(0L)
   for (sid in sample_ids) {
     f <- file.path(root_dir, sid, db_name, motif_id, paste0(motif_id, "_overview.txt"))
     if (!file.exists(f)) next
@@ -366,32 +378,41 @@ load_one_motif_wide <- function(
     dtj <- dtj[TFBS_name == motif_id_norm]
     if (!nrow(dtj)) next
     dtj <- unique(dtj, by = c("TFBS_name", "peak_ID"))
-    dtj[, sample_id := NULL]
-
-    sc_name <- paste0(sid, "_ATAC_score")
-    bd_name <- paste0(sid, "_ATAC_bound")
-    data.table::setnames(dtj, c("ATAC_score", "ATAC_bound"), c(sc_name, bd_name))
 
     if (!sid %in% samples_present) samples_present <- c(samples_present, sid)
-    if (is.null(acc)) {
-      acc <- dtj
-    } else {
-      acc <- merge(acc, dtj, by = c("peak_ID", "peak_ATAC", "TFBS_name"), all = TRUE, sort = FALSE)
-    }
+    chunks[[sid]] <- dtj
   }
 
-  if (is.null(acc) || !nrow(acc)) {
+  chunks <- Filter(Negate(is.null), chunks)
+  if (!length(chunks)) {
     if (isTRUE(verbose)) .log_inform("Motif {motif_id}: no per-sample overview rows found.")
     return(tibble::as_tibble(data.frame()))
   }
 
-  desired <- c(
-    "peak_ID", "peak_ATAC", "TFBS_name",
-    paste0(samples_present, "_ATAC_score"),
-    paste0(samples_present, "_ATAC_bound")
+  long <- data.table::rbindlist(chunks, use.names = TRUE)
+  if (!nrow(long)) {
+    if (isTRUE(verbose)) .log_inform("Motif {motif_id}: no per-sample overview rows found.")
+    return(tibble::as_tibble(data.frame()))
+  }
+  key_cols <- c("peak_ID", "peak_ATAC", "TFBS_name")
+  long <- unique(long, by = c(key_cols, "sample_id"))
+  score_wide <- data.table::dcast(
+    long,
+    peak_ID + peak_ATAC + TFBS_name ~ sample_id,
+    value.var = "ATAC_score"
   )
-  have <- intersect(desired, names(acc))
-  acc <- acc[, ..have]
+  bound_wide <- data.table::dcast(
+    long,
+    peak_ID + peak_ATAC + TFBS_name ~ sample_id,
+    value.var = "ATAC_bound"
+  )
+  sample_score_cols <- intersect(samples_present, names(score_wide))
+  sample_bound_cols <- intersect(samples_present, names(bound_wide))
+  data.table::setnames(score_wide, sample_score_cols, paste0(sample_score_cols, "_ATAC_score"))
+  data.table::setnames(bound_wide, sample_bound_cols, paste0(sample_bound_cols, "_ATAC_bound"))
+  acc <- merge(score_wide, bound_wide, by = key_cols, all = TRUE, sort = FALSE)
+  desired <- c(key_cols, paste0(samples_present, "_ATAC_score"), paste0(samples_present, "_ATAC_bound"))
+  acc <- acc[, ..desired]
   tibble::as_tibble(acc)
 }
 
@@ -612,17 +633,17 @@ load_footprints <- function(
 
     wd <- load_one_motif_wide(root_dir, db_name, sample_ids, m, verbose = FALSE)
     if (!nrow(wd)) {
-      readr::write_csv(tibble::tibble(peak_ID = character()), f_score)
-      readr::write_csv(tibble::tibble(peak_ID = character()), f_bound)
-      readr::write_csv(tibble::tibble(fp_peak = character(), atac_peak = character(), motifs = character()), f_annot)
+      data.table::fwrite(data.table::data.table(peak_ID = character()), f_score)
+      data.table::fwrite(data.table::data.table(peak_ID = character()), f_bound)
+      data.table::fwrite(data.table::data.table(fp_peak = character(), atac_peak = character(), motifs = character()), f_annot)
       return(tibble::tibble(motif = base, n_peaks = 0L, score = f_score, bound = f_bound, annot = f_annot))
     }
 
     anyb <- .filter_any_bound(wd)
     if (!nrow(anyb)) {
-      readr::write_csv(.select_fp_scores(wd)[0, ], f_score)
-      readr::write_csv(.select_fp_bounds(wd)[0, ], f_bound)
-      readr::write_csv(.select_fp_annots(wd)[0, ], f_annot)
+      data.table::fwrite(data.table::as.data.table(.select_fp_scores(wd)[0, ]), f_score)
+      data.table::fwrite(data.table::as.data.table(.select_fp_bounds(wd)[0, ]), f_bound)
+      data.table::fwrite(data.table::as.data.table(.select_fp_annots(wd)[0, ]), f_annot)
       return(tibble::tibble(motif = base, n_peaks = 0L, score = f_score, bound = f_bound, annot = f_annot))
     }
 
@@ -630,9 +651,9 @@ load_footprints <- function(
     bound_tbl <- .select_fp_bounds(anyb)
     annot_tbl <- .select_fp_annots(anyb)
     n_out <- nrow(score_tbl)
-    readr::write_csv(score_tbl, f_score)
-    readr::write_csv(bound_tbl, f_bound)
-    readr::write_csv(annot_tbl, f_annot)
+    data.table::fwrite(data.table::as.data.table(score_tbl), f_score)
+    data.table::fwrite(data.table::as.data.table(bound_tbl), f_bound)
+    data.table::fwrite(data.table::as.data.table(annot_tbl), f_annot)
 
     rm(wd, anyb, score_tbl, bound_tbl, annot_tbl)
     gc()
@@ -654,7 +675,7 @@ load_footprints <- function(
   out <- dplyr::bind_rows(results)
   if (!is.null(out_dir)) {
     manifest_path <- file.path(dirname(out_dir), paste0(basename(out_dir), "_manifest.csv"))
-    readr::write_csv(out, manifest_path)
+    data.table::fwrite(data.table::as.data.table(out), manifest_path)
   }
   attr(out, "from_cache") <- FALSE
   out

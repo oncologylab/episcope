@@ -172,6 +172,57 @@ test_that("raw footprint loader reuses a complete manifest before scanning raw f
   expect_equal(manifest$motif, "M1")
 })
 
+test_that("raw footprint loader writes minimal per-motif cache tables", {
+  root_dir <- file.path(tempdir(), paste0("craftgrn-raw-root-", as.integer(stats::runif(1L, 1, 1e9))))
+  out_dir <- file.path(tempdir(), paste0("craftgrn-raw-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  for (sid in c("S1", "S2")) {
+    dir.create(file.path(root_dir, sid, "TEST", "M1"), recursive = TRUE, showWarnings = FALSE)
+    data.table::fwrite(
+      data.table::data.table(
+        TFBS_chr = c("chr1", "chr1"),
+        TFBS_start = c(10L, 20L),
+        TFBS_end = c(15L, 25L),
+        TFBS_name = c("M1", "M1"),
+        TFBS_score = c(8, 9),
+        TFBS_strand = c("+", "-"),
+        peak_chr = c("chr1", "chr1"),
+        peak_start = c(1L, 1L),
+        peak_end = c(100L, 100L),
+        score = c(1.2, 0.1),
+        bound = c(1L, 0L)
+      ) |>
+        stats::setNames(c(
+          "TFBS_chr", "TFBS_start", "TFBS_end", "TFBS_name",
+          "TFBS_score", "TFBS_strand", "peak_chr", "peak_start", "peak_end",
+          paste0(sid, "_ATAC_score"), paste0(sid, "_ATAC_bound")
+        )),
+      file.path(root_dir, sid, "TEST", "M1", "M1_overview.txt"),
+      sep = "\t"
+    )
+  }
+
+  manifest <- load_footprints(
+    root_dir = root_dir,
+    db_name = "TEST",
+    out_dir = out_dir,
+    sample_ids = c("S1", "S2"),
+    n_workers = 1L,
+    verbose = FALSE
+  )
+
+  score <- data.table::fread(manifest$score[[1L]], showProgress = FALSE)
+  bound <- data.table::fread(manifest$bound[[1L]], showProgress = FALSE)
+  annot <- data.table::fread(manifest$annot[[1L]], showProgress = FALSE)
+
+  expect_equal(names(score), c("peak_ID", "S1", "S2"))
+  expect_equal(names(bound), c("peak_ID", "S1", "S2"))
+  expect_equal(names(annot), c("fp_peak", "atac_peak", "motifs"))
+  expect_equal(nrow(score), 1L)
+  expect_equal(score$S1, 1.2)
+  expect_equal(bound$S2, 1L)
+  expect_equal(annot$motifs, "M1")
+})
+
 test_that("footprint alignment can skip returning and writing id_map", {
   bench_dir <- file.path(tempdir(), paste0("craftgrn-align-cache-", as.integer(stats::runif(1L, 1, 1e9))))
   raw_dir <- file.path(bench_dir, "raw")
