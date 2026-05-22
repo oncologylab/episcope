@@ -24,6 +24,6 @@ normalize_config_paths(
 Invisibly returns the updated values (named character vector).
 }
 \description{
-Expands \code{~} and environment variables in configured paths.
+Expands \code{~} and resolves relative paths against the config directory.
 }
 \keyword{internal}

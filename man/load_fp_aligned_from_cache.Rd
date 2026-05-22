@@ -8,6 +8,8 @@ load_fp_aligned_from_cache(
   cache_dir,
   cache_tag,
   output_mode = c("full", "distinct"),
+  load_id_map = FALSE,
+  cache_format = c("auto", "parquet", "csv"),
   verbose = TRUE
 )
 }
@@ -17,6 +19,11 @@ load_fp_aligned_from_cache(
 \item{cache_tag}{Cache tag used in aligned footprint file names.}
 
 \item{output_mode}{Output mode. One of `"full"` or `"distinct"`.}
+
+\item{load_id_map}{Logical; if `TRUE`, load the optional footprint ID map.}
+
+\item{cache_format}{Cache format. `"auto"` prefers Parquet when available,
+then falls back to CSV.}
 
 \item{verbose}{Logical; if `TRUE`, emit concise status messages.}
 }

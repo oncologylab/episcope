@@ -53,6 +53,22 @@
   invisible(value)
 }
 
+.path_is_absolute <- function(path) {
+  path <- path.expand(path)
+  grepl("^(/|[A-Za-z]:[/\\\\]|\\\\\\\\)", path)
+}
+
+.resolve_config_path <- function(path, config_dir = NULL) {
+  if (!is.character(path) || !length(path) || !nzchar(path[1])) {
+    return(path)
+  }
+  path <- path.expand(path[1])
+  if (.path_is_absolute(path) || is.null(config_dir) || !nzchar(config_dir)) {
+    return(path)
+  }
+  normalizePath(file.path(config_dir, path), winslash = "/", mustWork = FALSE)
+}
+
 .cfg_apply_aliases <- function(env = .craftgrn_state) {
   if (exists("threshold_expr", envir = env, inherits = FALSE)) {
     thr_expr <- get("threshold_expr", envir = env, inherits = FALSE)
@@ -133,7 +149,7 @@ validate_config <- function(
 
 #' Normalize configured path variables
 #'
-#' Expands \code{~} and environment variables in configured paths.
+#' Expands \code{~} and resolves relative paths against the config directory.
 #'
 #' @param keys Character vector of config keys to normalize.
 #' @param env Environment to update. Defaults to the internal CraftGRN config state.
@@ -175,14 +191,24 @@ normalize_config_paths <- function(
   existing <- keys[vapply(keys, function(nm) exists(nm, envir = env, inherits = FALSE), logical(1))]
   if (!length(existing)) return(invisible(character(0)))
 
-  vals <- vapply(existing, function(nm) {
+  vals <- list()
+  for (nm in existing) {
     val <- get(nm, envir = env)
-    if (!is.character(val) || !length(val) || !nzchar(val[1])) return(val)
-    path.expand(val[1])
-  }, character(1))
+    if (!is.character(val) || !length(val) || !nzchar(val[1])) {
+      next
+    }
+    config_dir <- if (exists(".config_dir", envir = env, inherits = FALSE)) {
+      get(".config_dir", envir = env, inherits = FALSE)
+    } else {
+      NULL
+    }
+    vals[[nm]] <- .resolve_config_path(val[1], config_dir = config_dir)
+  }
 
-  list2env(as.list(vals), envir = env)
-  invisible(vals)
+  if (!length(vals)) return(invisible(character(0)))
+
+  list2env(vals, envir = env)
+  invisible(unlist(vals, use.names = TRUE))
 }
 
 #' Load a CraftGRN YAML config into an environment
@@ -204,8 +230,10 @@ load_config <- function(path, env = .craftgrn_state) {
   if (!file.exists(path)) {
     cli::cli_abort("Config file not found: {path}")
   }
+  config_dir <- normalizePath(dirname(path), winslash = "/", mustWork = TRUE)
   cfg <- yaml::read_yaml(path)
   list2env(cfg, envir = env)
+  assign(".config_dir", config_dir, envir = env)
   .cfg_apply_aliases(env = env)
   if (exists("validate_config", mode = "function")) {
     validate_config(env = env)
