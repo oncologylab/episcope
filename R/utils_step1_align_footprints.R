@@ -21,19 +21,71 @@
 #' @noRd
 NULL
 
+.fp_eq_counts <- function(a, v) {
+  b <- matrix(v, nrow = nrow(a), ncol = ncol(a), byrow = TRUE)
+  e <- (a == b) | (is.na(a) & is.na(b))
+  rowSums(e)
+}
+
+.assign_fp_score_components_base <- function(m, k_req) {
+  n <- nrow(m)
+  if (n == 0L) return(integer(0))
+  ids <- integer(n)
+  comp <- 0L
+  for (i in seq_len(n)) {
+    if (ids[i] != 0L) next
+    comp <- comp + 1L
+    ids[i] <- comp
+    q <- i
+    while (length(q)) {
+      a <- q[1L]
+      q <- q[-1L]
+      unassigned <- which(ids == 0L)
+      if (!length(unassigned)) break
+      eqc <- .fp_eq_counts(m[unassigned, , drop = FALSE], m[a, ])
+      to_add <- unassigned[eqc >= k_req]
+      if (length(to_add)) {
+        ids[to_add] <- comp
+        q <- c(q, to_add)
+      }
+    }
+  }
+  ids
+}
+
+.assign_fp_score_components <- function(m,
+                                        k_req,
+                                        compress_duplicates = TRUE,
+                                        compress_min_n = 64L) {
+  n <- nrow(m)
+  if (n == 0L) return(integer(0))
+  if (!isTRUE(compress_duplicates) || n < as.integer(compress_min_n)) {
+    return(.assign_fp_score_components_base(m, k_req = k_req))
+  }
+  keys <- do.call(paste, c(as.data.frame(m, optional = TRUE), sep = "\r"))
+  unique_pos <- !duplicated(keys)
+  if (all(unique_pos)) {
+    return(.assign_fp_score_components_base(m, k_req = k_req))
+  }
+  unique_keys <- keys[unique_pos]
+  key_map <- match(keys, unique_keys)
+  ids_unique <- .assign_fp_score_components_base(m[unique_pos, , drop = FALSE], k_req = k_req)
+  ids_unique[key_map]
+}
+
 align_footprints <- function(
     fp_filtered_manifest,
     mid_slop = 10L,
     round_digits = 1L,
     score_match_pct = 0.8,
     verbose = TRUE,
-    threads = max(1L, parallel::detectCores(TRUE)),
+    threads = max(1L, min(4L, parallel::detectCores(TRUE))),
     cache_dir = NULL,
     cache_tag = NULL,
     use_cache = TRUE,
     write_cache = TRUE,
     log_file = NULL,
-    parallel_by = c("atac_peak", "chromosome", "none"),
+    parallel_by = c("chromosome", "atac_peak", "none"),
     output_mode = c("full", "distinct"),
     save_prealign_score = FALSE,
     prealign_score_path = NULL,
@@ -123,14 +175,18 @@ align_footprints <- function(
     dt <- fread_fast(p)
     if ("fp_peak" %in% names(dt) && !"peak_ID" %in% names(dt)) data.table::setnames(dt, "fp_peak", "peak_ID")
     ids <- setdiff(names(dt), "peak_ID")
-    for (j in ids) data.table::set(dt, j = j, value = as.numeric(dt[[j]]))
+    for (j in ids) {
+      if (!is.numeric(dt[[j]])) data.table::set(dt, j = j, value = as.numeric(dt[[j]]))
+    }
     dt[]
   }
   read_bound <- function(p) {
     dt <- fread_fast(p)
     if ("fp_peak" %in% names(dt) && !"peak_ID" %in% names(dt)) data.table::setnames(dt, "fp_peak", "peak_ID")
     ids <- setdiff(names(dt), "peak_ID")
-    for (j in ids) data.table::set(dt, j = j, value = as.integer(dt[[j]]))
+    for (j in ids) {
+      if (!is.integer(dt[[j]])) data.table::set(dt, j = j, value = as.integer(dt[[j]]))
+    }
     dt[]
   }
   read_annot <- function(p) {
@@ -141,9 +197,11 @@ align_footprints <- function(
     dt[]
   }
 
-  if (isTRUE(verbose)) .log_inform("Loading and combining {nrow(use)} motifs.")
+  if (isTRUE(verbose)) {
+    .log_inform("Loading and combining {nrow(use)} motifs.")
+    .log_inform("Alignment threads: {threads}; parallelization: {match.arg(parallel_by)}.")
+  }
   score_dt <- data.table::rbindlist(lapply(use$score, read_score), use.names = TRUE, fill = TRUE)
-  bound_dt <- data.table::rbindlist(lapply(use$bound, read_bound), use.names = TRUE, fill = TRUE)
   annot_dt <- data.table::rbindlist(lapply(use$annot, read_annot), use.names = TRUE, fill = TRUE)
 
   if (isTRUE(save_prealign_score) && !is.null(prealign_path_use) && nzchar(prealign_path_use)) {
@@ -159,8 +217,6 @@ align_footprints <- function(
   }
 
   if ("peak_ID" %in% names(score_dt)) score_dt <- score_dt[!duplicated(peak_ID)]
-  if ("peak_ID" %in% names(bound_dt)) bound_dt <- bound_dt[!duplicated(peak_ID)]
-
   map_fp_atac <- unique(annot_dt[, .(fp_peak, atac_peak)])
   if (anyNA(map_fp_atac$atac_peak)) .log_abort("Found NA atac_peak in annotation.")
   dup <- map_fp_atac[, .N, by = fp_peak][N > 1L]
@@ -200,37 +256,6 @@ align_footprints <- function(
     invisible(NULL)
   }
 
-  .eq_counts <- function(a, v) {
-    b <- matrix(v, nrow = nrow(a), ncol = ncol(a), byrow = TRUE)
-    e <- (a == b) | (is.na(a) & is.na(b))
-    rowSums(e)
-  }
-  assign_components <- function(m, k_req) {
-    n <- nrow(m)
-    if (n == 0L) return(integer(0))
-    ids <- integer(n)
-    comp <- 0L
-    for (i in seq_len(n)) {
-      if (ids[i] != 0L) next
-      comp <- comp + 1L
-      ids[i] <- comp
-      q <- i
-      while (length(q)) {
-        a <- q[1]
-        q <- q[-1]
-        unassigned <- which(ids == 0L)
-        if (!length(unassigned)) break
-        eqc <- .eq_counts(m[unassigned, , drop = FALSE], m[a, ])
-        to_add <- unassigned[eqc >= k_req]
-        if (length(to_add)) {
-          ids[to_add] <- comp
-          q <- c(q, to_add)
-        }
-      }
-    }
-    ids
-  }
-
   parallel_by <- match.arg(parallel_by)
   output_mode <- match.arg(output_mode)
   use_parallel <- .Platform$OS.type == "unix" && threads > 1L
@@ -258,12 +283,12 @@ align_footprints <- function(
       if (use_inner_parallel) {
         n_workers <- max(1L, min(threads, length(splits)))
         if (length(splits) == 1L) {
-          comp_list <- list(assign_components(s_sig[splits[[1L]], , drop = FALSE], k_req))
+          comp_list <- list(.assign_fp_score_components(s_sig[splits[[1L]], , drop = FALSE], k_req))
         } else {
           batch_ids <- parallel::splitIndices(length(splits), n_workers)
           comp_batches <- parallel::mclapply(
             batch_ids,
-            function(idx) lapply(idx, function(i) assign_components(s_sig[splits[[i]], , drop = FALSE], k_req)),
+            function(idx) lapply(idx, function(i) .assign_fp_score_components(s_sig[splits[[i]], , drop = FALSE], k_req)),
             mc.cores = n_workers,
             mc.preschedule = FALSE
           )
@@ -275,7 +300,7 @@ align_footprints <- function(
           }
         }
       } else {
-        comp_list <- lapply(splits, function(ii) assign_components(s_sig[ii, , drop = FALSE], k_req))
+        comp_list <- lapply(splits, function(ii) .assign_fp_score_components(s_sig[ii, , drop = FALSE], k_req))
       }
       sig_local <- integer(length(idx_chr))
       next_id <- 1L
@@ -326,9 +351,15 @@ align_footprints <- function(
   score_dt[map_old_new, peak_ID := i.new_peak_ID, on = .(peak_ID = peak_ID_old)]
   score_dt <- score_dt[, c("peak_ID", sample_cols), with = FALSE][!duplicated(peak_ID)]
 
+  rm(sig_id_vec, chr_groups)
+  gc(verbose = FALSE)
+
+  if (isTRUE(verbose)) .log_inform("Loading and remapping footprint bound matrices.")
+  bound_dt <- data.table::rbindlist(lapply(use$bound, read_bound), use.names = TRUE, fill = TRUE)
   if (!"peak_ID" %in% names(bound_dt) && "fp_peak" %in% names(bound_dt)) {
     data.table::setnames(bound_dt, "fp_peak", "peak_ID")
   }
+  if ("peak_ID" %in% names(bound_dt)) bound_dt <- bound_dt[!duplicated(peak_ID)]
   bound_dt[map_old_new, peak_ID := i.new_peak_ID, on = .(peak_ID = peak_ID_old)]
   bound_dt <- bound_dt[!duplicated(peak_ID)]
 
@@ -336,6 +367,9 @@ align_footprints <- function(
   annot_dt[map_old_new, fp_peak := i.new_peak_ID, on = .(fp_peak = peak_ID_old)]
 
   i_ids <- data.table::data.table(peak_ID = annot_dt$fp_peak)
+  if (identical(output_mode, "distinct")) {
+    i_ids <- unique(i_ids)
+  }
   fp_score_out <- merge(i_ids, score_dt, by = "peak_ID", all.x = TRUE, sort = FALSE)
   fp_bound_out <- merge(i_ids, bound_dt, by = "peak_ID", all.x = TRUE, sort = FALSE)
 
@@ -350,6 +384,8 @@ align_footprints <- function(
   } else {
     data.table::data.table()
   }
+
+  annot_dt <- unique(annot_dt, by = c("fp_peak", "atac_peak", "motifs"))
 
   out <- list(
     fp_score = tibble::as_tibble(fp_score_out),

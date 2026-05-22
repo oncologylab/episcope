@@ -268,4 +268,25 @@ test_that("footprint alignment can skip returning and writing id_map", {
   expect_equal(nrow(aligned$id_map), 0L)
   expect_false(file.exists(file.path(cache_dir, "fp_id_map_TEST.csv")))
   expect_true(file.exists(file.path(cache_dir, "fp_scores_TEST.csv")))
+  expect_equal(nrow(aligned$fp_annotation), 1L)
+  expect_equal(aligned$fp_annotation$fp_peak, "chr1:10-22")
+})
+
+test_that("footprint alignment component helper preserves duplicate signature components", {
+  m <- matrix(
+    c(
+      1L, 2L, 3L,
+      1L, 2L, 3L,
+      1L, 2L, 4L,
+      9L, 9L, 9L
+    ),
+    ncol = 3L,
+    byrow = TRUE
+  )
+
+  ids <- craftgrn:::`.assign_fp_score_components`(m, k_req = 2L, compress_duplicates = TRUE)
+
+  expect_equal(ids[1L], ids[2L])
+  expect_equal(ids[1L], ids[3L])
+  expect_false(ids[1L] == ids[4L])
 })
