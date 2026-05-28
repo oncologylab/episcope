@@ -1,3 +1,7 @@
+// File: corr_kernels.cpp
+// Package: craftgrn
+// Author: Yaoxiang Li
+//
 // Shared C++ correlation kernels for CraftGRN.
 //
 // These exported kernels are intentionally module-neutral:
