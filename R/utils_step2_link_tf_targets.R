@@ -230,12 +230,14 @@
   man
 }
 
-.module2_read_predicted_chunk <- function(path, format = NULL) {
+.module2_read_predicted_chunk <- function(path, format = NULL, columns = NULL) {
   if (identical(format, "parquet") || grepl("\\.parquet$", path, ignore.case = TRUE)) {
     if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet predicted TFBS chunks.")
-    return(tibble::as_tibble(arrow::read_parquet(path)))
+    if (is.null(columns)) return(tibble::as_tibble(arrow::read_parquet(path)))
+    return(tibble::as_tibble(arrow::read_parquet(path, col_select = columns)))
   }
-  tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE))
+  if (is.null(columns)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
+  tibble::as_tibble(readr::read_csv(path, col_select = columns, show_col_types = FALSE))
 }
 
 .module2_write_chunk <- function(x, out_dir, prefix, chunk_id, output_format = c("auto", "parquet", "csv")) {
@@ -271,7 +273,7 @@
   tfs <- character()
   n_predicted_tfbs <- 0
   for (i in seq_len(nrow(predicted_manifest))) {
-    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]))
+    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf"))
     pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% expressed_genes, , drop = FALSE]
     n_predicted_tfbs <- n_predicted_tfbs + nrow(pred_i)
     tfs <- union(tfs, as.character(pred_i$tf))
@@ -296,7 +298,7 @@
   fp_pair_dt <- data.table::data.table(fp_id = character(), target_gene = character())
   candidate_offset <- 0L
   for (i in seq_len(nrow(predicted_manifest))) {
-    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]))
+    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf", "chr", "start", "end", "atac_peak"))
     pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% tfs, , drop = FALSE]
     cand_i <- .module2_build_candidates(pred_i, tf_target_pass, gene_tss, regulatory_prior = regulatory_prior, max_distance_bp = max_distance_bp, id_offset = candidate_offset)
     candidate_offset <- candidate_offset + nrow(cand_i)
@@ -328,9 +330,9 @@
   n_links <- 0L
   link_offset <- 0L
   for (i in seq_len(nrow(predicted_manifest))) {
-    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]))
+    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf"))
     pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% tfs, , drop = FALSE]
-    cand_i <- .module2_read_predicted_chunk(as.character(cand_manifest$path[[i]]), as.character(cand_manifest$format[[i]]))
+    cand_i <- .module2_read_predicted_chunk(as.character(cand_manifest$path[[i]]), as.character(cand_manifest$format[[i]]), columns = c("candidate_id", "fp_id", "target_gene"))
     if (nrow(cand_i) && nrow(pred_i)) {
       pred_dt <- unique(data.table::as.data.table(pred_i[, c("fp_id", "tf"), drop = FALSE]))
       cand_dt <- unique(data.table::as.data.table(cand_i[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]))
