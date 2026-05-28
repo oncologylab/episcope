@@ -950,7 +950,25 @@ predict_tfbs <- function(omics_data,
     }
   }
 
-  predicted_tfbs <- build_predicted_tfbs(tfbs_links)
+  predicted_tfbs_paths <- NULL
+  if (!is.null(link_manifest_path) && !isTRUE(keep_links)) {
+    if (isTRUE(verbose)) .log_inform("Module 1 predicted TFBS handoff: writing compact chunks.")
+    predicted_tfbs_paths <- .write_predicted_tfbs_from_link_manifest(link_manifest, out_dir = out_dir, output_format = output_format)
+    predicted_tfbs <- tibble::tibble(
+      tfbs_id = character(),
+      fp_id = character(),
+      chr = character(),
+      start = integer(),
+      end = integer(),
+      atac_peak = character(),
+      tf = character(),
+      condition_support = integer()
+    )
+    n_predicted_tfbs <- predicted_tfbs_paths$n_rows
+  } else {
+    predicted_tfbs <- build_predicted_tfbs(tfbs_links)
+    n_predicted_tfbs <- nrow(predicted_tfbs)
+  }
 
   qc_summary <- list(
     n_fp_input = length(fp_universe),
@@ -962,7 +980,7 @@ predict_tfbs <- function(omics_data,
     n_prediction_fps = nrow(prediction_footprints),
     n_prediction_pairs = as.numeric(prediction_pair_count),
     n_tfbs_links = as.numeric(n_tfbs_links),
-    n_predicted_tfbs = nrow(predicted_tfbs)
+    n_predicted_tfbs = as.numeric(n_predicted_tfbs)
   )
 
   reports <- list()
@@ -972,7 +990,7 @@ predict_tfbs <- function(omics_data,
     canonical_stats_path <- file.path(out_dir, "module1_canonical_tfbs_stats.csv.gz")
     qc_summary_path <- file.path(out_dir, "module1_qc_summary.csv")
     links_path <- file.path(out_dir, "module1_tfbs_links.csv.gz")
-    predicted_tfbs_paths <- .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
+    if (is.null(predicted_tfbs_paths)) predicted_tfbs_paths <- .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
     readr::write_csv(high_confidence_footprints, high_path)
     readr::write_csv(motif_supported_correlations, canonical_stats_path)
     readr::write_csv(tibble::tibble(metric = names(qc_summary), value = as.numeric(unlist(qc_summary, use.names = FALSE))), qc_summary_path)

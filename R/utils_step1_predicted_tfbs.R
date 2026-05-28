@@ -1,13 +1,7 @@
 # File: utils_step1_predicted_tfbs.R
 # Purpose: Compact Module 1 predicted TFBS handoff helpers.
 
-#' Build the compact predicted TFBS handoff for Module 2
-#'
-#' @param tfbs_links Module 1 TFBS link table.
-#' @param include_support Include compact condition support when available.
-#' @return A tibble with one row per predicted FP-TF binding event.
-#' @export
-build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
+.build_predicted_tfbs_table <- function(tfbs_links, include_support = TRUE, id_offset = 0L) {
   if (!is.data.frame(tfbs_links)) .log_abort("tfbs_links must be a data.frame.")
   need <- c("fp_id", "chr", "start", "end", "atac_peak", "tf")
   missing <- setdiff(need, names(tfbs_links))
@@ -16,10 +10,20 @@ build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
   if (isTRUE(include_support)) keep <- c(keep, intersect(c("condition_support", "sample_support"), names(tfbs_links)))
   out <- data.table::as.data.table(tfbs_links[, keep, drop = FALSE])
   out <- unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf)])
-  out[, tfbs_id := sprintf("tfbs_%08d", seq_len(.N))]
+  out[, tfbs_id := sprintf("tfbs_%08d", as.integer(id_offset) + seq_len(.N))]
   data.table::setcolorder(out, c("tfbs_id", setdiff(names(out), "tfbs_id")))
   data.table::setorder(out, tf, fp_id)
   tibble::as_tibble(out)
+}
+
+#' Build the compact predicted TFBS handoff for Module 2
+#'
+#' @param tfbs_links Module 1 TFBS link table.
+#' @param include_support Include compact condition support when available.
+#' @return A tibble with one row per predicted FP-TF binding event.
+#' @export
+build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
+  .build_predicted_tfbs_table(tfbs_links, include_support = include_support)
 }
 
 .predicted_tfbs_output_format <- function(output_format = c("auto", "parquet", "csv")) {
@@ -45,7 +49,45 @@ build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
   manifest <- tibble::tibble(table = "module1_predicted_tfbs", path = path, format = output_format, n_rows = nrow(predicted_tfbs))
   manifest_path <- file.path(out_dir, "module1_predicted_tfbs_manifest.csv")
   readr::write_csv(manifest, manifest_path)
-  list(path = path, manifest = manifest_path, format = output_format)
+  list(path = path, manifest = manifest_path, format = output_format, n_rows = nrow(predicted_tfbs))
+}
+
+.write_predicted_tfbs_from_link_manifest <- function(link_manifest, out_dir, output_format = c("auto", "parquet", "csv")) {
+  if (!is.data.frame(link_manifest)) .log_abort("link_manifest must be a data.frame.")
+  if (!all(c("path", "format") %in% names(link_manifest))) .log_abort("link_manifest must contain path and format columns.")
+  output_format <- .predicted_tfbs_output_format(output_format)
+  chunk_dir <- file.path(out_dir, "module1_predicted_tfbs_chunks")
+  dir.create(chunk_dir, recursive = TRUE, showWarnings = FALSE)
+  offset <- 0L
+  manifest <- vector("list", nrow(link_manifest))
+  for (i in seq_len(nrow(link_manifest))) {
+    link_path <- as.character(link_manifest$path[[i]])
+    link_format <- as.character(link_manifest$format[[i]])
+    if (!file.exists(link_path)) .log_abort("TFBS link chunk not found: {link_path}")
+    if (identical(link_format, "parquet") || grepl("\\.parquet$", link_path, ignore.case = TRUE)) {
+      if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet TFBS link chunks.")
+      links_i <- tibble::as_tibble(arrow::read_parquet(link_path))
+    } else {
+      links_i <- tibble::as_tibble(readr::read_csv(link_path, show_col_types = FALSE))
+    }
+    pred_i <- .build_predicted_tfbs_table(links_i, include_support = TRUE, id_offset = offset)
+    offset <- offset + nrow(pred_i)
+    if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
+      out_path <- file.path(chunk_dir, sprintf("module1_predicted_tfbs_chunk_%04d.parquet", i))
+      arrow::write_parquet(pred_i, out_path, compression = "zstd")
+      fmt <- "parquet"
+    } else {
+      fmt <- "csv"
+      out_path <- file.path(chunk_dir, sprintf("module1_predicted_tfbs_chunk_%04d.csv.gz", i))
+      readr::write_csv(pred_i, out_path)
+    }
+    manifest[[i]] <- tibble::tibble(chunk_id = i, path = out_path, format = fmt, n_rows = nrow(pred_i))
+    rm(links_i, pred_i)
+  }
+  manifest <- dplyr::bind_rows(manifest)
+  manifest_path <- file.path(out_dir, "module1_predicted_tfbs_manifest.csv")
+  readr::write_csv(manifest, manifest_path)
+  list(path = manifest_path, manifest = manifest_path, chunks = chunk_dir, format = output_format, n_rows = sum(manifest$n_rows))
 }
 
 #' Load compact predicted TFBS output
@@ -59,13 +101,20 @@ load_predicted_tfbs <- function(path) {
   if (grepl("_manifest\\.csv$", basename(path))) {
     man <- data.table::fread(path, showProgress = FALSE)
     if (!all(c("path", "format") %in% names(man)) || !nrow(man)) .log_abort("Invalid predicted TFBS manifest: {path}")
-    path <- as.character(man$path[[1L]])
+    read_one <- function(path_i, format_i) {
+      if (identical(format_i, "parquet") || grepl("\\.parquet$", path_i, ignore.case = TRUE)) {
+        if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet predicted TFBS output.")
+        return(tibble::as_tibble(arrow::read_parquet(path_i)))
+      }
+      tibble::as_tibble(readr::read_csv(path_i, show_col_types = FALSE))
+    }
+    return(dplyr::bind_rows(lapply(seq_len(nrow(man)), function(i) read_one(as.character(man$path[[i]]), as.character(man$format[[i]])))))
   }
   if (grepl("\\.parquet$", path, ignore.case = TRUE)) {
     if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet predicted TFBS output.")
     return(tibble::as_tibble(arrow::read_parquet(path)))
   }
-  tibble::as_tibble(data.table::fread(path, showProgress = FALSE))
+  tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE))
 }
 
 #' Export predicted TFBS as BED files

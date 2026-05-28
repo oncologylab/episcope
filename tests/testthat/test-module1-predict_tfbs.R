@@ -243,9 +243,14 @@ test_that("predict_tfbs streams large link outputs when return_links is disabled
   expect_true(all(file.exists(result$tfbs_link_manifest$path)))
   expect_true(file.exists(result$reports$canonical_tfbs_stats))
   expect_true(file.exists(result$reports$qc_summary))
+  expect_true(file.exists(result$reports$predicted_tfbs_manifest))
+  pred_manifest <- readr::read_csv(result$reports$predicted_tfbs_manifest, show_col_types = FALSE)
+  expect_true(all(file.exists(pred_manifest$path)))
+  expect_equal(sum(pred_manifest$n_rows), sum(result$tfbs_link_manifest$n_links))
   qc <- readr::read_csv(result$reports$qc_summary, show_col_types = FALSE)
   expect_true(all(c("metric", "value") %in% names(qc)))
   expect_equal(sum(result$tfbs_link_manifest$n_links), result$parameters$qc_summary$n_tfbs_links)
+  expect_equal(sum(pred_manifest$n_rows), result$parameters$qc_summary$n_predicted_tfbs)
 })
 
 test_that("compact multiomic object uses compact semantic names", {
