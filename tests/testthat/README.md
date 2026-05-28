@@ -12,16 +12,19 @@ Use kebab-case for all `testthat` files.
   - `module1` for TFBS prediction tests.
   - `module2` for TF-target linking and report tests.
   - `module3` for differential GRN and topic-model tests.
-  - `topic` for topic benchmark/report tests.
+  - `topic` for topic-model benchmark and report tests.
   - `benchmark` for benchmark-script coverage.
   - `tests` for tests that validate the test suite itself.
-  - `utils`, `golem`, `fct`, or `app` for shared package helpers.
+  - `app` for Shiny application contract and UI/server helpers.
+  - `config` for project configuration behavior.
 
 ## Examples
 
 - `test-module1-predict-tfbs.R`
+- `test-module1-footprints.R`
 - `test-module2-link-tf-targets.R`
+- `test-app-ui-utils.R`
 - `test-module3-topic-models.R`
-- `test-topic-method-k-html-reports.R`
-- `test-tests-naming.R`
+- `test-topic-reports.R`
+- `test-test-suite-naming.R`
 - `helper-module1.R`
