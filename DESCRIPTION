@@ -22,7 +22,6 @@ Imports:
     methods,
     readr,
     Rcpp,
-    rlang,
     shiny,
     tibble,
     tidyr,

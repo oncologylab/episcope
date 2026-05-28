@@ -53,7 +53,6 @@ reference:
   - build_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
-  - correlate_tf_to_fp
   - starts_with("read_")
   - starts_with("parse_")
   - starts_with("load_motif")
@@ -68,6 +67,7 @@ reference:
   desc: Connect predicted TF binding sites to target genes and query compact Module 2 outputs.
   contents:
   - link_tf_targets
+  - load_gene_tss
   - load_module2_links
   - query_module2_links
   - validate_module2_links

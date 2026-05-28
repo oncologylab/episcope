@@ -63,8 +63,8 @@ Primary package functions:
 
 - `load_prep_multiomic_data()` loads, filters, aligns, and prepares multiomic
   inputs from a YAML configuration file.
-- `correlate_tf_to_fp()` correlates TF expression with footprint or peak signal
-  across matched conditions to nominate condition-specific TF binding sites.
+- `predict_tfbs()` performs direct-bound footprint filtering and TF binding site
+  prediction across matched conditions.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg" alt="Module 1 workflow" width="800">
 

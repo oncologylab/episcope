@@ -15,6 +15,66 @@
   )
 }
 
+.module1_motif_gene_col <- function(motif_db) {
+  if (!is.data.frame(motif_db)) return(NULL)
+  if ("gene_symbol" %in% names(motif_db)) return("gene_symbol")
+  if ("HGNC" %in% names(motif_db)) return("HGNC")
+  NULL
+}
+
+.module1_add_fp_tfs <- function(grn_set, force = FALSE, verbose = TRUE) {
+  grn_set <- grn_status_init(grn_set)
+  if (grn_status_is(grn_set, "fp_tfs") && !isTRUE(force)) return(grn_set)
+  if (!is.data.frame(grn_set$fp_annotation)) {
+    .log_abort("`grn_set$fp_annotation` is missing or invalid.")
+  }
+
+  annot <- grn_set$fp_annotation
+  if (!"fp_peak" %in% names(annot)) .log_abort("`fp_annotation` needs fp_peak.")
+  if (!"motifs" %in% names(annot)) .log_abort("`fp_annotation` needs motifs.")
+
+  gene_col <- .module1_motif_gene_col(grn_set$motif_db)
+  has_db <- is.data.frame(grn_set$motif_db) &&
+    !is.null(gene_col) &&
+    all(c("motif", gene_col) %in% names(grn_set$motif_db))
+
+  if (isTRUE(has_db)) {
+    motif_join_tbl <- grn_set$motif_db |>
+      dplyr::select("motif", gene_symbol = dplyr::all_of(gene_col))
+    if ("motifs" %in% names(annot)) {
+      annot$motifs <- sub("^_+", "", annot$motifs)
+    }
+    if ("motif" %in% names(motif_join_tbl)) {
+      motif_join_tbl$motif <- sub("^_+", "", motif_join_tbl$motif)
+    }
+    annot <- annot |>
+      dplyr::left_join(
+        motif_join_tbl,
+        by = c("motifs" = "motif")
+      )
+    annot$tfs <- ifelse(
+      !is.na(annot$gene_symbol) & nzchar(annot$gene_symbol),
+      gsub("\\s*::\\s*", ",", annot$gene_symbol),
+      toupper(sub("\\..*$", "", sub("^_+", "", annot$motifs)))
+    )
+    annot$gene_symbol <- NULL
+  } else {
+    annot$tfs <- toupper(sub("\\..*$", "", sub("^_+", "", annot$motifs)))
+  }
+
+  grn_set$fp_annotation <- annot
+  fp_tfs <- annot |>
+    dplyr::select("fp_peak", "atac_peak", "tfs") |>
+    tidyr::separate_rows("tfs", sep = "\\s*,\\s*|\\s*::\\s*") |>
+    dplyr::filter(!is.na(.data$tfs), .data$tfs != "") |>
+    dplyr::distinct(.data$fp_peak, .data$atac_peak, .data$tfs) |>
+    dplyr::group_by(.data$fp_peak, .data$atac_peak) |>
+    dplyr::summarise(tfs = paste(unique(.data$tfs), collapse = ","), .groups = "drop")
+
+  grn_set$fp_tfs <- fp_tfs
+  grn_status_set(grn_set, "fp_tfs")
+}
+
 .module1_prepare_predict_omics <- function(omics_data, label_col = NULL, verbose = TRUE) {
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a prepared Module 1 list.")
   if (is_multiomic_object(omics_data)) {
@@ -24,7 +84,7 @@
     .log_abort("`omics_data$fp_annotation` is required.")
   }
   if (!"tfs" %in% names(omics_data$fp_annotation)) {
-    omics_data <- grn_add_fp_tfs(omics_data, force = TRUE, verbose = verbose)
+    omics_data <- .module1_add_fp_tfs(omics_data, force = TRUE, verbose = verbose)
   }
   if (!is.data.frame(omics_data$rna_condition)) {
     if (is.null(label_col) || !nzchar(label_col)) {
