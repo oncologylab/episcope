@@ -950,6 +950,8 @@ predict_tfbs <- function(omics_data,
     }
   }
 
+  predicted_tfbs <- build_predicted_tfbs(tfbs_links)
+
   qc_summary <- list(
     n_fp_input = length(fp_universe),
     n_fp_bound_accessible = length(bound_fp_ids),
@@ -959,7 +961,8 @@ predict_tfbs <- function(omics_data,
     n_canonical_bound_fps = length(canonical_fp_ids),
     n_prediction_fps = nrow(prediction_footprints),
     n_prediction_pairs = as.numeric(prediction_pair_count),
-    n_tfbs_links = as.numeric(n_tfbs_links)
+    n_tfbs_links = as.numeric(n_tfbs_links),
+    n_predicted_tfbs = nrow(predicted_tfbs)
   )
 
   reports <- list()
@@ -969,6 +972,7 @@ predict_tfbs <- function(omics_data,
     canonical_stats_path <- file.path(out_dir, "module1_canonical_tfbs_stats.csv.gz")
     qc_summary_path <- file.path(out_dir, "module1_qc_summary.csv")
     links_path <- file.path(out_dir, "module1_tfbs_links.csv.gz")
+    predicted_tfbs_paths <- .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
     readr::write_csv(high_confidence_footprints, high_path)
     readr::write_csv(motif_supported_correlations, canonical_stats_path)
     readr::write_csv(tibble::tibble(metric = names(qc_summary), value = as.numeric(unlist(qc_summary, use.names = FALSE))), qc_summary_path)
@@ -977,6 +981,8 @@ predict_tfbs <- function(omics_data,
         high_confidence_footprints = high_path,
         canonical_tfbs_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
+        predicted_tfbs = predicted_tfbs_paths$path,
+        predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         tfbs_links_manifest = link_manifest_path,
         tfbs_links_chunks = link_chunk_dir
       ))
@@ -986,6 +992,8 @@ predict_tfbs <- function(omics_data,
         high_confidence_footprints = high_path,
         canonical_tfbs_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
+        predicted_tfbs = predicted_tfbs_paths$path,
+        predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         tfbs_links = links_path
       ))
     }
@@ -1009,6 +1017,7 @@ predict_tfbs <- function(omics_data,
     high_confidence_footprints = high_confidence_footprints,
     motif_supported_correlations = motif_supported_correlations,
     tfbs_links = tfbs_links,
+    predicted_tfbs = predicted_tfbs,
     tfbs_link_manifest = link_manifest,
     tfbs_stats = if (isTRUE(write_stats)) prediction_stats else NULL,
     reports = reports,

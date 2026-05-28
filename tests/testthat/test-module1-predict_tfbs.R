@@ -21,6 +21,7 @@ test_that("predict_tfbs returns the public Module 1 contract", {
       "high_confidence_footprints",
       "motif_supported_correlations",
       "tfbs_links",
+      "predicted_tfbs",
       "tfbs_link_manifest",
       "tfbs_stats",
       "reports",
@@ -28,6 +29,8 @@ test_that("predict_tfbs returns the public Module 1 contract", {
     )
   )
   expect_s3_class(result$tfbs_links, "data.frame")
+  expect_s3_class(result$predicted_tfbs, "data.frame")
+  expect_false(any(c("best_r", "best_method") %in% names(result$predicted_tfbs)))
   expect_true(all(c("fp_id", "chr", "start", "end", "atac_peak", "tf", "best_r", "best_method", "condition_support") %in% names(result$tfbs_links)))
   expect_false(fixture$expected_excluded_fp %in% result$high_confidence_footprints$fp_id)
   expect_false(fixture$expected_excluded_fp %in% result$tfbs_links$fp_id)
@@ -37,7 +40,7 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   expect_true(result$parameters$filter_to_canonical_bound)
   expect_null(result$parameters$p_cutoff)
   expect_null(result$parameters$fdr_cutoff)
-  expect_named(result$parameters$qc_summary, c("n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_tfbs_links"))
+  expect_named(result$parameters$qc_summary, c("n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_tfbs_links", "n_predicted_tfbs"))
   expect_equal(result$parameters$qc_summary$n_prediction_fps, nrow(result$high_confidence_footprints))
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
 })

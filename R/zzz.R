@@ -19,7 +19,7 @@ utils::globalVariables(c(
   "new_start", "peak_ATAC", "peak_chr", "peak_end", "peak_ID",
   "peak_ID_old", "peak_start", "pearson_corr_fp_tf_r", "s_exp",
   "sample_id", "score", "sig_id", "spearman_corr_fp_tf_r",
-  "TFBS_chr", "TFBS_end", "TFBS_name", "TFBS_start", "tfs", "tfs_clean",
+  "TFBS_chr", "TFBS_end", "TFBS_name", "TFBS_start", "tfbs_id", "tfs", "tfs_clean",
   "type", "value"
 ))
 
@@ -42,7 +42,7 @@ utils::globalVariables(c(
   "gene_weight", "gs_name", "has_matching_peak", "HGNC",
   "in_marker_heatmap", "in_topic", "is_sig", "is_topic_top_pathway",
   "K", "leading_edge", "link_efdr_p", "link_efdr_q", "link_id",
-  "link_pass", "link_score", "link_score_prob", "log2_fc_z_c",
+  "link_pass", "module2_link_pass", "link_score", "link_score_prob", "log2_fc_z_c",
   "log2fc_fp", "log2FC_fp_bed_score", "log2FC_fp_score",
   "log2fc_gene", "log2fc_tf", "log2FC_tf_expr", "loglik", "logp",
   "marker_row_order", "max_doc_score", "max_score", "min_topic",
