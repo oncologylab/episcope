@@ -352,6 +352,81 @@
   edge_dt[]
 }
 
+
+.module2_report_condition_edges <- function(link_dt, multiomic_data, conditions = NULL, fp_score_cutoff = 0, verbose = TRUE) {
+  gene_norm <- fp_target_rna_r <- tf_expression_target_r <- NULL
+  if (!nrow(link_dt)) return(data.table::data.table())
+  if (is.null(multiomic_data)) {
+    dt <- data.table::copy(link_dt)
+    dt[, `:=`(condition = "all", condition_fp_score = NA_real_)]
+    return(.module2_report_build_direct_edges(dt, min_supporting_peaks = 1L))
+  }
+  if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
+  validate_multiomic_object(multiomic_data)
+  mats <- multiomic_data$matrices
+  all_conditions <- colnames(mats$fp_score)
+  if (is.null(conditions)) conditions <- all_conditions
+  conditions <- intersect(as.character(conditions), all_conditions)
+  if (!length(conditions)) .log_abort("No report conditions overlap multiomic_data condition names.")
+  dt <- data.table::copy(link_dt)
+  fp_idx <- match(dt$fp_id, rownames(mats$fp_score))
+  tf_idx <- match(dt$tf, rownames(mats$gene_expr))
+  gene_idx <- match(dt$target_gene, rownames(mats$gene_expr))
+  rows <- vector("list", length(conditions))
+  for (i in seq_along(conditions)) {
+    cc <- conditions[[i]]
+    fp_score <- as.numeric(mats$fp_score[fp_idx, cc])
+    fp_bound <- as.logical(mats$fp_bound[fp_idx, cc])
+    tf_expr <- as.numeric(mats$gene_expr[tf_idx, cc])
+    gene_expr <- as.numeric(mats$gene_expr[gene_idx, cc])
+    keep <- is.finite(fp_score) & fp_score >= fp_score_cutoff &
+      fp_bound %in% TRUE &
+      is.finite(tf_expr) & tf_expr > 0 &
+      is.finite(gene_expr) & gene_expr > 0
+    if (!any(keep)) next
+    one <- dt[keep, .(
+      tf,
+      gene_norm,
+      peak_ID,
+      fp_target_rna_r,
+      tf_expression_target_r,
+      condition = cc,
+      condition_fp_score = fp_score[keep]
+    )]
+    rows[[i]] <- .module2_report_build_direct_edges(one, min_supporting_peaks = 1L)
+    if (isTRUE(verbose)) .log_inform("Module 2 reports: aggregated direct TF-TF edges for condition {i}/{length(conditions)}: {cc}.")
+  }
+  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+}
+
+.module2_report_write_edge_cache <- function(edge_dt, output_dir, tag, result_label) {
+  csv_dir <- file.path(output_dir, "csv")
+  dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+  edge_path <- file.path(csv_dir, sprintf("%s_%s_conditionFiltered_direct_tf_tf_edges.csv", tag, result_label))
+  data.table::fwrite(edge_dt, edge_path)
+  edge_path
+}
+
+.module2_report_export_edge_browsers <- function(edge_dt, output_dir, html_subdir, report, out_suffix, title_template, report_name, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
+  html_dir <- file.path(output_dir, "html", html_subdir)
+  dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
+  rows <- lapply(as.integer(k_values), function(k) {
+    k_edge_dt <- .module2_report_assign_edge_clusters(edge_dt, k = k)
+    if (!nrow(k_edge_dt)) return(NULL)
+    html <- file.path(html_dir, sprintf("K%02d_%s.html", as.integer(k), out_suffix))
+    .module2_report_write_tf_tf_browser(
+      edge_dt = k_edge_dt,
+      out_html = html,
+      title = sprintf(title_template, tag, result_label, as.integer(k)),
+      report_name = report_name
+    )
+    data.table::data.table(report = report, k = k, path = html)
+  })
+  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  if (isTRUE(verbose)) .log_inform("Module 2 reports: wrote {nrow(out)} {report} HTML file(s).")
+  tibble::as_tibble(out)
+}
+
 .module2_report_assign_edge_clusters <- function(edge_dt, k) {
   direct_tf_cluster <- to_cluster <- from_cluster <- NULL
   if (!nrow(edge_dt)) return(edge_dt)
@@ -412,15 +487,21 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
     if (isTRUE(verbose)) .log_inform("Module 2 reports: building direct TF-TF report links.")
     direct_links <- .module2_report_direct_links(module2)
     if (!nrow(direct_links)) .log_abort("No direct TF-TF Module 2 links were found for report generation.")
-    if (isTRUE(verbose)) .log_inform("Module 2 reports: condition-filtering {nrow(direct_links)} direct TF-TF links.")
-    active <- .module2_report_condition_links(direct_links, multiomic_data, conditions = conditions)
+    if (isTRUE(verbose)) .log_inform("Module 2 reports: aggregating condition-filtered TF-TF edges from {nrow(direct_links)} direct links.")
     tag <- "module2"
     result_label <- "top100"
-    cache <- .module2_report_write_active_cache(active, output_dir, tag, result_label)
+    edge_dt <- .module2_report_condition_edges(direct_links, multiomic_data, conditions = conditions, verbose = verbose)
+    if (!nrow(edge_dt)) .log_abort("No condition-filtered direct TF-TF edges were found for report generation.")
+    .module2_report_write_edge_cache(edge_dt, output_dir, tag, result_label)
     if ("direct_tf_tf" %in% reports) {
-      out[[length(out) + 1L]] <- export_direct_tf_tf_browser(
-        cache = cache,
+      out[[length(out) + 1L]] <- .module2_report_export_edge_browsers(
+        edge_dt = edge_dt,
         output_dir = output_dir,
+        html_subdir = "direct_tf_tf_networks",
+        report = "direct_tf_tf",
+        out_suffix = "direct_tf_tf_network_browser",
+        title_template = "%s %s K%02d direct TF-TF network",
+        report_name = "Direct TF-TF",
         tag = tag,
         result_label = result_label,
         k_values = k_values,
@@ -428,9 +509,14 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
       )
     }
     if ("tf_tf_connectivity" %in% reports) {
-      out[[length(out) + 1L]] <- export_tf_tf_connectivity_browser(
-        cache = cache,
+      out[[length(out) + 1L]] <- .module2_report_export_edge_browsers(
+        edge_dt = edge_dt,
         output_dir = output_dir,
+        html_subdir = "tf_tf_connectivity",
+        report = "tf_tf_connectivity",
+        out_suffix = "tf_tf_connectivity_network_browser",
+        title_template = "%s %s K%02d TF-TF connectivity",
+        report_name = "TF-TF connectivity",
         tag = tag,
         result_label = result_label,
         k_values = k_values,
