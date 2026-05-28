@@ -1293,8 +1293,15 @@ correlate_tf_to_fp <- function(
     }
   }
 
-  if (isTRUE(write_bed)) {
-    .log_warn("`write_bed = TRUE` is not implemented yet in the rebuilt Step 1 path.")
+  if (isTRUE(write_bed) && !use_streaming_all && is.data.frame(grn_set$fp_annotation) && nrow(grn_set$fp_annotation)) {
+    bed_src <- grn_set$fp_annotation[!duplicated(grn_set$fp_annotation$fp_peak), , drop = FALSE]
+    coords <- .module1_parse_fp_coordinates(bed_src$fp_peak)
+    name_col <- if ("tfs" %in% names(bed_src)) as.character(bed_src$tfs) else as.character(bed_src$fp_peak)
+    bed <- data.frame(chrom = coords$chr, chromStart = coords$start, chromEnd = coords$end, name = name_col, stringsAsFactors = FALSE)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    bed_path <- file.path(out_dir, sprintf("module1_tf_corr_%s_%s.bed", db, mode))
+    data.table::fwrite(data.table::as.data.table(bed), bed_path, sep = "\t", col.names = FALSE)
+    if (isTRUE(verbose)) .log_inform("Module 1 TF correlation BED saved: {.path {bed_path}}")
   }
   if (isTRUE(write_outputs) && !use_streaming_all) {
     write_grn_tf_corr_outputs(grn_set, out_dir = out_dir, db = db, mode = mode)

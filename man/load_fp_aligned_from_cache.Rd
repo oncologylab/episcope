@@ -9,7 +9,9 @@ load_fp_aligned_from_cache(
   cache_tag,
   output_mode = c("full", "distinct"),
   load_id_map = FALSE,
-  cache_format = c("auto", "parquet", "csv"),
+  cache_format = c("csv", "parquet", "auto"),
+  cache_schema = c("auto", "compact", "legacy"),
+  expand_compact_annotation = TRUE,
   verbose = TRUE
 )
 }
@@ -22,8 +24,9 @@ load_fp_aligned_from_cache(
 
 \item{load_id_map}{Logical; if `TRUE`, load the optional footprint ID map.}
 
-\item{cache_format}{Cache format. `"auto"` prefers Parquet when available,
-then falls back to CSV.}
+\item{cache_format}{Cache format. The default `"csv"` reads CSV caches.
+Use `"parquet"` to read Parquet caches, or `"auto"` to prefer Parquet
+when available and fall back to CSV.}
 
 \item{verbose}{Logical; if `TRUE`, emit concise status messages.}
 }

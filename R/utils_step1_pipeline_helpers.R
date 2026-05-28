@@ -56,6 +56,8 @@ NULL
 #'   `"distinct"`.
 #' @param write_outputs Logical; if `TRUE`, save the prepared object as an RDS
 #'   cache under `predict_tf_binding_sites/`.
+#' @param save_mode RDS object mode. Use compact for the default,
+#'   full for the legacy debug object, or both for both.
 #' @param atac_data,rna_tbl,metadata Optional in-memory input tables.
 #' @param atac_data_path,rna_path,metadata_path Optional explicit file paths for
 #'   the input tables.
@@ -99,6 +101,7 @@ load_prep_multiomic_data <- function(
     score_match_pct = 0.8,
     output_mode = c("full", "distinct"),
     write_outputs = FALSE,
+    save_mode = c("compact", "full", "both"),
     atac_data = NULL,
     rna_tbl = NULL,
     metadata = NULL,
@@ -116,6 +119,7 @@ load_prep_multiomic_data <- function(
     verbose = TRUE
 ) {
   output_mode <- match.arg(output_mode)
+  save_mode <- match.arg(save_mode)
 
   if (!is.null(config)) {
     if (is.character(config) && length(config) == 1L && file.exists(config)) {
@@ -159,13 +163,19 @@ load_prep_multiomic_data <- function(
   if (is.null(threshold_fp_score)) {
     threshold_fp_score <- get_cfg("threshold_fp_score")
   }
-  omics_rds_path <- NULL
+  compact_rds_path <- NULL
+  full_rds_path <- NULL
   base_dir_cfg <- get_cfg("base_dir")
   if (is.character(base_dir_cfg) && nzchar(base_dir_cfg)) {
-    omics_rds_path <- file.path(
+    compact_rds_path <- file.path(
       base_dir_cfg,
       step1_out_dir_name_use,
       sprintf("01_multiomic_data_object_%s.rds", get_cfg("db"))
+    )
+    full_rds_path <- file.path(
+      base_dir_cfg,
+      step1_out_dir_name_use,
+      sprintf("01_multiomic_full_%s.rds", get_cfg("db"))
     )
   }
 
@@ -323,6 +333,7 @@ load_prep_multiomic_data <- function(
     label_col = label_col,
     threshold_gene_expr = threshold_gene_expr
   )
+  grn_set <- grn_add_rna_condition(grn_set, label_col = label_col)
 
   if (isTRUE(write_outputs) && exists("write_grn_outputs", mode = "function")) {
     write_grn_outputs(
@@ -351,13 +362,33 @@ load_prep_multiomic_data <- function(
     }
   }
 
-  if (isTRUE(write_outputs) && is.character(omics_rds_path) && nzchar(omics_rds_path)) {
-    dir.create(dirname(omics_rds_path), recursive = TRUE, showWarnings = FALSE)
-    saveRDS(grn_set, omics_rds_path)
-    if (isTRUE(verbose)) {
-      .log_inform("Saved Module 1 multi-omic object: {.path {omics_rds_path}}")
+  if (isTRUE(write_outputs) && is.character(compact_rds_path) && nzchar(compact_rds_path)) {
+    dir.create(dirname(compact_rds_path), recursive = TRUE, showWarnings = FALSE)
+    if (save_mode %in% c("compact", "both")) {
+      compact <- as_multiomic_object(
+        grn_set,
+        project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
+        paths = list(full = if (identical(save_mode, "both")) full_rds_path else NULL),
+        label_col = label_col,
+        verbose = FALSE
+      )
+      saveRDS(compact, compact_rds_path)
+      if (isTRUE(verbose)) .log_inform("Saved Module 1 multiomic object: {.path {compact_rds_path}}")
+    }
+    if (save_mode %in% c("full", "both")) {
+      saveRDS(grn_set, full_rds_path)
+      if (isTRUE(verbose)) .log_inform("Saved full Module 1 multiomic object: {.path {full_rds_path}}")
     }
   }
 
-  grn_set
+  if (identical(save_mode, "compact")) {
+    as_multiomic_object(
+      grn_set,
+      project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
+      label_col = label_col,
+      verbose = FALSE
+    )
+  } else {
+    grn_set
+  }
 }

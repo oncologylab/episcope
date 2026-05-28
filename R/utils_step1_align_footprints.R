@@ -73,26 +73,35 @@ NULL
   ids_unique[key_map]
 }
 
+# Alignment cache schemas:
+# - compact: default; writes one score/bound row per aligned FP plus fp_sites.
+# - legacy: writes historical duplicated score/bound/annotation tables.
+# - both: writes legacy tables plus fp_sites for debugging transitions.
+# fp_sites preserves all motif labels and original pre-alignment FP peaks per aligned FP.
 align_footprints <- function(
     fp_filtered_manifest,
     mid_slop = 10L,
     round_digits = 1L,
     score_match_pct = 0.8,
     verbose = TRUE,
-    threads = max(1L, min(4L, parallel::detectCores(TRUE))),
+    threads = .available_cores(logical = TRUE),
     cache_dir = NULL,
     cache_tag = NULL,
     use_cache = TRUE,
     write_cache = TRUE,
     log_file = NULL,
-    parallel_by = c("chromosome", "atac_peak", "none"),
+    parallel_by = c("none", "chromosome", "atac_peak"),
     output_mode = c("full", "distinct"),
+    return_data = TRUE,
     save_prealign_score = FALSE,
     prealign_score_path = NULL,
     prealign_output_mode = c("distinct", "all"),
     prealign_only = FALSE,
     return_id_map = TRUE,
     write_id_map = return_id_map,
+    write_fp_sites = TRUE,
+    include_source_fp_peaks = TRUE,
+    cache_schema = c("compact", "legacy", "both"),
     cache_format = c("csv", "parquet", "both")
 ) {
   stopifnot(
@@ -110,6 +119,40 @@ align_footprints <- function(
   stopifnot(is.numeric(score_match_pct), length(score_match_pct) == 1L, score_match_pct > 0, score_match_pct <= 1)
   prealign_output_mode <- match.arg(prealign_output_mode)
   cache_format <- match.arg(cache_format)
+  parallel_by <- match.arg(parallel_by)
+  output_mode <- match.arg(output_mode)
+  stopifnot(is.logical(return_data), length(return_data) == 1L, !is.na(return_data))
+  stopifnot(is.logical(write_fp_sites), length(write_fp_sites) == 1L, !is.na(write_fp_sites))
+  stopifnot(is.logical(include_source_fp_peaks), length(include_source_fp_peaks) == 1L, !is.na(include_source_fp_peaks))
+  cache_schema <- match.arg(cache_schema)
+  write_fp_sites <- isTRUE(write_fp_sites) || identical(cache_schema, "compact") || identical(cache_schema, "both")
+  write_legacy <- identical(cache_schema, "legacy") || identical(cache_schema, "both")
+  cache_format_primary <- if (identical(cache_format, "both")) "csv" else cache_format
+
+  cache_summary <- function(paths, counts, format) {
+    list(
+      paths = paths,
+      counts = counts,
+      format = format,
+      output_mode = output_mode,
+      cache_schema = cache_schema,
+      id_map_written = isTRUE(write_id_map),
+      fp_sites_written = isTRUE(write_fp_sites)
+    )
+  }
+
+  cache_counts_from_paths <- function(paths, format) {
+    if (!identical(format, "csv")) {
+      return(list(fp_score = NA_integer_, fp_bound = NA_integer_, fp_annotation = NA_integer_, id_map = NA_integer_, fp_sites = NA_integer_))
+    }
+    list(
+      fp_score = if (file.exists(paths$fp_score)) .count_rows_fast(paths$fp_score) else NA_integer_,
+      fp_bound = if (file.exists(paths$fp_bound)) .count_rows_fast(paths$fp_bound) else NA_integer_,
+      fp_annotation = if (file.exists(paths$fp_annotation)) .count_rows_fast(paths$fp_annotation) else NA_integer_,
+      id_map = if (file.exists(paths$id_map)) .count_rows_fast(paths$id_map) else 0L,
+      fp_sites = if (file.exists(paths$fp_sites)) .count_rows_fast(paths$fp_sites) else 0L
+    )
+  }
 
   prealign_path_use <- prealign_score_path
   if (is.null(prealign_path_use) && !is.null(cache_dir)) {
@@ -129,12 +172,17 @@ align_footprints <- function(
       cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, "csv")
     }
     if (isTRUE(cache_info$exists)) {
+      if (!isTRUE(return_data)) {
+        paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, cache_info$format)
+        return(cache_summary(paths, cache_counts_from_paths(paths, cache_info$format), cache_info$format))
+      }
       return(load_fp_aligned_from_cache(
         cache_dir = cache_dir,
         cache_tag = cache_tag,
         output_mode = output_mode,
         load_id_map = return_id_map,
         cache_format = cache_info$format,
+        cache_schema = if (identical(cache_schema, "both")) "auto" else cache_schema,
         verbose = verbose
       ))
     }
@@ -149,6 +197,7 @@ align_footprints <- function(
       output_mode = output_mode,
       load_id_map = return_id_map,
       cache_format = "csv",
+      cache_schema = if (identical(cache_schema, "both")) "auto" else cache_schema,
       verbose = verbose
     ))
   }
@@ -163,7 +212,11 @@ align_footprints <- function(
 
   if (!nrow(use)) {
     if (isTRUE(verbose)) .log_inform("No non-empty motifs with existing files.")
-    return(list(fp_score = tibble::tibble(), fp_bound = tibble::tibble(), fp_annotation = tibble::tibble(), id_map = tibble::tibble()))
+    if (!isTRUE(return_data)) {
+      paths <- if (!is.null(cache_dir) && !is.null(cache_tag)) .aligned_fp_cache_paths(cache_dir, cache_tag, cache_format_primary) else list()
+      return(cache_summary(paths, list(fp_score = 0L, fp_bound = 0L, fp_annotation = 0L, id_map = 0L, fp_sites = 0L), cache_format_primary))
+    }
+    return(list(fp_score = tibble::tibble(), fp_bound = tibble::tibble(), fp_annotation = tibble::tibble(), fp_sites = tibble::tibble(), id_map = tibble::tibble(), cache_schema = cache_schema))
   }
 
   old_threads <- data.table::getDTthreads()
@@ -256,8 +309,6 @@ align_footprints <- function(
     invisible(NULL)
   }
 
-  parallel_by <- match.arg(parallel_by)
-  output_mode <- match.arg(output_mode)
   use_parallel <- .Platform$OS.type == "unix" && threads > 1L
   use_inner_parallel <- use_parallel && identical(parallel_by, "atac_peak")
 
@@ -385,34 +436,86 @@ align_footprints <- function(
     data.table::data.table()
   }
 
+  annot_for_sites <- annot_dt
   annot_dt <- unique(annot_dt, by = c("fp_peak", "atac_peak", "motifs"))
 
-  out <- list(
-    fp_score = tibble::as_tibble(fp_score_out),
-    fp_bound = tibble::as_tibble(fp_bound_out),
-    fp_annotation = tibble::as_tibble(annot_dt),
-    id_map = if (isTRUE(return_id_map)) tibble::as_tibble(id_map_aligned) else tibble::tibble()
-  )
-  if (identical(output_mode, "distinct")) {
-    out$fp_score <- out$fp_score[!duplicated(out$fp_score$peak_ID), , drop = FALSE]
-    out$fp_bound <- out$fp_bound[!duplicated(out$fp_bound$peak_ID), , drop = FALSE]
+  fp_sites <- data.table::data.table()
+  source_fp_peak <- NULL
+  if (isTRUE(write_fp_sites)) {
+    site_long <- unique(annot_for_sites[, .(
+      peak_ID = fp_peak,
+      atac_peak = atac_peak,
+      motif = motifs,
+      source_fp_peak = fp_peak_bak
+    )])
+    fp_sites <- site_long[, .(
+      motifs_all = paste(sort(unique(as.character(motif[!is.na(motif)]))), collapse = ";"),
+      n_motifs = data.table::uniqueN(motif, na.rm = TRUE),
+      source_fp_peaks = if (isTRUE(include_source_fp_peaks)) paste(sort(unique(as.character(source_fp_peak[!is.na(source_fp_peak)]))), collapse = ";") else NA_character_,
+      n_source_fp_peaks = data.table::uniqueN(source_fp_peak, na.rm = TRUE)
+    ), by = .(peak_ID, atac_peak)]
+    pp_sites <- parse_peak(fp_sites$peak_ID)
+    fp_sites[, `:=`(chr = pp_sites$chr, start = pp_sites$start, end = pp_sites$end)]
+    fp_sites[gs_new, group_size := i.group_size, on = .(peak_ID, atac_peak)]
+    data.table::setcolorder(fp_sites, c(
+      "peak_ID", "chr", "start", "end", "atac_peak", "group_size",
+      "n_motifs", "motifs_all", "n_source_fp_peaks", "source_fp_peaks"
+    ))
   }
-  if (!identical(out$fp_score$peak_ID, out$fp_bound$peak_ID)) {
+
+  if (identical(output_mode, "distinct")) {
+    fp_score_out <- fp_score_out[!duplicated(peak_ID)]
+    fp_bound_out <- fp_bound_out[!duplicated(peak_ID)]
+  }
+  if (!identical(fp_score_out$peak_ID, fp_bound_out$peak_ID)) {
     .log_abort("fp_score and fp_bound peak_ID rows are not in the same order.")
   }
 
+  if (identical(cache_schema, "compact")) {
+    fp_score_out <- fp_score_out[!duplicated(peak_ID)]
+    fp_bound_out <- fp_bound_out[!duplicated(peak_ID)]
+  }
+
+  written_paths <- list()
+  written_format <- cache_format_primary
   if (!is.null(cache_paths) && isTRUE(write_cache)) {
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
     formats <- if (identical(cache_format, "both")) c("csv", "parquet") else cache_format
     for (fmt in formats) {
       paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, fmt)
-      .aligned_fp_write_table(out$fp_bound, paths$fp_bound, fmt)
-      .aligned_fp_write_table(out$fp_score, paths$fp_score, fmt)
-      .aligned_fp_write_table(out$fp_annotation, paths$fp_annotation, fmt)
+      .aligned_fp_write_table(tibble::as_tibble(fp_bound_out), paths$fp_bound, fmt)
+      .aligned_fp_write_table(tibble::as_tibble(fp_score_out), paths$fp_score, fmt)
+      if (isTRUE(write_legacy)) {
+        .aligned_fp_write_table(tibble::as_tibble(annot_dt), paths$fp_annotation, fmt)
+      }
       if (isTRUE(write_id_map)) {
         .aligned_fp_write_table(tibble::as_tibble(id_map_aligned), paths$id_map, fmt)
       }
+      if (isTRUE(write_fp_sites)) {
+        .aligned_fp_write_table(tibble::as_tibble(fp_sites), paths$fp_sites, fmt)
+      }
+      if (identical(fmt, written_format)) written_paths <- paths
     }
   }
-  out
+
+  counts <- list(
+    fp_score = nrow(fp_score_out),
+    fp_bound = nrow(fp_bound_out),
+    fp_annotation = if (isTRUE(write_legacy)) nrow(annot_dt) else 0L,
+    id_map = if (isTRUE(return_id_map) || isTRUE(write_id_map)) nrow(id_map_aligned) else 0L,
+    fp_sites = if (isTRUE(write_fp_sites)) nrow(fp_sites) else 0L
+  )
+  if (!isTRUE(return_data)) {
+    paths <- if (length(written_paths)) written_paths else if (!is.null(cache_dir) && !is.null(cache_tag)) .aligned_fp_cache_paths(cache_dir, cache_tag, written_format) else list()
+    return(cache_summary(paths, counts, written_format))
+  }
+
+  list(
+    fp_score = tibble::as_tibble(fp_score_out),
+    fp_bound = tibble::as_tibble(fp_bound_out),
+    fp_annotation = tibble::as_tibble(annot_dt),
+    id_map = if (isTRUE(return_id_map)) tibble::as_tibble(id_map_aligned) else tibble::tibble(),
+    fp_sites = if (isTRUE(write_fp_sites)) tibble::as_tibble(fp_sites) else tibble::tibble(),
+    cache_schema = cache_schema
+  )
 }

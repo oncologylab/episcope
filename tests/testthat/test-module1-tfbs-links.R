@@ -13,8 +13,10 @@ test_that("Module 1 helpers select high-confidence footprints from motif-support
   )
 
   expect_equal(high_conf$fp_id, c("chr1:100-140", "chr1:200-240"))
-  expect_true(all(c("fp_id", "chr", "start", "end", "atac_peak") %in% names(high_conf)))
+  expect_true(all(c("fp_id", "chr", "start", "end", "atac_peak", "n_canonical_bound_tfs", "canonical_bound_tfs", "canonical_bound_motifs", "has_canonical_bound") %in% names(high_conf)))
   expect_equal(high_conf$start, c(100L, 200L))
+  expect_equal(high_conf$n_canonical_bound_tfs, c(1L, 1L))
+  expect_true(all(high_conf$has_canonical_bound))
 })
 
 test_that("Module 1 helpers merge Pearson and Spearman stats with best method", {
@@ -40,6 +42,33 @@ test_that("Module 1 helpers merge Pearson and Spearman stats with best method", 
   expect_equal(merged$best_method, c("pearson", "spearman", "spearman"))
   expect_equal(merged$pass, c(TRUE, TRUE, FALSE))
   expect_equal(merged$best_r, c(0.91, 0.90, 0.20), tolerance = 1e-8)
+})
+
+test_that("Module 1 helper cutoffs support optional p-value and FDR filters", {
+  stats <- tibble::tibble(
+    fp_id = c("chr1:100-140", "chr1:200-240", "chr1:300-340"),
+    atac_peak = c("chr1:90-160", "chr1:180-260", "chr1:280-360"),
+    tf = c("TF_A", "TF_B", "TF_C"),
+    pearson_r = c(0.91, 0.90, 0.89),
+    pearson_p = c(0.001, 0.050, 0.001),
+    pearson_p_adj = c(0.010, 0.060, 0.090),
+    spearman_r = c(0.80, 0.88, 0.87),
+    spearman_p = c(0.020, 0.020, 0.020),
+    spearman_p_adj = c(0.030, 0.030, 0.030)
+  )
+
+  merged <- .module1_merge_tfbs_stats(
+    pearson_stats = stats[, c("fp_id", "atac_peak", "tf", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
+    spearman_stats = stats[, c("fp_id", "atac_peak", "tf", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
+    r_cutoff = 0.8,
+    p_cutoff = 0.01,
+    fdr_cutoff = 0.05
+  )
+
+  expect_equal(merged$pass_r, c(TRUE, TRUE, TRUE))
+  expect_equal(merged$pass_p, c(TRUE, FALSE, TRUE))
+  expect_equal(merged$pass_fdr, c(TRUE, FALSE, FALSE))
+  expect_equal(merged$pass, c(TRUE, FALSE, FALSE))
 })
 
 test_that("Module 1 helpers build sparse tfbs_links with multiple TFs per footprint", {

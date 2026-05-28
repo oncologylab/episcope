@@ -26,3 +26,7 @@ inst/extdata/GeneHancer_v5.24_full.csv
 /doc/
 /Meta/
 workspace.RData
+
+# R compiled objects
+src/*.o
+src/*.so

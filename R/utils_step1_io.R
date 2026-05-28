@@ -22,6 +22,15 @@
 #' @noRd
 NULL
 
+.available_cores <- function(logical = TRUE) {
+  cores <- suppressWarnings(parallel::detectCores(logical = logical))
+  cores <- suppressWarnings(as.integer(cores))
+  if (!is.finite(cores) || is.na(cores) || cores < 1L) {
+    return(1L)
+  }
+  max(1L, cores)
+}
+
 .aligned_fp_cache_paths <- function(cache_dir, cache_tag, format = c("csv", "parquet")) {
   format <- match.arg(format)
   ext <- if (identical(format, "parquet")) "parquet" else "csv"
@@ -29,12 +38,26 @@ NULL
     fp_bound = file.path(cache_dir, sprintf("fp_bounds_%s.%s", cache_tag, ext)),
     fp_score = file.path(cache_dir, sprintf("fp_scores_%s.%s", cache_tag, ext)),
     fp_annotation = file.path(cache_dir, sprintf("fp_annotation_%s.%s", cache_tag, ext)),
-    id_map = file.path(cache_dir, sprintf("fp_id_map_%s.%s", cache_tag, ext))
+    id_map = file.path(cache_dir, sprintf("fp_id_map_%s.%s", cache_tag, ext)),
+    fp_sites = file.path(cache_dir, sprintf("fp_sites_%s.%s", cache_tag, ext))
   )
 }
 
-.aligned_fp_cache_required_exists <- function(cache_paths) {
-  all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
+.aligned_fp_cache_required_exists <- function(cache_paths, schema = c("auto", "compact", "legacy")) {
+  schema <- match.arg(schema)
+  compact_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_sites")], use.names = FALSE)))
+  legacy_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
+  if (identical(schema, "compact")) return(compact_ok)
+  if (identical(schema, "legacy")) return(legacy_ok)
+  compact_ok || legacy_ok
+}
+
+.aligned_fp_cache_schema <- function(cache_paths) {
+  compact_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_sites")], use.names = FALSE)))
+  legacy_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
+  if (compact_ok) return("compact")
+  if (legacy_ok) return("legacy")
+  "missing"
 }
 
 .aligned_fp_cache_choose_format <- function(cache_dir,
@@ -44,8 +67,8 @@ NULL
   cache_format <- match.arg(cache_format)
   csv_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "csv")
   parquet_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "parquet")
-  has_csv <- .aligned_fp_cache_required_exists(csv_paths)
-  has_parquet <- .aligned_fp_cache_required_exists(parquet_paths)
+  has_csv <- .aligned_fp_cache_required_exists(csv_paths, "auto")
+  has_parquet <- .aligned_fp_cache_required_exists(parquet_paths, "auto")
   has_arrow <- requireNamespace("arrow", quietly = TRUE)
 
   if (identical(cache_format, "parquet")) {
@@ -106,12 +129,16 @@ load_fp_aligned_from_cache <- function(
     output_mode = c("full", "distinct"),
     load_id_map = FALSE,
     cache_format = c("csv", "parquet", "auto"),
+    cache_schema = c("auto", "compact", "legacy"),
+    expand_compact_annotation = TRUE,
     verbose = TRUE
 ) {
   .assert_pkg("data.table")
 
   output_mode <- match.arg(output_mode)
   cache_format <- match.arg(cache_format)
+  cache_schema <- match.arg(cache_schema)
+  stopifnot(is.logical(expand_compact_annotation), length(expand_compact_annotation) == 1L, !is.na(expand_compact_annotation))
   cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, cache_format)
   cache_paths <- cache_info$paths
 
@@ -123,16 +150,38 @@ load_fp_aligned_from_cache <- function(
     .log_inform("Using {cache_info$format} cached aligned footprints from {.path {cache_dir}} (tag = {cache_tag}).")
   }
 
+  schema_detected <- .aligned_fp_cache_schema(cache_paths)
+  if (!identical(cache_schema, "auto") && !identical(cache_schema, schema_detected)) {
+    .log_abort("Requested aligned footprint cache_schema={cache_schema}, but detected {schema_detected} cache for tag={cache_tag}.")
+  }
+
   fp_bound <- .aligned_fp_read_table(cache_paths$fp_bound, cache_info$format)
   fp_score <- .aligned_fp_read_table(cache_paths$fp_score, cache_info$format)
-  fp_annotation <- .aligned_fp_read_table(cache_paths$fp_annotation, cache_info$format)
+  fp_sites <- if (file.exists(cache_paths$fp_sites)) {
+    .aligned_fp_read_table(cache_paths$fp_sites, cache_info$format)
+  } else {
+    data.table::data.table()
+  }
+
+  if (file.exists(cache_paths$fp_annotation)) {
+    fp_annotation <- .aligned_fp_read_table(cache_paths$fp_annotation, cache_info$format)
+  } else if (isTRUE(expand_compact_annotation) && nrow(fp_sites) > 0L && all(c("peak_ID", "atac_peak", "motifs_all") %in% names(fp_sites))) {
+    motif_parts <- strsplit(as.character(fp_sites$motifs_all), ";", fixed = TRUE)
+    motif_lens <- lengths(motif_parts)
+    keep <- motif_lens > 0L
+    fp_annotation <- data.table::data.table(
+      fp_peak = rep(fp_sites$peak_ID[keep], motif_lens[keep]),
+      atac_peak = rep(fp_sites$atac_peak[keep], motif_lens[keep]),
+      motifs = unlist(motif_parts[keep], use.names = FALSE)
+    )
+  } else {
+    fp_annotation <- data.table::data.table()
+  }
   if (identical(cache_tag, "HOCOMOCOv13") && "motifs" %in% names(fp_annotation)) {
     fp_annotation$motifs <- .normalize_motif_id(fp_annotation$motifs, db_name = cache_tag)
   }
   id_map <- if (isTRUE(load_id_map) && file.exists(cache_paths$id_map)) {
     .aligned_fp_read_table(cache_paths$id_map, cache_info$format)
-  } else if (all(c("fp_peak", "atac_peak") %in% names(fp_annotation))) {
-    data.table::data.table()
   } else {
     data.table::data.table()
   }
@@ -141,7 +190,9 @@ load_fp_aligned_from_cache <- function(
     fp_score = tibble::as_tibble(fp_score),
     fp_bound = tibble::as_tibble(fp_bound),
     fp_annotation = tibble::as_tibble(fp_annotation),
-    id_map = tibble::as_tibble(id_map)
+    fp_sites = tibble::as_tibble(fp_sites),
+    id_map = tibble::as_tibble(id_map),
+    cache_schema = schema_detected
   )
 
   if (identical(output_mode, "distinct")) {
@@ -426,6 +477,25 @@ load_one_motif_wide <- function(
   }, error = function(e) NA_integer_)
 }
 
+.fp_cache_triplet_status <- function(score_path, bound_path, annot_path) {
+  paths <- c(score = score_path, bound = bound_path, annot = annot_path)
+  exists <- file.exists(paths)
+  if (!all(exists)) {
+    return(list(valid = FALSE, n_rows = NA_integer_, reason = paste0(names(paths)[!exists], collapse = ",")))
+  }
+  n_score <- .count_rows_fast(score_path)
+  n_bound <- .count_rows_fast(bound_path)
+  n_annot <- .count_rows_fast(annot_path)
+  counts <- c(score = n_score, bound = n_bound, annot = n_annot)
+  if (anyNA(counts)) {
+    return(list(valid = FALSE, n_rows = NA_integer_, reason = "unreadable"))
+  }
+  if (!identical(as.integer(n_score), as.integer(n_bound)) || !identical(as.integer(n_score), as.integer(n_annot))) {
+    return(list(valid = FALSE, n_rows = as.integer(n_score), reason = sprintf("row_mismatch:score=%d,bound=%d,annot=%d", n_score, n_bound, n_annot)))
+  }
+  list(valid = TRUE, n_rows = as.integer(n_score), reason = "complete")
+}
+
 load_footprints <- function(
     root_dir,
     db_name,
@@ -434,7 +504,7 @@ load_footprints <- function(
     n_samples = NULL,
     motif_ids = NULL,
     n_motifs = NULL,
-    n_workers = max(1L, parallel::detectCores(TRUE)),
+    n_workers = .available_cores(logical = TRUE),
     set_plan = TRUE,
     skip_existing = TRUE,
     verbose = TRUE,
@@ -464,13 +534,16 @@ load_footprints <- function(
       if (!is.null(man) &&
           all(required_cols %in% names(man)) &&
           nrow(man) > 0 &&
-          !any(is.na(man$n_peaks)) &&
-          all(file.exists(man$score)) &&
-          all(file.exists(man$bound)) &&
-          all(file.exists(man$annot))) {
-        if (isTRUE(verbose)) .log_inform("Found existing manifest at {.path {manifest_path}}; returning cached summary.")
-        attr(man, "from_cache") <- TRUE
-        return(man)
+          !any(is.na(man$n_peaks))) {
+        cache_ok <- vapply(seq_len(nrow(man)), function(i) {
+          status <- .fp_cache_triplet_status(man$score[[i]], man$bound[[i]], man$annot[[i]])
+          isTRUE(status$valid) && identical(as.integer(status$n_rows), as.integer(man$n_peaks[[i]]))
+        }, logical(1))
+        if (all(cache_ok)) {
+          if (isTRUE(verbose)) .log_inform("Found existing manifest at {.path {manifest_path}}; returning cached summary.")
+          attr(man, "from_cache") <- TRUE
+          return(man)
+        }
       }
     }
   }
@@ -568,8 +641,11 @@ load_footprints <- function(
           coverage_ok <- all(motifs_union %in% motifs_in_manifest)
           if (coverage_ok) {
             man <- man[man$motif %in% motifs_union, , drop = FALSE]
-            if (nrow(man) > 0 && !any(is.na(man$n_peaks)) &&
-                all(file.exists(man$score)) && all(file.exists(man$bound)) && all(file.exists(man$annot))) {
+            cache_ok <- vapply(seq_len(nrow(man)), function(i) {
+              status <- .fp_cache_triplet_status(man$score[[i]], man$bound[[i]], man$annot[[i]])
+              isTRUE(status$valid) && identical(as.integer(status$n_rows), as.integer(man$n_peaks[[i]]))
+            }, logical(1))
+            if (nrow(man) > 0 && !any(is.na(man$n_peaks)) && all(cache_ok)) {
               manifest_ok <- TRUE
             }
           }
@@ -625,12 +701,16 @@ load_footprints <- function(
     f_bound <- file.path(out_dir, paste0(base, "_bound.csv"))
     f_annot <- file.path(out_dir, paste0(base, "_annotation.csv"))
 
-    if (skip_existing && file.exists(f_score) && file.exists(f_bound) && file.exists(f_annot)) {
-      n_out <- .count_rows_fast(f_score)
-      if (!is.null(log_file_use)) {
-        log_line(sprintf("Motif %s: outputs exist; skipped (n_peaks=%s).", m, n_out))
+    if (isTRUE(skip_existing)) {
+      cache_status <- .fp_cache_triplet_status(f_score, f_bound, f_annot)
+      if (isTRUE(cache_status$valid)) {
+        if (!is.null(log_file_use)) {
+          log_line(sprintf("Motif %s: complete cached outputs skipped (n_peaks=%s).", m, cache_status$n_rows))
+        }
+        return(tibble::tibble(motif = base, n_peaks = cache_status$n_rows, score = f_score, bound = f_bound, annot = f_annot))
+      } else if (!is.null(log_file_use)) {
+        log_line(sprintf("Motif %s: cached outputs incomplete; recomputing (%s).", m, cache_status$reason))
       }
-      return(tibble::tibble(motif = base, n_peaks = n_out, score = f_score, bound = f_bound, annot = f_annot))
     }
 
     wd <- load_one_motif_wide(root_dir, db_name, sample_ids, m, verbose = FALSE)

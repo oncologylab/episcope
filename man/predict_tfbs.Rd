@@ -10,11 +10,18 @@ predict_tfbs(
   db = "JASPAR2024",
   label_col = NULL,
   r_cutoff = 0.3,
+  p_cutoff = NULL,
+  fdr_cutoff = NULL,
+  filter_to_canonical_bound = TRUE,
   tf_subset = NULL,
   write_outputs = TRUE,
   write_stats = FALSE,
   write_bed = FALSE,
+  output_format = c("csv", "parquet", "auto"),
+  return_links = NULL,
+  link_return_limit = getOption("craftgrn.module1_link_return_limit", 5e+06),
   min_non_na = 3L,
+  cores = NULL,
   verbose = TRUE
 )
 }
@@ -31,15 +38,36 @@ missing from `omics_data`.}
 \item{r_cutoff}{Minimum positive correlation used for motif-supported and
 prediction calls.}
 
+\item{p_cutoff}{Optional best-method p-value cutoff. If `NULL`, p-value
+filtering is disabled.}
+
+\item{fdr_cutoff}{Optional best-method adjusted p-value cutoff. If `NULL`,
+FDR filtering is disabled.}
+
+\item{filter_to_canonical_bound}{Logical; if `TRUE`, only footprints with
+at least one motif-supported TF passing the cutoffs are used for the
+all-expressed-TF prediction stage.}
+
 \item{tf_subset}{Optional TF subset.}
 
 \item{write_outputs}{Write compact Module 1 output files.}
 
 \item{write_stats}{Retain and write full FP-TF correlation statistics.}
 
-\item{write_bed}{Write optional BED-like browser files. Not used by default.}
+\item{write_bed}{Write optional BED-like browser files for high-confidence footprints and in-memory TFBS links.}
+
+\item{output_format}{Output format for large streamed TFBS link chunks.}
+
+\item{return_links}{Return the TFBS link table in memory. If `NULL`,
+large output-writing runs are streamed to disk and return a manifest.}
+
+\item{link_return_limit}{Maximum number of predicted links to keep in
+memory when `return_links = NULL` and `write_outputs = TRUE`.}
 
 \item{min_non_na}{Minimum finite condition pairs required for correlation.}
+
+\item{cores}{Number of worker cores for the dense prediction correlation step.
+If `NULL`, use available cores.}
 
 \item{verbose}{Emit concise progress messages.}
 }

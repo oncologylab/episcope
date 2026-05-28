@@ -21,6 +21,7 @@ load_prep_multiomic_data(
   score_match_pct = 0.8,
   output_mode = c("full", "distinct"),
   write_outputs = FALSE,
+  save_mode = c("compact", "full", "both"),
   atac_data = NULL,
   rna_tbl = NULL,
   metadata = NULL,
@@ -72,6 +73,9 @@ is available.}
 
 \item{write_outputs}{Logical; if `TRUE`, save the prepared object as an RDS
 cache under `predict_tf_binding_sites/`.}
+
+\item{save_mode}{RDS object mode. Use compact for the default,
+full for the legacy debug object, or both for both.}
 
 \item{atac_data, rna_tbl, metadata}{Optional in-memory input tables.}
 

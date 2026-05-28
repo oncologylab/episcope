@@ -20,11 +20,13 @@ Imports:
     magrittr,
     methods,
     readr,
+    Rcpp,
     rlang,
     shiny,
     tibble,
     tidyr,
     yaml
+LinkingTo: Rcpp
 Suggests: 
     arrow,
     enrichR,

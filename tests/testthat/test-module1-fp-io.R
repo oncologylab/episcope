@@ -1,3 +1,10 @@
+test_that("Module 1 preprocessing defaults use available cores", {
+  expect_gt(.available_cores(logical = TRUE), 0L)
+  expect_match(paste(deparse(formals(load_footprints)$n_workers), collapse = " "), "\\.available_cores")
+  expect_match(paste(deparse(formals(align_footprints)$threads), collapse = " "), "\\.available_cores")
+  expect_true(eval(formals(align_footprints)$write_fp_sites))
+})
+
 test_that("aligned footprint cache loader skips id_map by default", {
   cache_dir <- file.path(tempdir(), paste0("craftgrn-fp-cache-", as.integer(stats::runif(1L, 1, 1e9))))
   dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
@@ -186,7 +193,7 @@ test_that("footprint alignment can write Parquet cache", {
   expect_true(file.exists(file.path(cache_dir, "fp_scores_TEST.parquet")))
   expect_false(file.exists(file.path(cache_dir, "fp_scores_TEST.csv")))
   expect_equal(from_cache$fp_score, aligned$fp_score)
-  expect_equal(from_cache$fp_annotation, aligned$fp_annotation)
+  expect_equal(from_cache$fp_annotation[, c("fp_peak", "atac_peak", "motifs")], aligned$fp_annotation[, c("fp_peak", "atac_peak", "motifs")])
 })
 
 test_that("raw footprint loader reuses a complete manifest before scanning raw folders", {
@@ -267,6 +274,91 @@ test_that("raw footprint loader writes minimal per-motif cache tables", {
   expect_equal(annot$motifs, "M1")
 })
 
+test_that("raw footprint loader recomputes incomplete cached motif triplets", {
+  root_dir <- file.path(tempdir(), paste0("craftgrn-resume-root-", as.integer(stats::runif(1L, 1, 1e9))))
+  out_dir <- file.path(tempdir(), paste0("craftgrn-resume-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  dir.create(file.path(root_dir, "S1", "TEST", "M1"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      TFBS_chr = "chr1",
+      TFBS_start = 10L,
+      TFBS_end = 15L,
+      TFBS_name = "M1",
+      peak_chr = "chr1",
+      peak_start = 1L,
+      peak_end = 100L,
+      S1_ATAC_score = 2.5,
+      S1_ATAC_bound = 1L
+    ),
+    file.path(root_dir, "S1", "TEST", "M1", "M1_overview.txt"),
+    sep = "\t"
+  )
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:999-1000", S1 = 9), file.path(out_dir, "M1_score.csv"))
+
+  manifest <- load_footprints(
+    root_dir = root_dir,
+    db_name = "TEST",
+    out_dir = out_dir,
+    sample_ids = "S1",
+    n_workers = 1L,
+    skip_existing = TRUE,
+    verbose = FALSE
+  )
+  score <- data.table::fread(manifest$score[[1L]], showProgress = FALSE)
+  bound <- data.table::fread(manifest$bound[[1L]], showProgress = FALSE)
+  annot <- data.table::fread(manifest$annot[[1L]], showProgress = FALSE)
+
+  expect_equal(nrow(manifest), 1L)
+  expect_equal(score$peak_ID, "chr1:10-15")
+  expect_equal(score$S1, 2.5)
+  expect_equal(bound$S1, 1L)
+  expect_equal(annot$fp_peak, "chr1:10-15")
+})
+
+test_that("raw footprint loader recomputes cached motif triplets with mismatched rows", {
+  root_dir <- file.path(tempdir(), paste0("craftgrn-resume-mismatch-root-", as.integer(stats::runif(1L, 1, 1e9))))
+  out_dir <- file.path(tempdir(), paste0("craftgrn-resume-mismatch-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  dir.create(file.path(root_dir, "S1", "TEST", "M1"), recursive = TRUE, showWarnings = FALSE)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      TFBS_chr = c("chr1", "chr1"),
+      TFBS_start = c(10L, 20L),
+      TFBS_end = c(15L, 25L),
+      TFBS_name = c("M1", "M1"),
+      peak_chr = c("chr1", "chr1"),
+      peak_start = c(1L, 1L),
+      peak_end = c(100L, 100L),
+      S1_ATAC_score = c(2.5, 3.5),
+      S1_ATAC_bound = c(1L, 1L)
+    ),
+    file.path(root_dir, "S1", "TEST", "M1", "M1_overview.txt"),
+    sep = "\t"
+  )
+  readr::write_csv(tibble::tibble(peak_ID = c("chr1:10-15", "chr1:20-25"), S1 = c(2.5, 3.5)), file.path(out_dir, "M1_score.csv"))
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:10-15", S1 = 1L), file.path(out_dir, "M1_bound.csv"))
+  readr::write_csv(tibble::tibble(fp_peak = "chr1:10-15", atac_peak = "chr1:1-100", motifs = "M1"), file.path(out_dir, "M1_annotation.csv"))
+
+  manifest <- load_footprints(
+    root_dir = root_dir,
+    db_name = "TEST",
+    out_dir = out_dir,
+    sample_ids = "S1",
+    n_workers = 1L,
+    skip_existing = TRUE,
+    verbose = FALSE
+  )
+  score <- data.table::fread(manifest$score[[1L]], showProgress = FALSE)
+  bound <- data.table::fread(manifest$bound[[1L]], showProgress = FALSE)
+  annot <- data.table::fread(manifest$annot[[1L]], showProgress = FALSE)
+
+  expect_equal(nrow(score), 2L)
+  expect_equal(nrow(bound), 2L)
+  expect_equal(nrow(annot), 2L)
+  expect_equal(manifest$n_peaks, 2L)
+})
+
 test_that("footprint alignment can skip returning and writing id_map", {
   bench_dir <- file.path(tempdir(), paste0("craftgrn-align-cache-", as.integer(stats::runif(1L, 1, 1e9))))
   raw_dir <- file.path(bench_dir, "raw")
@@ -314,6 +406,132 @@ test_that("footprint alignment can skip returning and writing id_map", {
   expect_true(file.exists(file.path(cache_dir, "fp_scores_TEST.csv")))
   expect_equal(nrow(aligned$fp_annotation), 1L)
   expect_equal(aligned$fp_annotation$fp_peak, "chr1:10-22")
+})
+
+test_that("footprint alignment can write cache without returning large tables", {
+  bench_dir <- file.path(tempdir(), paste0("craftgrn-align-paths-", as.integer(stats::runif(1L, 1, 1e9))))
+  raw_dir <- file.path(bench_dir, "raw")
+  cache_dir <- file.path(bench_dir, "cache")
+  dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+  score_path <- file.path(raw_dir, "M1_score.csv")
+  bound_path <- file.path(raw_dir, "M1_bound.csv")
+  annot_path <- file.path(raw_dir, "M1_annotation.csv")
+  readr::write_csv(tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1.1, 1.1)), score_path)
+  readr::write_csv(tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1L, 1L)), bound_path)
+  readr::write_csv(
+    tibble::tibble(
+      fp_peak = c("chr1:10-20", "chr1:12-22"),
+      atac_peak = c("chr1:1-100", "chr1:1-100"),
+      motifs = c("M1", "M1")
+    ),
+    annot_path
+  )
+  manifest <- tibble::tibble(motif = "M1", n_peaks = 2L, score = score_path, bound = bound_path, annot = annot_path)
+
+  aligned <- align_footprints(
+    manifest,
+    mid_slop = 10L,
+    round_digits = 1L,
+    score_match_pct = 1,
+    threads = 1L,
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = TRUE,
+    output_mode = "distinct",
+    return_data = FALSE,
+    return_id_map = FALSE,
+    write_id_map = FALSE,
+    write_fp_sites = TRUE,
+    verbose = FALSE
+  )
+
+  expect_equal(aligned$output_mode, "distinct")
+  expect_equal(aligned$counts$fp_score, 1L)
+  expect_equal(aligned$counts$fp_bound, 1L)
+  expect_equal(aligned$counts$fp_annotation, 0L)
+  expect_true(file.exists(aligned$paths$fp_score))
+  expect_true(file.exists(aligned$paths$fp_bound))
+  expect_false(file.exists(aligned$paths$fp_annotation))
+  expect_true(file.exists(aligned$paths$fp_sites))
+  expect_equal(aligned$counts$fp_sites, 1L)
+  fp_sites <- data.table::fread(aligned$paths$fp_sites, showProgress = FALSE)
+  expect_equal(fp_sites$peak_ID, "chr1:10-22")
+  expect_equal(fp_sites$n_source_fp_peaks, 2L)
+  expect_equal(fp_sites$source_fp_peaks, "chr1:10-20;chr1:12-22")
+  expect_equal(fp_sites$motifs_all, "M1")
+  expect_false("fp_score" %in% names(aligned))
+  expect_false(file.exists(file.path(cache_dir, "fp_id_map_TEST.csv")))
+})
+
+test_that("chromosome-parallel footprint alignment matches single-process alignment", {
+  bench_dir <- file.path(tempdir(), paste0("craftgrn-align-parallel-", as.integer(stats::runif(1L, 1, 1e9))))
+  raw_dir <- file.path(bench_dir, "raw")
+  cache_dir <- file.path(bench_dir, "cache")
+  dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+  score_path <- file.path(raw_dir, "M1_score.csv")
+  bound_path <- file.path(raw_dir, "M1_bound.csv")
+  annot_path <- file.path(raw_dir, "M1_annotation.csv")
+  readr::write_csv(
+    tibble::tibble(
+      peak_ID = c("chr1:10-20", "chr1:12-22", "chr2:40-50", "chr2:42-52"),
+      sample_a = c(1.1, 1.1, 3.2, 3.2),
+      sample_b = c(2.0, 2.0, 4.0, 4.0)
+    ),
+    score_path
+  )
+  readr::write_csv(
+    tibble::tibble(
+      peak_ID = c("chr1:10-20", "chr1:12-22", "chr2:40-50", "chr2:42-52"),
+      sample_a = c(1L, 1L, 1L, 1L),
+      sample_b = c(1L, 1L, 0L, 0L)
+    ),
+    bound_path
+  )
+  readr::write_csv(
+    tibble::tibble(
+      fp_peak = c("chr1:10-20", "chr1:12-22", "chr2:40-50", "chr2:42-52"),
+      atac_peak = c("chr1:1-100", "chr1:1-100", "chr2:1-100", "chr2:1-100"),
+      motifs = c("M1", "M1", "M1", "M1")
+    ),
+    annot_path
+  )
+  manifest <- tibble::tibble(motif = "M1", n_peaks = 4L, score = score_path, bound = bound_path, annot = annot_path)
+
+  single <- align_footprints(
+    manifest,
+    mid_slop = 10L,
+    score_match_pct = 1,
+    threads = 1L,
+    cache_dir = file.path(cache_dir, "single"),
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = FALSE,
+    return_id_map = FALSE,
+    write_id_map = FALSE,
+    parallel_by = "none",
+    verbose = FALSE
+  )
+  parallel <- align_footprints(
+    manifest,
+    mid_slop = 10L,
+    score_match_pct = 1,
+    threads = 2L,
+    cache_dir = file.path(cache_dir, "parallel"),
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = FALSE,
+    return_id_map = FALSE,
+    write_id_map = FALSE,
+    parallel_by = "chromosome",
+    verbose = FALSE
+  )
+
+  expect_equal(parallel$fp_score, single$fp_score)
+  expect_equal(parallel$fp_bound, single$fp_bound)
+  expect_equal(parallel$fp_annotation, single$fp_annotation)
 })
 
 test_that("footprint alignment component helper preserves duplicate signature components", {
