@@ -17,6 +17,7 @@ Imports:
     future.apply,
     ggplot2,
     golem,
+    jsonlite,
     magrittr,
     methods,
     readr,

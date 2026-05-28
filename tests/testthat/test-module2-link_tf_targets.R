@@ -60,8 +60,7 @@ test_that("Module 2 streams predicted TFBS manifests", {
   expect_true(all(q$tf == "TF_A"))
 })
 
-test_that("Module 2 top TF target reports write legacy-style HTML", {
-  skip_if_not(any(file.exists(c(file.path(getwd(), "dev", "benchmark", "02_build_tf_target_perturbation_html_networks.R"), file.path(getwd(), "..", "..", "dev", "benchmark", "02_build_tf_target_perturbation_html_networks.R"))))) 
+test_that("Module 2 top TF target reports write self-contained HTML", {
   omics <- list(
     fp_score_condition_qn = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1, 9), s2 = c(2, 8), s3 = c(8, 2), s4 = c(9, 1)),
     fp_bound_condition = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1L, 1L), s2 = c(1L, 1L), s3 = c(1L, 1L), s4 = c(1L, 1L)),
@@ -80,5 +79,29 @@ test_that("Module 2 top TF target reports write legacy-style HTML", {
   expect_true(file.exists(man$path[[1L]]))
   html <- readLines(man$path[[1L]], warn = FALSE)
   expect_true(any(grepl("Export SVG", html, fixed = TRUE)))
-  expect_true(any(grepl("FULL_NODES", html, fixed = TRUE)))
+  expect_true(any(grepl("const PAYLOAD", html, fixed = TRUE)))
+})
+
+test_that("Module 2 report builder writes direct HTML without pdf folders", {
+  omics <- list(
+    fp_score_condition_qn = tibble::tibble(peak_ID = "chr1:100-140", s1 = 5, s2 = 6),
+    fp_bound_condition = tibble::tibble(peak_ID = "chr1:100-140", s1 = 1L, s2 = 1L),
+    fp_annotation = tibble::tibble(fp_peak = "chr1:100-140", atac_peak = "chr1:90-160", motifs = "M_A", tfs = "TF_A"),
+    rna_condition = tibble::tibble(ensembl_gene_id = c("g1", "g2"), HGNC = c("TF_A", "TF_B"), s1 = c(3, 4), s2 = c(5, 6)),
+    rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2"), HGNC = c("TF_A", "TF_B"), s1 = 1L, s2 = 1L),
+    tf_list = c("TF_A", "TF_B")
+  )
+  compact <- as_multiomic_object(omics, verbose = FALSE)
+  module2 <- list(
+    tf_target_corr = tibble::tibble(tf = c("TF_A", "TF_B"), target_gene = c("TF_B", "TF_A"), best_r = c(0.9, 0.1), pass = c(TRUE, FALSE)),
+    fp_target_corr = tibble::tibble(fp_id = "chr1:100-140", target_gene = "TF_B", best_r = 0.8, pass = TRUE),
+    links = tibble::tibble(link_id = "l1", tf = "TF_A", fp_id = "chr1:100-140", target_gene = "TF_B", candidate_id = "c1", module2_link_pass = TRUE),
+    manifest = tibble::tibble()
+  )
+  out_dir <- tempfile("module2-report-builder-")
+  man <- build_module2_reports(module2, multiomic_data = NULL, output_dir = out_dir, reports = c("direct_tf_tf", "tf_tf_connectivity"), k_values = 2L, verbose = FALSE)
+  expect_equal(nrow(man), 2L)
+  expect_true(all(file.exists(man$path)))
+  expect_true(all(grepl("/html/", man$path, fixed = TRUE)))
+  expect_false(dir.exists(file.path(out_dir, "pdf")))
 })

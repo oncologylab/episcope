@@ -1,19 +1,6 @@
 # File: utils_step2_reports.R
 # Purpose: Optional Module 2 HTML reports from compact relational outputs.
 
-.module2_report_source_legacy <- function(script_name, env = parent.frame()) {
-  roots <- unique(c(getwd(), dirname(getwd()), dirname(dirname(getwd()))))
-  candidates <- file.path(roots, "dev", "benchmark", script_name)
-  script_path <- candidates[file.exists(candidates)][1L]
-  if (is.na(script_path)) {
-    .log_abort("Legacy report writer not found. Expected dev/benchmark/{script_name}.")
-  }
-  old_wd <- getwd()
-  on.exit(setwd(old_wd), add = TRUE)
-  setwd(dirname(dirname(dirname(script_path))))
-  sys.source(script_path, envir = env, keep.source = FALSE)
-  invisible(script_path)
-}
 
 .module2_report_table_row <- function(module2, table_name) {
   man <- module2$manifest
@@ -116,6 +103,70 @@
   out[, `:=`(
     tf = toupper(as.character(tf)),
     gene_norm = toupper(as.character(target_gene)),
+    gene_symbol = as.character(target_gene),
+    peak_ID = as.character(fp_id),
+    fp_target_rna_r = suppressWarnings(as.numeric(fp_target_rna_r)),
+    tf_expression_target_r = suppressWarnings(as.numeric(tf_expression_target_r))
+  )]
+  out[]
+}
+
+
+.module2_report_direct_links <- function(module2) {
+  tf_expression_target_r <- fp_target_rna_r <- NULL
+  if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
+  tf_corr <- .module2_report_read_table(
+    module2,
+    "module2_tf_target_corr",
+    columns = c("tf", "target_gene", "best_r", "pass")
+  )
+  tf_dt <- data.table::as.data.table(tf_corr)
+  tf_dt[, `:=`(tf = toupper(as.character(tf)), target_gene = toupper(as.character(target_gene)))]
+  tf_levels <- sort(unique(tf_dt$tf))
+  tf_dt <- tf_dt[target_gene %in% tf_levels & pass %in% TRUE]
+  if (!nrow(tf_dt)) return(data.table::data.table())
+  data.table::setnames(tf_dt, "best_r", "tf_expression_target_r", skip_absent = TRUE)
+  keep_pairs <- unique(tf_dt[, .(tf, target_gene)])
+  link_man <- module2$module2_links_manifest
+  if (!is.data.frame(link_man) || !nrow(link_man)) {
+    link_tbl <- .module2_report_read_table(
+      module2,
+      "module2_links",
+      columns = c("link_id", "tf", "fp_id", "target_gene", "candidate_id", "module2_link_pass")
+    )
+    link_rows <- list(data.table::as.data.table(link_tbl))
+  } else {
+    link_rows <- lapply(seq_len(nrow(link_man)), function(i) {
+      one <- .module2_read_predicted_chunk(
+        as.character(link_man$path[[i]]),
+        as.character(link_man$format[[i]]),
+        columns = c("link_id", "tf", "fp_id", "target_gene", "candidate_id", "module2_link_pass")
+      )
+      one <- data.table::as.data.table(one)
+      one[, `:=`(tf = toupper(as.character(tf)), target_gene = toupper(as.character(target_gene)))]
+      one <- one[module2_link_pass %in% TRUE & target_gene %in% tf_levels & tf != target_gene]
+      if (!nrow(one)) return(data.table::data.table())
+      one <- keep_pairs[one, on = c("tf", "target_gene"), nomatch = 0L]
+      one[]
+    })
+  }
+  links <- data.table::rbindlist(link_rows, use.names = TRUE, fill = TRUE)
+  if (!nrow(links)) return(data.table::data.table())
+  fp_corr <- .module2_report_read_table(
+    module2,
+    "module2_fp_target_corr",
+    columns = c("fp_id", "target_gene", "best_r", "pass")
+  )
+  fp_dt <- data.table::as.data.table(fp_corr)
+  fp_dt[, target_gene := toupper(as.character(target_gene))]
+  fp_dt <- fp_dt[target_gene %in% tf_levels & pass %in% TRUE]
+  data.table::setnames(fp_dt, "best_r", "fp_target_rna_r", skip_absent = TRUE)
+  out <- tf_dt[links, on = c("tf", "target_gene"), nomatch = 0L]
+  out <- fp_dt[out, on = c("fp_id", "target_gene"), nomatch = 0L]
+  if (!"tf_expression_target_r" %in% names(out)) out[, tf_expression_target_r := NA_real_]
+  if (!"fp_target_rna_r" %in% names(out)) out[, fp_target_rna_r := NA_real_]
+  out[, `:=`(
+    gene_norm = as.character(target_gene),
     gene_symbol = as.character(target_gene),
     peak_ID = as.character(fp_id),
     fp_target_rna_r = suppressWarnings(as.numeric(fp_target_rna_r)),
@@ -229,6 +280,101 @@
   list(nodes = nodes, edges = edges, targets = target_dt)
 }
 
+
+.module2_report_safe_filename <- function(x) {
+  x <- gsub("[^A-Za-z0-9_.-]+", "_", as.character(x))
+  x <- gsub("^_+|_+$", "", x)
+  ifelse(nzchar(x), x, "item")
+}
+
+.module2_report_html_escape <- function(x) {
+  x <- as.character(x)
+  x <- gsub("&", "&amp;", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  x <- gsub(">", "&gt;", x, fixed = TRUE)
+  x <- gsub("\"", "&quot;", x, fixed = TRUE)
+  x
+}
+
+.module2_report_json <- function(x) {
+  jsonlite::toJSON(x, dataframe = "rows", auto_unbox = TRUE, null = "null", na = "null", digits = 6)
+}
+
+.module2_report_write_html <- function(path, title, body, script) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  style <- paste(
+    "body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f7f9fb;color:#18212f}",
+    ".app{min-height:100vh;display:flex;flex-direction:column}",
+    "header{background:#111827;color:white;padding:14px 18px;border-bottom:4px solid #2dd4bf}",
+    "h1{font-size:20px;line-height:1.25;margin:0 0 6px 0;font-weight:700}.meta{font-size:12px;color:#cbd5e1}",
+    ".toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 14px;background:white;border-bottom:1px solid #d8e0ea}",
+    ".toolbar label{font-size:12px;font-weight:700;color:#344256;display:flex;gap:6px;align-items:center}",
+    "select,input,button{font:inherit;font-size:12px;border:1px solid #b7c2d0;border-radius:6px;background:white;padding:5px 7px}",
+    "button{cursor:pointer;background:#0f766e;color:white;border-color:#0f766e;font-weight:700}",
+    ".main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:0;min-height:0;flex:1}",
+    ".canvasWrap{background:white;min-height:720px;position:relative;overflow:hidden}svg{width:100%;height:100%;min-height:720px;display:block}",
+    ".side{border-left:1px solid #d8e0ea;background:#fbfdff;padding:12px;overflow:auto}.side h2{font-size:14px;margin:0 0 8px 0}",
+    ".stat{font-size:12px;margin:5px 0;color:#344256}.node text{paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;font-weight:700}",
+    ".edge{stroke:#64748b;stroke-opacity:.38}.edge.strong{stroke:#dc2626;stroke-opacity:.72}@media(max-width:900px){.main{grid-template-columns:1fr}.side{border-left:0;border-top:1px solid #d8e0ea}.canvasWrap,svg{min-height:560px}}",
+    sep = "\n"
+  )
+  html <- paste0("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>", .module2_report_html_escape(title), "</title><style>", style, "</style></head><body>", body, "<script>", script, "</script></body></html>")
+  writeLines(html, path, useBytes = TRUE)
+  path
+}
+
+.module2_report_write_network_html <- function(nodes, edges, out_html, title, subtitle = NULL) {
+  node_role <- edge_score <- NULL
+  nodes <- data.table::as.data.table(nodes)
+  edges <- data.table::as.data.table(edges)
+  if (!"node_id" %in% names(nodes)) data.table::setnames(nodes, names(nodes)[[1L]], "node_id")
+  if (!"node_type" %in% names(nodes)) nodes[, node_type := "Gene"]
+  if (!"node_role" %in% names(nodes)) nodes[, node_role := "node"]
+  if (!"edge_score" %in% names(edges)) edges[, edge_score := 1]
+  body <- paste0("<div class=\"app\"><header><h1>", .module2_report_html_escape(title), "</h1><div class=\"meta\">", .module2_report_html_escape(if (is.null(subtitle)) "Interactive Module 2 network report" else subtitle), "</div></header><div class=\"toolbar\"><label>Layout <select id=\"layout\"><option value=\"force\">Force</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option></select></label><label>Max edges <input id=\"maxEdges\" type=\"number\" min=\"0\" step=\"25\" value=\"0\"></label><button id=\"exportSvg\">Export SVG</button></div><div class=\"main\"><div class=\"canvasWrap\"><svg id=\"net\" viewBox=\"0 0 1500 850\" role=\"img\"></svg></div><aside class=\"side\"><h2>Report</h2><div id=\"stats\"></div><h2>Selection</h2><div id=\"sel\" class=\"stat\">Click a node or edge.</div></aside></div></div>")
+  script <- paste0("const PAYLOAD=", .module2_report_json(list(nodes = nodes, edges = edges)), ";const svg=document.getElementById('net'),stats=document.getElementById('stats'),sel=document.getElementById('sel');const W=1500,H=850,cx=W/2,cy=H/2;function topEdges(){let n=+document.getElementById('maxEdges').value||0;let e=[...PAYLOAD.edges];e.sort((a,b)=>Math.abs(b.edge_score||0)-Math.abs(a.edge_score||0));return n>0?e.slice(0,n):e;}function positions(nodes,edges){let mode=document.getElementById('layout').value;let ids=nodes.map(d=>d.node_id);let p={};if(mode==='radial'){ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:cx+320*Math.cos(a),y:cy+320*Math.sin(a)}});return p;}if(mode==='columns'){let left=nodes.filter(d=>d.node_type==='TF'),right=nodes.filter(d=>d.node_type!=='TF');left.forEach((d,i)=>p[d.node_id]={x:300,y:120+i*(620/Math.max(1,left.length-1))});right.forEach((d,i)=>p[d.node_id]={x:1120,y:120+i*(620/Math.max(1,right.length-1))});return p;}ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:cx+330*Math.cos(a),y:cy+260*Math.sin(a)}});return p;}function render(){let edges=topEdges();let used=new Set();edges.forEach(e=>{used.add(e.from);used.add(e.to)});let nodes=PAYLOAD.nodes.filter(n=>used.has(n.node_id)||PAYLOAD.nodes.length<200);let p=positions(nodes,edges);svg.innerHTML='<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#64748b\"></path></marker></defs>';edges.forEach(e=>{let a=p[e.from],b=p[e.to];if(!a||!b)return;let line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);line.setAttribute('stroke-width',Math.max(1,Math.min(8,1+Math.abs(e.edge_score||0)/3)));line.setAttribute('marker-end','url(#arrow)');line.setAttribute('class','edge '+((e.edge_score||0)>0?'strong':''));line.onclick=()=>sel.textContent=`${e.from} -> ${e.to}; score=${(e.edge_score||0).toFixed(3)}`;svg.appendChild(line)});nodes.forEach(n=>{let q=p[n.node_id];let g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','node');g.setAttribute('transform',`translate(${q.x},${q.y})`);let isTf=n.node_type==='TF';let shape=document.createElementNS('http://www.w3.org/2000/svg',isTf?'rect':'circle');if(isTf){shape.setAttribute('x',-34);shape.setAttribute('y',-18);shape.setAttribute('width',68);shape.setAttribute('height',36);shape.setAttribute('rx',4)}else{shape.setAttribute('r',18)}shape.setAttribute('fill',n.node_role==='seed_tf'?'#ef4444':(isTf?'#2563eb':'#14b8a6'));shape.setAttribute('stroke','#0f172a');shape.setAttribute('stroke-width','1.2');g.appendChild(shape);let tx=document.createElementNS('http://www.w3.org/2000/svg','text');tx.setAttribute('text-anchor','middle');tx.setAttribute('dy',isTf?5:34);tx.setAttribute('font-size',isTf?13:11);tx.textContent=n.node_id;g.appendChild(tx);g.onclick=()=>sel.textContent=`${n.node_id} (${n.node_type}; ${n.node_role||'node'})`;svg.appendChild(g)});stats.innerHTML=`<div class=\"stat\">Nodes: ${nodes.length}</div><div class=\"stat\">Edges shown: ${edges.length}</div><div class=\"stat\">Edges total: ${PAYLOAD.edges.length}</div>`;}document.getElementById('layout').onchange=render;document.getElementById('maxEdges').onchange=render;document.getElementById('exportSvg').onclick=()=>{let blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='module2_network.svg';a.click();URL.revokeObjectURL(a.href)};render();")
+  .module2_report_write_html(out_html, title, body, script)
+}
+
+.module2_report_build_direct_edges <- function(link_dt, min_supporting_peaks = 1L) {
+  gene_norm <- from <- to <- fp_target_rna_r <- tf_expression_target_r <- NULL
+  condition_fp_score <- n_supporting_peaks <- edge_score <- edge_rank <- NULL
+  if (!nrow(link_dt) || !all(c("tf", "gene_norm", "peak_ID") %in% names(link_dt))) return(data.table::data.table())
+  dt <- data.table::copy(link_dt)
+  dt[, `:=`(from = toupper(as.character(tf)), to = toupper(as.character(gene_norm)), peak_ID = as.character(peak_ID))]
+  dt <- dt[from != to]
+  if (!nrow(dt)) return(data.table::data.table())
+  dt[, link_score := suppressWarnings(as.numeric(fp_target_rna_r)) * suppressWarnings(as.numeric(tf_expression_target_r))]
+  edge_dt <- dt[, .(n_supporting_peaks = data.table::uniqueN(peak_ID), edge_score = sum(link_score, na.rm = TRUE), mean_fp_target_rna_r = mean(fp_target_rna_r, na.rm = TRUE), mean_tf_expression_target_r = mean(tf_expression_target_r, na.rm = TRUE), mean_condition_fp_score = mean(condition_fp_score, na.rm = TRUE)), by = .(condition, from, to)]
+  edge_dt <- edge_dt[n_supporting_peaks >= min_supporting_peaks & is.finite(edge_score) & edge_score > 0]
+  data.table::setorder(edge_dt, condition, -edge_score, -n_supporting_peaks, from, to)
+  edge_dt[, edge_rank := seq_len(.N), by = condition]
+  edge_dt[]
+}
+
+.module2_report_assign_edge_clusters <- function(edge_dt, k) {
+  direct_tf_cluster <- to_cluster <- from_cluster <- NULL
+  if (!nrow(edge_dt)) return(edge_dt)
+  k <- as.integer(k[[1L]])
+  if (!is.finite(k) || is.na(k) || k < 1L) k <- 5L
+  out <- data.table::copy(edge_dt)
+  tfs <- sort(unique(c(out$from, out$to)))
+  cl <- data.table::data.table(tf = tfs, cluster = sprintf("T%02d", ((seq_along(tfs) - 1L) %% k) + 1L))
+  out <- merge(out, cl, by.x = "from", by.y = "tf", all.x = TRUE, sort = FALSE)
+  data.table::setnames(out, "cluster", "from_cluster")
+  out <- merge(out, cl, by.x = "to", by.y = "tf", all.x = TRUE, sort = FALSE)
+  data.table::setnames(out, "cluster", "to_cluster")
+  out[, direct_tf_cluster := paste(sub("^T", "C", to_cluster), sub("^T", "R", from_cluster), sep = "-")]
+  out[]
+}
+
+.module2_report_write_tf_tf_browser <- function(edge_dt, out_html, title, report_name) {
+  edge_dt <- data.table::as.data.table(edge_dt)
+  conditions <- sort(unique(edge_dt$condition))
+  body <- paste0("<div class=\"app\"><header><h1>", .module2_report_html_escape(title), "</h1><div class=\"meta\">Condition-filtered Module 2 TF-to-TF browser</div></header><div class=\"toolbar\"><label>Condition <select id=\"condition\"></select></label><label>Cluster <select id=\"cluster\"></select></label><label>Max edges <input id=\"maxEdges\" type=\"number\" min=\"25\" step=\"25\" value=\"250\"></label><button id=\"exportSvg\">Export SVG</button></div><div class=\"main\"><div class=\"canvasWrap\"><svg id=\"net\" viewBox=\"0 0 1500 850\" role=\"img\"></svg></div><aside class=\"side\"><h2>", .module2_report_html_escape(report_name), "</h2><div id=\"stats\"></div><h2>Selection</h2><div id=\"sel\" class=\"stat\">Click a node or edge.</div></aside></div></div>")
+  script <- paste0("const PAYLOAD=", .module2_report_json(list(edges = edge_dt, conditions = conditions)), ";const svg=document.getElementById('net'),sel=document.getElementById('sel'),stats=document.getElementById('stats'),cond=document.getElementById('condition'),clSel=document.getElementById('cluster');PAYLOAD.conditions.forEach(c=>cond.add(new Option(c,c)));function clusters(c){let s=new Set(PAYLOAD.edges.filter(e=>e.condition===c).map(e=>e.direct_tf_cluster));return Array.from(s).sort();}function updateClusters(){let old=clSel.value;let cs=clusters(cond.value);clSel.innerHTML='';clSel.add(new Option('All clusters','__all__'));cs.forEach(c=>clSel.add(new Option(c,c)));if(cs.includes(old))clSel.value=old;}function render(){let max=+document.getElementById('maxEdges').value||250;let e=PAYLOAD.edges.filter(x=>x.condition===cond.value&&(clSel.value==='__all__'||x.direct_tf_cluster===clSel.value));e.sort((a,b)=>Math.abs(b.edge_score||0)-Math.abs(a.edge_score||0));e=e.slice(0,max);let ids=Array.from(new Set(e.flatMap(x=>[x.from,x.to]))).sort();let p={};ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:750+330*Math.cos(a),y:425+290*Math.sin(a)}});svg.innerHTML='<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#64748b\"></path></marker></defs>';e.forEach(x=>{let a=p[x.from],b=p[x.to];if(!a||!b)return;let l=document.createElementNS('http://www.w3.org/2000/svg','line');l.setAttribute('x1',a.x);l.setAttribute('y1',a.y);l.setAttribute('x2',b.x);l.setAttribute('y2',b.y);l.setAttribute('stroke-width',Math.max(1,Math.min(8,1+Math.abs(x.edge_score||0)/8)));l.setAttribute('class','edge strong');l.setAttribute('marker-end','url(#arrow)');l.onclick=()=>sel.textContent=`${x.condition}: ${x.from} -> ${x.to}; score=${(x.edge_score||0).toFixed(3)}; peaks=${x.n_supporting_peaks}`;svg.appendChild(l)});ids.forEach(id=>{let q=p[id];let g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','node');g.setAttribute('transform',`translate(${q.x},${q.y})`);let r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('x',-38);r.setAttribute('y',-18);r.setAttribute('width',76);r.setAttribute('height',36);r.setAttribute('rx',4);r.setAttribute('fill','#2563eb');r.setAttribute('stroke','#0f172a');g.appendChild(r);let t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('text-anchor','middle');t.setAttribute('dy',5);t.setAttribute('font-size',12);t.textContent=id;g.appendChild(t);g.onclick=()=>sel.textContent=id;svg.appendChild(g)});stats.innerHTML=`<div class=\"stat\">Condition: ${cond.value}</div><div class=\"stat\">Cluster: ${clSel.value}</div><div class=\"stat\">TF nodes: ${ids.length}</div><div class=\"stat\">Edges shown: ${e.length}</div>`;}cond.onchange=()=>{updateClusters();render()};clSel.onchange=render;document.getElementById('maxEdges').onchange=render;document.getElementById('exportSvg').onclick=()=>{let blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='module2_tf_tf.svg';a.click();URL.revokeObjectURL(a.href)};updateClusters();render();")
+  .module2_report_write_html(out_html, title, body, script)
+}
 #' Build optional Module 2 HTML reports
 #'
 #' @param module2 Module 2 result list, loaded output list, or output directory.
@@ -247,22 +393,29 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
   reports <- match.arg(reports, several.ok = TRUE)
   if (is.null(output_dir)) output_dir <- file.path(getwd(), "module2_reports")
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-  joined <- .module2_report_join_links(module2, tf = tfs)
-  if (!nrow(joined)) .log_abort("No passing Module 2 links were found for report generation.")
-  active <- .module2_report_condition_links(joined, multiomic_data, conditions = conditions)
-  tag <- "module2"
-  result_label <- "top100"
   out <- list()
+  top_tfs <- tfs
   if ("top_tf_targets" %in% reports) {
+    if (is.null(top_tfs)) {
+      tf_corr <- .module2_report_read_table(module2, "module2_tf_target_corr", columns = c("tf"))
+      top_tfs <- head(sort(unique(toupper(as.character(tf_corr$tf)))), 10L)
+    }
     out[[length(out) + 1L]] <- export_top_tf_targets(
       module2 = module2,
       output_dir = file.path(output_dir, "top_tf_targets"),
-      tfs = if (is.null(tfs)) head(sort(unique(joined$tf)), 10L) else tfs,
+      tfs = top_tfs,
       top_n = top_n,
       verbose = verbose
     )
   }
   if (any(c("direct_tf_tf", "tf_tf_connectivity") %in% reports)) {
+    if (isTRUE(verbose)) .log_inform("Module 2 reports: building direct TF-TF report links.")
+    direct_links <- .module2_report_direct_links(module2)
+    if (!nrow(direct_links)) .log_abort("No direct TF-TF Module 2 links were found for report generation.")
+    if (isTRUE(verbose)) .log_inform("Module 2 reports: condition-filtering {nrow(direct_links)} direct TF-TF links.")
+    active <- .module2_report_condition_links(direct_links, multiomic_data, conditions = conditions)
+    tag <- "module2"
+    result_label <- "top100"
     cache <- .module2_report_write_active_cache(active, output_dir, tag, result_label)
     if ("direct_tf_tf" %in% reports) {
       out[[length(out) + 1L]] <- export_direct_tf_tf_browser(
@@ -301,25 +454,21 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
 #' @export
 export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbose = TRUE) {
   if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
-  legacy_env <- new.env(parent = parent.frame())
-  .module2_report_source_legacy("02_build_tf_target_perturbation_html_networks.R", env = legacy_env)
   dir.create(file.path(output_dir, "csv"), recursive = TRUE, showWarnings = FALSE)
-  dir.create(file.path(output_dir, "pdf"), recursive = TRUE, showWarnings = FALSE)
+  html_dir <- file.path(output_dir, "html", "tf_target_networks")
+  dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
   link_dt <- .module2_report_join_links(module2, tf = tfs)
   tfs <- toupper(as.character(tfs))
   rows <- lapply(tfs, function(tf) {
     tables <- .module2_report_top_tables(link_dt, tf, top_n = top_n)
     if (is.null(tables)) return(NULL)
-    case <- list(seed_tf = tf, cell_line = "Module2", output_prefix = paste0(tf, "_Module2_top", top_n))
-    html <- file.path(output_dir, "pdf", sprintf("%s_Module2_top%d_log2fc1_network.html", tf, as.integer(top_n)))
-    legacy_env$.write_network_html(
+    html <- file.path(html_dir, sprintf("%s_Module2_top%d_log2fc1_network.html", tf, as.integer(top_n)))
+    .module2_report_write_network_html(
       nodes = tables$nodes,
       edges = tables$edges,
-      case = case,
       out_html = html,
       title = sprintf("%s Module2 top-%d target network", tf, as.integer(top_n)),
-      tf_only = FALSE,
-      max_edges_default = 0L
+      subtitle = "Top target genes and supporting TF-to-target edges"
     )
     data.table::fwrite(tables$nodes, file.path(output_dir, "csv", sprintf("%s_Module2_top%d_nodes.csv", tf, as.integer(top_n))))
     data.table::fwrite(tables$edges, file.path(output_dir, "csv", sprintf("%s_Module2_top%d_edges.csv", tf, as.integer(top_n))))
@@ -341,25 +490,19 @@ export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbos
 #' @return A tibble report manifest.
 #' @export
 export_direct_tf_tf_browser <- function(cache, output_dir, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
-  legacy_env <- new.env(parent = parent.frame())
-  .module2_report_source_legacy("02_build_tf_regulated_cluster_html_browsers.R", env = legacy_env)
-  pdf_dir <- file.path(output_dir, "pdf", "condition_filtered_direct_tf_tf")
-  dir.create(pdf_dir, recursive = TRUE, showWarnings = FALSE)
+  html_dir <- file.path(output_dir, "html", "direct_tf_tf_networks")
+  dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
   link_dt <- data.table::rbindlist(lapply(cache$manifest$filtered_links_csv, data.table::fread, showProgress = FALSE), use.names = TRUE, fill = TRUE)
+  base_edges <- .module2_report_build_direct_edges(link_dt, min_supporting_peaks = 1L)
   rows <- lapply(as.integer(k_values), function(k) {
-    edge_dt <- legacy_env$.build_condition_direct_tf_tf_base_edges(link_dt, min_edge_score = 1L)
+    edge_dt <- .module2_report_assign_edge_clusters(base_edges, k = k)
     if (!nrow(edge_dt)) return(NULL)
-    edge_dt[, condition := if ("condition" %in% names(link_dt)) link_dt$condition[[1L]] else cache$manifest$condition[[1L]]]
-    edge_dt[, `:=`(from_cluster = sprintf("T%02d", ((seq_len(.N) - 1L) %% k) + 1L), to_cluster = sprintf("T%02d", ((seq_len(.N) - 1L) %% k) + 1L))]
-    html <- legacy_env$.write_condition_direct_tf_tf_k_index(
+    html <- file.path(html_dir, sprintf("K%02d_direct_tf_tf_network_browser.html", as.integer(k)))
+    .module2_report_write_tf_tf_browser(
       edge_dt = edge_dt,
-      out_dir = pdf_dir,
-      title_prefix = tag,
-      k_label = sprintf("K%02d", k),
-      network_label = "Direct TF network",
-      page_label = "direct TF-TF",
-      edge_label = "direct TF-to-TF edges",
-      out_suffix = "direct_tf_tf_network_browser"
+      out_html = html,
+      title = sprintf("%s %s K%02d direct TF-TF network", tag, result_label, as.integer(k)),
+      report_name = "Direct TF-TF"
     )
     data.table::data.table(report = "direct_tf_tf", k = k, path = html)
   })
@@ -379,25 +522,19 @@ export_direct_tf_tf_browser <- function(cache, output_dir, tag = "module2", resu
 #' @return A tibble report manifest.
 #' @export
 export_tf_tf_connectivity_browser <- function(cache, output_dir, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
-  legacy_env <- new.env(parent = parent.frame())
-  .module2_report_source_legacy("02_build_tf_regulated_cluster_html_browsers.R", env = legacy_env)
-  pdf_dir <- file.path(output_dir, "pdf", "condition_filtered_tf_tf_connectivity")
-  dir.create(pdf_dir, recursive = TRUE, showWarnings = FALSE)
+  html_dir <- file.path(output_dir, "html", "tf_tf_connectivity")
+  dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
+  link_dt <- data.table::rbindlist(lapply(cache$manifest$filtered_links_csv, data.table::fread, showProgress = FALSE), use.names = TRUE, fill = TRUE)
+  base_edges <- .module2_report_build_direct_edges(link_dt, min_supporting_peaks = 1L)
   rows <- lapply(as.integer(k_values), function(k) {
-    link_dt <- data.table::rbindlist(lapply(cache$manifest$filtered_links_csv, data.table::fread, showProgress = FALSE), use.names = TRUE, fill = TRUE)
-    edge_dt <- legacy_env$.build_condition_direct_tf_tf_base_edges(link_dt, min_edge_score = 1L)
+    edge_dt <- .module2_report_assign_edge_clusters(base_edges, k = k)
     if (!nrow(edge_dt)) return(NULL)
-    edge_dt[, condition := cache$manifest$condition[[1L]]]
-    edge_dt[, `:=`(from_cluster = sprintf("T%02d", ((seq_len(.N) - 1L) %% k) + 1L), to_cluster = sprintf("T%02d", ((seq_len(.N) - 1L) %% k) + 1L))]
-    html <- legacy_env$.write_condition_direct_tf_tf_k_index(
+    html <- file.path(html_dir, sprintf("K%02d_tf_tf_connectivity_network_browser.html", as.integer(k)))
+    .module2_report_write_tf_tf_browser(
       edge_dt = edge_dt,
-      out_dir = pdf_dir,
-      title_prefix = tag,
-      k_label = sprintf("K%02d", k),
-      network_label = "TF-TF connectivity",
-      page_label = "TF-TF connectivity",
-      edge_label = "TF-TF connectivity edges",
-      out_suffix = "tf_tf_connectivity_network_browser"
+      out_html = html,
+      title = sprintf("%s %s K%02d TF-TF connectivity", tag, result_label, as.integer(k)),
+      report_name = "TF-TF connectivity"
     )
     data.table::data.table(report = "tf_tf_connectivity", k = k, path = html)
   })
