@@ -79,7 +79,7 @@ test_that("Module 2 top TF target reports write self-contained HTML", {
   expect_true(file.exists(man$path[[1L]]))
   html <- readLines(man$path[[1L]], warn = FALSE)
   expect_true(any(grepl("Export SVG", html, fixed = TRUE)))
-  expect_true(any(grepl("const PAYLOAD", html, fixed = TRUE)))
+  expect_true(any(grepl("const FULL_NODES", html, fixed = TRUE)))
 })
 
 test_that("Module 2 report builder writes direct HTML without pdf folders", {

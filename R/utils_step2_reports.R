@@ -324,18 +324,22 @@
 }
 
 .module2_report_write_network_html <- function(nodes, edges, out_html, title, subtitle = NULL) {
-  node_role <- edge_score <- NULL
+  is_seed_tf <- node_id <- node_type <- NULL
   nodes <- data.table::as.data.table(nodes)
   edges <- data.table::as.data.table(edges)
-  if (!"node_id" %in% names(nodes)) data.table::setnames(nodes, names(nodes)[[1L]], "node_id")
-  if (!"node_type" %in% names(nodes)) nodes[, node_type := "Gene"]
-  if (!"node_role" %in% names(nodes)) nodes[, node_role := "node"]
-  if (!"edge_score" %in% names(edges)) edges[, edge_score := 1]
-  body <- paste0("<div class=\"app\"><header><h1>", .module2_report_html_escape(title), "</h1><div class=\"meta\">", .module2_report_html_escape(if (is.null(subtitle)) "Interactive Module 2 network report" else subtitle), "</div></header><div class=\"toolbar\"><label>Layout <select id=\"layout\"><option value=\"force\">Force</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option></select></label><label>Max edges <input id=\"maxEdges\" type=\"number\" min=\"0\" step=\"25\" value=\"0\"></label><button id=\"exportSvg\">Export SVG</button></div><div class=\"main\"><div class=\"canvasWrap\"><svg id=\"net\" viewBox=\"0 0 1500 850\" role=\"img\"></svg></div><aside class=\"side\"><h2>Report</h2><div id=\"stats\"></div><h2>Selection</h2><div id=\"sel\" class=\"stat\">Click a node or edge.</div></aside></div></div>")
-  script <- paste0("const PAYLOAD=", .module2_report_json(list(nodes = nodes, edges = edges)), ";const svg=document.getElementById('net'),stats=document.getElementById('stats'),sel=document.getElementById('sel');const W=1500,H=850,cx=W/2,cy=H/2;function topEdges(){let n=+document.getElementById('maxEdges').value||0;let e=[...PAYLOAD.edges];e.sort((a,b)=>Math.abs(b.edge_score||0)-Math.abs(a.edge_score||0));return n>0?e.slice(0,n):e;}function positions(nodes,edges){let mode=document.getElementById('layout').value;let ids=nodes.map(d=>d.node_id);let p={};if(mode==='radial'){ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:cx+320*Math.cos(a),y:cy+320*Math.sin(a)}});return p;}if(mode==='columns'){let left=nodes.filter(d=>d.node_type==='TF'),right=nodes.filter(d=>d.node_type!=='TF');left.forEach((d,i)=>p[d.node_id]={x:300,y:120+i*(620/Math.max(1,left.length-1))});right.forEach((d,i)=>p[d.node_id]={x:1120,y:120+i*(620/Math.max(1,right.length-1))});return p;}ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:cx+330*Math.cos(a),y:cy+260*Math.sin(a)}});return p;}function render(){let edges=topEdges();let used=new Set();edges.forEach(e=>{used.add(e.from);used.add(e.to)});let nodes=PAYLOAD.nodes.filter(n=>used.has(n.node_id)||PAYLOAD.nodes.length<200);let p=positions(nodes,edges);svg.innerHTML='<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#64748b\"></path></marker></defs>';edges.forEach(e=>{let a=p[e.from],b=p[e.to];if(!a||!b)return;let line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);line.setAttribute('stroke-width',Math.max(1,Math.min(8,1+Math.abs(e.edge_score||0)/3)));line.setAttribute('marker-end','url(#arrow)');line.setAttribute('class','edge '+((e.edge_score||0)>0?'strong':''));line.onclick=()=>sel.textContent=`${e.from} -> ${e.to}; score=${(e.edge_score||0).toFixed(3)}`;svg.appendChild(line)});nodes.forEach(n=>{let q=p[n.node_id];let g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','node');g.setAttribute('transform',`translate(${q.x},${q.y})`);let isTf=n.node_type==='TF';let shape=document.createElementNS('http://www.w3.org/2000/svg',isTf?'rect':'circle');if(isTf){shape.setAttribute('x',-34);shape.setAttribute('y',-18);shape.setAttribute('width',68);shape.setAttribute('height',36);shape.setAttribute('rx',4)}else{shape.setAttribute('r',18)}shape.setAttribute('fill',n.node_role==='seed_tf'?'#ef4444':(isTf?'#2563eb':'#14b8a6'));shape.setAttribute('stroke','#0f172a');shape.setAttribute('stroke-width','1.2');g.appendChild(shape);let tx=document.createElementNS('http://www.w3.org/2000/svg','text');tx.setAttribute('text-anchor','middle');tx.setAttribute('dy',isTf?5:34);tx.setAttribute('font-size',isTf?13:11);tx.textContent=n.node_id;g.appendChild(tx);g.onclick=()=>sel.textContent=`${n.node_id} (${n.node_type}; ${n.node_role||'node'})`;svg.appendChild(g)});stats.innerHTML=`<div class=\"stat\">Nodes: ${nodes.length}</div><div class=\"stat\">Edges shown: ${edges.length}</div><div class=\"stat\">Edges total: ${PAYLOAD.edges.length}</div>`;}document.getElementById('layout').onchange=render;document.getElementById('maxEdges').onchange=render;document.getElementById('exportSvg').onclick=()=>{let blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='module2_network.svg';a.click();URL.revokeObjectURL(a.href)};render();")
-  .module2_report_write_html(out_html, title, body, script)
+  seed_tf <- nodes[is_seed_tf %in% TRUE, node_id]
+  if (!length(seed_tf)) seed_tf <- nodes[node_type == "TF", node_id]
+  if (!length(seed_tf)) seed_tf <- title
+  .module2_legacy_write_network_html(
+    nodes = nodes,
+    edges = edges,
+    case = list(seed_tf = seed_tf[[1L]]),
+    out_html = out_html,
+    title = title,
+    tf_only = FALSE,
+    max_edges_default = 0L
+  )
 }
-
 .module2_report_build_direct_edges <- function(link_dt, min_supporting_peaks = 1L) {
   gene_norm <- from <- to <- fp_target_rna_r <- tf_expression_target_r <- NULL
   condition_fp_score <- n_supporting_peaks <- edge_score <- edge_rank <- NULL
@@ -444,11 +448,24 @@
 }
 
 .module2_report_write_tf_tf_browser <- function(edge_dt, out_html, title, report_name) {
-  edge_dt <- data.table::as.data.table(edge_dt)
-  conditions <- sort(unique(edge_dt$condition))
-  body <- paste0("<div class=\"app\"><header><h1>", .module2_report_html_escape(title), "</h1><div class=\"meta\">Condition-filtered Module 2 TF-to-TF browser</div></header><div class=\"toolbar\"><label>Condition <select id=\"condition\"></select></label><label>Cluster <select id=\"cluster\"></select></label><label>Max edges <input id=\"maxEdges\" type=\"number\" min=\"25\" step=\"25\" value=\"250\"></label><button id=\"exportSvg\">Export SVG</button></div><div class=\"main\"><div class=\"canvasWrap\"><svg id=\"net\" viewBox=\"0 0 1500 850\" role=\"img\"></svg></div><aside class=\"side\"><h2>", .module2_report_html_escape(report_name), "</h2><div id=\"stats\"></div><h2>Selection</h2><div id=\"sel\" class=\"stat\">Click a node or edge.</div></aside></div></div>")
-  script <- paste0("const PAYLOAD=", .module2_report_json(list(edges = edge_dt, conditions = conditions)), ";const svg=document.getElementById('net'),sel=document.getElementById('sel'),stats=document.getElementById('stats'),cond=document.getElementById('condition'),clSel=document.getElementById('cluster');PAYLOAD.conditions.forEach(c=>cond.add(new Option(c,c)));function clusters(c){let s=new Set(PAYLOAD.edges.filter(e=>e.condition===c).map(e=>e.direct_tf_cluster));return Array.from(s).sort();}function updateClusters(){let old=clSel.value;let cs=clusters(cond.value);clSel.innerHTML='';clSel.add(new Option('All clusters','__all__'));cs.forEach(c=>clSel.add(new Option(c,c)));if(cs.includes(old))clSel.value=old;}function render(){let max=+document.getElementById('maxEdges').value||250;let e=PAYLOAD.edges.filter(x=>x.condition===cond.value&&(clSel.value==='__all__'||x.direct_tf_cluster===clSel.value));e.sort((a,b)=>Math.abs(b.edge_score||0)-Math.abs(a.edge_score||0));e=e.slice(0,max);let ids=Array.from(new Set(e.flatMap(x=>[x.from,x.to]))).sort();let p={};ids.forEach((id,i)=>{let a=2*Math.PI*i/Math.max(1,ids.length);p[id]={x:750+330*Math.cos(a),y:425+290*Math.sin(a)}});svg.innerHTML='<defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#64748b\"></path></marker></defs>';e.forEach(x=>{let a=p[x.from],b=p[x.to];if(!a||!b)return;let l=document.createElementNS('http://www.w3.org/2000/svg','line');l.setAttribute('x1',a.x);l.setAttribute('y1',a.y);l.setAttribute('x2',b.x);l.setAttribute('y2',b.y);l.setAttribute('stroke-width',Math.max(1,Math.min(8,1+Math.abs(x.edge_score||0)/8)));l.setAttribute('class','edge strong');l.setAttribute('marker-end','url(#arrow)');l.onclick=()=>sel.textContent=`${x.condition}: ${x.from} -> ${x.to}; score=${(x.edge_score||0).toFixed(3)}; peaks=${x.n_supporting_peaks}`;svg.appendChild(l)});ids.forEach(id=>{let q=p[id];let g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','node');g.setAttribute('transform',`translate(${q.x},${q.y})`);let r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('x',-38);r.setAttribute('y',-18);r.setAttribute('width',76);r.setAttribute('height',36);r.setAttribute('rx',4);r.setAttribute('fill','#2563eb');r.setAttribute('stroke','#0f172a');g.appendChild(r);let t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('text-anchor','middle');t.setAttribute('dy',5);t.setAttribute('font-size',12);t.textContent=id;g.appendChild(t);g.onclick=()=>sel.textContent=id;svg.appendChild(g)});stats.innerHTML=`<div class=\"stat\">Condition: ${cond.value}</div><div class=\"stat\">Cluster: ${clSel.value}</div><div class=\"stat\">TF nodes: ${ids.length}</div><div class=\"stat\">Edges shown: ${e.length}</div>`;}cond.onchange=()=>{updateClusters();render()};clSel.onchange=render;document.getElementById('maxEdges').onchange=render;document.getElementById('exportSvg').onclick=()=>{let blob=new Blob([svg.outerHTML],{type:'image/svg+xml'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='module2_tf_tf.svg';a.click();URL.revokeObjectURL(a.href)};updateClusters();render();")
-  .module2_report_write_html(out_html, title, body, script)
+  base <- tools::file_path_sans_ext(basename(out_html))
+  k_label <- sub("_.*$", "", base)
+  out_suffix <- sub("^[^_]+_", "", base)
+  page_label <- if (identical(report_name, "TF-TF connectivity")) "TF-TF connectivity" else "direct TF-TF"
+  edge_label <- if (identical(report_name, "TF-TF connectivity")) "condition-filtered TF-to-TF connectivity edges" else "condition-filtered direct TF-to-TF edges"
+  .module2_legacy_write_condition_direct_tf_tf_k_index(
+    edge_dt = data.table::as.data.table(edge_dt),
+    out_dir = dirname(out_html),
+    title_prefix = title,
+    k_label = k_label,
+    max_edges_per_cluster = 250L,
+    max_nodes_per_cluster = Inf,
+    heatmap_dt = data.table::data.table(),
+    network_label = report_name,
+    page_label = page_label,
+    edge_label = edge_label,
+    out_suffix = out_suffix
+  )
 }
 #' Build optional Module 2 HTML reports
 #'
