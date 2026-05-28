@@ -488,7 +488,7 @@
   out[, .(condition, direct_tf_cluster, heatmap_png, x, y, w, h)]
 }
 
-.module2_report_heatmap_metadata <- function(edge_dt, k_label, report_name, png_size = 900L) {
+.module2_report_heatmap_metadata <- function(edge_dt, k_label, report_name, png_size = 4800L) {
   condition <- from <- to <- edge_score <- from_cluster <- to_cluster <- NULL
   if (!nrow(edge_dt)) return(data.table::data.table())
   dt <- data.table::copy(edge_dt)
@@ -507,9 +507,7 @@
     cl_to <- one[, .(tf = as.character(to), cluster = as.character(to_cluster))]
     cl <- unique(data.table::rbindlist(list(cl_from, cl_to), use.names = TRUE, fill = TRUE))
     cl <- cl[nzchar(tf) & nzchar(cluster)]
-    row_order <- .module2_report_order_tfs_for_heatmap(rownames(mat), mat, cl, axis = "row")
-    col_order <- .module2_report_order_tfs_for_heatmap(colnames(mat), mat, cl, axis = "col")
-    mat <- mat[row_order, col_order, drop = FALSE]
+    mat <- .module2_report_order_matrix_by_clusters(mat, cl)
     png_name <- sprintf("%s_%s_%s_heatmap.png", .module2_report_safe_filename(cc), .module2_report_safe_filename(report_name), k_label)
     .module2_report_draw_browser_heatmap_png(mat, cl, file.path(tmp_dir, png_name), cc, png_size = png_size)
   })
@@ -536,20 +534,151 @@
   tibble::as_tibble(out)
 }
 
-.module2_report_assign_edge_clusters <- function(edge_dt, k) {
-  direct_tf_cluster <- to_cluster <- from_cluster <- NULL
-  if (!nrow(edge_dt)) return(edge_dt)
+.module2_report_direct_matrix_from_edges <- function(edge_dt) {
+  edge_score <- from <- to <- NULL
+  if (!nrow(edge_dt)) return(matrix(numeric(), 0L, 0L))
+  tfs <- sort(unique(c(as.character(edge_dt$from), as.character(edge_dt$to))))
+  if (length(tfs) < 2L) return(matrix(numeric(), 0L, 0L))
+  mat <- matrix(0, nrow = length(tfs), ncol = length(tfs), dimnames = list(tfs, tfs))
+  edge_sum <- edge_dt[, .(edge_score = sum(as.numeric(edge_score), na.rm = TRUE)), by = .(from, to)]
+  mat[cbind(match(edge_sum$from, tfs), match(edge_sum$to, tfs))] <- edge_sum$edge_score
+  log10(mat + 1)
+}
+
+.module2_report_cut_condition_clusters <- function(mat, k) {
+  if (!nrow(mat)) return(data.table::data.table(tf = character(), cluster = character()))
   k <- as.integer(k[[1L]])
-  if (!is.finite(k) || is.na(k) || k < 1L) k <- 5L
-  out <- data.table::copy(edge_dt)
-  tfs <- sort(unique(c(out$from, out$to)))
-  cl <- data.table::data.table(tf = tfs, cluster = sprintf("T%02d", ((seq_along(tfs) - 1L) %% k) + 1L))
-  out <- merge(out, cl, by.x = "from", by.y = "tf", all.x = TRUE, sort = FALSE)
-  data.table::setnames(out, "cluster", "from_cluster")
-  out <- merge(out, cl, by.x = "to", by.y = "tf", all.x = TRUE, sort = FALSE)
-  data.table::setnames(out, "cluster", "to_cluster")
-  out[, direct_tf_cluster := paste(sub("^T", "C", to_cluster), sub("^T", "R", from_cluster), sep = "-")]
-  out[]
+  if (!is.finite(k) || is.na(k) || k < 1L) k <- 1L
+  k <- min(k, nrow(mat))
+  labels <- if (nrow(mat) >= 2L && k > 1L) {
+    hc <- tryCatch(stats::hclust(stats::dist(mat), method = "complete"), error = function(e) NULL)
+    if (is.null(hc)) rep("T01", nrow(mat)) else paste0("T", sprintf("%02d", stats::cutree(hc, k = k)))
+  } else {
+    rep("T01", nrow(mat))
+  }
+  data.table::data.table(tf = rownames(mat), cluster = labels)
+}
+
+.module2_report_order_names_by_cluster <- function(names_vec, mat, cluster_dt, axis = c("row", "col")) {
+  cluster_rank <- NULL
+  axis <- match.arg(axis)
+  names_vec <- as.character(names_vec)
+  if (!length(names_vec) || !nrow(cluster_dt)) return(names_vec)
+  cl <- unique(data.table::copy(cluster_dt)[, .(tf = .module2_report_norm_tf(tf), cluster = as.character(cluster))])
+  cluster_map <- stats::setNames(cl$cluster, cl$tf)
+  cluster_vec <- unname(cluster_map[.module2_report_norm_tf(names_vec)])
+  cluster_vec[is.na(cluster_vec) | !nzchar(cluster_vec)] <- "T00"
+  order_dt <- data.table::data.table(tf = names_vec, cluster = cluster_vec)
+  order_dt[, cluster_rank := .module2_report_cluster_rank(cluster)]
+  cluster_levels <- unique(order_dt[order(cluster_rank, cluster), cluster])
+  unlist(lapply(cluster_levels, function(cluster_id) {
+    members <- order_dt[cluster == cluster_id, tf]
+    if (length(members) < 2L) return(members)
+    idx <- match(members, if (identical(axis, "row")) rownames(mat) else colnames(mat))
+    sub_mat <- if (identical(axis, "row")) mat[idx, , drop = FALSE] else t(mat[, idx, drop = FALSE])
+    ord <- tryCatch(stats::hclust(stats::dist(sub_mat), method = "complete")$order, error = function(e) seq_along(members))
+    members[ord]
+  }), use.names = FALSE)
+}
+
+.module2_report_order_matrix_by_clusters <- function(mat, cluster_dt) {
+  if (!nrow(mat) || !ncol(mat) || !nrow(cluster_dt)) return(mat)
+  row_order <- .module2_report_order_names_by_cluster(rownames(mat), mat, cluster_dt, axis = "row")
+  col_order <- .module2_report_order_names_by_cluster(colnames(mat), mat, cluster_dt, axis = "col")
+  mat[row_order, col_order, drop = FALSE]
+}
+
+.module2_report_assign_edge_clusters <- function(edge_dt, k) {
+  condition <- direct_tf_cluster <- to_cluster <- from_cluster <- NULL
+  if (!nrow(edge_dt)) return(edge_dt)
+  dt <- data.table::copy(edge_dt)
+  if (!"condition" %in% names(dt)) dt[, condition := "all"]
+  rows <- lapply(sort(unique(as.character(dt$condition))), function(cc) {
+    one <- dt[condition == cc]
+    mat <- .module2_report_direct_matrix_from_edges(one)
+    cl <- .module2_report_cut_condition_clusters(mat, k = k)
+    if (!nrow(cl)) return(data.table::data.table())
+    out <- merge(one, cl, by.x = "from", by.y = "tf", all.x = TRUE, sort = FALSE)
+    data.table::setnames(out, "cluster", "from_cluster")
+    out <- merge(out, cl, by.x = "to", by.y = "tf", all.x = TRUE, sort = FALSE)
+    data.table::setnames(out, "cluster", "to_cluster")
+    out[is.na(from_cluster) | !nzchar(from_cluster), from_cluster := "T00"]
+    out[is.na(to_cluster) | !nzchar(to_cluster), to_cluster := "T00"]
+    out[, direct_tf_cluster := paste(sub("^T", "C", to_cluster), sub("^T", "R", from_cluster), sep = "-")]
+    out[]
+  })
+  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+}
+
+.module2_report_composite_score_matrix_from_links <- function(link_dt) {
+  gene_norm <- target_norm <- tf_norm <- NULL
+  if (!nrow(link_dt) || !all(c("tf", "gene_norm") %in% names(link_dt))) return(matrix(numeric(), 0L, 0L))
+  dt <- unique(data.table::copy(link_dt)[, .(tf_norm = .module2_report_norm_tf(tf), target_norm = .module2_report_norm_tf(gene_norm))])
+  dt <- dt[nzchar(tf_norm) & nzchar(target_norm)]
+  if (!nrow(dt)) return(matrix(numeric(), 0L, 0L))
+  tf_levels <- sort(unique(dt$tf_norm))
+  if (length(tf_levels) < 2L) return(matrix(numeric(), 0L, 0L))
+  direct <- matrix(0, nrow = length(tf_levels), ncol = length(tf_levels), dimnames = list(tf_levels, tf_levels))
+  tf2tf <- dt[target_norm %in% tf_levels]
+  if (nrow(tf2tf)) direct[cbind(match(tf2tf$tf_norm, tf_levels), match(tf2tf$target_norm, tf_levels))] <- 1
+  target_levels <- sort(unique(dt$target_norm))
+  incidence <- matrix(0, nrow = length(tf_levels), ncol = length(target_levels), dimnames = list(tf_levels, target_levels))
+  incidence[cbind(match(dt$tf_norm, tf_levels), match(dt$target_norm, target_levels))] <- 1
+  comp <- direct + t(direct) + 0.5 * tcrossprod(incidence)
+  diag(comp) <- 0
+  comp
+}
+
+.module2_report_filter_composite_matrix <- function(score_mat, min_score = 2, max_tfs = Inf) {
+  if (!nrow(score_mat) || !ncol(score_mat)) return(matrix(numeric(), 0L, 0L))
+  mat <- score_mat
+  mat[mat < min_score] <- 0
+  keep <- pmax(rowSums(mat > 0, na.rm = TRUE), colSums(mat > 0, na.rm = TRUE)) > 0
+  mat <- mat[keep, keep, drop = FALSE]
+  if (nrow(mat) < 2L || ncol(mat) < 2L) return(matrix(numeric(), 0L, 0L))
+  if (is.finite(max_tfs) && !is.na(max_tfs) && max_tfs > 1L && nrow(mat) > max_tfs) {
+    tf_strength <- rowSums(mat, na.rm = TRUE) + colSums(mat, na.rm = TRUE)
+    keep_tf <- names(sort(tf_strength, decreasing = TRUE))[seq_len(max_tfs)]
+    mat <- mat[keep_tf, keep_tf, drop = FALSE]
+  }
+  log2(mat + 1)
+}
+
+.module2_report_composite_edges_for_k <- function(link_dt, k, min_score = 2, max_tfs = Inf) {
+  condition <- edge_rank <- edge_score <- from <- from_cluster <- to <- to_cluster <- direct_tf_cluster <- NULL
+  if (!nrow(link_dt)) return(data.table::data.table())
+  dt <- data.table::copy(link_dt)
+  if (!"condition" %in% names(dt)) dt[, condition := "all"]
+  rows <- lapply(sort(unique(as.character(dt$condition))), function(cc) {
+    score_mat <- .module2_report_composite_score_matrix_from_links(dt[condition == cc])
+    mat <- .module2_report_filter_composite_matrix(score_mat, min_score = min_score, max_tfs = max_tfs)
+    if (!nrow(mat)) return(data.table::data.table())
+    cl <- .module2_report_cut_condition_clusters(mat, k = k)
+    mat <- .module2_report_order_matrix_by_clusters(mat, cl)
+    idx <- which(is.finite(mat) & mat > 0 & row(mat) != col(mat), arr.ind = TRUE)
+    if (!nrow(idx)) return(data.table::data.table())
+    edge_dt <- data.table::data.table(
+      condition = cc,
+      from = rownames(mat)[idx[, 1L]],
+      to = colnames(mat)[idx[, 2L]],
+      edge_score = as.numeric(mat[idx]),
+      n_supporting_peaks = NA_integer_,
+      mean_fp_target_rna_r = NA_real_,
+      mean_tf_expression_target_r = NA_real_,
+      mean_condition_fp_score = NA_real_
+    )
+    edge_dt <- merge(edge_dt, cl, by.x = "from", by.y = "tf", all.x = TRUE, sort = FALSE)
+    data.table::setnames(edge_dt, "cluster", "from_cluster")
+    edge_dt <- merge(edge_dt, cl, by.x = "to", by.y = "tf", all.x = TRUE, sort = FALSE)
+    data.table::setnames(edge_dt, "cluster", "to_cluster")
+    edge_dt[is.na(from_cluster) | !nzchar(from_cluster), from_cluster := "T00"]
+    edge_dt[is.na(to_cluster) | !nzchar(to_cluster), to_cluster := "T00"]
+    edge_dt[, direct_tf_cluster := paste(sub("^T", "C", to_cluster), sub("^T", "R", from_cluster), sep = "-")]
+    data.table::setorder(edge_dt, condition, from_cluster, to_cluster, -edge_score, from, to)
+    edge_dt[, edge_rank := seq_len(.N), by = condition]
+    edge_dt[]
+  })
+  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
 }
 
 .module2_report_write_tf_tf_browser <- function(edge_dt, out_html, title, report_name) {
@@ -572,6 +701,27 @@
     out_suffix = out_suffix
   )
 }
+.module2_report_export_composite_browsers <- function(active_dt, fallback_edge_dt, output_dir, report, out_suffix, title_template, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), min_score = 2, verbose = TRUE) {
+  html_dir <- output_dir
+  dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
+  rows <- lapply(as.integer(k_values), function(k) {
+    k_edge_dt <- .module2_report_composite_edges_for_k(active_dt, k = k, min_score = min_score)
+    if (!nrow(k_edge_dt)) k_edge_dt <- .module2_report_assign_edge_clusters(fallback_edge_dt, k = k)
+    if (!nrow(k_edge_dt)) return(NULL)
+    html <- file.path(html_dir, sprintf("K%02d_%s.html", as.integer(k), out_suffix))
+    .module2_report_write_tf_tf_browser(
+      edge_dt = k_edge_dt,
+      out_html = html,
+      title = sprintf(title_template, tag, result_label, as.integer(k)),
+      report_name = "TF-TF connectivity"
+    )
+    data.table::data.table(report = report, k = k, path = html)
+  })
+  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  if (isTRUE(verbose)) .log_inform("Module 2 reports: wrote {nrow(out)} TF-TF connectivity HTML file(s).")
+  tibble::as_tibble(out)
+}
+
 #' Build optional Module 2 HTML reports
 #'
 #' @param module2 Module 2 result list, loaded output list, or output directory.
@@ -612,7 +762,9 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
     if (isTRUE(verbose)) .log_inform("Module 2 reports: aggregating condition-filtered TF-TF edges from {nrow(direct_links)} direct links.")
     tag <- "module2"
     result_label <- "top100"
-    edge_dt <- .module2_report_condition_edges(direct_links, multiomic_data, conditions = conditions, verbose = verbose)
+    active_dt <- .module2_report_condition_links(direct_links, multiomic_data, conditions = conditions)
+    if (!nrow(active_dt)) .log_abort("No condition-filtered Module 2 links were found for report generation.")
+    edge_dt <- .module2_report_build_direct_edges(active_dt, min_supporting_peaks = 1L)
     if (!nrow(edge_dt)) .log_abort("No condition-filtered direct TF-TF edges were found for report generation.")
     .module2_report_write_edge_cache(edge_dt, output_dir, tag, result_label)
     if ("direct_tf_tf" %in% reports) {
@@ -631,17 +783,17 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
       )
     }
     if ("tf_tf_connectivity" %in% reports) {
-      out[[length(out) + 1L]] <- .module2_report_export_edge_browsers(
-        edge_dt = edge_dt,
+      out[[length(out) + 1L]] <- .module2_report_export_composite_browsers(
+        active_dt = active_dt,
+        fallback_edge_dt = edge_dt,
         output_dir = output_dir,
-        html_subdir = "tf_tf_connectivity",
         report = "tf_tf_connectivity",
         out_suffix = "tf_tf_connectivity_network_browser",
         title_template = "%s %s K%02d TF-TF connectivity",
-        report_name = "TF-TF connectivity",
         tag = tag,
         result_label = result_label,
         k_values = k_values,
+        min_score = 2,
         verbose = verbose
       )
     }
@@ -735,7 +887,8 @@ export_tf_tf_connectivity_browser <- function(cache, output_dir, tag = "module2"
   link_dt <- data.table::rbindlist(lapply(cache$manifest$filtered_links_csv, data.table::fread, showProgress = FALSE), use.names = TRUE, fill = TRUE)
   base_edges <- .module2_report_build_direct_edges(link_dt, min_supporting_peaks = 1L)
   rows <- lapply(as.integer(k_values), function(k) {
-    edge_dt <- .module2_report_assign_edge_clusters(base_edges, k = k)
+    edge_dt <- .module2_report_composite_edges_for_k(link_dt, k = k, min_score = 2)
+    if (!nrow(edge_dt)) edge_dt <- .module2_report_assign_edge_clusters(base_edges, k = k)
     if (!nrow(edge_dt)) return(NULL)
     html <- file.path(html_dir, sprintf("K%02d_tf_tf_connectivity_network_browser.html", as.integer(k)))
     .module2_report_write_tf_tf_browser(
