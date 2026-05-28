@@ -1,3 +1,11 @@
+// Shared C++ correlation kernels for CraftGRN.
+//
+// These exported kernels are intentionally module-neutral:
+// - sparse_pair_correlations_cpp is used by Module 1 motif-supported tests
+//   and Module 2 TF-target / FP-target restricted correlation tests.
+// - dense_prediction_stats_cpp is used by Module 1 all-TF prediction
+//   chunks after canonical-bound FP filtering.
+//
 #include <Rcpp.h>
 #ifdef _OPENMP
 #include <omp.h>
@@ -68,6 +76,9 @@ static inline double cor_indexed_complete(const NumericMatrix& x, const NumericM
   return cor_complete(x, y, xi, yi);
 }
 
+// Sparse pairwise kernel shared by Module 1 and Module 2. It avoids
+// materializing a full FP x TF or TF x gene matrix when only restricted
+// candidate pairs are needed.
 // [[Rcpp::export(.sparse_pair_correlations_cpp)]]
 DataFrame sparse_pair_correlations_cpp(NumericMatrix fp,
                                        NumericMatrix tf,
@@ -113,6 +124,9 @@ DataFrame sparse_pair_correlations_cpp(NumericMatrix fp,
     _["stringsAsFactors"] = false
   );
 }
+// Dense all-pairs kernel used by Module 1 prediction chunks after
+// canonical-bound FP filtering. It emits only passing FP-TF predictions
+// to keep R-side memory usage bounded.
 // [[Rcpp::plugins(openmp)]]
 // [[Rcpp::export(.dense_prediction_stats_cpp)]]
 DataFrame dense_prediction_stats_cpp(NumericMatrix fp,

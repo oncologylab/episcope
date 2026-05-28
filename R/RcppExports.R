@@ -8,3 +8,4 @@
 .dense_prediction_stats_cpp <- function(fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads = 1L) {
     .Call(`_craftgrn_dense_prediction_stats_cpp`, fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads)
 }
+
