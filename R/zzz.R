@@ -42,6 +42,7 @@ utils::globalVariables(c(
   "gene_weight", "gs_name", "has_matching_peak", "HGNC",
   "in_marker_heatmap", "in_topic", "is_sig", "is_topic_top_pathway",
   "K", "leading_edge", "link_efdr_p", "link_efdr_q", "link_id",
+  "candidate_id", "candidate_source", "distance_to_tss", "fp_center", "point_end", "point_start", "prior_id", "prior_score", "prior_source", "prior_status", "prior_supported", "target_chr", "target_gene", "target_strand", "target_tss", "window_end", "window_start", "within_tss_window",
   "link_pass", "module2_link_pass", "link_score", "link_score_prob", "log2_fc_z_c",
   "log2fc_fp", "log2FC_fp_bed_score", "log2FC_fp_score",
   "log2fc_gene", "log2fc_tf", "log2FC_tf_expr", "loglik", "logp",
