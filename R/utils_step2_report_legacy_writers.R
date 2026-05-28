@@ -353,3 +353,349 @@
     writeLines(html, out_html, useBytes = TRUE)
     out_html
 }
+
+
+# Legacy composite TF-TF connectivity pathway browser.
+#
+# This preserves the distinct two-pane browser used by the old benchmark
+# TF-TF connectivity reports. It is intentionally separate from the direct
+# TF-TF browser writer above because the two report families have different
+# payloads and UI layouts.
+.module2_legacy_write_condition_pathway_tf_gene_k_index <- function(edge_dt, out_dir, title_prefix, k_label, max_edges_per_network = 120L, out_suffix = "tf_tf_connectivity_network_browser", heatmap_dt = data.table()) {
+  condition <- database <- edge_r <- edge_score <- from <- heatmap_image <- heatmap_png <- major_cluster <- mean_condition_fp_score <- n_supporting_links <- n_target_genes <- network_id <- network_label <- pathway_adjusted_p_value <- pathway_key <- pathway_neglog10_padj <- pathway_term <- to <- NULL
+  if (!nrow(edge_dt)) return(NA_character_)
+  out_dir <- .module2_legacy_ensure_dir(out_dir)
+  dt <- data.table::copy(edge_dt)
+  dt <- dt[nzchar(from) & nzchar(to)]
+  if (!nrow(dt)) return(NA_character_)
+  network_gene_counts <- dt[, .(n_target_genes = data.table::uniqueN(to)), by = .(condition, network_id)]
+  keep_networks <- network_gene_counts[n_target_genes >= 3L, .(condition, network_id, n_target_genes)]
+  if (!nrow(keep_networks)) return(NA_character_)
+  dt <- merge(dt, keep_networks, by = c("condition", "network_id"), all.x = FALSE, sort = FALSE)
+  if (!nrow(dt)) return(NA_character_)
+  data.table::setorder(dt, condition, major_cluster, pathway_term, -edge_score, from, to)
+  html_escape <- function(x) {
+    x <- as.character(x)
+    x <- gsub("&", "&amp;", x, fixed = TRUE)
+    x <- gsub("<", "&lt;", x, fixed = TRUE)
+    x <- gsub(">", "&gt;", x, fixed = TRUE)
+    x <- gsub("\"", "&quot;", x, fixed = TRUE)
+    x
+  }
+  payload <- dt[, .(
+    condition = as.character(condition),
+    network_id = as.character(network_id),
+    network_label = as.character(network_label),
+    major_cluster = as.character(major_cluster),
+    database = as.character(database),
+    pathway_key = as.character(pathway_key),
+    pathway_term = as.character(pathway_term),
+    pathway_adjusted_p_value = as.numeric(pathway_adjusted_p_value),
+    pathway_neglog10_padj = as.numeric(pathway_neglog10_padj),
+    from = as.character(from),
+    to = as.character(to),
+    edge_score = round(as.numeric(edge_score), 6),
+    edge_r = round(as.numeric(edge_r), 6),
+    n_supporting_links = as.integer(n_supporting_links),
+    n_target_genes = as.integer(n_target_genes),
+    mean_condition_fp_score = round(as.numeric(mean_condition_fp_score), 4)
+  )]
+  payload_gzip_base64 <- .module2_legacy_encode_browser_json_deflate_base64(.module2_legacy_browser_payload_to_columnar(payload))
+  heatmap_payload <- data.table()
+  heatmap_image_json <- "{}"
+  if (nrow(heatmap_dt)) {
+    heatmap_payload <- data.table::copy(heatmap_dt)
+    keep_cols <- c("condition", "major_cluster", "heatmap_png", "x", "y", "w", "h")
+    heatmap_payload <- heatmap_payload[, intersect(keep_cols, names(heatmap_payload)), with = FALSE]
+    if ("heatmap_png" %chin% names(heatmap_payload)) {
+      image_dt <- unique(heatmap_payload[, .(heatmap_png)])
+      image_dt[, heatmap_image := vapply(heatmap_png, function(path) {
+        full_path <- if (file.exists(path)) {
+          path
+        } else if (file.exists(file.path(out_dir, path))) {
+          file.path(out_dir, path)
+        } else {
+          file.path(out_dir, "png", path)
+        }
+        uri <- .module2_legacy_png_file_to_data_uri(full_path)
+        ifelse(is.na(uri), path, uri)
+      }, character(1L))]
+      heatmap_image_json <- jsonlite::toJSON(
+        stats::setNames(as.list(image_dt$heatmap_image), image_dt$heatmap_png),
+        auto_unbox = TRUE,
+        null = "null"
+      )
+    }
+  }
+  heatmap_json <- jsonlite::toJSON(heatmap_payload, dataframe = "rows", auto_unbox = TRUE, null = "null")
+  default_edges <- ifelse(is.finite(max_edges_per_network), as.character(max_edges_per_network), "0")
+  out_html <- file.path(out_dir, sprintf("%s_%s.html", k_label, out_suffix))
+  page_title <- sprintf("%s condition-filtered TF-TF connectivity pathway networks", k_label)
+  html <- c(
+    "<!doctype html>",
+    "<html>",
+    "<head>",
+    "<meta charset=\"utf-8\"/>",
+    sprintf("<title>%s</title>", html_escape(page_title)),
+    "<style>",
+    "body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;}",
+    ".wrap{max-width:min(98vw,2400px);margin:0 auto;padding:8px 20px 14px 20px;}",
+    ".top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid #d6d6d0;padding-bottom:4px;margin-bottom:6px;}",
+    "h1{font-size:17px;line-height:1.12;margin:0 0 2px 0;font-weight:700;color:#111;}",
+    ".meta{font-size:9.5px;line-height:1.18;color:#555;max-width:760px;font-weight:700;}",
+    ".controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}",
+    ".styleDetails{display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;margin:0 0 3px 0;padding:0 0 2px 0;border-bottom:1px solid #d6d6d0;}",
+    ".styleLabel{font:700 9px Arial,Helvetica,sans-serif;color:#333;padding-top:4px;white-space:nowrap;}",
+    ".styleGrid{display:flex;gap:3px 5px;align-items:center;flex-wrap:wrap;flex:1;}",
+    ".paneGrid{display:grid;grid-template-columns:minmax(280px,1fr) minmax(0,3fr);gap:12px;align-items:stretch;height:calc(100vh - 175px);min-height:850px;}",
+    ".leftStack{min-width:0;min-height:0;height:100%;display:grid;grid-template-rows:minmax(390px,0.52fr) minmax(360px,0.48fr);gap:12px;}",
+    ".pane{min-width:0;min-height:0;display:flex;flex-direction:column;}",
+    ".paneHead{display:flex;justify-content:space-between;gap:7px;align-items:flex-start;align-content:flex-start;flex-wrap:wrap;margin:0 0 4px 0;box-sizing:border-box;}",
+    ".paneTitle{font-size:13px;font-weight:700;margin:0;color:#111;}",
+    ".paneControls{display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end;}",
+    ".control{display:flex;gap:5px;align-items:center;font-size:11px;color:#333;white-space:nowrap;font-weight:700;}",
+    "select,input{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:5px 7px;min-width:0;}",
+    "select{max-width:420px;text-overflow:ellipsis;}",
+    ".paneControls select{max-width:min(36vw,520px);}",
+    "#leftNetworkSelect{width:100%;max-width:none;}",
+    "#leftNodeSelect{width:118px;}",
+    "#leftMaxEdges{width:52px;}",
+    "#rightNetworkSelect{width:100%;max-width:none;}",
+    "#rightNodeSelect{width:132px;}",
+    "#rightMaxEdges{width:52px;}",
+    "#selectedNetworkSelect{width:100%;height:30px;padding:1px 6px;}",
+    ".leftStack .paneHead{display:block;margin-bottom:3px;}",
+    ".leftStack .paneTitle{margin-bottom:3px;}",
+    ".leftStack .paneControls{display:grid;grid-template-columns:auto auto minmax(0,1fr);justify-content:stretch;align-items:center;margin-top:0;width:100%;}",
+    ".leftStack .paneControls .control{min-width:0;}",
+    ".leftStack .paneControls .clusterControl{grid-column:1 / -1;}",
+    ".leftStack .paneControls button{width:auto;min-width:96px;flex:0 0 auto;}",
+    "input{width:64px;}",
+    "input[type=color]{width:30px;height:27px;padding:2px;}",
+    "input[type=checkbox]{width:auto;}",
+    "input[type=range]{width:96px;padding:0;}",
+    "input[type=text]{width:92px;}",
+    "button{font:700 10.5px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#f4f4f2;color:#222;border-radius:3px;padding:5px 8px;cursor:pointer;}",
+    "button:hover{background:#e9e9e4;border-color:#777;}",
+    ".paneControls button{min-width:58px;}",
+    "#addNetworkButton{background:#2B6CB0;border-color:#1f5c9d;color:#fff;min-width:82px;}",
+    "#addNetworkButton:hover{background:#245b96;border-color:#174c82;}",
+    "#rightExportSvgButton{min-width:44px;}",
+    ".rightPane .paneHead{display:block;margin-bottom:3px;}",
+    ".rightPane .paneTitle{margin-bottom:3px;}",
+    ".rightPane .paneControls{display:flex;gap:4px;align-items:center;justify-content:flex-start;flex-wrap:wrap;}",
+    ".rightPane .paneControls .control{min-width:0;}",
+    ".rightPane .selectedControl{display:grid;grid-template-columns:auto minmax(0,1fr);flex:1 1 760px;max-width:min(58vw,1180px);align-items:center;}",
+    ".rightPane .selectedControl span{padding-top:0;}",
+    ".rightPane .paneControls button{flex:0 0 auto;min-width:0;padding:4px 6px;}",
+    "#removeNetworkButton{width:38px;background:#fff7f7;color:#9F1239;border-color:#ddb8c0;}",
+    "#removeNetworkButton:hover{background:#ffecec;border-color:#c58a97;}",
+    "#clearNetworksButton,#rightResetButton{width:46px;}",
+    "#rightExportSvgButton{width:44px;min-width:44px;}",
+    ".rightPane #rightNodeSelect{width:170px;}",
+    ".styleGrid .control{font-size:9px;gap:3px;}",
+    ".styleGrid select,.styleGrid input{font-size:9.5px;padding:2px 4px;height:24px;box-sizing:border-box;}",
+    ".styleGrid input{width:42px;}",
+    ".styleGrid input[type=range]{width:56px;height:16px;padding:0;}",
+    ".styleGrid input[type=text]{width:62px;}",
+    ".styleGrid input[type=color]{width:24px;height:24px;padding:1px;}",
+    ".styleGrid input[type=checkbox]{width:auto;height:auto;}",
+    ".styleGrid button{font-size:9.5px;padding:3px 6px;}",
+    "#layoutSelect{width:72px;}",
+    "#labelFontSelect{width:58px;}",
+    "#paletteSelect{width:94px;}",
+    "#tfSizeMin,#tfSizeMax,#tfFontMin,#tfFontMax,#geneSize,#geneFont{width:42px;text-align:center;}",
+    "#spacingValue,#edgeWidth,#edgeOpacity{width:48px;text-align:center;}",
+    ".note{font-size:9.5px;color:#666;margin:0 0 5px 0;font-weight:700;min-height:11px;}",
+    ".canvas{position:relative;width:100%;height:760px;border:1px solid #d6d6d0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);overflow:hidden;cursor:grab;min-height:0;}",
+    ".previewCanvas{height:auto;flex:1;}",
+    ".mainCanvas{height:auto;flex:1;}",
+    ".heatmapPanel{border:1px solid #d6d6d0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);padding:8px;display:flex;flex-direction:column;min-height:0;}",
+    ".heatmapTitle{font-size:11px;font-weight:700;color:#333;margin:0 0 5px 0;display:flex;justify-content:space-between;gap:10px;}",
+    ".heatmapGrid{display:grid;grid-template-columns:minmax(0,1fr) 104px;grid-template-rows:minmax(0,1fr);gap:5px;background:#fff;align-items:stretch;min-height:0;height:100%;width:auto;max-width:100%;aspect-ratio:1.05/1;align-self:center;}",
+    ".matrixStage{position:relative;grid-column:1;grid-row:1;width:100%;height:100%;background:#fff;overflow:hidden;}",
+    ".matrixStage img{display:block;width:100%;height:100%;object-fit:fill;image-rendering:crisp-edges;image-rendering:pixelated;}",
+    ".rowAnnLayer{position:relative;grid-column:2;grid-row:1;border:1px solid #e5e5df;background:#fff;overflow:hidden;}",
+    ".annBand{position:absolute;left:0;width:38px;box-sizing:border-box;border:0;opacity:0.96;}",
+    ".annSvg{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:none;}",
+    ".annLabel{position:absolute;box-sizing:border-box;color:#111;background:transparent;border:0;font:700 10px Arial,Helvetica,sans-serif;line-height:1;text-align:left;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px #fff,0 0 3px #fff;left:52px;}",
+    ".clusterBox{position:absolute;border:3px solid #111;box-shadow:0 0 0 2px rgba(255,255,255,0.95),0 0 0 5px rgba(17,17,17,0.18);box-sizing:border-box;pointer-events:none;}",
+    ".canvas.panning{cursor:grabbing;}",
+    "svg{width:100%;height:100%;display:block;background:#fff;}",
+    ".edge{stroke-width:1.05;fill:none;stroke-opacity:0.42;}",
+    ".node{stroke:transparent;stroke-width:0;cursor:grab;}",
+    ".node:active{cursor:grabbing;}",
+    ".label{font:700 11px Arial,Helvetica,sans-serif;fill:#fff;stroke:rgba(0,0,0,0.35);stroke-width:2px;paint-order:stroke;dominant-baseline:middle;text-anchor:middle;pointer-events:none;}",
+    ".geneLabel{fill:#111;stroke:#fff;stroke-width:2.6px;paint-order:stroke;text-anchor:start;}",
+    ".selected{stroke:#d7263d;stroke-width:2.6;}",
+    ".selectBox{fill:rgba(43,108,176,0.10);stroke:#2B6CB0;stroke-width:1.4;stroke-dasharray:6 4;pointer-events:none;}",
+    ".tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:360px;line-height:1.35;}",
+    "@media(max-width:1200px){.paneGrid{grid-template-columns:1fr;height:auto}.leftStack{height:auto;grid-template-rows:auto auto}.previewCanvas{height:520px}.heatmapGrid{height:520px}.mainCanvas{height:760px}}",
+    "</style>",
+    "</head>",
+    "<body>",
+    "<div class=\"wrap\">",
+    "<div class=\"top\">",
+    "<div>",
+    sprintf("<h1>%s</h1>", html_escape(page_title)),
+    "<div class=\"meta\">Cluster-unique dotplot pathways, min 3 rendered target genes. TF rectangles link to pathway genes; Shift-drag selects nodes.</div>",
+    "</div>",
+    "<div class=\"controls\"><label class=\"control\">Condition <select id=\"conditionSelect\"></select></label></div>",
+    "</div>",
+    "<div class=\"styleDetails\"><div class=\"styleLabel\">Style</div><div class=\"styleGrid\">",
+    "<label class=\"control\">Layout <select id=\"layoutSelect\"><option value=\"force\">Force</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
+    "<label class=\"control\">Space <input id=\"spacingRange\" type=\"range\" min=\"0.1\" max=\"10\" step=\"0.01\" value=\"0.72\"/><input id=\"spacingValue\" type=\"number\" min=\"0.1\" max=\"10\" step=\"0.01\" value=\"0.72\"/></label>",
+    "<label class=\"control\">TF box <input id=\"tfSizeMin\" type=\"number\" min=\"4\" max=\"90\" step=\"1\" value=\"14\"/><input id=\"tfSizeMax\" type=\"number\" min=\"6\" max=\"120\" step=\"1\" value=\"20\"/></label>",
+    "<label class=\"control\">TF text <input id=\"tfFontMin\" type=\"number\" min=\"4\" max=\"24\" step=\"1\" value=\"6\"/><input id=\"tfFontMax\" type=\"number\" min=\"5\" max=\"30\" step=\"1\" value=\"11\"/></label>",
+    "<label class=\"control\">Gene <input id=\"geneSize\" type=\"number\" min=\"2\" max=\"18\" step=\"0.5\" value=\"6\"/><input id=\"geneFont\" type=\"number\" min=\"5\" max=\"20\" step=\"0.5\" value=\"9\"/></label>",
+    "<label class=\"control\">Font <select id=\"labelFontSelect\"><option value=\"Arial, Helvetica, sans-serif\" selected>Arial</option><option value=\"Helvetica, Arial, sans-serif\">Helvetica</option><option value=\"Times New Roman, Times, serif\">Times</option><option value=\"Georgia, serif\">Georgia</option><option value=\"Courier New, Courier, monospace\">Courier</option></select></label>",
+    "<label class=\"control\">Palette <select id=\"paletteSelect\"><option value=\"direct\" selected>Cluster</option><option value=\"default\">Default</option><option value=\"npg\">NPG</option><option value=\"aaas\">AAAS</option><option value=\"nejm\">NEJM</option><option value=\"lancet\">Lancet</option><option value=\"jama\">JAMA</option><option value=\"bmj\">BMJ</option><option value=\"jco\">JCO</option><option value=\"d3\">D3</option><option value=\"observable\">Observable</option><option value=\"primer\">Primer</option><option value=\"material\">Material</option><option value=\"tailwind\">Tailwind</option></select></label>",
+    "<label class=\"control\">Bold <input id=\"labelBold\" type=\"checkbox\" checked/></label>",
+    "<label class=\"control\">Edge <input id=\"edgeWidth\" type=\"number\" min=\"0.2\" max=\"6\" step=\"0.1\" value=\"1.3\"/><input id=\"edgeOpacity\" type=\"number\" min=\"0.05\" max=\"1\" step=\"0.05\" value=\"0.58\"/></label>",
+    "<label class=\"control\">TF lab <input id=\"showLabels\" type=\"checkbox\" checked/></label>",
+    "<label class=\"control\">Gene lab <input id=\"showGeneLabels\" type=\"checkbox\" checked/></label>",
+    "<label class=\"control\">Arrows <input id=\"showArrows\" type=\"checkbox\" checked/></label>",
+    "<label class=\"control\">TF col <input id=\"tfColorInput\" type=\"color\" value=\"#2B6CB0\"/><input id=\"tfColorText\" type=\"text\" value=\"#2B6CB0\"/></label>",
+    "<label class=\"control\">Gene col <input id=\"geneColorInput\" type=\"color\" value=\"#8A8F98\"/><input id=\"geneColorText\" type=\"text\" value=\"#8A8F98\"/></label>",
+    "<label class=\"control\">Edge col <input id=\"edgeColorInput\" type=\"color\" value=\"#1f2937\"/><input id=\"edgeColorText\" type=\"text\" value=\"#1f2937\"/></label>",
+    "<button id=\"resetStyleButton\" type=\"button\">Reset</button>",
+    "</div></div>",
+    "<div class=\"paneGrid\">",
+    "<div class=\"leftStack\">",
+    "<section class=\"pane\">",
+    "<div class=\"paneHead\"><h2 class=\"paneTitle\">Single</h2><div class=\"paneControls\">",
+    "<label class=\"control clusterControl\">Cluster-pathway <select id=\"leftNetworkSelect\"></select></label>",
+    "<button id=\"addNetworkButton\" type=\"button\">Add preview</button>",
+    sprintf("<label class=\"control\">Max edges <input id=\"leftMaxEdges\" type=\"number\" min=\"0\" value=\"%s\"/></label>", html_escape(default_edges)),
+    "<label class=\"control\">Select node <select id=\"leftNodeSelect\"></select></label>",
+    "</div></div>",
+    "<p class=\"note\" id=\"leftStatsLine\"></p>",
+    "<div class=\"canvas previewCanvas\" id=\"leftCanvas\"><div class=\"tooltip\" id=\"leftTooltip\"></div><svg id=\"leftNetworkSvg\" viewBox=\"450 0 900 900\" role=\"img\" aria-label=\"single TF gene pathway network\"><defs><marker id=\"leftArrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#8a8a8a\" fill-opacity=\"0.55\"/></marker></defs><g id=\"leftViewLayer\"><rect id=\"leftSelectBox\" class=\"selectBox\" display=\"none\"/><g id=\"leftEdgeLayer\"></g><g id=\"leftNodeLayer\"></g><g id=\"leftLabelLayer\"></g></g></svg></div>",
+    "</section>",
+    "<section class=\"heatmapPanel\"><div class=\"heatmapTitle\"><span>Composite TF-TF heatmap</span><span id=\"heatmapClusterLabel\"></span></div><div class=\"heatmapGrid\"><div class=\"matrixStage\"><img id=\"heatmapImg\" alt=\"Composite TF-TF heatmap\"/><div class=\"clusterBox\" id=\"clusterBox\"></div></div><div class=\"rowAnnLayer\" id=\"rowAnnLayer\"></div></div></section>",
+    "</div>",
+    "<section class=\"pane rightPane\">",
+    "<select id=\"rightNetworkSelect\" style=\"display:none\"></select>",
+    "<div class=\"paneHead\"><h2 class=\"paneTitle\">Overlay</h2><div class=\"paneControls\">",
+    "<label class=\"control selectedControl\"><span>Selected</span><select id=\"selectedNetworkSelect\" size=\"2\"></select></label>",
+    "<button id=\"removeNetworkButton\" type=\"button\" title=\"Remove selected overlay item\">Del</button>",
+    "<button id=\"clearNetworksButton\" type=\"button\">Clear</button>",
+    "<label class=\"control\">Max edges <input id=\"rightMaxEdges\" type=\"number\" min=\"0\" value=\"0\"/></label>",
+    "<label class=\"control\">Select node <select id=\"rightNodeSelect\"></select></label>",
+    "<button id=\"rightResetButton\" type=\"button\">Reset</button>",
+    "<button id=\"rightExportSvgButton\" type=\"button\">SVG</button>",
+    "</div></div>",
+    "<p class=\"note\" id=\"rightStatsLine\"></p>",
+    "<div class=\"canvas mainCanvas\" id=\"rightCanvas\"><div class=\"tooltip\" id=\"rightTooltip\"></div><svg id=\"rightNetworkSvg\" viewBox=\"0 0 1800 900\" role=\"img\" aria-label=\"overlay TF gene pathway network\"><defs><marker id=\"rightArrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#8a8a8a\" fill-opacity=\"0.55\"/></marker></defs><g id=\"rightViewLayer\"><rect id=\"rightSelectBox\" class=\"selectBox\" display=\"none\"/><g id=\"rightEdgeLayer\"></g><g id=\"rightNodeLayer\"></g><g id=\"rightLabelLayer\"></g></g></svg></div>",
+    "</section>",
+    "</div>",
+    "</div>",
+    "<script>",
+    sprintf("const FULL_EDGES_GZIP_BASE64 = '%s';", payload_gzip_base64),
+    sprintf("const HEATMAPS = %s;", heatmap_json),
+    sprintf("const HEATMAP_IMAGES = %s;", heatmap_image_json),
+    "let FULL_EDGES = [];",
+    "const WIDTH = 1800, HEIGHT = 900;",
+    "const PALETTE = ['#2B6CB0','#fb5311','#2F855A','#6B46C1','#B7791F','#0F766E','#9F1239','#4A5568','#1A365D','#7C2D12'];",
+    "const COLOR_PRESETS = {direct:PALETTE,default:['#C2410C','#2166AC','#A0A0A0','#777777'],npg:['#E64B35','#4DBBD5','#7E6148','#3C5488'],aaas:['#EE0000','#3B4992','#008B45','#631879'],nejm:['#BC3C29','#0072B5','#E18727','#20854E'],lancet:['#ED0000','#00468B','#42B540','#0099B4'],jama:['#374E55','#DF8F44','#B24745','#6A6599'],bmj:['#2B8CBE','#E34A33','#969696','#636363'],jco:['#CD534C','#0073C2','#868686','#EFC000'],d3:['#FF7F0E','#1F77B4','#7F7F7F','#2CA02C'],observable:['#4269D0','#EF553B','#AAAAAA','#6CC5B0'],primer:['#CF222E','#0969DA','#8C959F','#57606A'],material:['#F44336','#2196F3','#9E9E9E','#4CAF50'],tailwind:['#EF4444','#3B82F6','#9CA3AF','#10B981']};",
+    "const conditionSelect = document.getElementById('conditionSelect');",
+    "const layoutSelect = document.getElementById('layoutSelect');",
+    "const spacingRange = document.getElementById('spacingRange');",
+    "const spacingValue = document.getElementById('spacingValue');",
+    "const tfSizeMin = document.getElementById('tfSizeMin');",
+    "const tfSizeMax = document.getElementById('tfSizeMax');",
+    "const tfFontMin = document.getElementById('tfFontMin');",
+    "const tfFontMax = document.getElementById('tfFontMax');",
+    "const geneSizeInput = document.getElementById('geneSize');",
+    "const geneFontInput = document.getElementById('geneFont');",
+    "const labelFontSelect = document.getElementById('labelFontSelect');",
+    "const paletteSelect = document.getElementById('paletteSelect');",
+    "const labelBold = document.getElementById('labelBold');",
+    "const edgeWidthInput = document.getElementById('edgeWidth');",
+    "const edgeOpacityInput = document.getElementById('edgeOpacity');",
+    "const showLabels = document.getElementById('showLabels');",
+    "const showGeneLabels = document.getElementById('showGeneLabels');",
+    "const showArrows = document.getElementById('showArrows');",
+    "const tfColorInput = document.getElementById('tfColorInput');",
+    "const tfColorText = document.getElementById('tfColorText');",
+    "const geneColorInput = document.getElementById('geneColorInput');",
+    "const geneColorText = document.getElementById('geneColorText');",
+    "const edgeColorInput = document.getElementById('edgeColorInput');",
+    "const edgeColorText = document.getElementById('edgeColorText');",
+    "const left = makePane('left', false);",
+    "const right = makePane('right', true);",
+    "const selectedNetworkSelect = document.getElementById('selectedNetworkSelect');",
+    "let networkMeta = new Map();",
+    "function uniq(arr){ return Array.from(new Set(arr)).sort(); }",
+    "function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }",
+    "function boundedInput(el, fallback, min, max){ const v=Number(el.value); if(!Number.isFinite(v)) return fallback; return Math.max(min,Math.min(max,v)); }",
+    "function colorToHex(value, fallback){ const s=String(value||'').trim(); let m=s.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/); if(m){ let x=m[1]; if(x.length===3) x=x.split('').map(c=>c+c).join(''); return '#'+x.toUpperCase(); } return fallback; }",
+    "function setColorPair(colorEl,textEl,value){ const next=colorToHex(value,colorEl.value); colorEl.value=next; textEl.value=next; }",
+    "function colorValue(colorEl,textEl){ return colorToHex(textEl.value,colorEl.value); }",
+    "function activePalette(){ return COLOR_PRESETS[paletteSelect.value] || PALETTE; }",
+    "function paletteColor(idx){ const p=activePalette(); return p[(Math.max(1,idx)-1)%p.length]; }",
+    "function syncColorInput(colorEl,textEl,source){ const next=colorToHex(source==='text'?textEl.value:colorEl.value,colorEl.value); colorEl.value=next; textEl.value=next; return next; }",
+    "function labelFontFamily(){ return labelFontSelect.value || 'Arial, Helvetica, sans-serif'; }",
+    "function labelFontWeight(){ return labelBold.checked ? '700' : '400'; }",
+    "function edgeBaseColor(){ return colorValue(edgeColorInput,edgeColorText); }",
+    "function geneBaseColor(){ return colorValue(geneColorInput,geneColorText); }",
+    "function customTfColor(){ return colorValue(tfColorInput,tfColorText); }",
+    "function styleChanged(){ renderPane(left); renderPane(right); if(typeof updateSelectedList==='function') updateSelectedList(); }",
+    "function base64ToBytes(s){ const bin=atob(s); const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes; }",
+    "async function inflateColumnarPayload(b64){ const stream=new Blob([base64ToBytes(b64)]).stream().pipeThrough(new DecompressionStream('deflate')); const text=await new Response(stream).text(); const payload=JSON.parse(text); const cols=payload.columns||[], data=payload.data||[]; const n=data.length?data[0].length:0; const rows=new Array(n); for(let i=0;i<n;i++){ const row={}; for(let j=0;j<cols.length;j++) row[cols[j]]=data[j][i]; rows[i]=row; } return rows; }",
+    "function makePane(prefix, multi){ return {prefix, multi, svg:document.getElementById(prefix+'NetworkSvg'), canvas:document.getElementById(prefix+'Canvas'), viewLayer:document.getElementById(prefix+'ViewLayer'), edgeLayer:document.getElementById(prefix+'EdgeLayer'), nodeLayer:document.getElementById(prefix+'NodeLayer'), labelLayer:document.getElementById(prefix+'LabelLayer'), selectBox:document.getElementById(prefix+'SelectBox'), networkSelect:document.getElementById(prefix+'NetworkSelect'), nodeSelect:document.getElementById(prefix+'NodeSelect'), maxEdgesInput:document.getElementById(prefix+'MaxEdges'), statsLine:document.getElementById(prefix+'StatsLine'), tooltip:document.getElementById(prefix+'Tooltip'), selectedNetworks:[], nodes:[], edges:[], drag:null, dragGroup:null, selecting:null, pan:null, selected:'', selectedNodes:new Set(), view:{x:0,y:0,k:1},preserveNextRender:false}; }",
+    "function paneMaxEdges(pane){ const v=Number(pane.maxEdgesInput.value); return Number.isFinite(v)&&v>0?Math.floor(v):Infinity; }",
+    "function colorForNetwork(pane,id){ if(pane.multi){ const idx=pane.selectedNetworks.indexOf(id); return activePalette()[(idx < 0 ? 0 : idx) % activePalette().length]; } const meta=networkMeta.get(id)||{}; const clusterIndex=clusterRank(meta.major_cluster)||1; return paletteColor(clusterIndex); }",
+    "function edgeRows(pane){ const keep=new Set(pane.selectedNetworks); return FULL_EDGES.filter(d => d.condition === conditionSelect.value && keep.has(d.network_id)); }",
+    "function edgeSubset(pane){ const rows=edgeRows(pane).slice().sort((a,b)=>(Number(b.edge_score||0)-Number(a.edge_score||0)) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to)); const m=paneMaxEdges(pane); return Number.isFinite(m)?rows.slice(0,m):rows; }",
+    "function subsetGraph(pane){ const edges=edgeSubset(pane); const nodeMap=new Map(); edges.forEach(e=>{ if(!nodeMap.has(e.from)) nodeMap.set(e.from,{id:e.from,node_type:'TF',display_size:0,degree:0,networkScore:new Map()}); if(!nodeMap.has(e.to)) nodeMap.set(e.to,{id:e.to,node_type:'Gene',display_size:0,degree:0,networkScore:new Map()}); const a=nodeMap.get(e.from), b=nodeMap.get(e.to), s=Number(e.edge_score||0); a.display_size+=s; b.display_size+=1; a.degree+=1; b.degree+=1; a.networkScore.set(e.network_id,(a.networkScore.get(e.network_id)||0)+s); b.networkScore.set(e.network_id,(b.networkScore.get(e.network_id)||0)+1); }); const nodes=Array.from(nodeMap.values()); nodes.forEach(n=>{ let best='', val=-Infinity; n.networkScore.forEach((v,k)=>{ if(v>val){best=k; val=v;} }); n.primaryNetwork=best; }); return {nodes, edges, totalEdges:edgeRows(pane).length}; }",
+    "function seededUnit(id){ let h=2166136261; for(let i=0;i<id.length;i++){h^=id.charCodeAt(i); h=Math.imul(h,16777619);} return (h>>>0)/4294967295; }",
+    "function radiusScale(nodes){ const vals=nodes.filter(n=>n.node_type==='TF').map(n=>Number(n.display_size||1)); const lo=Math.min(...vals), hi=Math.max(...vals); const tfMin=boundedInput(tfSizeMin,14,4,90), tfMax=Math.max(tfMin+1,boundedInput(tfSizeMax,20,6,120)), geneSize=boundedInput(geneSizeInput,6,2,18); return n=>{ if(n.node_type==='Gene') return geneSize; const v=Number(n.display_size||1); if(!Number.isFinite(lo)||hi<=lo) return (tfMin+tfMax)/2; return tfMin+(v-lo)/(hi-lo)*(tfMax-tfMin); }; }",
+    "function edgeOpacityScale(edges, score){ const base=boundedInput(edgeOpacityInput,0.58,0.05,1); const vals=edges.map(e=>Number(e.edge_score||0)); const lo=Math.min(...vals), hi=Math.max(...vals); if(!Number.isFinite(lo)||hi<=lo) return base; const t=(Number(score||0)-lo)/(hi-lo); return Math.max(0.05,Math.min(1,base*(0.55+0.45*t))); }",
+    "function fitLayout(nodes){ if(!nodes.length) return; const pad=55; const xs=nodes.map(n=>n.x), ys=nodes.map(n=>n.y); const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys); const sx=(WIDTH-2*pad)/Math.max(1,maxX-minX), sy=(HEIGHT-2*pad)/Math.max(1,maxY-minY), s=Math.min(sx,sy); nodes.forEach(n=>{ n.x=pad+(n.x-minX)*s+(WIDTH-2*pad-(maxX-minX)*s)/2; n.y=pad+(n.y-minY)*s+(HEIGHT-2*pad-(maxY-minY)*s)/2; }); }",
+    "function applyDisplaySpacing(nodes){ const spacing=boundedInput(spacingValue,1,0.1,10); nodes.forEach(n=>{ n.x=WIDTH/2+(n.x-WIDTH/2)*spacing; n.y=HEIGHT/2+(n.y-HEIGHT/2)*spacing; }); }",
+    "function layout(nodes, edges){ const n=Math.max(nodes.length,1), byId=new Map(nodes.map(d=>[d.id,d])); const tfs=nodes.filter(n=>n.node_type==='TF'), genes=nodes.filter(n=>n.node_type==='Gene'); const mode=layoutSelect.value||'force'; if(mode==='columns' || mode==='bipartite'){ tfs.forEach((node,i)=>{node.x=WIDTH*0.24;node.y=HEIGHT*(i+1)/(tfs.length+1);}); genes.forEach((node,i)=>{node.x=WIDTH*0.76;node.y=HEIGHT*(i+1)/(genes.length+1);}); } else if(mode==='hierarchy'){ tfs.forEach((node,i)=>{node.x=WIDTH*(i+1)/(tfs.length+1);node.y=HEIGHT*0.22;}); genes.forEach((node,i)=>{node.x=WIDTH*(i+1)/(genes.length+1);node.y=HEIGHT*0.75;}); } else if(mode==='circle' || mode==='radial'){ nodes.forEach((node,i)=>{ const angle=-Math.PI/2+2*Math.PI*i/n; const radius=mode==='radial'?(node.node_type==='TF'?390:650):620; node.x=WIDTH/2+Math.cos(angle)*radius; node.y=HEIGHT/2+Math.sin(angle)*radius; }); } else if(mode==='concentric'){ tfs.forEach((node,i)=>{ const a=-Math.PI/2+2*Math.PI*i/Math.max(1,tfs.length); node.x=WIDTH/2+Math.cos(a)*390; node.y=HEIGHT/2+Math.sin(a)*390; }); genes.forEach((node,i)=>{ const a=-Math.PI/2+2*Math.PI*i/Math.max(1,genes.length); node.x=WIDTH/2+Math.cos(a)*680; node.y=HEIGHT/2+Math.sin(a)*680; }); } else if(mode==='grid'){ const cols=Math.ceil(Math.sqrt(n)); nodes.forEach((node,i)=>{ node.x=WIDTH*(1+(i%cols))/(cols+1); node.y=HEIGHT*(1+Math.floor(i/cols))/(Math.ceil(n/cols)+1); }); } else if(mode==='spiral'){ nodes.forEach((node,i)=>{ const a=0.55*i, r=28*Math.sqrt(i+1); node.x=WIDTH/2+Math.cos(a)*r; node.y=HEIGHT/2+Math.sin(a)*r; }); } else if(mode==='clustered'){ const groups=new Map(); nodes.forEach(node=>{ const key=node.primaryNetwork||'none'; if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(node); }); const keys=Array.from(groups.keys()).sort(), outer=Math.min(560,180+keys.length*45); keys.forEach((key,gi)=>{ const ca=-Math.PI/2+2*Math.PI*gi/Math.max(1,keys.length), cx=WIDTH/2+Math.cos(ca)*outer, cy=HEIGHT/2+Math.sin(ca)*outer, group=groups.get(key); group.forEach((node,i)=>{ const a=-Math.PI/2+2*Math.PI*i/Math.max(1,group.length), r=node.node_type==='TF'?80:155; node.x=cx+Math.cos(a)*r; node.y=cy+Math.sin(a)*r; }); }); } else { tfs.forEach((node,i)=>{ const angle=-Math.PI/2+2*Math.PI*i/Math.max(tfs.length,1); node.x=WIDTH/2+Math.cos(angle)*390; node.y=HEIGHT/2+Math.sin(angle)*390; node.vx=0; node.vy=0; }); genes.forEach((node,i)=>{ const angle=-Math.PI/2+2*Math.PI*i/Math.max(genes.length,1)+(seededUnit(node.id)-0.5)*0.12; node.x=WIDTH/2+Math.cos(angle)*650; node.y=HEIGHT/2+Math.sin(angle)*650; node.vx=0; node.vy=0; }); for(let iter=0;iter<240;iter++){ for(let i=0;i<n;i++){ for(let j=i+1;j<n;j++){ const a=nodes[i],b=nodes[j]; let dx=a.x-b.x,dy=a.y-b.y,d2=Math.max(dx*dx+dy*dy,64),d=Math.sqrt(d2),f=Math.min(4.2,4200/d2); dx/=d;dy/=d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f; }} edges.forEach(e=>{ const a=byId.get(e.from),b=byId.get(e.to); if(!a||!b)return; let dx=b.x-a.x,dy=b.y-a.y,d=Math.max(Math.sqrt(dx*dx+dy*dy),1),f=(d-175)*0.008; dx/=d;dy/=d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f; }); nodes.forEach(node=>{ node.vx+=(WIDTH/2-node.x)*0.0015; node.vy+=(HEIGHT/2-node.y)*0.0015; node.x=node.x+node.vx; node.y=node.y+node.vy; node.vx*=0.76; node.vy*=0.76; }); } nodes.forEach(n=>{delete n.vx; delete n.vy;}); } fitLayout(nodes); applyDisplaySpacing(nodes); }",
+    "function el(name,attrs){ const x=document.createElementNS('http://www.w3.org/2000/svg',name); Object.entries(attrs||{}).forEach(([k,v])=>x.setAttribute(k,v)); return x; }",
+    "function inlinePaneSvgStyles(clone){ const svgNS='http://www.w3.org/2000/svg'; const arrowLines=[]; clone.querySelectorAll('line').forEach(x=>{ if(x.getAttribute('marker-end') && x.getAttribute('marker-end')!=='none') arrowLines.push(x); }); clone.querySelectorAll('defs,marker').forEach(x=>x.remove()); clone.querySelectorAll('line').forEach(x=>{ const op=Number(x.getAttribute('opacity')||x.getAttribute('stroke-opacity')||0.55), sw=Number(x.getAttribute('stroke-width')||boundedInput(edgeWidthInput,1.3,0.2,6)); x.removeAttribute('marker-end'); x.removeAttribute('opacity'); x.setAttribute('fill','none'); x.setAttribute('stroke-linecap','round'); x.setAttribute('stroke-opacity',Math.max(0.05,Math.min(1,op))); x.setAttribute('stroke-width',Math.max(0.2,sw)); }); arrowLines.forEach(line=>{ const x1=Number(line.getAttribute('x1')||0), y1=Number(line.getAttribute('y1')||0), x2=Number(line.getAttribute('x2')||0), y2=Number(line.getAttribute('y2')||0), dx=x2-x1, dy=y2-y1, len=Math.max(1,Math.sqrt(dx*dx+dy*dy)), ux=dx/len, uy=dy/len, px=-uy, py=ux, size=7, back=11; const p1=[x2,y2], p2=[x2-ux*back+px*size*0.55,y2-uy*back+py*size*0.55], p3=[x2-ux*back-px*size*0.55,y2-uy*back-py*size*0.55]; const poly=document.createElementNS(svgNS,'polygon'); poly.setAttribute('points',p1.join(',')+' '+p2.join(',')+' '+p3.join(',')); poly.setAttribute('fill',line.getAttribute('stroke')||edgeBaseColor()); poly.setAttribute('fill-opacity',line.getAttribute('stroke-opacity')||line.getAttribute('opacity')||'0.55'); line.parentNode.insertBefore(poly,line.nextSibling); }); clone.querySelectorAll('rect,circle').forEach(x=>{ const cls=String(x.getAttribute('class')||''); x.setAttribute('stroke',cls.indexOf('selected')>=0?'#d7263d':'none'); x.setAttribute('stroke-width',cls.indexOf('selected')>=0?'2.6':'0'); }); Array.from(clone.querySelectorAll('text')).forEach(x=>{ const isGene=String(x.getAttribute('class')||'').indexOf('geneLabel')>=0; x.setAttribute('font-family',labelFontFamily()); x.setAttribute('font-weight',labelFontWeight()); x.setAttribute('dominant-baseline','middle'); x.setAttribute('text-anchor',x.getAttribute('text-anchor')||(isGene?'start':'middle')); x.removeAttribute('paint-order'); const halo=x.cloneNode(true); halo.setAttribute('fill','none'); halo.setAttribute('stroke',isGene?'#fff':'#555'); halo.setAttribute('stroke-width',isGene?'2.6':'2.8'); halo.setAttribute('stroke-linejoin','round'); halo.setAttribute('stroke-linecap','round'); x.parentNode.insertBefore(halo,x); x.setAttribute('fill',isGene?'#111':'#fff'); x.setAttribute('stroke','none'); }); }",
+    "function exportPaneSvg(pane){ const clone=pane.svg.cloneNode(true); const cloneView=clone.querySelector('#'+pane.prefix+'ViewLayer'); const k=Math.max(0.01,Number(pane.view.k)||1), vbX=(-Number(pane.view.x||0))/k, vbY=(-Number(pane.view.y||0))/k, vbW=WIDTH/k, vbH=HEIGHT/k; if(cloneView) cloneView.removeAttribute('transform'); clone.setAttribute('xmlns','http://www.w3.org/2000/svg'); clone.setAttribute('viewBox',[vbX,vbY,vbW,vbH].join(' ')); clone.setAttribute('width',WIDTH); clone.setAttribute('height',HEIGHT); inlinePaneSvgStyles(clone); const bg=document.createElementNS('http://www.w3.org/2000/svg','rect'); bg.setAttribute('x',vbX); bg.setAttribute('y',vbY); bg.setAttribute('width',vbW); bg.setAttribute('height',vbH); bg.setAttribute('fill','#fff'); clone.insertBefore(bg,clone.firstChild); const text=new XMLSerializer().serializeToString(clone); const blob=new Blob([text],{type:'image/svg+xml'}); const a=document.createElement('a'); const label=(conditionSelect.value+'_'+pane.prefix+'_'+pane.selectedNetworks.join('_')).replace(/[^A-Za-z0-9_.-]+/g,'_'); a.href=URL.createObjectURL(blob); a.download=(label||'tf_tf_connectivity_network')+'.svg'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href); }",
+    "function applyView(pane){ pane.viewLayer.setAttribute('transform','translate('+pane.view.x+' '+pane.view.y+') scale('+pane.view.k+')'); }",
+    "function screenPoint(pane,ev){ const pt=pane.svg.createSVGPoint(); pt.x=ev.clientX; pt.y=ev.clientY; return pt.matrixTransform(pane.svg.getScreenCTM().inverse()); }",
+    "function screenToWorld(pane,ev){ const p=screenPoint(pane,ev); return {x:(p.x-pane.view.x)/pane.view.k,y:(p.y-pane.view.y)/pane.view.k}; }",
+    "function dragBoundX(x){ return x; }",
+    "function dragBoundY(y){ return y; }",
+    "function nodeHalfWidth(n){ return n.node_type==='TF' ? n.r*1.35 : n.r; }",
+    "function nodeHalfHeight(n){ return n.node_type==='TF' ? n.r*0.78 : n.r; }",
+    "function linePoint(a,b){ const dx=b.x-a.x,dy=b.y-a.y,len=Math.max(Math.sqrt(dx*dx+dy*dy),1); if(b.node_type==='TF'){ const sx=Math.abs(dx)/nodeHalfWidth(b), sy=Math.abs(dy)/nodeHalfHeight(b), scale=1/Math.max(sx,sy,1e-6); return {x:b.x-dx*scale/len*len,y:b.y-dy*scale/len*len}; } const r=Number(b.r)||10; return {x:b.x-dx/len*r,y:b.y-dy/len*r}; }",
+    "function fitLabel(id,r,isGene){ if(isGene){ return {label:id,size:boundedInput(geneFontInput,9,5,20)}; } const lo=boundedInput(tfFontMin,7,4,24), hi=Math.max(lo+1,boundedInput(tfFontMax,14,5,30)); let label=id,size=Math.max(lo,Math.min(hi,r*0.34)); while(label.length>3 && size*label.length*0.58>r*2.15){ label=label.slice(0,-1); } if(label!==id && label.length>3) label=label.slice(0,-2)+'..'; return {label,size}; }",
+    "function tfFillColor(pane,n){ const custom=colorValue(tfColorInput,tfColorText); if(custom !== '#2B6CB0') return custom; return colorForNetwork(pane,n.primaryNetwork); }",
+    "function activeMajorCluster(){ const id=left.selectedNetworks[0]||left.networkSelect.value||''; const meta=networkMeta.get(id)||{}; return meta.major_cluster||''; }",
+    "function drawHeatmapAnnotations(){ rowAnnLayer.replaceChildren(); const rows=HEATMAPS.filter(d=>d.condition===conditionSelect.value).slice().sort((a,b)=>clusterRank(a.major_cluster)-clusterRank(b.major_cluster)); const svgNS='http://www.w3.org/2000/svg'; const rowHeight=Math.max(1,rowAnnLayer.clientHeight), rowWidth=Math.max(1,rowAnnLayer.clientWidth); const rowSvg=document.createElementNS(svgNS,'svg'); rowSvg.setAttribute('class','annSvg'); rowSvg.setAttribute('viewBox','0 0 '+rowWidth+' '+rowHeight); rowSvg.setAttribute('preserveAspectRatio','none'); rowAnnLayer.appendChild(rowSvg); const labelH=14, pad=7, gap=16; const centers=rows.map(d=>(Number(d.y||0)+Number(d.h||0)/2)*rowHeight); const labelY=centers.slice(); for(let i=1;i<labelY.length;i++) labelY[i]=Math.max(labelY[i],labelY[i-1]+gap); if(labelY.length){ const overflow=labelY[labelY.length-1]-(rowHeight-pad-labelH/2); if(overflow>0) for(let i=0;i<labelY.length;i++) labelY[i]-=overflow; labelY[0]=Math.max(labelY[0],pad+labelH/2); for(let i=1;i<labelY.length;i++) labelY[i]=Math.max(labelY[i],labelY[i-1]+gap); } rows.forEach((d,i)=>{ const idx=clusterRank(d.major_cluster), y=Number(d.y||0), h=Number(d.h||0), center=centers[i], labCenter=Math.max(pad+labelH/2,Math.min(rowHeight-pad-labelH/2,labelY[i])); const band=document.createElement('div'); band.className='annBand'; band.title=d.major_cluster; band.style.top=(100*y)+'%'; band.style.height=Math.max(0.25,100*h)+'%'; band.style.background=paletteColor(idx); rowAnnLayer.appendChild(band); const p=document.createElementNS(svgNS,'path'); p.setAttribute('d',Math.abs(labCenter-center)<1?'M 40 '+center.toFixed(2)+' L 50 '+center.toFixed(2):'M 40 '+center.toFixed(2)+' L 47 '+center.toFixed(2)+' L 50 '+labCenter.toFixed(2)); p.setAttribute('fill','none'); p.setAttribute('stroke','#4d4d4d'); p.setAttribute('stroke-width','1'); p.setAttribute('opacity','0.62'); rowSvg.appendChild(p); const lab=document.createElement('div'); lab.className='annLabel'; lab.textContent=d.major_cluster; lab.title=d.major_cluster; lab.style.top=(labCenter-labelH/2)+'px'; lab.style.height=labelH+'px'; lab.style.lineHeight=labelH+'px'; rowAnnLayer.appendChild(lab); }); }",
+    "function updateHeatmap(){ const cluster=activeMajorCluster(); const m=HEATMAPS.find(d=>d.condition===conditionSelect.value && d.major_cluster===cluster); drawHeatmapAnnotations(); heatmapClusterLabel.textContent=cluster||''; if(!m){ heatmapImg.removeAttribute('src'); clusterBox.style.display='none'; return; } const src=HEATMAP_IMAGES[m.heatmap_png]||m.heatmap_png; if(heatmapImg.getAttribute('src')!==src) heatmapImg.setAttribute('src',src); clusterBox.style.display='block'; clusterBox.style.left=(100*Number(m.x||0))+'%'; clusterBox.style.top=(100*Number(m.y||0))+'%'; clusterBox.style.width=(100*Number(m.w||0))+'%'; clusterBox.style.height=(100*Number(m.h||0))+'%'; const idx=clusterRank(cluster)||1; clusterBox.style.borderColor=paletteColor(idx); }",
+    "function labelPosition(n){ if(n.node_type==='Gene'){ const pad=7, placeLeft=n.x+n.r+82>WIDTH; return {x:placeLeft?n.x-n.r-pad:n.x+n.r+pad,y:n.y,anchor:placeLeft?'end':'start'}; } return {x:n.x,y:n.y,anchor:'middle'}; }",
+    "function redrawPositions(pane){ const byId=new Map(pane.nodes.map(n=>[n.id,n])); pane.edgeLayer.querySelectorAll('line').forEach(line=>{ const a=byId.get(line.dataset.from),b=byId.get(line.dataset.to); if(!a||!b)return; const end=linePoint(a,b); line.setAttribute('x1',a.x); line.setAttribute('y1',a.y); line.setAttribute('x2',end.x); line.setAttribute('y2',end.y); }); pane.nodeLayer.querySelectorAll('.node').forEach(c=>{ const n=byId.get(c.dataset.id); if(!n)return; if(c.tagName==='rect'){ const hw=nodeHalfWidth(n),hh=nodeHalfHeight(n); c.setAttribute('x',n.x-hw); c.setAttribute('y',n.y-hh); c.setAttribute('width',hw*2); c.setAttribute('height',hh*2); } else { c.setAttribute('cx',n.x); c.setAttribute('cy',n.y); } }); pane.labelLayer.querySelectorAll('text').forEach(t=>{ const n=byId.get(t.dataset.id); if(!n)return; const p=labelPosition(n); t.setAttribute('x',p.x); t.setAttribute('y',p.y); t.setAttribute('text-anchor',p.anchor); }); }",
+    "function renderPane(pane){ const oldPos=pane.preserveNextRender?new Map(pane.nodes.map(n=>[n.id,{x:n.x,y:n.y}])):new Map(); pane.preserveNextRender=false; const g=subsetGraph(pane); pane.nodes=g.nodes; pane.edges=g.edges; const rFor=radiusScale(pane.nodes); pane.nodes.forEach(n=>{n.r=rFor(n);}); layout(pane.nodes,pane.edges); if(oldPos.size){ pane.nodes.forEach(n=>{ const p=oldPos.get(n.id); if(p){ n.x=p.x; n.y=p.y; } }); } const byId=new Map(pane.nodes.map(n=>[n.id,n])); pane.edgeLayer.replaceChildren(); pane.nodeLayer.replaceChildren(); pane.labelLayer.replaceChildren(); pane.nodeSelect.replaceChildren(); const noneOpt=document.createElement('option'); noneOpt.value=''; noneOpt.textContent='None'; pane.nodeSelect.appendChild(noneOpt); pane.edges.forEach(e=>{ const a=byId.get(e.from),b=byId.get(e.to); if(!a||!b)return; const end=linePoint(a,b); const line=el('line',{class:'edge',x1:a.x,y1:a.y,x2:end.x,y2:end.y,stroke:edgeBaseColor(),opacity:edgeOpacityScale(pane.edges,e.edge_score),'stroke-width':boundedInput(edgeWidthInput,1.3,0.2,6),'marker-end':showArrows.checked?'url(#'+pane.prefix+'Arrow)':'none'}); line.dataset.from=e.from; line.dataset.to=e.to; line.dataset.title=e.from+' -> '+e.to+'\\nTF-gene score: '+Number(e.edge_score||0).toFixed(3)+'\\nlinks: '+e.n_supporting_links+'\\ntarget genes: '+e.n_target_genes+'\\npathway: '+e.pathway_term+'\\n-log10 padj: '+Number(e.pathway_neglog10_padj||0).toFixed(2); pane.edgeLayer.appendChild(line); }); pane.nodes.forEach(n=>{ const fill=n.node_type==='Gene'?geneBaseColor():tfFillColor(pane,n); let c; if(n.node_type==='TF'){ const hw=nodeHalfWidth(n),hh=nodeHalfHeight(n); c=el('rect',{class:'node',x:n.x-hw,y:n.y-hh,width:hw*2,height:hh*2,rx:3,ry:3,fill:fill}); } else { c=el('circle',{class:'node',cx:n.x,cy:n.y,r:n.r,fill:fill}); } c.dataset.id=n.id; c.dataset.title=n.id+'\\n'+n.node_type+'\\ndegree: '+n.degree+'\\nscore sum: '+Number(n.display_size||0).toFixed(3); pane.nodeLayer.appendChild(c); const showNodeLabel=n.node_type==='TF'?showLabels.checked:showGeneLabels.checked; if(showNodeLabel){ const lab=fitLabel(n.id,n.r,n.node_type==='Gene'), p=labelPosition(n); const t=el('text',{class:'label '+(n.node_type==='Gene'?'geneLabel':''),x:p.x,y:p.y,'text-anchor':p.anchor,'font-size':lab.size,'font-family':labelFontFamily(),'font-weight':labelFontWeight()}); t.dataset.id=n.id; t.textContent=lab.label; pane.labelLayer.appendChild(t); } }); pane.nodes.map(n=>n.id).sort((a,b)=>String(a).localeCompare(String(b))).forEach(id=>{ const o=document.createElement('option'); o.value=id; o.textContent=id; pane.nodeSelect.appendChild(o); }); if(pane.selectedNodes.size===1){ pane.selected=Array.from(pane.selectedNodes)[0]; pane.nodeSelect.value=pane.selected; } else { pane.selected=''; pane.nodeSelect.value=''; } pane.statsLine.textContent='Showing '+conditionSelect.value+': '+pane.selectedNetworks.length+(pane.multi?'/10':'')+' cluster-pathway, '+pane.nodes.length+' nodes and '+pane.edges.length+'/'+g.totalEdges+' edges.'; applyView(pane); if(typeof applySelectedNodes==='function') applySelectedNodes(pane); if(pane.prefix==='left') updateHeatmap(); }",
+    "function clusterRank(x){ const m=String(x||'').match(/T(\\d+)/); return m?Number(m[1]):9999; }",
+    "function updateSelectedList(){ selectedNetworkSelect.replaceChildren(); const p=activePalette(); right.selectedNetworks.forEach((id,i)=>{ const meta=networkMeta.get(id)||{}, label=(i+1)+'. '+(meta.network_label||id); const o=document.createElement('option'); o.value=id; o.textContent=shortLabel(label,78); o.title=label; o.style.color=p[i%p.length]; selectedNetworkSelect.appendChild(o); }); }",
+    "function addNetwork(id){ if(!id || right.selectedNetworks.includes(id)) return; if(right.selectedNetworks.length>=10) return; right.selectedNetworks.push(id); right.preserveNextRender=false; updateSelectedList(); renderPane(right); }",
+    "function removeSelectedNetwork(){ const id=selectedNetworkSelect.value; if(!id) return; right.selectedNetworks=right.selectedNetworks.filter(x=>x!==id); right.preserveNextRender=true; updateSelectedList(); renderPane(right); }",
+    "function clearNetworks(){ right.selectedNetworks=[]; updateSelectedList(); renderPane(right); }",
+    "function shortLabel(x,n){ const s=String(x||''); return s.length>n?s.slice(0,n-2)+'..':s; }",
+    "function fillNetworkSelect(sel,nets){ sel.replaceChildren(); nets.forEach(d=>{ const o=document.createElement('option'); o.value=d.network_id; o.textContent=shortLabel(d.network_label,84); o.title=d.network_label; sel.appendChild(o); }); }",
+    "function refreshNetworks(){ networkMeta=new Map(); const rows=FULL_EDGES.filter(d=>d.condition===conditionSelect.value); const map=new Map(); rows.forEach(d=>{ if(!map.has(d.network_id)) map.set(d.network_id,d); }); const nets=Array.from(map.values()).sort((a,b)=>(clusterRank(a.major_cluster)-clusterRank(b.major_cluster)) || (Number(b.pathway_neglog10_padj||0)-Number(a.pathway_neglog10_padj||0)) || String(a.pathway_term).localeCompare(String(b.pathway_term))); nets.forEach(d=>networkMeta.set(d.network_id,d)); fillNetworkSelect(left.networkSelect,nets); fillNetworkSelect(right.networkSelect,nets); left.selectedNetworks=left.selectedNetworks.filter(id=>networkMeta.has(id)); right.selectedNetworks=right.selectedNetworks.filter(id=>networkMeta.has(id)); if(!left.selectedNetworks.length && nets.length) left.selectedNetworks=[nets[0].network_id]; if(!right.selectedNetworks.length && nets.length) right.selectedNetworks=[nets[0].network_id]; left.networkSelect.value=left.selectedNetworks[0]||''; right.networkSelect.value=right.selectedNetworks[right.selectedNetworks.length-1]||''; updateSelectedList(); renderPane(left); renderPane(right); }",
+    "function fillConditionSelect(){ conditionSelect.replaceChildren(); uniq(FULL_EDGES.map(d=>d.condition)).forEach(c=>{ const o=document.createElement('option'); o.value=c; o.textContent=c; conditionSelect.appendChild(o); }); }",
+    "function applySelectedNodes(pane){ pane.nodeLayer.querySelectorAll('.node').forEach(c=>c.classList.toggle('selected',pane.selectedNodes.has(c.dataset.id))); }",
+    "function setSelectBox(pane,a,b){ const x=Math.min(a.x,b.x), y=Math.min(a.y,b.y), w=Math.abs(a.x-b.x), h=Math.abs(a.y-b.y); pane.selectBox.setAttribute('x',x); pane.selectBox.setAttribute('y',y); pane.selectBox.setAttribute('width',w); pane.selectBox.setAttribute('height',h); pane.selectBox.setAttribute('display','block'); }",
+    "function finishSelection(pane,end){ const a=pane.selecting.start, x0=Math.min(a.x,end.x), x1=Math.max(a.x,end.x), y0=Math.min(a.y,end.y), y1=Math.max(a.y,end.y); pane.selectedNodes=new Set(pane.nodes.filter(n=>n.x>=x0&&n.x<=x1&&n.y>=y0&&n.y<=y1).map(n=>n.id)); pane.selected=pane.selectedNodes.size===1?Array.from(pane.selectedNodes)[0]:''; pane.nodeSelect.value=pane.selected||''; applySelectedNodes(pane); pane.selectBox.setAttribute('display','none'); pane.selecting=null; }",
+    "function bindPane(pane, resetId){ pane.networkSelect.addEventListener('change',()=>{ if(!pane.multi){ pane.selectedNetworks=[pane.networkSelect.value]; pane.selectedNodes=new Set(); renderPane(pane); } }); pane.maxEdgesInput.addEventListener('change',()=>renderPane(pane)); if(resetId){ document.getElementById(resetId).addEventListener('click',()=>{ pane.view={x:0,y:0,k:1}; pane.selectedNodes=new Set(); renderPane(pane); }); } pane.nodeSelect.addEventListener('change',()=>{ pane.selected=pane.nodeSelect.value; pane.selectedNodes=new Set(pane.selected?[pane.selected]:[]); applySelectedNodes(pane); }); pane.svg.addEventListener('wheel',ev=>{ev.preventDefault(); const p=screenPoint(pane,ev), oldK=pane.view.k, nextK=Math.max(0.02,Math.min(8,oldK*(ev.deltaY<0?1.15:1/1.15))); pane.view.x=p.x-(p.x-pane.view.x)*nextK/oldK; pane.view.y=p.y-(p.y-pane.view.y)*nextK/oldK; pane.view.k=nextK; applyView(pane);},{passive:false}); pane.svg.addEventListener('mousedown',ev=>{ if(ev.target.classList && ev.target.classList.contains('node'))return; if(ev.shiftKey){ ev.preventDefault(); pane.selecting={start:screenToWorld(pane,ev)}; setSelectBox(pane,pane.selecting.start,pane.selecting.start); return; } const p=screenPoint(pane,ev); pane.pan={startX:p.x,startY:p.y,x:pane.view.x,y:pane.view.y}; pane.canvas.classList.add('panning'); }); pane.svg.addEventListener('mousemove',ev=>{ if(pane.dragGroup){ const p=screenToWorld(pane,ev), dx=p.x-pane.dragGroup.last.x, dy=p.y-pane.dragGroup.last.y; pane.dragGroup.nodes.forEach(n=>{ n.x=dragBoundX(n.x+dx); n.y=dragBoundY(n.y+dy); }); pane.dragGroup.last=p; redrawPositions(pane); } else if(pane.drag){ const p=screenToWorld(pane,ev); pane.drag.x=dragBoundX(p.x); pane.drag.y=dragBoundY(p.y); redrawPositions(pane); } else if(pane.selecting){ setSelectBox(pane,pane.selecting.start,screenToWorld(pane,ev)); } else if(pane.pan){ const p=screenPoint(pane,ev); pane.view.x=pane.pan.x+(p.x-pane.pan.startX); pane.view.y=pane.pan.y+(p.y-pane.pan.startY); applyView(pane); } }); pane.svg.addEventListener('mouseup',ev=>{ if(pane.selecting) finishSelection(pane,screenToWorld(pane,ev)); pane.drag=null;pane.dragGroup=null;pane.pan=null;pane.canvas.classList.remove('panning');}); pane.svg.addEventListener('mouseleave',()=>{pane.drag=null;pane.dragGroup=null;pane.pan=null;if(pane.selecting){pane.selecting=null;pane.selectBox.setAttribute('display','none');}pane.canvas.classList.remove('panning');pane.tooltip.style.display='none';}); pane.nodeLayer.addEventListener('mousedown',ev=>{ if(!(ev.target.classList && ev.target.classList.contains('node')))return; ev.stopPropagation(); const n=pane.nodes.find(x=>x.id===ev.target.dataset.id); if(n){ if(pane.selectedNodes.has(n.id)&&pane.selectedNodes.size>1){ pane.dragGroup={last:screenToWorld(pane,ev),nodes:pane.nodes.filter(x=>pane.selectedNodes.has(x.id))}; } else { pane.selectedNodes=new Set([n.id]); pane.drag=n; } pane.selected=n.id; pane.nodeSelect.value=n.id; applySelectedNodes(pane); } }); pane.svg.addEventListener('mouseover',ev=>{ const title=ev.target.dataset?ev.target.dataset.title:''; if(!title)return; pane.tooltip.innerHTML=esc(title).replace(/\\n/g,'<br/>'); pane.tooltip.style.display='block'; }); pane.svg.addEventListener('mousemove',ev=>{ pane.tooltip.style.left=(ev.offsetX+12)+'px'; pane.tooltip.style.top=(ev.offsetY+12)+'px'; }); pane.svg.addEventListener('mouseout',ev=>{ if(ev.target.dataset && ev.target.dataset.title) pane.tooltip.style.display='none'; }); }",
+    "function resetStyle(){ layoutSelect.value='force'; spacingRange.value='0.72'; spacingValue.value='0.72'; tfSizeMin.value='14'; tfSizeMax.value='20'; tfFontMin.value='6'; tfFontMax.value='11'; geneSizeInput.value='6'; geneFontInput.value='9'; labelFontSelect.value='Arial, Helvetica, sans-serif'; paletteSelect.value='direct'; labelBold.checked=true; edgeWidthInput.value='1.3'; edgeOpacityInput.value='0.58'; showLabels.checked=true; showGeneLabels.checked=true; showArrows.checked=true; setColorPair(tfColorInput,tfColorText,'#2B6CB0'); setColorPair(geneColorInput,geneColorText,'#8A8F98'); setColorPair(edgeColorInput,edgeColorText,'#1f2937'); styleChanged(); }",
+    "function bindStyleControls(){ [layoutSelect,paletteSelect,tfSizeMin,tfSizeMax,tfFontMin,tfFontMax,geneSizeInput,geneFontInput,labelFontSelect,labelBold,edgeWidthInput,edgeOpacityInput,showLabels,showGeneLabels,showArrows].forEach(el=>{el.addEventListener('input',styleChanged); el.addEventListener('change',styleChanged);}); spacingRange.addEventListener('input',()=>{spacingValue.value=spacingRange.value; styleChanged();}); spacingValue.addEventListener('input',()=>{spacingRange.value=spacingValue.value; styleChanged();}); [[tfColorInput,tfColorText],[geneColorInput,geneColorText],[edgeColorInput,edgeColorText]].forEach(pair=>{ const colorEl=pair[0], textEl=pair[1]; colorEl.addEventListener('input',()=>{syncColorInput(colorEl,textEl,'color'); styleChanged();}); textEl.addEventListener('change',()=>{syncColorInput(colorEl,textEl,'text'); styleChanged();}); }); document.getElementById('resetStyleButton').addEventListener('click',resetStyle); }",
+    "conditionSelect.addEventListener('change',refreshNetworks); right.networkSelect.addEventListener('change',()=>{}); document.getElementById('addNetworkButton').addEventListener('click',()=>addNetwork(left.networkSelect.value)); document.getElementById('removeNetworkButton').addEventListener('click',removeSelectedNetwork); document.getElementById('clearNetworksButton').addEventListener('click',clearNetworks); bindPane(left,null); bindPane(right,'rightResetButton'); bindStyleControls(); document.getElementById('rightExportSvgButton').addEventListener('click',()=>exportPaneSvg(right));",
+    "async function init(){ FULL_EDGES=await inflateColumnarPayload(FULL_EDGES_GZIP_BASE64); fillConditionSelect(); if(conditionSelect.options.length){ conditionSelect.value=conditionSelect.options[0].value; refreshNetworks(); } }",
+    "init().catch(err=>{ console.error(err); left.statsLine.textContent='Failed to load embedded network data: '+err; right.statsLine.textContent=left.statsLine.textContent; });",
+    "</script>",
+    "</body>",
+    "</html>"
+  )
+  writeLines(html, out_html, useBytes = TRUE)
+  out_html
+}

@@ -488,7 +488,7 @@
   out[, .(condition, direct_tf_cluster, heatmap_png, x, y, w, h)]
 }
 
-.module2_report_heatmap_metadata <- function(edge_dt, k_label, report_name, png_size = 4800L) {
+.module2_report_heatmap_metadata <- function(edge_dt, k_label, report_name, png_size = 900L) {
   condition <- from <- to <- edge_score <- from_cluster <- to_cluster <- NULL
   if (!nrow(edge_dt)) return(data.table::data.table())
   dt <- data.table::copy(edge_dt)
@@ -503,6 +503,7 @@
     mat <- matrix(0, nrow = length(tfs), ncol = length(tfs), dimnames = list(tfs, tfs))
     edge_sum <- one[, .(edge_score = sum(as.numeric(edge_score), na.rm = TRUE)), by = .(from, to)]
     mat[cbind(match(edge_sum$from, tfs), match(edge_sum$to, tfs))] <- edge_sum$edge_score
+    if (!identical(report_name, "TF-TF connectivity")) mat <- log10(mat + 1)
     cl_from <- one[, .(tf = as.character(from), cluster = as.character(from_cluster))]
     cl_to <- one[, .(tf = as.character(to), cluster = as.character(to_cluster))]
     cl <- unique(data.table::rbindlist(list(cl_from, cl_to), use.names = TRUE, fill = TRUE))
@@ -512,6 +513,119 @@
     .module2_report_draw_browser_heatmap_png(mat, cl, file.path(tmp_dir, png_name), cc, png_size = png_size)
   })
   data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+}
+
+
+.module2_report_draw_connectivity_heatmap_png <- function(mat, cluster_dt, out_png, condition, png_size = 4800L, png_aspect = 0.60) {
+  major_cluster <- row_index <- row_start <- row_end <- col_index <- col_start <- col_end <- h <- heatmap_png <- NULL
+  if (!nrow(mat) || !ncol(mat)) return(data.table::data.table())
+  if (!capabilities("png")) {
+    .log_warn("PNG device is unavailable; skipping Module 2 connectivity browser heatmap.")
+    return(data.table::data.table())
+  }
+  png_size <- suppressWarnings(as.integer(png_size[[1L]]))
+  if (!is.finite(png_size) || is.na(png_size) || png_size < 300L) png_size <- 4800L
+  png_aspect <- suppressWarnings(as.numeric(png_aspect[[1L]]))
+  if (!is.finite(png_aspect) || is.na(png_aspect) || png_aspect <= 0) png_aspect <- 0.60
+  png_width <- max(300L, as.integer(round(png_size * png_aspect)))
+  cl <- unique(data.table::copy(cluster_dt)[, .(tf = .module2_report_norm_tf(tf), major_cluster = as.character(cluster))])
+  cluster_map <- stats::setNames(cl$major_cluster, cl$tf)
+  row_cluster <- unname(cluster_map[.module2_report_norm_tf(rownames(mat))])
+  col_cluster <- unname(cluster_map[.module2_report_norm_tf(colnames(mat))])
+  row_cluster[is.na(row_cluster) | !nzchar(row_cluster)] <- "T00"
+  col_cluster[is.na(col_cluster) | !nzchar(col_cluster)] <- "T00"
+  finite_vals <- as.numeric(mat[is.finite(mat)])
+  if (!length(finite_vals)) finite_vals <- 0
+  fill_limits <- range(finite_vals, na.rm = TRUE)
+  if (!is.finite(fill_limits[[1L]]) || !is.finite(fill_limits[[2L]]) || fill_limits[[1L]] == fill_limits[[2L]]) fill_limits <- c(0, max(1, fill_limits[[2L]]))
+  pal <- if (requireNamespace("RColorBrewer", quietly = TRUE)) {
+    grDevices::colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7L, name = "RdYlBu")))(100L)
+  } else {
+    grDevices::colorRampPalette(c("#4575B4", "#FFFFBF", "#D73027"))(100L)
+  }
+  scaled <- (mat - fill_limits[[1L]]) / diff(fill_limits)
+  scaled[!is.finite(scaled)] <- 0
+  scaled <- pmin(1, pmax(0, scaled))
+  color_mat <- matrix(pal[pmax(1L, pmin(length(pal), floor(scaled * (length(pal) - 1L)) + 1L))], nrow = nrow(mat), dimnames = dimnames(mat))
+  dir.create(dirname(out_png), recursive = TRUE, showWarnings = FALSE)
+  opened <- tryCatch({ grDevices::png(out_png, width = png_width, height = png_size, bg = "white", type = "cairo-png"); TRUE }, error = function(e) FALSE)
+  if (!opened) grDevices::png(out_png, width = png_width, height = png_size, bg = "white")
+  on.exit(grDevices::dev.off(), add = TRUE)
+  old_par <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(old_par), add = TRUE)
+  graphics::par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
+  graphics::plot.new()
+  graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1))
+  graphics::rasterImage(grDevices::as.raster(color_mat), 0, 0, 1, 1, interpolate = FALSE)
+  row_bounds <- data.table::data.table(major_cluster = row_cluster, row_index = seq_along(row_cluster))[, .(row_start = min(row_index), row_end = max(row_index)), by = major_cluster]
+  col_bounds <- data.table::data.table(major_cluster = col_cluster, col_index = seq_along(col_cluster))[, .(col_start = min(col_index), col_end = max(col_index)), by = major_cluster]
+  out <- merge(col_bounds[major_cluster != "T00"], row_bounds[major_cluster != "T00"], by = "major_cluster", all = FALSE, sort = FALSE)
+  if (!nrow(out)) return(data.table::data.table())
+  out[, `:=`(condition = as.character(condition), heatmap_png = out_png, x = (col_start - 1) / ncol(mat), y = (row_start - 1) / nrow(mat), w = (col_end - col_start + 1) / ncol(mat), h = (row_end - row_start + 1) / nrow(mat))]
+  out[, .(condition, major_cluster, heatmap_png, x, y, w, h)]
+}
+
+.module2_report_connectivity_heatmap_metadata <- function(edge_dt, k_label, png_size = 4800L) {
+  condition <- edge_score <- from <- from_cluster <- major_cluster <- to <- to_cluster <- NULL
+  if (!nrow(edge_dt)) return(data.table::data.table())
+  dt <- data.table::copy(edge_dt)
+  required <- c("condition", "from", "to", "edge_score", "from_cluster", "to_cluster")
+  if (!all(required %in% names(dt))) return(data.table::data.table())
+  if (!"major_cluster" %in% names(dt)) dt[, major_cluster := from_cluster]
+  tmp_dir <- tempfile("craftgrn-module2-connectivity-heatmap-")
+  dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
+  rows <- lapply(sort(unique(as.character(dt$condition))), function(cc) {
+    one <- dt[condition == cc]
+    if (!nrow(one)) return(NULL)
+    tfs <- sort(unique(c(as.character(one$from), as.character(one$to))))
+    mat <- matrix(0, nrow = length(tfs), ncol = length(tfs), dimnames = list(tfs, tfs))
+    edge_sum <- one[, .(edge_score = sum(as.numeric(edge_score), na.rm = TRUE)), by = .(from, to)]
+    mat[cbind(match(edge_sum$from, tfs), match(edge_sum$to, tfs))] <- edge_sum$edge_score
+    mat[cbind(match(edge_sum$to, tfs), match(edge_sum$from, tfs))] <- edge_sum$edge_score
+    cl_from <- one[, .(tf = as.character(from), cluster = as.character(from_cluster))]
+    cl_to <- one[, .(tf = as.character(to), cluster = as.character(to_cluster))]
+    cl <- unique(data.table::rbindlist(list(cl_from, cl_to), use.names = TRUE, fill = TRUE))
+    cl <- cl[nzchar(tf) & nzchar(cluster)]
+    mat <- .module2_report_order_matrix_by_clusters(mat, cl)
+    png_name <- sprintf("%s_tf_tf_connectivity_heatmap_%s_browser.png", .module2_report_safe_filename(cc), k_label)
+    .module2_report_draw_connectivity_heatmap_png(mat, cl, file.path(tmp_dir, png_name), cc, png_size = png_size)
+  })
+  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+}
+
+.module2_report_connectivity_payload <- function(edge_dt) {
+  condition <- database <- edge_r <- edge_score <- from <- from_cluster <- major_cluster <- mean_condition_fp_score <- n_supporting_links <- network_id <- network_label <- pathway_adjusted_p_value <- pathway_key <- pathway_neglog10_padj <- pathway_term <- to <- NULL
+  if (!nrow(edge_dt)) return(data.table::data.table())
+  dt <- data.table::copy(edge_dt)
+  if (!"major_cluster" %in% names(dt)) dt[, major_cluster := from_cluster]
+  dt[is.na(major_cluster) | !nzchar(major_cluster), major_cluster := "T00"]
+  dt[, network_id := paste(condition, major_cluster, "composite_tf_tf", sep = "__")]
+  dt[, network_label := paste0(major_cluster, " composite TF-TF connectivity")]
+  dt[, database := "Module2"]
+  dt[, pathway_key := "composite_tf_tf_connectivity"]
+  dt[, pathway_term := paste0(major_cluster, " composite TF-TF connectivity")]
+  dt[, pathway_adjusted_p_value := 1]
+  dt[, pathway_neglog10_padj := 0]
+  dt[, edge_r := as.numeric(edge_score)]
+  if (!"n_supporting_links" %in% names(dt)) dt[, n_supporting_links := 1L]
+  if (!"mean_condition_fp_score" %in% names(dt)) dt[, mean_condition_fp_score := NA_real_]
+  dt[, .(condition, network_id, network_label, major_cluster, database, pathway_key, pathway_term, pathway_adjusted_p_value, pathway_neglog10_padj, from, to, edge_score, edge_r, n_supporting_links, mean_condition_fp_score)]
+}
+
+.module2_report_write_tf_tf_connectivity_browser <- function(edge_dt, out_html, title) {
+  base <- tools::file_path_sans_ext(basename(out_html))
+  k_label <- sub("_.*$", "", base)
+  out_suffix <- sub("^[^_]+_", "", base)
+  payload_dt <- .module2_report_connectivity_payload(edge_dt)
+  .module2_legacy_write_condition_pathway_tf_gene_k_index(
+    edge_dt = payload_dt,
+    out_dir = dirname(out_html),
+    title_prefix = title,
+    k_label = k_label,
+    max_edges_per_network = 120L,
+    out_suffix = out_suffix,
+    heatmap_dt = .module2_report_connectivity_heatmap_metadata(edge_dt, k_label = k_label)
+  )
 }
 
 .module2_report_export_edge_browsers <- function(edge_dt, output_dir, html_subdir, report, out_suffix, title_template, report_name, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
@@ -645,7 +759,7 @@
 }
 
 .module2_report_composite_edges_for_k <- function(link_dt, k, min_score = 2, max_tfs = Inf) {
-  condition <- edge_rank <- edge_score <- from <- from_cluster <- to <- to_cluster <- direct_tf_cluster <- NULL
+  condition <- edge_rank <- edge_score <- from <- from_cluster <- major_cluster <- to <- to_cluster <- direct_tf_cluster <- NULL
   if (!nrow(link_dt)) return(data.table::data.table())
   dt <- data.table::copy(link_dt)
   if (!"condition" %in% names(dt)) dt[, condition := "all"]
@@ -655,7 +769,7 @@
     if (!nrow(mat)) return(data.table::data.table())
     cl <- .module2_report_cut_condition_clusters(mat, k = k)
     mat <- .module2_report_order_matrix_by_clusters(mat, cl)
-    idx <- which(is.finite(mat) & mat > 0 & row(mat) != col(mat), arr.ind = TRUE)
+    idx <- which(upper.tri(mat) & is.finite(mat) & mat > 0, arr.ind = TRUE)
     if (!nrow(idx)) return(data.table::data.table())
     edge_dt <- data.table::data.table(
       condition = cc,
@@ -674,6 +788,9 @@
     edge_dt[is.na(from_cluster) | !nzchar(from_cluster), from_cluster := "T00"]
     edge_dt[is.na(to_cluster) | !nzchar(to_cluster), to_cluster := "T00"]
     edge_dt[, direct_tf_cluster := paste(sub("^T", "C", to_cluster), sub("^T", "R", from_cluster), sep = "-")]
+    edge_dt <- edge_dt[from_cluster == to_cluster]
+    if (!nrow(edge_dt)) return(data.table::data.table())
+    edge_dt[, major_cluster := from_cluster]
     data.table::setorder(edge_dt, condition, from_cluster, to_cluster, -edge_score, from, to)
     edge_dt[, edge_rank := seq_len(.N), by = condition]
     edge_dt[]
@@ -709,11 +826,10 @@
     if (!nrow(k_edge_dt)) k_edge_dt <- .module2_report_assign_edge_clusters(fallback_edge_dt, k = k)
     if (!nrow(k_edge_dt)) return(NULL)
     html <- file.path(html_dir, sprintf("K%02d_%s.html", as.integer(k), out_suffix))
-    .module2_report_write_tf_tf_browser(
+    .module2_report_write_tf_tf_connectivity_browser(
       edge_dt = k_edge_dt,
       out_html = html,
-      title = sprintf(title_template, tag, result_label, as.integer(k)),
-      report_name = "TF-TF connectivity"
+      title = sprintf(title_template, tag, result_label, as.integer(k))
     )
     data.table::data.table(report = report, k = k, path = html)
   })
@@ -891,11 +1007,10 @@ export_tf_tf_connectivity_browser <- function(cache, output_dir, tag = "module2"
     if (!nrow(edge_dt)) edge_dt <- .module2_report_assign_edge_clusters(base_edges, k = k)
     if (!nrow(edge_dt)) return(NULL)
     html <- file.path(html_dir, sprintf("K%02d_tf_tf_connectivity_network_browser.html", as.integer(k)))
-    .module2_report_write_tf_tf_browser(
+    .module2_report_write_tf_tf_connectivity_browser(
       edge_dt = edge_dt,
       out_html = html,
-      title = sprintf("%s %s K%02d TF-TF connectivity", tag, result_label, as.integer(k)),
-      report_name = "TF-TF connectivity"
+      title = sprintf("%s %s K%02d TF-TF connectivity", tag, result_label, as.integer(k))
     )
     data.table::data.table(report = "tf_tf_connectivity", k = k, path = html)
   })

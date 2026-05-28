@@ -83,29 +83,48 @@ test_that("Module 2 top TF target reports write self-contained HTML", {
   expect_true(any(grepl("const FULL_NODES", html, fixed = TRUE)))
 })
 
-test_that("Module 2 report builder writes direct HTML without pdf folders", {
-  omics <- list(
-    fp_score_condition_qn = tibble::tibble(peak_ID = "chr1:100-140", s1 = 5, s2 = 6),
-    fp_bound_condition = tibble::tibble(peak_ID = "chr1:100-140", s1 = 1L, s2 = 1L),
-    fp_annotation = tibble::tibble(fp_peak = "chr1:100-140", atac_peak = "chr1:90-160", motifs = "M_A", tfs = "TF_A"),
-    rna_condition = tibble::tibble(ensembl_gene_id = c("g1", "g2"), HGNC = c("TF_A", "TF_B"), s1 = c(3, 4), s2 = c(5, 6)),
-    rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2"), HGNC = c("TF_A", "TF_B"), s1 = 1L, s2 = 1L),
-    tf_list = c("TF_A", "TF_B")
-  )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+test_that("Module 2 report builder writes distinct direct and connectivity HTML", {
+  tfs <- c("TF_A", "TF_B", "TF_C", "TF_D")
+  pairs <- expand.grid(tf = tfs, target_gene = tfs, stringsAsFactors = FALSE)
+  pairs <- pairs[pairs$tf != pairs$target_gene, , drop = FALSE]
+  n_pairs <- nrow(pairs)
   module2 <- list(
-    tf_target_corr = tibble::tibble(tf = c("TF_A", "TF_B"), target_gene = c("TF_B", "TF_A"), best_r = c(0.9, 0.1), pass = c(TRUE, FALSE)),
-    fp_target_corr = tibble::tibble(fp_id = "chr1:100-140", target_gene = "TF_B", best_r = 0.8, pass = TRUE),
-    links = tibble::tibble(link_id = "l1", tf = "TF_A", fp_id = "chr1:100-140", target_gene = "TF_B", candidate_id = "c1", module2_link_pass = TRUE),
+    tf_target_corr = tibble::tibble(
+      tf = pairs$tf,
+      target_gene = pairs$target_gene,
+      best_r = seq(0.95, 0.84, length.out = n_pairs),
+      pass = TRUE
+    ),
+    fp_target_corr = tibble::tibble(
+      fp_id = paste0("fp", seq_len(n_pairs)),
+      target_gene = pairs$target_gene,
+      best_r = seq(0.83, 0.72, length.out = n_pairs),
+      pass = TRUE
+    ),
+    links = tibble::tibble(
+      link_id = paste0("l", seq_len(n_pairs)),
+      tf = pairs$tf,
+      fp_id = paste0("fp", seq_len(n_pairs)),
+      target_gene = pairs$target_gene,
+      candidate_id = paste0("c", seq_len(n_pairs)),
+      module2_link_pass = TRUE
+    ),
     manifest = tibble::tibble()
   )
   out_dir <- tempfile("module2-report-builder-")
-  man <- build_module2_reports(module2, multiomic_data = NULL, output_dir = out_dir, reports = c("direct_tf_tf", "tf_tf_connectivity"), k_values = 2L, verbose = FALSE)
+  man <- build_module2_reports(module2, multiomic_data = NULL, output_dir = out_dir, reports = c("direct_tf_tf", "tf_tf_connectivity"), k_values = 1L, verbose = FALSE)
   expect_equal(nrow(man), 2L)
   expect_true(all(file.exists(man$path)))
   expect_true(all(dirname(man$path) == out_dir))
-  html <- paste(readLines(man$path[[1L]], warn = FALSE), collapse = "\n")
-  expect_true(grepl("data:image/png;base64", html, fixed = TRUE))
-  expect_true(grepl("const HEATMAP_IMAGES", html, fixed = TRUE))
+  direct_html <- paste(readLines(man$path[man$report == "direct_tf_tf"][[1L]], warn = FALSE), collapse = "\n")
+  conn_html <- paste(readLines(man$path[man$report == "tf_tf_connectivity"][[1L]], warn = FALSE), collapse = "\n")
+  expect_true(grepl("Direct TF heatmap", direct_html, fixed = TRUE))
+  expect_true(grepl("Composite TF-TF heatmap", conn_html, fixed = TRUE))
+  expect_true(grepl(">Single<", conn_html, fixed = TRUE))
+  expect_true(grepl(">Overlay<", conn_html, fixed = TRUE))
+  expect_false(grepl("Direct TF heatmap", conn_html, fixed = TRUE))
+  expect_true(grepl("data:image/png;base64", direct_html, fixed = TRUE))
+  expect_true(grepl("data:image/png;base64", conn_html, fixed = TRUE))
+  expect_true(grepl("const HEATMAP_IMAGES", conn_html, fixed = TRUE))
   expect_false(dir.exists(file.path(out_dir, "pdf")))
 })
