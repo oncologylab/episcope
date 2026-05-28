@@ -29,8 +29,11 @@ Imports:
     yaml
 LinkingTo: Rcpp
 Suggests: 
+    AnnotationDbi,
     arrow,
     enrichR,
+    EnsDb.Hsapiens.v86,
+    EnsDb.Mmusculus.v79,
     fgsea,
     ggraph,
     ggrepel,

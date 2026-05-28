@@ -266,7 +266,7 @@
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
   if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
   validate_multiomic_object(multiomic_data)
-  gene_tss <- .module2_normalize_gene_tss(gene_tss)
+  gene_tss <- .module2_resolve_gene_tss(gene_tss, cfg = cfg, multiomic_data = multiomic_data, verbose = verbose)
   mats <- multiomic_data$matrices
   gene_on <- mats$gene_on
   gene_expr <- mats$gene_expr
@@ -388,7 +388,9 @@
 #'
 #' @param multiomic_data Compact multiomic object or compatible Module 1 object.
 #' @param predicted_tfbs Compact Module 1 predicted TFBS table or path.
-#' @param gene_tss Gene TSS annotation table.
+#' @param gene_tss Optional gene TSS annotation table or path. If `NULL`, the
+#'   table is resolved from `project_config$gene_tss` or generated from the
+#'   configured `ref_genome`.
 #' @param regulatory_prior Optional generic FP-target regulatory prior.
 #' @param project_config Optional project YAML path or list.
 #' @param output_dir Optional output directory.
@@ -398,7 +400,7 @@
 #' @param verbose Emit concise progress messages.
 #' @return Compact Module 2 relational result list.
 #' @export
-link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
+link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
   output_format <- match.arg(output_format)
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
@@ -422,7 +424,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss, regulatory
   }
   if (is.character(predicted_tfbs) && length(predicted_tfbs) == 1L && file.exists(predicted_tfbs)) predicted_tfbs <- load_predicted_tfbs(predicted_tfbs)
   predicted_tfbs <- build_predicted_tfbs(predicted_tfbs)
-  gene_tss <- .module2_normalize_gene_tss(gene_tss)
+  gene_tss <- .module2_resolve_gene_tss(gene_tss, cfg = cfg, multiomic_data = multiomic_data, verbose = verbose)
   mats <- multiomic_data$matrices
   gene_on <- mats$gene_on
   gene_expr <- mats$gene_expr

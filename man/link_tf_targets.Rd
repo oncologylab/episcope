@@ -7,7 +7,7 @@
 link_tf_targets(
   multiomic_data,
   predicted_tfbs,
-  gene_tss,
+  gene_tss = NULL,
   regulatory_prior = NULL,
   project_config = NULL,
   output_dir = NULL,
@@ -22,7 +22,9 @@ link_tf_targets(
 
 \item{predicted_tfbs}{Compact Module 1 predicted TFBS table or path.}
 
-\item{gene_tss}{Gene TSS annotation table.}
+\item{gene_tss}{Optional gene TSS annotation table or path. If `NULL`, the
+table is resolved from `project_config$gene_tss` or generated from the
+configured `ref_genome`.}
 
 \item{regulatory_prior}{Optional generic FP-target regulatory prior.}
 
