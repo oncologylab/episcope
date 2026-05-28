@@ -243,7 +243,7 @@
     return(tibble::as_tibble(arrow::read_parquet(path, col_select = columns)))
   }
   if (is.null(columns)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
-  tibble::as_tibble(readr::read_csv(path, col_select = columns, show_col_types = FALSE))
+  tibble::as_tibble(readr::read_csv(path, col_select = dplyr::all_of(columns), show_col_types = FALSE))
 }
 
 .module2_write_chunk <- function(x, out_dir, prefix, chunk_id, output_format = c("auto", "parquet", "csv")) {

@@ -266,7 +266,7 @@ test_that("compact multiomic object uses compact semantic names", {
   expect_silent(validate_multiomic_object(compact))
 })
 
-test_that("predict_tfbs accepts compact and legacy objects equivalently", {
+test_that("predict_tfbs accepts compact and previous-format objects equivalently", {
   fixture <- module1_tiny_fixture()
   compact <- as_multiomic_object(fixture$omics_data, verbose = FALSE)
 

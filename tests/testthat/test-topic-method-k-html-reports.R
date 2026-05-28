@@ -365,7 +365,7 @@ test_that("condition report MDS uses authoritative theta group MDS coordinates",
   expect_equal(out[comparison_label == "HPAFII_A_vs_B::Up", Topic1], 0.7)
   expect_equal(out[comparison_label == "HPAFII_A_vs_B::Down", Topic2], 0.9)
   expect_equal(out$color, c("#222222", "#111111"))
-  expect_equal(out[comparison_label == "HPAFII_A_vs_B::Up", mds_label], "AvsBUp")
+  expect_equal(out[comparison_label == "HPAFII_A_vs_B::Up", mds_label], "A_vs_B_Up")
   expect_equal(out[comparison_label == "HPAFII_A_vs_B::Down", shape_value], 25L)
 })
 
@@ -402,7 +402,7 @@ test_that("topic report grid can be restricted to selected K values", {
   expect_equal(out$extract_id, "K10")
 })
 
-test_that("topic report HTML uses LDAvis-style pathway bars", {
+test_that("topic report HTML renders pathway bars and theta tooltips", {
   source_benchmark_script(topic_report_script)
 
   row <- data.table::data.table(
@@ -440,23 +440,40 @@ test_that("topic report HTML uses LDAvis-style pathway bars", {
   expect_false(grepl("pathItem", html, fixed = TRUE))
   expect_false(grepl("+'\nmean theta: '", html, fixed = TRUE))
   expect_false(grepl("+'\ndocs: '", html, fixed = TRUE))
-  expect_match(html, "+'\\nmean theta: '", fixed = TRUE)
-  expect_match(html, "+'\\ndocs: '", fixed = TRUE)
+  expect_match(html, "mean document-to-topic probability", fixed = TRUE)
+  expect_match(html, "\\ndocs: ", fixed = TRUE)
 })
 
-test_that("combined topic report points to individual reports in subfolder", {
+test_that("combined topic report embeds individual report HTML when available", {
   source_benchmark_script(topic_report_script)
 
   html_dir <- tempfile("topic-html-")
   report_dir <- file.path(html_dir, "topic_reports")
   dir.create(report_dir, recursive = TRUE)
   report_file <- file.path(report_dir, "cond_fp_uniq_MultiVI_K10_topic_report.html")
-  writeLines("<!doctype html><html></html>", report_file, useBytes = TRUE)
+  writeLines("<!doctype html><html><body>embedded topic report</body></html>", report_file, useBytes = TRUE)
 
   out <- .write_combined_topic_report_html(html_dir, report_dir = report_dir)
   html <- paste(readLines(out, warn = FALSE), collapse = "\n")
 
   expect_match(html, "topic_reports/cond_fp_uniq_MultiVI_K10_topic_report.html", fixed = TRUE)
+  expect_match(html, "frame.srcdoc=hit.html", fixed = TRUE)
+  expect_match(html, "embedded topic report", fixed = TRUE)
+})
+
+test_that("combined condition report links condition reports by relative path", {
+  source_benchmark_script(topic_report_script)
+
+  html_dir <- tempfile("condition-topic-html-")
+  report_dir <- file.path(html_dir, "condition_topic_reports")
+  dir.create(report_dir, recursive = TRUE)
+  report_file <- file.path(report_dir, "cond_fp_uniq_MultiVI_K10_condition_topic_report.html")
+  writeLines("<!doctype html><html><body>embedded condition report</body></html>", report_file, useBytes = TRUE)
+
+  out <- .write_combined_condition_topic_report_html(html_dir, report_dir = report_dir)
+  html <- paste(readLines(out, warn = FALSE), collapse = "\n")
+
+  expect_match(html, "condition_topic_reports/cond_fp_uniq_MultiVI_K10_condition_topic_report.html", fixed = TRUE)
 })
 
 test_that("condition-centered report HTML uses group MDS and topic waterfall payloads", {

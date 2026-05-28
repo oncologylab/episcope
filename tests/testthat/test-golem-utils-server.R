@@ -1,19 +1,19 @@
-test_that("not_in works", {
+test_that("%not_in% negates membership checks", {
   expect_true(1 %not_in% 2:10)
   expect_false(1 %not_in% 1:10)
 })
 
-test_that("not_null works", {
+test_that("not_null identifies non-null values", {
   expect_true(not_null(1))
   expect_false(not_null(NULL))
 })
 
-test_that("not_na works", {
+test_that("not_na identifies non-missing scalar values", {
   expect_true(not_na(1))
   expect_false(not_na(NA))
 })
 
-test_that("drop_nulls works", {
+test_that("drop_nulls removes null entries from lists", {
   expect_equal(
     drop_nulls(
       list(x = NULL, y = 2)
@@ -22,7 +22,7 @@ test_that("drop_nulls works", {
   )
 })
 
-test_that("%||% works", {
+test_that("%||% returns the fallback only for NULL", {
   expect_equal(
     NULL %||% 1,
     1
@@ -33,7 +33,7 @@ test_that("%||% works", {
   )
 })
 
-test_that("%|NA|% works", {
+test_that("%|NA|% returns the fallback only for NA", {
   expect_equal(
     NA %|NA|% 1,
     1
@@ -44,7 +44,7 @@ test_that("%|NA|% works", {
   )
 })
 
-test_that("rv and rvtl work", {
+test_that("rv and rvtl wrap Shiny reactive value helpers", {
   expect_true(
     inherits(rv, "function")
   )

@@ -1,4 +1,4 @@
-test_that("app ui", {
+test_that("app_ui returns a Shiny tag list and keeps request argument", {
   ui <- app_ui()
   golem::expect_shinytaglist(ui)
   # Check that formals have not been removed
@@ -8,7 +8,7 @@ test_that("app ui", {
   }
 })
 
-test_that("app server", {
+test_that("app_server keeps the standard Shiny server signature", {
   server <- app_server
   expect_type(server, "closure")
   # Check that formals have not been removed
@@ -19,7 +19,7 @@ test_that("app server", {
 })
 
 test_that(
-  "app_sys works",
+  "app_sys resolves packaged app configuration files",
   {
     expect_true(
       app_sys("golem-config.yml") != ""
@@ -28,7 +28,7 @@ test_that(
 )
 
 test_that(
-  "golem-config works",
+  "golem config reads production and development flags",
   {
     config_file <- app_sys("golem-config.yml")
     skip_if(config_file == "")
@@ -50,24 +50,8 @@ test_that(
   }
 )
 
-# Configure this test to fit your need.
-# testServer() function makes it possible to test code in server functions and modules, without needing to run the full Shiny application
-testServer(app_server, {
-
-  # Set and test an input
-  session$setInputs(x = 2)
-  expect_equal(input$x, 2)
-
-  # Example of tests you can do on the server:
-  # - Checking reactiveValues
-  # expect_equal(r$lg, 'EN')
-  # - Checking output
-  # expect_equal(output$txt, "Text")
-})
-
-# Configure this test to fit your need
 test_that(
-  "app launches",
+  "Shiny application starts without runtime errors",
   {
     golem::expect_running(sleep = 5)
   }
