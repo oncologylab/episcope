@@ -16,6 +16,12 @@
     cfg <- project_config
   }
   if (is.list(cfg$module2)) cfg <- utils::modifyList(cfg, cfg$module2)
+  if (is.null(cfg$threshold_rna_gene_corr_r) && !is.null(cfg$threshold_rna_gene_corr_abs_r)) {
+    cfg$threshold_rna_gene_corr_r <- cfg$threshold_rna_gene_corr_abs_r
+  }
+  if (is.null(cfg$threshold_fp_gene_corr_r) && !is.null(cfg$threshold_fp_gene_corr_abs_r)) {
+    cfg$threshold_fp_gene_corr_r <- cfg$threshold_fp_gene_corr_abs_r
+  }
   cfg
 }
 
@@ -283,7 +289,7 @@
   if (isTRUE(verbose)) .log_inform("Module 2 inputs: {length(tfs)} TF(s), {length(target_genes)} target gene(s), {n_predicted_tfbs} predicted TFBS row(s), streamed from {nrow(predicted_manifest)} chunk(s).")
   tf_pairs <- tidyr::crossing(tf = tfs, target_gene = target_genes)
   if (isTRUE(verbose)) .log_inform("Module 2 TF-target correlation: testing {nrow(tf_pairs)} pair(s).")
-  tf_cutoffs <- .module2_corr_cutoffs(cfg, "tf_target", r_default = .module2_cfg_value(cfg, "threshold_rna_gene_corr_abs_r", 0.3))
+  tf_cutoffs <- .module2_corr_cutoffs(cfg, "tf_target", r_default = .module2_cfg_value(cfg, "threshold_rna_gene_corr_r", 0.3))
   if (is.null(tf_cutoffs$p)) tf_cutoffs$p <- .module2_cfg_value(cfg, "threshold_rna_gene_corr_p", NULL)
   if (is.null(tf_cutoffs$fdr)) tf_cutoffs$fdr <- .module2_cfg_value(cfg, "threshold_rna_gene_corr_fdr", NULL)
   tf_target_corr <- .module2_pair_correlations(gene_expr, gene_expr, tf_pairs, "tf", "target_gene", tf_cutoffs, n_cores = n_cores)
@@ -314,7 +320,7 @@
   readr::write_csv(cand_manifest, cand_manifest_path)
   fp_pairs <- tibble::as_tibble(fp_pair_dt)
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target correlation: testing {nrow(fp_pairs)} unique restricted pair(s).")
-  fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_abs_r", 0.3))
+  fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_r", 0.3))
   if (is.null(fp_cutoffs$p)) fp_cutoffs$p <- .module2_cfg_value(cfg, "threshold_fp_gene_corr_p", NULL)
   if (is.null(fp_cutoffs$fdr)) fp_cutoffs$fdr <- .module2_cfg_value(cfg, "threshold_fp_gene_corr_fdr", NULL)
   fp_target_corr <- .module2_pair_correlations(fp_score, gene_expr, fp_pairs, "fp_id", "target_gene", fp_cutoffs, n_cores = n_cores)
@@ -430,7 +436,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss, regulatory
   if (isTRUE(verbose)) .log_inform("Module 2 inputs: {length(tfs)} TF(s), {length(target_genes)} target gene(s), {nrow(predicted_tfbs)} predicted TFBS row(s).")
   tf_pairs <- tidyr::crossing(tf = tfs, target_gene = target_genes)
   if (isTRUE(verbose)) .log_inform("Module 2 TF-target correlation: testing {nrow(tf_pairs)} pair(s).")
-  tf_cutoffs <- .module2_corr_cutoffs(cfg, "tf_target", r_default = .module2_cfg_value(cfg, "threshold_rna_gene_corr_abs_r", 0.3))
+  tf_cutoffs <- .module2_corr_cutoffs(cfg, "tf_target", r_default = .module2_cfg_value(cfg, "threshold_rna_gene_corr_r", 0.3))
   if (is.null(tf_cutoffs$p)) tf_cutoffs$p <- .module2_cfg_value(cfg, "threshold_rna_gene_corr_p", NULL)
   if (is.null(tf_cutoffs$fdr)) tf_cutoffs$fdr <- .module2_cfg_value(cfg, "threshold_rna_gene_corr_fdr", NULL)
   tf_target_corr <- .module2_pair_correlations(gene_expr, gene_expr, tf_pairs, "tf", "target_gene", tf_cutoffs, n_cores = n_cores)
@@ -440,7 +446,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss, regulatory
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target candidates after TF-target and TSS/prior filters: {nrow(candidates)} pair(s).")
   fp_pairs <- unique(candidates[, c("fp_id", "target_gene"), drop = FALSE])
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target correlation: testing {nrow(fp_pairs)} restricted pair(s).")
-  fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_abs_r", 0.3))
+  fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_r", 0.3))
   if (is.null(fp_cutoffs$p)) fp_cutoffs$p <- .module2_cfg_value(cfg, "threshold_fp_gene_corr_p", NULL)
   if (is.null(fp_cutoffs$fdr)) fp_cutoffs$fdr <- .module2_cfg_value(cfg, "threshold_fp_gene_corr_fdr", NULL)
   fp_target_corr <- .module2_pair_correlations(fp_score, gene_expr, fp_pairs, "fp_id", "target_gene", fp_cutoffs, n_cores = n_cores)

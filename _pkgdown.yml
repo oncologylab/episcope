@@ -41,11 +41,18 @@ reference:
   - load_omics_data
   - save_omics_data
   - load_prep_multiomic_data
+  - as_multiomic_object
+  - validate_multiomic_object
+  - is_multiomic_object
+  - as_multiomic_legacy
 
 - title: TF binding site and motif utilities
   desc: Work with motif resources, footprints, and TF-footprint correlations.
   contents:
   - predict_tfbs
+  - build_predicted_tfbs
+  - load_predicted_tfbs
+  - export_predicted_tfbs_bed
   - correlate_tf_to_fp
   - starts_with("read_")
   - starts_with("parse_")
@@ -56,6 +63,19 @@ reference:
   - starts_with("pwm_")
   - utils_motif_clustering
 
+
+- title: TF-target linking
+  desc: Connect predicted TF binding sites to target genes and query compact Module 2 outputs.
+  contents:
+  - link_tf_targets
+  - load_module2_links
+  - query_module2_links
+  - validate_module2_links
+  - export_tf_target_bedpe
+  - build_module2_reports
+  - export_top_tf_targets
+  - export_direct_tf_tf_browser
+  - export_tf_tf_connectivity_browser
 - title: Regulatory topic modeling
   desc: Build topic model inputs, train models, and extract regulatory topics.
   contents:

@@ -59,3 +59,26 @@ test_that("Module 2 streams predicted TFBS manifests", {
   expect_true(nrow(q) > 0)
   expect_true(all(q$tf == "TF_A"))
 })
+
+test_that("Module 2 top TF target reports write legacy-style HTML", {
+  skip_if_not(any(file.exists(c(file.path(getwd(), "dev", "benchmark", "02_build_tf_target_perturbation_html_networks.R"), file.path(getwd(), "..", "..", "dev", "benchmark", "02_build_tf_target_perturbation_html_networks.R"))))) 
+  omics <- list(
+    fp_score_condition_qn = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1, 9), s2 = c(2, 8), s3 = c(8, 2), s4 = c(9, 1)),
+    fp_bound_condition = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1L, 1L), s2 = c(1L, 1L), s3 = c(1L, 1L), s4 = c(1L, 1L)),
+    fp_annotation = tibble::tibble(fp_peak = c("chr1:100-140", "chr1:500-540"), atac_peak = c("chr1:90-160", "chr1:490-560"), motifs = c("M_A", "M_B"), tfs = c("TF_A", "TF_B")),
+    rna_condition = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3"), HGNC = c("TF_A", "TF_B", "GENE_UP"), s1 = c(1, 9, 1), s2 = c(2, 8, 2), s3 = c(8, 2, 8), s4 = c(9, 1, 9)),
+    rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3"), HGNC = c("TF_A", "TF_B", "GENE_UP"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
+    tf_list = c("TF_A", "TF_B")
+  )
+  compact <- as_multiomic_object(omics, verbose = FALSE)
+  pred <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_A", "TF_B"))
+  gene_tss <- tibble::tibble(target_gene = "GENE_UP", target_chr = "chr1", target_tss = 120L, target_strand = "+")
+  res <- link_tf_targets(compact, pred, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), max_distance_bp = 1000, n_cores = 1, verbose = FALSE)
+  out_dir <- tempfile("module2-reports-")
+  man <- export_top_tf_targets(res, output_dir = out_dir, tfs = "TF_A", top_n = 1L, verbose = FALSE)
+  expect_equal(nrow(man), 1L)
+  expect_true(file.exists(man$path[[1L]]))
+  html <- readLines(man$path[[1L]], warn = FALSE)
+  expect_true(any(grepl("Export SVG", html, fixed = TRUE)))
+  expect_true(any(grepl("FULL_NODES", html, fixed = TRUE)))
+})
