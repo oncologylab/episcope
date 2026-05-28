@@ -16,7 +16,7 @@
 # Outputs:
 # - prepared Step 1 multi-omic object with aligned score, bound, annotation,
 #   condition-level, and expression-flag components
-# - numbered Step 1 prep outputs under predict_tf_binding_sites/
+# - compact prepared multiomic RDS cache under predict_tf_binding_sites/
 # - on-disk RDS cache for fast reruns when requested
 #
 # Notes:
@@ -44,7 +44,7 @@ NULL
 #'   building the object. If `FALSE`, use cached aligned footprints.
 #' @param do_motif_clustering Logical; if `TRUE`, run motif clustering during
 #'   preprocessing when available.
-#' @param trim_hocomoco Logical; trim HOCOMOCO manifests when the legacy helper
+#' @param trim_hocomoco Logical; trim HOCOMOCO manifests when the trimming helper
 #'   is available.
 #' @param fp_root_dir Optional root directory for raw footprint overview files.
 #' @param fp_cache_dir Cache directory for aligned footprint files.
@@ -56,8 +56,6 @@ NULL
 #'   `"distinct"`.
 #' @param write_outputs Logical; if `TRUE`, save the prepared object as an RDS
 #'   cache under `predict_tf_binding_sites/`.
-#' @param save_mode RDS object mode. Use compact for the default,
-#'   full for the legacy debug object, or both for both.
 #' @param atac_data,rna_tbl,metadata Optional in-memory input tables.
 #' @param atac_data_path,rna_path,metadata_path Optional explicit file paths for
 #'   the input tables.
@@ -71,6 +69,7 @@ NULL
 #' @param use_parallel Logical; if `TRUE`, allow parallel work in supported
 #'   helpers.
 #' @param verbose Logical; if `TRUE`, emit concise progress messages.
+#' @param time_log Logical; if TRUE, emit elapsed-time messages.
 #'
 #' @return A rebuilt Module 1 multi-omic object.
 #' @examples
@@ -101,7 +100,6 @@ load_prep_multiomic_data <- function(
     score_match_pct = 0.8,
     output_mode = c("full", "distinct"),
     write_outputs = FALSE,
-    save_mode = c("compact", "full", "both"),
     atac_data = NULL,
     rna_tbl = NULL,
     metadata = NULL,
@@ -116,10 +114,14 @@ load_prep_multiomic_data <- function(
     threshold_gene_expr = NULL,
     threshold_fp_score = NULL,
     use_parallel = TRUE,
-    verbose = TRUE
+    verbose = TRUE,
+    time_log = verbose
 ) {
+  start_time <- Sys.time()
+  if (isTRUE(time_log)) {
+    on.exit(.log_inform("Module 1 multiomic preparation completed in {round(as.numeric(difftime(Sys.time(), start_time, units = 'secs')), 1)} sec."), add = TRUE)
+  }
   output_mode <- match.arg(output_mode)
-  save_mode <- match.arg(save_mode)
 
   if (!is.null(config)) {
     if (is.character(config) && length(config) == 1L && file.exists(config)) {
@@ -164,18 +166,12 @@ load_prep_multiomic_data <- function(
     threshold_fp_score <- get_cfg("threshold_fp_score")
   }
   compact_rds_path <- NULL
-  full_rds_path <- NULL
   base_dir_cfg <- get_cfg("base_dir")
   if (is.character(base_dir_cfg) && nzchar(base_dir_cfg)) {
     compact_rds_path <- file.path(
       base_dir_cfg,
       step1_out_dir_name_use,
       sprintf("01_multiomic_data_object_%s.rds", get_cfg("db"))
-    )
-    full_rds_path <- file.path(
-      base_dir_cfg,
-      step1_out_dir_name_use,
-      sprintf("01_multiomic_full_%s.rds", get_cfg("db"))
     )
   }
 
@@ -335,17 +331,20 @@ load_prep_multiomic_data <- function(
   )
   grn_set <- grn_add_rna_condition(grn_set, label_col = label_col)
 
-  if (isTRUE(write_outputs) && exists("write_grn_outputs", mode = "function")) {
-    write_grn_outputs(
-      grn_set = grn_set,
-      out_dir = file.path(base_dir_cfg, step1_out_dir_name_use),
-      db = get_cfg("db"),
-      verbose = verbose
-    )
+  compact <- as_multiomic_object(
+    grn_set,
+    project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
+    label_col = label_col,
+    verbose = FALSE
+  )
+
+  if (isTRUE(write_outputs)) {
+    out_dir <- file.path(base_dir_cfg, step1_out_dir_name_use)
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     if (exists("plot_fp_norm_bound_qc", mode = "function")) {
       plot_fp_norm_bound_qc(
         omics_data = grn_set,
-        out_dir = file.path(base_dir_cfg, step1_out_dir_name_use),
+        out_dir = out_dir,
         db = get_cfg("db"),
         threshold_fp_score = threshold_fp_score,
         verbose = verbose
@@ -354,41 +353,18 @@ load_prep_multiomic_data <- function(
     if (exists("plot_gene_expr_qc", mode = "function")) {
       plot_gene_expr_qc(
         omics_data = grn_set,
-        out_dir = file.path(base_dir_cfg, step1_out_dir_name_use),
+        out_dir = out_dir,
         db = get_cfg("db"),
         threshold_gene_expr = threshold_gene_expr,
         verbose = verbose
       )
     }
-  }
-
-  if (isTRUE(write_outputs) && is.character(compact_rds_path) && nzchar(compact_rds_path)) {
-    dir.create(dirname(compact_rds_path), recursive = TRUE, showWarnings = FALSE)
-    if (save_mode %in% c("compact", "both")) {
-      compact <- as_multiomic_object(
-        grn_set,
-        project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
-        paths = list(full = if (identical(save_mode, "both")) full_rds_path else NULL),
-        label_col = label_col,
-        verbose = FALSE
-      )
+    if (is.character(compact_rds_path) && nzchar(compact_rds_path)) {
+      dir.create(dirname(compact_rds_path), recursive = TRUE, showWarnings = FALSE)
       saveRDS(compact, compact_rds_path)
       if (isTRUE(verbose)) .log_inform("Saved Module 1 multiomic object: {.path {compact_rds_path}}")
     }
-    if (save_mode %in% c("full", "both")) {
-      saveRDS(grn_set, full_rds_path)
-      if (isTRUE(verbose)) .log_inform("Saved full Module 1 multiomic object: {.path {full_rds_path}}")
-    }
   }
 
-  if (identical(save_mode, "compact")) {
-    as_multiomic_object(
-      grn_set,
-      project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
-      label_col = label_col,
-      verbose = FALSE
-    )
-  } else {
-    grn_set
-  }
+  compact
 }

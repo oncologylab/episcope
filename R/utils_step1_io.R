@@ -37,27 +37,17 @@ NULL
   list(
     fp_bound = file.path(cache_dir, sprintf("fp_bounds_%s.%s", cache_tag, ext)),
     fp_score = file.path(cache_dir, sprintf("fp_scores_%s.%s", cache_tag, ext)),
-    fp_annotation = file.path(cache_dir, sprintf("fp_annotation_%s.%s", cache_tag, ext)),
     id_map = file.path(cache_dir, sprintf("fp_id_map_%s.%s", cache_tag, ext)),
     fp_sites = file.path(cache_dir, sprintf("fp_sites_%s.%s", cache_tag, ext))
   )
 }
 
-.aligned_fp_cache_required_exists <- function(cache_paths, schema = c("auto", "compact", "legacy")) {
-  schema <- match.arg(schema)
-  compact_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_sites")], use.names = FALSE)))
-  legacy_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
-  if (identical(schema, "compact")) return(compact_ok)
-  if (identical(schema, "legacy")) return(legacy_ok)
-  compact_ok || legacy_ok
+.aligned_fp_cache_required_exists <- function(cache_paths) {
+  all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_sites")], use.names = FALSE)))
 }
 
 .aligned_fp_cache_schema <- function(cache_paths) {
-  compact_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_sites")], use.names = FALSE)))
-  legacy_ok <- all(file.exists(unlist(cache_paths[c("fp_bound", "fp_score", "fp_annotation")], use.names = FALSE)))
-  if (compact_ok) return("compact")
-  if (legacy_ok) return("legacy")
-  "missing"
+  if (.aligned_fp_cache_required_exists(cache_paths)) "compact" else "missing"
 }
 
 .aligned_fp_cache_choose_format <- function(cache_dir,
@@ -67,8 +57,8 @@ NULL
   cache_format <- match.arg(cache_format)
   csv_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "csv")
   parquet_paths <- .aligned_fp_cache_paths(cache_dir, cache_tag, "parquet")
-  has_csv <- .aligned_fp_cache_required_exists(csv_paths, "auto")
-  has_parquet <- .aligned_fp_cache_required_exists(parquet_paths, "auto")
+  has_csv <- .aligned_fp_cache_required_exists(csv_paths)
+  has_parquet <- .aligned_fp_cache_required_exists(parquet_paths)
   has_arrow <- requireNamespace("arrow", quietly = TRUE)
 
   if (identical(cache_format, "parquet")) {
@@ -129,7 +119,6 @@ load_fp_aligned_from_cache <- function(
     output_mode = c("full", "distinct"),
     load_id_map = FALSE,
     cache_format = c("csv", "parquet", "auto"),
-    cache_schema = c("auto", "compact", "legacy"),
     expand_compact_annotation = TRUE,
     verbose = TRUE
 ) {
@@ -137,7 +126,6 @@ load_fp_aligned_from_cache <- function(
 
   output_mode <- match.arg(output_mode)
   cache_format <- match.arg(cache_format)
-  cache_schema <- match.arg(cache_schema)
   stopifnot(is.logical(expand_compact_annotation), length(expand_compact_annotation) == 1L, !is.na(expand_compact_annotation))
   cache_info <- .aligned_fp_cache_choose_format(cache_dir, cache_tag, cache_format)
   cache_paths <- cache_info$paths
@@ -151,9 +139,6 @@ load_fp_aligned_from_cache <- function(
   }
 
   schema_detected <- .aligned_fp_cache_schema(cache_paths)
-  if (!identical(cache_schema, "auto") && !identical(cache_schema, schema_detected)) {
-    .log_abort("Requested aligned footprint cache_schema={cache_schema}, but detected {schema_detected} cache for tag={cache_tag}.")
-  }
 
   fp_bound <- .aligned_fp_read_table(cache_paths$fp_bound, cache_info$format)
   fp_score <- .aligned_fp_read_table(cache_paths$fp_score, cache_info$format)
@@ -163,9 +148,7 @@ load_fp_aligned_from_cache <- function(
     data.table::data.table()
   }
 
-  if (file.exists(cache_paths$fp_annotation)) {
-    fp_annotation <- .aligned_fp_read_table(cache_paths$fp_annotation, cache_info$format)
-  } else if (isTRUE(expand_compact_annotation) && nrow(fp_sites) > 0L && all(c("peak_ID", "atac_peak", "motifs_all") %in% names(fp_sites))) {
+  if (isTRUE(expand_compact_annotation) && nrow(fp_sites) > 0L && all(c("peak_ID", "atac_peak", "motifs_all") %in% names(fp_sites))) {
     motif_parts <- strsplit(as.character(fp_sites$motifs_all), ";", fixed = TRUE)
     motif_lens <- lengths(motif_parts)
     keep <- motif_lens > 0L

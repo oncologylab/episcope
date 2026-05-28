@@ -23,19 +23,11 @@
 .craftgrn_state <- new.env(parent = emptyenv())
 
 .craftgrn_get_option <- function(name, default = NULL) {
-  new_name <- paste0("craftgrn.", name)
-  old_name <- paste0("episcope.", name)
-  val <- getOption(new_name, default = NULL)
-  if (!is.null(val)) return(val)
-  getOption(old_name, default = default)
+  getOption(paste0("craftgrn.", name), default = default)
 }
 
 .craftgrn_getenv <- function(name, unset = "") {
-  new_name <- paste0("CRAFTGRN_", name)
-  old_name <- paste0("EPISCOPE_", name)
-  val <- Sys.getenv(new_name, unset = NA_character_)
-  if (!is.na(val)) return(val)
-  Sys.getenv(old_name, unset = unset)
+  Sys.getenv(paste0("CRAFTGRN_", name), unset = unset)
 }
 
 .cfg_get <- function(name, default = NULL) {

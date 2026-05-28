@@ -13,7 +13,7 @@ as_multiomic_object(
 )
 }
 \arguments{
-\item{omics_data}{Legacy or compact prepared Module 1 object.}
+\item{omics_data}{Prepared Module 1 object.}
 
 \item{project}{Optional project metadata list.}
 

@@ -36,7 +36,7 @@ apply threshold rules consistently during term construction.
 Required input columns are `comparison_id`, `case_id`, `ctrl_id`, `tf`,
 `gene_key`, `peak_id`, `fp_score_case`, `fp_score_ctrl`,
 `gene_expr_case`, and `gene_expr_ctrl`. TF expression columns
-`tf_expr_case` and `tf_expr_ctrl` are optional for legacy cluster-level
+`tf_expr_case` and `tf_expr_ctrl` are optional for cluster-level
 workflows but required when condition-level TF thresholds are applied.
 }
 \keyword{internal}

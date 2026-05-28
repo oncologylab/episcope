@@ -170,7 +170,7 @@ is_multiomic_object <- function(x) {
 
 #' Convert a prepared Module 1 object to the compact multiomic schema
 #'
-#' @param omics_data Legacy or compact prepared Module 1 object.
+#' @param omics_data Prepared Module 1 object.
 #' @param project Optional project metadata list.
 #' @param paths Optional path metadata list.
 #' @param label_col Metadata column used as the condition label.
@@ -267,28 +267,22 @@ validate_multiomic_object <- function(omics_data) {
 
 
 
-#' Convert a compact multiomic object to the legacy Module 1 view
-#'
-#' @param omics_data Compact or legacy object.
-#' @param verbose Emit status messages.
-#'
-#' @return A legacy-compatible Module 1 list.
-#' @export
-as_multiomic_legacy <- function(omics_data, verbose = TRUE) {
-  if (!is_multiomic_object(omics_data)) return(omics_data)
-  validate_multiomic_object(omics_data)
-  fp <- omics_data$features$fp
-  genes <- omics_data$features$gene
-  motif <- omics_data$features$fp_motif
-  if (!is.data.frame(motif) || !all(c("fp_id", "motif", "tf") %in% names(motif))) {
-    motif <- tibble::tibble(fp_id = character(), motif = character(), tf = character())
+.as_module1_analysis_data <- function(omics_data, verbose = TRUE) {
+  if (!is_multiomic_object(omics_data)) {
+    .log_abort("`omics_data` must be a compact multiomic object created by as_multiomic_object().")
   }
-  ann <- dplyr::left_join(
-    motif,
-    fp[, c("fp_id", "atac_peak"), drop = FALSE],
-    by = "fp_id"
-  )
-  fp_annotation <- tibble::tibble(
+  validate_multiomic_object(omics_data)
+  fp <- data.table::as.data.table(omics_data$features$fp)
+  genes <- data.table::as.data.table(omics_data$features$gene)
+  motif <- data.table::as.data.table(omics_data$features$fp_motif)
+  if (!is.data.frame(motif) || !all(c("fp_id", "motif", "tf") %in% names(motif))) {
+    motif <- data.table::data.table(fp_id = character(), motif = character(), tf = character())
+  }
+  fp_keep <- fp[, .(fp_id = as.character(fp_id), atac_peak = as.character(atac_peak))]
+  data.table::setkey(motif, fp_id)
+  data.table::setkey(fp_keep, fp_id)
+  ann <- fp_keep[motif, on = "fp_id"]
+  fp_annotation <- data.table::data.table(
     fp_peak = as.character(ann$fp_id),
     atac_peak = as.character(ann$atac_peak),
     motifs = as.character(ann$motif),
@@ -297,15 +291,15 @@ as_multiomic_legacy <- function(omics_data, verbose = TRUE) {
   out <- list(
     fp_score_condition_qn = .compact_df_from_matrix(omics_data$matrices$fp_score, "peak_ID"),
     fp_bound_condition = .compact_df_from_matrix(omics_data$matrices$fp_bound, "peak_ID"),
-    fp_annotation = fp_annotation,
+    fp_annotation = tibble::as_tibble(fp_annotation),
     rna_condition = .compact_gene_df_from_matrix(omics_data$matrices$gene_expr, genes),
     rna_expressed = .compact_gene_df_from_matrix(omics_data$matrices$gene_on, genes, logical_out = TRUE),
     tf_list = omics_data$refs$tf,
     motif_db = omics_data$refs$motif_db,
     sample_metadata_used = omics_data$samples,
     sample_labels = colnames(omics_data$matrices$fp_score),
-    status = list(compact_legacy_view = TRUE)
+    status = list(module1_analysis_view = TRUE)
   )
-  if (isTRUE(verbose)) .log_inform("Converted compact multiomic object to legacy Module 1 view.")
+  if (isTRUE(verbose)) .log_inform("Prepared compact multiomic object for Module 1 analysis.")
   out
 }

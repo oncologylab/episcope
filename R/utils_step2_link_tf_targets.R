@@ -16,12 +16,6 @@
     cfg <- project_config
   }
   if (is.list(cfg$module2)) cfg <- utils::modifyList(cfg, cfg$module2)
-  if (is.null(cfg$threshold_rna_gene_corr_r) && !is.null(cfg$threshold_rna_gene_corr_abs_r)) {
-    cfg$threshold_rna_gene_corr_r <- cfg$threshold_rna_gene_corr_abs_r
-  }
-  if (is.null(cfg$threshold_fp_gene_corr_r) && !is.null(cfg$threshold_fp_gene_corr_abs_r)) {
-    cfg$threshold_fp_gene_corr_r <- cfg$threshold_fp_gene_corr_abs_r
-  }
   cfg
 }
 
@@ -264,7 +258,7 @@
   output_format <- match.arg(output_format)
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
-  if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
   validate_multiomic_object(multiomic_data)
   gene_tss <- .module2_resolve_gene_tss(gene_tss, cfg = cfg, multiomic_data = multiomic_data, verbose = verbose)
   mats <- multiomic_data$matrices
@@ -386,7 +380,7 @@
 
 #' Link predicted TF binding sites to target genes
 #'
-#' @param multiomic_data Compact multiomic object or compatible Module 1 object.
+#' @param multiomic_data Compact multiomic object created by `as_multiomic_object()`.
 #' @param predicted_tfbs Compact Module 1 predicted TFBS table or path.
 #' @param gene_tss Optional gene TSS annotation table or path. If `NULL`, the
 #'   table is resolved from `project_config$gene_tss` or generated from the
@@ -404,7 +398,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   output_format <- match.arg(output_format)
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
-  if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
   validate_multiomic_object(multiomic_data)
   predicted_manifest <- .module2_predicted_manifest(predicted_tfbs)
   if (!is.null(predicted_manifest)) {

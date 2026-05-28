@@ -44,7 +44,6 @@ reference:
   - as_multiomic_object
   - validate_multiomic_object
   - is_multiomic_object
-  - as_multiomic_legacy
 
 - title: TF binding site and motif utilities
   desc: Work with motif resources, footprints, and TF-footprint correlations.

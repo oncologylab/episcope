@@ -22,11 +22,12 @@ predict_tfbs(
   link_return_limit = getOption("craftgrn.module1_link_return_limit", 5e+06),
   min_non_na = 3L,
   cores = NULL,
-  verbose = TRUE
+  verbose = TRUE,
+  time_log = verbose
 )
 }
 \arguments{
-\item{omics_data}{Prepared Module 1 multiomic object.}
+\item{omics_data}{Compact multiomic object created by `as_multiomic_object()` or `load_prep_multiomic_data()`.}
 
 \item{out_dir}{Output directory.}
 
@@ -70,6 +71,8 @@ memory when `return_links = NULL` and `write_outputs = TRUE`.}
 If `NULL`, use available cores.}
 
 \item{verbose}{Emit concise progress messages.}
+
+\item{time_log}{Logical; if TRUE, emit elapsed-time messages.}
 }
 \value{
 A list containing `omics_data`, `high_confidence_footprints`,

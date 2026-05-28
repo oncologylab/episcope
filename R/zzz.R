@@ -13,7 +13,7 @@ utils::globalVariables(c(
   "any_bound", "ATAC_bound", "atac_peak", "ATAC_score",
   "bed_end", "bed_start", "bound_peaks", "chr", "comp_id",
   "condition", "condition_support", "corr_fp_tf_p", "corr_fp_tf_p_adj", "corr_fp_tf_r",
-  "e_exp", "expressed_genes", "focal_point", "fp_peak", "fp_peak_bak",
+  "e_exp", "expressed_genes", "focal_point", "fp_peak", "source_fp_peak",
   "group_size", "i.atac_peak", "i.group_size", "i.new_peak_ID",
   "metric", "mid", "motif_use", "motifs", "N", "new_end", "new_peak_ID",
   "new_start", "peak_ATAC", "peak_chr", "peak_end", "peak_ID",

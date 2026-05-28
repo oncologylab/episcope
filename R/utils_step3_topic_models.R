@@ -3400,7 +3400,7 @@ compute_link_topic_scores <- function(edges_docs,
                               thrP = 0.975,
                               min_terms = 50L,
                               gammafit_scope = c("topic_term_group", "global_term_group")) {
-  # Backward-compatible combined cutoff (max of class-specific cutoffs).
+  # Combined cutoff using the maximum class-specific cutoff.
   gammafit_scope <- match.arg(gammafit_scope)
   cut_tbl <- .gammafit_cutoffs_by_termclass(
     score_mat,
@@ -8062,7 +8062,7 @@ extract_regulatory_topics <- function(k,
 # Purpose:
 # Package-level utilities for Module 3 topic-model document construction.
 # This file intentionally starts small. Add functions here gradually as they are
-# needed by benchmark and package workflows instead of copying the full legacy
+# needed by benchmark and package workflows instead of copying the full
 # topic-model helper file.
 #
 # Design notes:
@@ -8274,7 +8274,7 @@ add_tf_docs <- function(edges,
 #' Required input columns are `comparison_id`, `case_id`, `ctrl_id`, `tf`,
 #' `gene_key`, `peak_id`, `fp_score_case`, `fp_score_ctrl`,
 #' `gene_expr_case`, and `gene_expr_ctrl`. TF expression columns
-#' `tf_expr_case` and `tf_expr_ctrl` are optional for legacy cluster-level
+#' `tf_expr_case` and `tf_expr_ctrl` are optional for cluster-level
 #' workflows but required when condition-level TF thresholds are applied.
 #'
 #' @param edges Link table.
@@ -8326,7 +8326,7 @@ add_condition_tf_docs <- function(edges,
 
 #' Add condition-level TF-cluster document IDs to links
 #'
-#' Backward-compatible wrapper for existing code paths that built only
+#' Convenience wrapper for condition-level TF-cluster document construction used by
 #' condition-level TF-cluster documents.
 #'
 #' @param edges Link table.
@@ -8536,7 +8536,7 @@ build_doc_term_from_edges <- function(edges_docs,
 
 #' Build peak terms from delta footprint scores
 #'
-#' Thin compatibility wrapper for legacy topic-report helpers.
+#' Convenience wrapper for topic-report term construction.
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.
@@ -8547,7 +8547,7 @@ build_doc_term_opt1_peak_delta_fp <- function(edges_docs, ...) {
 
 #' Build peak terms from footprint fold-change magnitude
 #'
-#' Thin compatibility wrapper for legacy topic-report helpers.
+#' Convenience wrapper for topic-report term construction.
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.
@@ -8558,7 +8558,7 @@ build_doc_term_opt2_peak_fc_fp <- function(edges_docs, ...) {
 
 #' Build gene terms from expression fold-change magnitude
 #'
-#' Thin compatibility wrapper for legacy topic-report helpers.
+#' Convenience wrapper for topic-report term construction.
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.

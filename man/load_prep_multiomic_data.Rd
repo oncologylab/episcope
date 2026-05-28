@@ -21,7 +21,6 @@ load_prep_multiomic_data(
   score_match_pct = 0.8,
   output_mode = c("full", "distinct"),
   write_outputs = FALSE,
-  save_mode = c("compact", "full", "both"),
   atac_data = NULL,
   rna_tbl = NULL,
   metadata = NULL,
@@ -36,7 +35,8 @@ load_prep_multiomic_data(
   threshold_gene_expr = NULL,
   threshold_fp_score = NULL,
   use_parallel = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  time_log = verbose
 )
 }
 \arguments{
@@ -54,7 +54,7 @@ building the object. If `FALSE`, use cached aligned footprints.}
 \item{do_motif_clustering}{Logical; if `TRUE`, run motif clustering during
 preprocessing when available.}
 
-\item{trim_hocomoco}{Logical; trim HOCOMOCO manifests when the legacy helper
+\item{trim_hocomoco}{Logical; trim HOCOMOCO manifests when the trimming helper
 is available.}
 
 \item{fp_root_dir}{Optional root directory for raw footprint overview files.}
@@ -73,9 +73,6 @@ is available.}
 
 \item{write_outputs}{Logical; if `TRUE`, save the prepared object as an RDS
 cache under `predict_tf_binding_sites/`.}
-
-\item{save_mode}{RDS object mode. Use compact for the default,
-full for the legacy debug object, or both for both.}
 
 \item{atac_data, rna_tbl, metadata}{Optional in-memory input tables.}
 
@@ -100,6 +97,8 @@ the input tables.}
 helpers.}
 
 \item{verbose}{Logical; if `TRUE`, emit concise progress messages.}
+
+\item{time_log}{Logical; if TRUE, emit elapsed-time messages.}
 }
 \value{
 A rebuilt Module 1 multi-omic object.

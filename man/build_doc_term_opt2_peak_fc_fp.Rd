@@ -13,6 +13,6 @@ build_doc_term_opt2_peak_fc_fp(edges_docs, ...)
 A document-term data.table.
 }
 \description{
-Thin compatibility wrapper for legacy topic-report helpers.
+Convenience wrapper for topic-report term construction.
 }
 \keyword{internal}

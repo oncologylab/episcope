@@ -4,14 +4,14 @@
 # Updated: 2026-03-31
 #
 # Purpose:
-# Provide Module 1 QC plots and numbered Step 1 output writers.
+# Provide Module 1 QC plots and compact Step 1 report helpers.
 #
 # Inputs:
 # - prepared Step 1 tables and correlation outputs
 # - output directories, thresholds, and labeling information
 #
 # Outputs:
-# - numbered Step 1 CSV outputs
+# - PDF QC plots
 # - PDF QC plots
 # - Step 1 summary tables and overview files
 # - grouped Module 1 motif-clustering outputs under 04_tf_motif_clustering/
@@ -50,7 +50,7 @@ plot_fp_merge_summary <- function(
   counts_df <- data.frame(
     metric = c("Raw footprints", "Aligned footprints", "ATAC peaks"),
     value = c(
-      length(unique(id_map$fp_peak_bak)),
+      length(unique(id_map$source_fp_peak)),
       length(unique(id_map$peak_ID)),
       length(unique(id_map$atac_peak))
     ),
@@ -104,177 +104,6 @@ plot_fp_merge_summary <- function(
 
   if (isTRUE(verbose)) .log_inform("Footprint merge summary saved: {pdf_path}")
   invisible(pdf_path)
-}
-
-write_grn_outputs <- function(grn_set, out_dir, db, qn_base_dir = NULL, verbose = TRUE) {
-  if (!is.list(grn_set)) .log_abort("`grn_set` must be a list.")
-  if (!is.character(out_dir) || !nzchar(out_dir)) .log_abort("`out_dir` must be a non-empty path.")
-  if (!is.character(db) || !nzchar(db)) .log_abort("`db` must be a non-empty string.")
-
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  if (!is.data.frame(grn_set$fp_score)) .log_abort("`grn_set$fp_score` is missing or invalid.")
-  if (!is.data.frame(grn_set$fp_annotation)) .log_abort("`grn_set$fp_annotation` is missing or invalid.")
-  if (!is.data.frame(grn_set$rna_expressed)) .log_abort("`grn_set$rna_expressed` is missing or invalid.")
-  if (!is.data.frame(grn_set$fp_bound_condition)) .log_abort("`grn_set$fp_bound_condition` is missing or invalid.")
-
-  fp_score_out <- grn_set$fp_score
-  if ("peak_ID" %in% names(fp_score_out)) {
-    fp_score_out <- dplyr::distinct(fp_score_out, .data$peak_ID, .keep_all = TRUE)
-  }
-  readr::write_csv(fp_score_out, file.path(out_dir, sprintf("02_fp_score_raw_%s.csv", db)))
-  readr::write_csv(grn_set$fp_annotation, file.path(out_dir, sprintf("03_fp_annotation_%s.csv", db)))
-  readr::write_csv(grn_set$rna_expressed, file.path(out_dir, sprintf("05_gene_expr_flag_%s.csv", db)))
-
-  fp_bound_out <- grn_set$fp_bound_condition
-  if ("peak_ID" %in% names(fp_bound_out)) {
-    fp_bound_out <- dplyr::distinct(fp_bound_out, .data$peak_ID, .keep_all = TRUE)
-  }
-
-  if (is.data.frame(grn_set$fp_score_condition_qn)) {
-    fp_qn_out <- grn_set$fp_score_condition_qn
-    if ("peak_ID" %in% names(fp_qn_out)) {
-      fp_qn_out <- dplyr::distinct(fp_qn_out, .data$peak_ID, .keep_all = TRUE)
-    }
-    if ("peak_ID" %in% names(fp_qn_out) && "peak_ID" %in% names(fp_bound_out)) {
-      idx_bound <- match(fp_qn_out$peak_ID, fp_bound_out$peak_ID)
-      if (anyNA(idx_bound)) {
-        .log_warn("Some fp_bound_condition peaks are missing in fp_score_qn; dropping unmatched rows.")
-        keep <- which(!is.na(idx_bound))
-        fp_qn_out <- fp_qn_out[keep, , drop = FALSE]
-        idx_bound <- idx_bound[keep]
-      }
-      fp_bound_out <- fp_bound_out[idx_bound, , drop = FALSE]
-    }
-    readr::write_csv(fp_bound_out, file.path(out_dir, sprintf("03_fp_bound_condition_%s.csv", db)))
-    readr::write_csv(fp_qn_out, file.path(out_dir, sprintf("03_fp_score_qn_%s.csv", db)))
-    if (!is.null(qn_base_dir) && is.character(qn_base_dir) && nzchar(qn_base_dir)) {
-      dir.create(qn_base_dir, recursive = TRUE, showWarnings = FALSE)
-      readr::write_csv(fp_qn_out, file.path(qn_base_dir, sprintf("fp_scores_qn_%s.csv", db)))
-    }
-  }
-
-  if (isTRUE(verbose)) {
-    .log_inform("Module 1 numbered prep outputs saved in {.path {out_dir}}")
-  }
-  invisible(out_dir)
-}
-
-#' Write numbered Module 1 preprocessing outputs
-#'
-#' Write the standard numbered Module 1 preprocessing outputs from a prepared
-#' multi-omic object without rerunning preprocessing. This includes the raw
-#' footprint score table, normalized footprint outputs, gene-expression flag
-#' table, and the associated QC PDFs.
-#'
-#' @param omics_data Prepared Module 1 multi-omic object.
-#' @param out_dir Output directory, typically `predict_tf_binding_sites/`.
-#' @param db Database label used in output file names.
-#' @param threshold_fp_score Footprint-score threshold used when creating the
-#'   condition-specific bound matrix.
-#' @param threshold_gene_expr Expression threshold used when creating the
-#'   condition-specific gene-expression flag matrix.
-#' @param fp_cache_dir Optional aligned-footprint cache directory used to
-#'   regenerate `02_fp_merge_summary.pdf` when it is missing.
-#' @param fp_cache_tag Optional cache tag used with `fp_cache_dir`.
-#' @param output_mode Cached aligned-footprint output mode used with
-#'   `load_fp_aligned_from_cache()`.
-#' @param cluster_dir Optional source directory for motif-clustering outputs.
-#'   When supplied, `04_*` files are copied into
-#'   `file.path(out_dir, "04_tf_motif_clustering")`.
-#' @param verbose Logical; if `TRUE`, emit concise progress messages.
-#'
-#' @return Output directory path (invisible).
-#' @keywords internal
-write_multiomic_prep_outputs <- function(
-    omics_data,
-    out_dir,
-    db,
-    threshold_fp_score,
-    threshold_gene_expr,
-    fp_cache_dir = NULL,
-    fp_cache_tag = NULL,
-    output_mode = "distinct",
-    cluster_dir = NULL,
-    verbose = TRUE
-) {
-  if (!is.list(omics_data)) {
-    .log_abort("`omics_data` must be a list.")
-  }
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  cluster_subdir <- file.path(out_dir, "04_tf_motif_clustering")
-  required_files <- c(
-    file.path(out_dir, sprintf("02_fp_score_raw_%s.csv", db)),
-    file.path(out_dir, "02_fp_merge_summary.pdf"),
-    file.path(out_dir, sprintf("03_fp_annotation_%s.csv", db)),
-    file.path(out_dir, sprintf("03_fp_bound_condition_%s.csv", db)),
-    file.path(out_dir, sprintf("03_fp_score_qn_%s.csv", db)),
-    file.path(out_dir, "03_fp_norm_bound_summary.pdf"),
-    file.path(out_dir, sprintf("05_gene_expr_flag_%s.csv", db)),
-    file.path(out_dir, "05_gene_expr_flag_summary.pdf")
-  )
-  has_04_outputs <- dir.exists(cluster_subdir) &&
-    length(list.files(cluster_subdir, pattern = "^04_", full.names = TRUE)) > 0L
-  if (all(file.exists(required_files)) && has_04_outputs) {
-    if (isTRUE(verbose)) {
-      .log_inform("Module 1 numbered prep outputs already present in {.path {out_dir}}")
-    }
-    return(invisible(out_dir))
-  }
-
-  write_grn_outputs(
-    grn_set = omics_data,
-    out_dir = out_dir,
-    db = db,
-    verbose = verbose
-  )
-
-  merge_summary_path <- file.path(out_dir, "02_fp_merge_summary.pdf")
-  if (!file.exists(merge_summary_path) &&
-      is.character(fp_cache_dir) && nzchar(fp_cache_dir) &&
-      is.character(fp_cache_tag) && nzchar(fp_cache_tag) &&
-      exists("load_fp_aligned_from_cache", mode = "function")) {
-    fp_aligned <- load_fp_aligned_from_cache(
-      cache_dir = fp_cache_dir,
-      cache_tag = fp_cache_tag,
-      output_mode = output_mode,
-      verbose = FALSE
-    )
-    if (is.list(fp_aligned) && is.data.frame(fp_aligned$id_map)) {
-      plot_fp_merge_summary(
-        fp_aligned = fp_aligned,
-        out_dir = out_dir,
-        db = db,
-        verbose = verbose
-      )
-    }
-  }
-
-  plot_fp_norm_bound_qc(
-    omics_data = omics_data,
-    out_dir = out_dir,
-    db = db,
-    threshold_fp_score = threshold_fp_score,
-    verbose = verbose
-  )
-  plot_gene_expr_qc(
-    omics_data = omics_data,
-    out_dir = out_dir,
-    db = db,
-    threshold_gene_expr = threshold_gene_expr,
-    verbose = verbose
-  )
-
-  if (is.character(cluster_dir) && nzchar(cluster_dir) && dir.exists(cluster_dir)) {
-    cluster_files <- list.files(cluster_dir, pattern = "^04_", full.names = TRUE)
-    if (length(cluster_files)) {
-      dir.create(cluster_subdir, recursive = TRUE, showWarnings = FALSE)
-      file.copy(cluster_files, cluster_subdir, overwrite = TRUE)
-    }
-  }
-
-  invisible(out_dir)
 }
 
 plot_fp_norm_bound_qc <- function(

@@ -10,7 +10,6 @@ load_fp_aligned_from_cache(
   output_mode = c("full", "distinct"),
   load_id_map = FALSE,
   cache_format = c("csv", "parquet", "auto"),
-  cache_schema = c("auto", "compact", "legacy"),
   expand_compact_annotation = TRUE,
   verbose = TRUE
 )

@@ -18,7 +18,7 @@ link_tf_targets(
 )
 }
 \arguments{
-\item{multiomic_data}{Compact multiomic object or compatible Module 1 object.}
+\item{multiomic_data}{Compact multiomic object created by `as_multiomic_object()`.}
 
 \item{predicted_tfbs}{Compact Module 1 predicted TFBS table or path.}
 

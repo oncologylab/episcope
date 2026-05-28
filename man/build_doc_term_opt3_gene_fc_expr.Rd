@@ -13,6 +13,6 @@ build_doc_term_opt3_gene_fc_expr(edges_docs, ...)
 A document-term data.table.
 }
 \description{
-Thin compatibility wrapper for legacy topic-report helpers.
+Convenience wrapper for topic-report term construction.
 }
 \keyword{internal}

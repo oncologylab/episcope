@@ -15,7 +15,7 @@ add_condition_tf_cluster_docs(edges, tf_cluster_map)
 A data.table with condition-specific TF-cluster document IDs.
 }
 \description{
-Backward-compatible wrapper for existing code paths that built only
+Convenience wrapper for condition-level TF-cluster document construction used by
 condition-level TF-cluster documents.
 }
 \keyword{internal}

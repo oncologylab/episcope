@@ -20,16 +20,16 @@ test_that("aligned footprint cache loader skips id_map by default", {
   )
   readr::write_csv(
     tibble::tibble(
-      fp_peak = c("chr1:1-10", "chr1:20-30"),
+      peak_ID = c("chr1:1-10", "chr1:20-30"),
       atac_peak = c("chr1:1-50", "chr1:1-50"),
-      motifs = c("M1", "M2")
+      motifs_all = c("M1", "M2")
     ),
-    file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag))
+    file.path(cache_dir, sprintf("fp_sites_%s.csv", cache_tag))
   )
   readr::write_csv(
     tibble::tibble(
       peak_ID = c("chr1:1-10", "chr1:20-30"),
-      fp_peak_bak = c("chr1:1-10", "chr1:20-30"),
+      source_fp_peak = c("chr1:1-10", "chr1:20-30"),
       atac_peak = c("chr1:1-50", "chr1:1-50"),
       group_size = c(1, 1)
     ),
@@ -56,8 +56,8 @@ test_that("aligned footprint cache loader loads id_map only when requested", {
 
   readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1), file.path(cache_dir, sprintf("fp_scores_%s.csv", cache_tag)))
   readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", sample_a = 1L), file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag)))
-  readr::write_csv(tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "M1"), file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag)))
-  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", fp_peak_bak = "chr1:1-10", atac_peak = "chr1:1-50", group_size = 1), file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag)))
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", atac_peak = "chr1:1-50", motifs_all = "M1"), file.path(cache_dir, sprintf("fp_sites_%s.csv", cache_tag)))
+  readr::write_csv(tibble::tibble(peak_ID = "chr1:1-10", source_fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", group_size = 1), file.path(cache_dir, sprintf("fp_id_map_%s.csv", cache_tag)))
 
   out <- load_fp_aligned_from_cache(
     cache_dir = cache_dir,
@@ -87,11 +87,11 @@ test_that("aligned footprint cache loader reads Parquet cache when available", {
   )
   arrow::write_parquet(
     tibble::tibble(
-      fp_peak = c("chr1:1-10", "chr1:20-30"),
+      peak_ID = c("chr1:1-10", "chr1:20-30"),
       atac_peak = c("chr1:1-50", "chr1:1-50"),
-      motifs = c("M1", "M2")
+      motifs_all = c("M1", "M2")
     ),
-    file.path(cache_dir, sprintf("fp_annotation_%s.parquet", cache_tag))
+    file.path(cache_dir, sprintf("fp_sites_%s.parquet", cache_tag))
   )
 
   out <- load_fp_aligned_from_cache(
@@ -122,8 +122,8 @@ test_that("aligned footprint cache loader defaults to CSV when both formats exis
     file.path(cache_dir, sprintf("fp_bounds_%s.csv", cache_tag))
   )
   readr::write_csv(
-    tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "CSV"),
-    file.path(cache_dir, sprintf("fp_annotation_%s.csv", cache_tag))
+    tibble::tibble(peak_ID = "chr1:1-10", atac_peak = "chr1:1-50", motifs_all = "CSV"),
+    file.path(cache_dir, sprintf("fp_sites_%s.csv", cache_tag))
   )
 
   arrow::write_parquet(
@@ -135,8 +135,8 @@ test_that("aligned footprint cache loader defaults to CSV when both formats exis
     file.path(cache_dir, sprintf("fp_bounds_%s.parquet", cache_tag))
   )
   arrow::write_parquet(
-    tibble::tibble(fp_peak = "chr1:1-10", atac_peak = "chr1:1-50", motifs = "PARQUET"),
-    file.path(cache_dir, sprintf("fp_annotation_%s.parquet", cache_tag))
+    tibble::tibble(peak_ID = "chr1:1-10", atac_peak = "chr1:1-50", motifs_all = "PARQUET"),
+    file.path(cache_dir, sprintf("fp_sites_%s.parquet", cache_tag))
   )
 
   out <- load_fp_aligned_from_cache(
@@ -453,7 +453,7 @@ test_that("footprint alignment can write cache without returning large tables", 
   expect_equal(aligned$counts$fp_annotation, 0L)
   expect_true(file.exists(aligned$paths$fp_score))
   expect_true(file.exists(aligned$paths$fp_bound))
-  expect_false(file.exists(aligned$paths$fp_annotation))
+  expect_false("fp_annotation" %in% names(aligned$paths))
   expect_true(file.exists(aligned$paths$fp_sites))
   expect_equal(aligned$counts$fp_sites, 1L)
   fp_sites <- data.table::fread(aligned$paths$fp_sites, showProgress = FALSE)

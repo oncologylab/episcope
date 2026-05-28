@@ -184,7 +184,7 @@
     out[, condition_fp_score := NA_real_]
     return(out)
   }
-  if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
   validate_multiomic_object(multiomic_data)
   mats <- multiomic_data$matrices
   all_conditions <- colnames(mats$fp_score)
@@ -330,7 +330,7 @@
   seed_tf <- nodes[is_seed_tf %in% TRUE, node_id]
   if (!length(seed_tf)) seed_tf <- nodes[node_type == "TF", node_id]
   if (!length(seed_tf)) seed_tf <- title
-  .module2_legacy_write_network_html(
+  .module2_report_browser_write_network_html(
     nodes = nodes,
     edges = edges,
     case = list(seed_tf = seed_tf[[1L]]),
@@ -365,7 +365,7 @@
     dt[, `:=`(condition = "all", condition_fp_score = NA_real_)]
     return(.module2_report_build_direct_edges(dt, min_supporting_peaks = 1L))
   }
-  if (!is_multiomic_object(multiomic_data)) multiomic_data <- as_multiomic_object(multiomic_data, verbose = FALSE)
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
   validate_multiomic_object(multiomic_data)
   mats <- multiomic_data$matrices
   all_conditions <- colnames(mats$fp_score)
@@ -617,7 +617,7 @@
   k_label <- sub("_.*$", "", base)
   out_suffix <- sub("^[^_]+_", "", base)
   payload_dt <- .module2_report_connectivity_payload(edge_dt)
-  .module2_legacy_write_condition_pathway_tf_gene_k_index(
+  .module2_report_browser_write_condition_pathway_tf_gene_k_index(
     edge_dt = payload_dt,
     out_dir = dirname(out_html),
     title_prefix = title,
@@ -804,7 +804,7 @@
   out_suffix <- sub("^[^_]+_", "", base)
   page_label <- if (identical(report_name, "TF-TF connectivity")) "TF-TF connectivity" else "direct TF-TF"
   edge_label <- if (identical(report_name, "TF-TF connectivity")) "condition-filtered TF-to-TF connectivity edges" else "condition-filtered direct TF-to-TF edges"
-  .module2_legacy_write_condition_direct_tf_tf_k_index(
+  .module2_report_browser_write_condition_direct_tf_tf_k_index(
     edge_dt = data.table::as.data.table(edge_dt),
     out_dir = dirname(out_html),
     title_prefix = title,

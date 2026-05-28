@@ -76,10 +76,10 @@
 }
 
 .module1_prepare_predict_omics <- function(omics_data, label_col = NULL, verbose = TRUE) {
-  if (!is.list(omics_data)) .log_abort("`omics_data` must be a prepared Module 1 list.")
-  if (is_multiomic_object(omics_data)) {
-    omics_data <- as_multiomic_legacy(omics_data, verbose = verbose)
+  if (!is_multiomic_object(omics_data)) {
+    .log_abort("`omics_data` must be a compact multiomic object created by as_multiomic_object().")
   }
+  omics_data <- .as_module1_analysis_data(omics_data, verbose = verbose)
   if (!is.data.frame(omics_data$fp_annotation)) {
     .log_abort("`omics_data$fp_annotation` is required.")
   }
@@ -786,7 +786,7 @@
 #' first uses motif-supported FP-TF correlations to define high-confidence
 #' footprints, then predicts sparse FP-TF binding links for expressed TFs.
 #'
-#' @param omics_data Prepared Module 1 multiomic object.
+#' @param omics_data Compact multiomic object created by `as_multiomic_object()` or `load_prep_multiomic_data()`.
 #' @param out_dir Output directory.
 #' @param db Motif database label used in output metadata.
 #' @param label_col Metadata column used to build condition-level matrices when
@@ -813,6 +813,7 @@
 #' @param cores Number of worker cores for the dense prediction correlation step.
 #'   If `NULL`, use available cores.
 #' @param verbose Emit concise progress messages.
+#' @param time_log Logical; if TRUE, emit elapsed-time messages.
 #'
 #' @return A list containing `omics_data`, `high_confidence_footprints`,
 #'   `motif_supported_correlations`, `tfbs_links`, `tfbs_stats`, `reports`, and
@@ -835,7 +836,8 @@ predict_tfbs <- function(omics_data,
                          link_return_limit = getOption("craftgrn.module1_link_return_limit", 5000000),
                          min_non_na = 3L,
                          cores = NULL,
-                         verbose = TRUE) {
+                         verbose = TRUE,
+                         time_log = verbose) {
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a prepared Module 1 list.")
   if (!is.character(out_dir) || length(out_dir) != 1L || !nzchar(out_dir)) {
     .log_abort("`out_dir` must be a non-empty path.")

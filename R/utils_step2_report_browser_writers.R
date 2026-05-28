@@ -1,9 +1,9 @@
-# Legacy Module 2 HTML report writers.
+# Browser Module 2 HTML report writers.
 #
 # These package-local writers preserve the visual design of the original
 # benchmark HTML reports while avoiding runtime dependencies on dev/benchmark.
 
-.module2_legacy_html_escape <- function(x) {
+.module2_report_browser_html_escape <- function(x) {
     x <- as.character(x)
     x <- gsub("&", "&amp;", x, fixed = TRUE)
     x <- gsub("<", "&lt;", x, fixed = TRUE)
@@ -12,7 +12,7 @@
     x
 }
 
-.module2_legacy_network_payload <- function(nodes, edges, seed_tf, tf_only = FALSE) {
+.module2_report_browser_network_payload <- function(nodes, edges, seed_tf, tf_only = FALSE) {
     from <- to <- edge_score <- abs_edge_score <- node_id <- NULL
     node_type <- is_target_gene <- shared_targets <- is_seed_tf <- NULL
     display_size <- edge_r <- node_role <- perturbation_log2fc <- NULL
@@ -42,19 +42,19 @@
     list(nodes = node_dt[, .(id = node_id, node_type, node_role, is_seed_tf, is_target_gene, shared_targets, display_size, perturbation_log2fc, strict_mean_expression)], edges = edge_dt[, .(from, to, edge_class, edge_score, edge_r, n_supporting_links, best_peak_ID)])
 }
 
-.module2_legacy_write_network_html <- function(nodes, edges, case, out_html, title, tf_only = FALSE, max_edges_default = 0L) {
-    payload <- .module2_legacy_network_payload(nodes, edges, case$seed_tf, tf_only = tf_only)
+.module2_report_browser_write_network_html <- function(nodes, edges, case, out_html, title, tf_only = FALSE, max_edges_default = 0L) {
+    payload <- .module2_report_browser_network_payload(nodes, edges, case$seed_tf, tf_only = tf_only)
     if (!nrow(payload$nodes) || !nrow(payload$edges)) {
         writeLines(c("<!doctype html><html><head><meta charset=\"utf-8\"/></head><body><b>No edges to plot.</b></body></html>"), out_html, useBytes = TRUE)
         return(out_html)
     }
     nodes_json <- jsonlite::toJSON(payload$nodes, dataframe = "rows", auto_unbox = TRUE, null = "null")
     edges_json <- jsonlite::toJSON(payload$edges, dataframe = "rows", auto_unbox = TRUE, null = "null")
-    html <- c("<!doctype html>", "<html>", "<head>", "<meta charset=\"utf-8\"/>", sprintf("<title>%s</title>", .module2_legacy_html_escape(title)), "<style>", "body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;}", ".wrap{max-width:min(calc((100vh - 230px) * 1.7778),calc(100vw - 24px));margin:0 auto;padding:12px 12px 16px 12px;}", ".top{display:block;border-bottom:1px solid #d6d6d0;padding-bottom:10px;margin-bottom:10px;}", "h1{font-size:21px;line-height:1.18;margin:0 0 6px 0;font-weight:700;color:#111;}", 
+    html <- c("<!doctype html>", "<html>", "<head>", "<meta charset=\"utf-8\"/>", sprintf("<title>%s</title>", .module2_report_browser_html_escape(title)), "<style>", "body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;}", ".wrap{max-width:min(calc((100vh - 230px) * 1.7778),calc(100vw - 24px));margin:0 auto;padding:12px 12px 16px 12px;}", ".top{display:block;border-bottom:1px solid #d6d6d0;padding-bottom:10px;margin-bottom:10px;}", "h1{font-size:21px;line-height:1.18;margin:0 0 6px 0;font-weight:700;color:#111;}", 
         ".meta{font-size:12px;line-height:1.35;color:#555;max-width:1200px;font-weight:700;margin-bottom:10px;}", ".controls{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap;justify-content:flex-start;}", ".control{display:flex;gap:5px;align-items:center;font-size:12px;color:#333;white-space:nowrap;font-weight:700;}", "select,input{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:6px 8px;}", "input{width:62px;}", "input[type=text]{width:92px;}", 
         "input[type=range]{width:96px;padding:0;}", "input[type=color]{width:32px;height:30px;padding:2px;}", "input[type=checkbox]{width:auto;}", "#layoutSelect{width:116px;}#paletteSelect{width:220px;}#nodeSelect{width:160px;}", "button{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #777;background:#222;color:#fff;border-radius:3px;padding:7px 10px;cursor:pointer;}", ".note{font-size:11px;color:#666;margin:0 0 10px 0;font-weight:700;}", ".canvas{position:relative;width:100%;aspect-ratio:16/9;max-height:calc(100vh - 230px);border:1px solid #d6d6d0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);overflow:hidden;cursor:grab;}", 
         ".canvas.panning{cursor:grabbing;}", "svg{width:100%;height:100%;display:block;background:#fff;}", ".edge{fill:none;}", ".node{stroke:transparent;stroke-width:0;cursor:grab;}", ".node:active{cursor:grabbing;}", ".label{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#fff;stroke:#666;stroke-width:2.4px;paint-order:stroke;dominant-baseline:middle;text-anchor:middle;pointer-events:none;}", ".geneLabel{fill:#111;stroke:#fff;stroke-width:2.6px;paint-order:stroke;text-anchor:start;}", 
-        ".selected{stroke:#d7263d;stroke-width:2.6;}", ".tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:340px;line-height:1.35;}", "</style>", "</head>", "<body>", "<div class=\"wrap\">", "<div class=\"top\">", "<div>", sprintf("<h1>%s</h1>", .module2_legacy_html_escape(title)), "<div class=\"meta\">Edges are 100 kb module2 TF-to-target predictions. Thin edges use shade to show absolute R/link score: black is strongest, light grey is weakest. TF rectangles scale by the number of selected target genes shared with the seed TF.</div>", 
+        ".selected{stroke:#d7263d;stroke-width:2.6;}", ".tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:340px;line-height:1.35;}", "</style>", "</head>", "<body>", "<div class=\"wrap\">", "<div class=\"top\">", "<div>", sprintf("<h1>%s</h1>", .module2_report_browser_html_escape(title)), "<div class=\"meta\">Edges are 100 kb module2 TF-to-target predictions. Thin edges use shade to show absolute R/link score: black is strongest, light grey is weakest. TF rectangles scale by the number of selected target genes shared with the seed TF.</div>", 
         "</div>", "<div class=\"controls\">", sprintf("<label class=\"control\">Max edges <input id=\"maxEdges\" type=\"number\" min=\"0\" value=\"%s\"/></label>", max_edges_default), "<label class=\"control\">Layout <select id=\"layoutSelect\"><option value=\"force\">Force</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>", 
         "<label class=\"control\">Spacing <input id=\"spacingRange\" type=\"range\" min=\"0.5\" max=\"2\" step=\"0.01\" value=\"1\"/><input id=\"spacingValue\" type=\"number\" min=\"0.5\" max=\"2\" step=\"0.01\" value=\"1\"/></label>", "<label class=\"control\">TF box <input id=\"tfBoxMin\" type=\"number\" min=\"6\" max=\"80\" step=\"1\" value=\"14\"/><input id=\"tfBoxMax\" type=\"number\" min=\"8\" max=\"110\" step=\"1\" value=\"64\"/></label>", "<label class=\"control\">TF font <input id=\"tfFontMin\" type=\"number\" min=\"5\" max=\"24\" step=\"1\" value=\"9\"/><input id=\"tfFontMax\" type=\"number\" min=\"6\" max=\"34\" step=\"1\" value=\"19\"/></label>", 
         "<label class=\"control\">Gene size <input id=\"geneRadius\" type=\"number\" min=\"2\" max=\"18\" step=\"0.5\" value=\"6\"/></label>", "<label class=\"control\">Gene font <input id=\"geneFont\" type=\"number\" min=\"5\" max=\"20\" step=\"0.5\" value=\"9\"/></label>", "<label class=\"control\">Edge <input id=\"edgeWidth\" type=\"number\" min=\"0.2\" max=\"5\" step=\"0.1\" value=\"1.05\"/><input id=\"edgeOpacity\" type=\"number\" min=\"0.05\" max=\"1\" step=\"0.05\" value=\"0.42\"/></label>", 
@@ -96,7 +96,7 @@
     out_html
 }
 
-.module2_legacy_ensure_dir <- function(path) {
+.module2_report_browser_ensure_dir <- function(path) {
     dir.create(path, recursive = TRUE, showWarnings = FALSE)
     if (!dir.exists(path)) {
         .log_abort(sprintf("Failed to create directory: %s", path))
@@ -104,13 +104,13 @@
     path
 }
 
-.module2_legacy_norm_gene <- function(x) {
+.module2_report_browser_norm_gene <- function(x) {
     x <- toupper(trimws(as.character(x)))
     x[is.na(x)] <- ""
     x
 }
 
-.module2_legacy_prepare_rna_condition_table <- function(rna_dt, comparison_dt = NULL, metadata_path = NULL) {
+.module2_report_browser_prepare_rna_condition_table <- function(rna_dt, comparison_dt = NULL, metadata_path = NULL) {
     id <- name <- NULL
     if (!nrow(rna_dt)) 
         return(rna_dt)
@@ -139,17 +139,17 @@
     out
 }
 
-.module2_legacy_browser_payload_to_columnar <- function(x) {
+.module2_report_browser_browser_payload_to_columnar <- function(x) {
     x <- as.data.frame(x, stringsAsFactors = FALSE)
     list(columns = names(x), data = unname(lapply(x, unname)))
 }
 
-.module2_legacy_encode_browser_json_deflate_base64 <- function(x) {
+.module2_report_browser_encode_browser_json_deflate_base64 <- function(x) {
     json <- jsonlite::toJSON(x, dataframe = "rows", auto_unbox = TRUE, null = "null")
     gsub("[\r\n]", "", jsonlite::base64_enc(memCompress(charToRaw(as.character(json)), "gzip")))
 }
 
-.module2_legacy_png_file_to_data_uri <- function(path) {
+.module2_report_browser_png_file_to_data_uri <- function(path) {
     if (!file.exists(path)) 
         return(NA_character_)
     size <- file.info(path)$size[[1L]]
@@ -159,7 +159,7 @@
     paste0("data:image/png;base64,", gsub("[\r\n]", "", jsonlite::base64_enc(raw_png)))
 }
 
-.module2_legacy_write_condition_direct_tf_tf_k_index <- function(edge_dt, out_dir, title_prefix, k_label, max_edges_per_cluster = 250L, max_nodes_per_cluster = Inf, heatmap_dt = data.table(), network_label = "Direct TF network", page_label = "direct TF-TF", edge_label = "direct TF-to-TF edges", out_suffix = "direct_tf_tf_network_browser") {
+.module2_report_browser_write_condition_direct_tf_tf_k_index <- function(edge_dt, out_dir, title_prefix, k_label, max_edges_per_cluster = 250L, max_nodes_per_cluster = Inf, heatmap_dt = data.table(), network_label = "Direct TF network", page_label = "direct TF-TF", edge_label = "direct TF-to-TF edges", out_suffix = "direct_tf_tf_network_browser") {
     from_cluster <- to_cluster <- direct_tf_cluster_pair <- NULL
     col_cluster_label <- row_cluster_label <- tf_expr <- NULL
     n_supporting_peaks <- mean_condition_fp_score <- NULL
@@ -168,7 +168,7 @@
     heatmap_png <- heatmap_image <- condition <- tf <- NULL
     if (!nrow(edge_dt)) 
         return(NA_character_)
-    out_dir <- .module2_legacy_ensure_dir(out_dir)
+    out_dir <- .module2_report_browser_ensure_dir(out_dir)
     dt <- data.table::copy(edge_dt)
     dt <- dt[from_cluster != "T00" & to_cluster != "T00"]
     if (!nrow(dt)) 
@@ -181,7 +181,7 @@
     expr_long <- data.table()
     if (file.exists(rna_path)) {
         rna_dt <- data.table::fread(rna_path, showProgress = FALSE)
-        rna_dt <- .module2_legacy_prepare_rna_condition_table(rna_dt, metadata_path = metadata_path)
+        rna_dt <- .module2_report_browser_prepare_rna_condition_table(rna_dt, metadata_path = metadata_path)
         gene_col <- if ("HGNC" %chin% names(rna_dt)) 
             "HGNC"
         else if ("gene_symbol" %chin% names(rna_dt)) 
@@ -193,7 +193,7 @@
         if (!is.na(gene_col) && length(condition_cols)) {
             expr_long <- data.table::melt(rna_dt[, c(gene_col, condition_cols), with = FALSE], id.vars = gene_col, variable.name = "condition", value.name = "tf_expr")
             data.table::setnames(expr_long, gene_col, "tf")
-            expr_long[, `:=`(tf = .module2_legacy_norm_gene(tf), condition = as.character(condition), tf_expr = suppressWarnings(as.numeric(tf_expr)))]
+            expr_long[, `:=`(tf = .module2_report_browser_norm_gene(tf), condition = as.character(condition), tf_expr = suppressWarnings(as.numeric(tf_expr)))]
             expr_long <- unique(expr_long[nzchar(tf), .(condition, tf, tf_expr)])
         }
     }
@@ -225,7 +225,7 @@
     }
     payload <- dt[, .(condition = as.character(condition), direct_tf_cluster = as.character(direct_tf_cluster_pair), row_cluster = as.character(row_cluster_label), col_cluster = as.character(col_cluster_label), from = as.character(from), to = as.character(to), edge_score = as.numeric(edge_score), n_supporting_peaks = as.integer(n_supporting_peaks), from_expr = round(as.numeric(from_expr), 4), to_expr = round(as.numeric(to_expr), 4), mean_condition_fp_score = round(as.numeric(mean_condition_fp_score), 
         4), mean_fp_target_rna_r = round(as.numeric(mean_fp_target_rna_r), 4), mean_tf_expression_target_r = round(as.numeric(mean_tf_expression_target_r), 4))]
-    payload_gzip_base64 <- .module2_legacy_encode_browser_json_deflate_base64(.module2_legacy_browser_payload_to_columnar(payload))
+    payload_gzip_base64 <- .module2_report_browser_encode_browser_json_deflate_base64(.module2_report_browser_browser_payload_to_columnar(payload))
     heatmap_payload <- data.table()
     heatmap_image_json <- "{}"
     if (nrow(heatmap_dt)) {
@@ -244,7 +244,7 @@
                 else {
                   file.path(out_dir, "png", path)
                 }
-                uri <- .module2_legacy_png_file_to_data_uri(full_path)
+                uri <- .module2_report_browser_png_file_to_data_uri(full_path)
                 ifelse(is.na(uri), path, uri)
             }, character(1L)))]
             heatmap_image_json <- jsonlite::toJSON(stats::setNames(as.list(image_dt$heatmap_image), image_dt$heatmap_png), auto_unbox = TRUE, null = "null")
@@ -355,16 +355,16 @@
 }
 
 
-# Legacy composite TF-TF connectivity pathway browser.
+# Browser composite TF-TF connectivity pathway browser.
 #
 # This preserves the distinct two-pane browser used by the old benchmark
 # TF-TF connectivity reports. It is intentionally separate from the direct
 # TF-TF browser writer above because the two report families have different
 # payloads and UI layouts.
-.module2_legacy_write_condition_pathway_tf_gene_k_index <- function(edge_dt, out_dir, title_prefix, k_label, max_edges_per_network = 120L, out_suffix = "tf_tf_connectivity_network_browser", heatmap_dt = data.table()) {
+.module2_report_browser_write_condition_pathway_tf_gene_k_index <- function(edge_dt, out_dir, title_prefix, k_label, max_edges_per_network = 120L, out_suffix = "tf_tf_connectivity_network_browser", heatmap_dt = data.table()) {
   condition <- database <- edge_r <- edge_score <- from <- heatmap_image <- heatmap_png <- major_cluster <- mean_condition_fp_score <- n_supporting_links <- n_target_genes <- network_id <- network_label <- pathway_adjusted_p_value <- pathway_key <- pathway_neglog10_padj <- pathway_term <- to <- NULL
   if (!nrow(edge_dt)) return(NA_character_)
-  out_dir <- .module2_legacy_ensure_dir(out_dir)
+  out_dir <- .module2_report_browser_ensure_dir(out_dir)
   dt <- data.table::copy(edge_dt)
   dt <- dt[nzchar(from) & nzchar(to)]
   if (!nrow(dt)) return(NA_character_)
@@ -400,7 +400,7 @@
     n_target_genes = as.integer(n_target_genes),
     mean_condition_fp_score = round(as.numeric(mean_condition_fp_score), 4)
   )]
-  payload_gzip_base64 <- .module2_legacy_encode_browser_json_deflate_base64(.module2_legacy_browser_payload_to_columnar(payload))
+  payload_gzip_base64 <- .module2_report_browser_encode_browser_json_deflate_base64(.module2_report_browser_browser_payload_to_columnar(payload))
   heatmap_payload <- data.table()
   heatmap_image_json <- "{}"
   if (nrow(heatmap_dt)) {
@@ -417,7 +417,7 @@
         } else {
           file.path(out_dir, "png", path)
         }
-        uri <- .module2_legacy_png_file_to_data_uri(full_path)
+        uri <- .module2_report_browser_png_file_to_data_uri(full_path)
         ifelse(is.na(uri), path, uri)
       }, character(1L))]
       heatmap_image_json <- jsonlite::toJSON(
