@@ -50,6 +50,27 @@ install.packages(c("igraph", "ggplot2", "data.table", "BiocManager"))
 BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
 ```
 
+## Demo Data
+
+A small processed chr22 demo bundle is available from GitHub Releases. It
+contains matched ATAC/RNA inputs and compact aligned JASPAR2024 footprint
+cache files, but not raw TOBIAS outputs or generated result folders.
+
+```r
+demo_dir <- craftgrn::download_craftgrn_demo_data(destdir = tempdir())
+config <- file.path(demo_dir, "project.yaml")
+
+omics <- craftgrn::load_prep_multiomic_data(
+  config = config,
+  label_col = "strict_match_rna",
+  do_preprocess = FALSE,
+  verbose = TRUE
+)
+```
+
+Use `craftgrn_demo_data_info()` to inspect the release URL, file name, and
+MD5 checksum.
+
 ## Pipeline Overview
 
 CraftGRN is organized as a three-module workflow.

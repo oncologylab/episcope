@@ -34,6 +34,8 @@ reference:
   - run_app
   - load_config
   - validate_config
+  - craftgrn_demo_data_info
+  - download_craftgrn_demo_data
 
 - title: Multiomic data preparation
   desc: Load, save, and prepare matched ATAC and RNA inputs.

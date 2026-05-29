@@ -31,6 +31,21 @@ remotes::install_github("oncologylab/craftgrn")
 library(craftgrn)
 ```
 
+## Demo data
+
+The package provides a helper for downloading the small processed chr22 demo
+bundle from GitHub Releases. The bundle contains a portable `project.yaml`,
+matched RNA and ATAC inputs, and compact aligned footprint cache files. Raw
+TOBIAS outputs are not included.
+
+```{r demo-data}
+demo_dir <- download_craftgrn_demo_data(destdir = tempdir())
+config <- file.path(demo_dir, "project.yaml")
+```
+
+The examples below show generic project paths. To run the chr22 demo, replace
+`project.yaml` or `craftgrn_grn.yaml` with `config` from the chunk above.
+
 ## Module 1: Predict TF binding sites
 
 Module 1 combines normalized ATAC signal, RNA expression, footprint summaries,
