@@ -128,32 +128,38 @@
   </defs>
   <path class="st11" d="M500,58l368,212v460l-368,212-368-212v-460L500,58Z"/>
   <g id="module-1-footprint">
+    <path class="st7" d="M502,280v33"/>
     <path class="st0" d="M520,256c74-66,202-48,233,63"/>
     <line class="st3" x1="198" y1="385" x2="802" y2="385"/>
     <circle class="st15" cx="802" cy="385" r="8"/>
     <circle class="st15" cx="828" cy="385" r="8"/>
-    <path class="st23" d="M205,385c17-2,25-18,35-41,9-21,22-18,31,10,10,31,28,30,36-2,13-51,27-102,48-102s36,56,48,104c9,32,28,30,39-1,9-24,22-24,32-1,10,21,19,31,38,33H205Z"/>
+    <path class="st23" d="M250,385c17-2,25-18,35-41,9-21,22-18,31,10,10,31,28,30,36-2,13-51,27-102,48-102s36,56,48,104c9,32,28,30,39-1,9-24,22-24,32-1,10,21,19,31,38,33H250Z"/>
     <g id="tfbs-symbol">
       <rect class="st20" x="467" y="373" width="76" height="36" rx="7" ry="7"/>
       <line class="st1" x1="465" y1="356" x2="465" y2="414"/>
       <line class="st1" x1="545" y1="356" x2="545" y2="414"/>
       <path class="st5" d="M474,392c11-14,21-14,32,0s21,14,32,0"/>
       <g class="st17">
-        <text class="st16" transform="translate(473.67 431)"><tspan x="0" y="0">TFBS</tspan></text>
+        <g class="st17">
+          <text class="st16" transform="translate(473.67 431)"><tspan x="0" y="0">TFBS</tspan></text>
+        </g>
       </g>
     </g>
-    <circle class="st19" cx="482" cy="252" r="47"/>
+    <circle class="st19" cx="501" cy="236" r="47"/>
     <g class="st17">
-      <text class="st13" transform="translate(453.68 271)"><tspan x="0" y="0">TF</tspan></text>
+      <g class="st17">
+        <text class="st13" transform="translate(472.68 255)"><tspan x="0" y="0">TF</tspan></text>
+      </g>
     </g>
-    <path class="st7" d="M482,305v34"/>
-    <path class="st15" d="M462,332l20,27,20-27h-40Z"/>
+    <path class="st15" d="M482,307l20,27,20-27h-40Z"/>
     <g id="tss-symbol">
       <line class="st6" x1="718" y1="338" x2="718" y2="430"/>
       <line class="st4" x1="723.97" y1="385" x2="804" y2="385"/>
       <path class="st22" d="M790,363l40,22-40,22v-44Z"/>
       <g class="st17">
-        <text class="st18" transform="translate(734.66 429)"><tspan x="0" y="0">TSS</tspan></text>
+        <g class="st17">
+          <text class="st18" transform="translate(734.66 429)"><tspan x="0" y="0">TSS</tspan></text>
+        </g>
       </g>
     </g>
     <path class="st0" d="M733,311l21,24,14.52-28.5"/>
@@ -187,6 +193,8 @@
     <circle class="st2" cx="499" cy="518" r="45"/>
   </g>
   <g class="st17">
-    <text class="st14" transform="translate(263.11 778)"><tspan x="0" y="0">CraftGRN</tspan></text>
+    <g class="st17">
+      <text class="st14" transform="translate(263.11 778)"><tspan x="0" y="0">CraftGRN</tspan></text>
+    </g>
   </g>
 </svg>
