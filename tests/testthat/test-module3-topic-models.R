@@ -292,6 +292,39 @@ test_that("VAE variant aliases normalize to Python variants", {
   expect_error(.normalize_vae_python_variant("bad_variant"), "Unsupported VAE variant")
 })
 
+test_that("VAE cache plan falls back to CSV when Python pyarrow is unavailable", {
+  csv_plan <- .vae_doc_term_cache_plan(has_r_arrow = TRUE, python_has_pyarrow = FALSE, save_full_doc_term_csv = FALSE)
+  expect_false(csv_plan$write_arrow)
+  expect_true(csv_plan$save_full_doc_term_csv)
+
+  arrow_plan <- .vae_doc_term_cache_plan(has_r_arrow = TRUE, python_has_pyarrow = TRUE, save_full_doc_term_csv = FALSE)
+  expect_true(arrow_plan$write_arrow)
+  expect_false(arrow_plan$save_full_doc_term_csv)
+})
+
+test_that("WarpLDA resume requires existing fit artifacts, not metrics alone", {
+  fit_dir <- tempfile("warplda-fits-")
+  dir.create(fit_dir)
+  fit_k2 <- file.path(fit_dir, "fit_K2.rds")
+  fit_k4 <- tempfile(fileext = ".rds")
+  saveRDS(list(K = 2L, metrics = list(perplexity = 1, loglik_approx = -1, n_tokens = 10)), fit_k2)
+  saveRDS(list(K = 4L, metrics = list(perplexity = 1, loglik_approx = -1, n_tokens = 10)), fit_k4)
+
+  k_grid <- c(2L, 3L, 4L)
+  fit_files_all <- file.path(fit_dir, sprintf("fit_K%d.rds", k_grid))
+  existing_metrics <- data.table::data.table(
+    K = c(2L, 3L, 4L),
+    perplexity = 1,
+    loglik = -1,
+    n_tokens = 10,
+    fit_file = c(fit_k2, file.path(fit_dir, "fit_K3.rds"), fit_k4)
+  )
+
+  status <- .warplda_completed_from_cache(k_grid, existing_metrics, fit_files_all)
+  expect_equal(status$done_from_file, c(TRUE, FALSE, FALSE))
+  expect_equal(status$done_from_metrics, c(TRUE, FALSE, TRUE))
+})
+
 test_that("gammafit topic-term scope preserves existing topic-group behavior", {
   score_mat <- matrix(
     c(

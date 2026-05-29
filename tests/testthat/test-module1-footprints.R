@@ -465,6 +465,51 @@ test_that("footprint alignment can write cache without returning large tables", 
   expect_false(file.exists(file.path(cache_dir, "fp_id_map_TEST.csv")))
 })
 
+test_that("footprint alignment cache summary handles compact cache without annotation file", {
+  bench_dir <- file.path(tempdir(), paste0("craftgrn-align-cache-hit-", as.integer(stats::runif(1L, 1, 1e9))))
+  raw_dir <- file.path(bench_dir, "raw")
+  cache_dir <- file.path(bench_dir, "cache")
+  dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
+
+  score_path <- file.path(raw_dir, "M1_score.csv")
+  bound_path <- file.path(raw_dir, "M1_bound.csv")
+  annot_path <- file.path(raw_dir, "M1_annotation.csv")
+  readr::write_csv(tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1.1, 1.1)), score_path)
+  readr::write_csv(tibble::tibble(peak_ID = c("chr1:10-20", "chr1:12-22"), sample_a = c(1L, 1L)), bound_path)
+  readr::write_csv(tibble::tibble(fp_peak = c("chr1:10-20", "chr1:12-22"), atac_peak = "chr1:1-100", motifs = "M1"), annot_path)
+  manifest <- tibble::tibble(motif = "M1", n_peaks = 2L, score = score_path, bound = bound_path, annot = annot_path)
+
+  invisible(align_footprints(
+    manifest,
+    mid_slop = 10L,
+    score_match_pct = 1,
+    threads = 1L,
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    use_cache = FALSE,
+    write_cache = TRUE,
+    return_data = FALSE,
+    return_id_map = FALSE,
+    write_id_map = FALSE,
+    write_fp_sites = TRUE,
+    verbose = FALSE
+  ))
+
+  summary <- align_footprints(
+    manifest,
+    cache_dir = cache_dir,
+    cache_tag = "TEST",
+    use_cache = TRUE,
+    return_data = FALSE,
+    verbose = FALSE
+  )
+
+  expect_equal(summary$counts$fp_score, 1L)
+  expect_equal(summary$counts$fp_bound, 1L)
+  expect_equal(summary$counts$fp_annotation, 0L)
+  expect_equal(summary$counts$fp_sites, 1L)
+})
+
 test_that("chromosome-parallel footprint alignment matches single-process alignment", {
   bench_dir <- file.path(tempdir(), paste0("craftgrn-align-parallel-", as.integer(stats::runif(1L, 1, 1e9))))
   raw_dir <- file.path(bench_dir, "raw")

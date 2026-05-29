@@ -607,6 +607,31 @@ fit_warplda_one <- function(dtm,
   )
 }
 
+.existing_file <- function(path) {
+  is.character(path) & !is.na(path) & nzchar(path) & file.exists(path)
+}
+
+.warplda_completed_from_cache <- function(K_grid, existing_metrics, fit_files_all) {
+  done_from_file <- .existing_file(fit_files_all)
+  done_from_metrics <- rep(FALSE, length(K_grid))
+  if (nrow(existing_metrics) && "K" %in% names(existing_metrics)) {
+    metrics_dt <- data.table::as.data.table(existing_metrics)
+    for (idx in seq_along(K_grid)) {
+      k_value <- as.integer(K_grid[[idx]])
+      rows <- metrics_dt[as.integer(metrics_dt[["K"]]) == k_value]
+      if (!nrow(rows)) next
+      metric_paths <- character()
+      if ("fit_file" %in% names(rows)) {
+        metric_paths <- as.character(rows[["fit_file"]])
+      }
+      expected_path <- fit_files_all[[idx]]
+      metric_paths <- unique(c(metric_paths, expected_path))
+      done_from_metrics[[idx]] <- any(.existing_file(metric_paths))
+    }
+  }
+  list(done_from_file = done_from_file, done_from_metrics = done_from_metrics)
+}
+
 # Fit WarpLDA models across K grid (cisTopic-like runWarpLDAModels)
 run_warplda_models <- function(dtm,
                                K_grid,
@@ -703,11 +728,9 @@ run_warplda_models <- function(dtm,
   }
 
   fit_files_all <- vapply(K_grid, fit_file_for_k, character(1))
-  done_from_file <- !is.na(fit_files_all) & file.exists(fit_files_all)
-  done_from_metrics <- rep(FALSE, length(K_grid))
-  if (nrow(existing_metrics) && "K" %in% names(existing_metrics)) {
-    done_from_metrics <- K_grid %in% as.integer(existing_metrics$K)
-  }
+  cache_status <- .warplda_completed_from_cache(K_grid, existing_metrics, fit_files_all)
+  done_from_file <- cache_status$done_from_file
+  done_from_metrics <- cache_status$done_from_metrics
   todo <- K_grid[!(done_from_file | done_from_metrics)]
 
   if (isTRUE(verbose)) {
@@ -721,12 +744,15 @@ run_warplda_models <- function(dtm,
     metrics_list <- c(metrics_list, lapply(K_grid[done_from_file], function(K) metric_from_fit(K, fit_file_for_k(K))))
   }
   if (nrow(existing_metrics)) {
-    keep <- existing_metrics[K %in% K_grid]
+    keep <- data.table::as.data.table(existing_metrics)[K %in% K_grid]
     if (nrow(keep)) {
       if (!"fit_file" %in% names(keep)) {
         keep[, fit_file := fit_file_for_k(K)]
       }
-      metrics_list <- c(metrics_list, list(keep[, .(K, perplexity, loglik, n_tokens, fit_file)]))
+      keep <- keep[.existing_file(fit_file)]
+      if (nrow(keep)) {
+        metrics_list <- c(metrics_list, list(keep[, .(K, perplexity, loglik, n_tokens, fit_file)]))
+      }
     }
   }
 
@@ -760,7 +786,8 @@ run_warplda_models <- function(dtm,
   if (!is.null(metrics_file)) {
     data.table::fwrite(metrics_tbl, metrics_file)
   }
-  list(fit_files = metrics_tbl$fit_file, metrics = metrics_tbl[, .(K, perplexity, loglik, n_tokens)])
+  fit_files <- stats::setNames(as.character(metrics_tbl$fit_file), as.character(metrics_tbl$K))
+  list(fit_files = fit_files, metrics = metrics_tbl[, .(K, perplexity, loglik, n_tokens)])
 }
 
 # =============================================================================
@@ -6280,7 +6307,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
         save_tmp_dir = file.path(out_dir, "tmp_models"),
         metrics_file = file.path(out_dir, "model_metrics.csv")
       )
-  fits <- fits_out$fits
+  fit_files <- fits_out$fit_files
   metrics_tbl <- fits_out$metrics
   data.table::fwrite(metrics_tbl, file.path(out_dir, "model_metrics.csv"))
   .save_all(out_dir, "model_metrics", metrics_tbl)
@@ -6295,9 +6322,12 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   idx <- sel$idx
 
   pick_fit_by_K <- function(K) {
-    # fits are aligned with sorted unique K_grid inside run_warplda_models
-    Kvec <- vapply(fits, function(z) z$K, integer(1))
-    fits[[which(Kvec == K)[1]]]
+    key <- as.character(as.integer(K))
+    fit_file <- fit_files[[key]]
+    if (is.null(fit_file) || is.na(fit_file) || !nzchar(fit_file) || !file.exists(fit_file)) {
+      .log_abort("Missing WarpLDA fit artifact for K={K}; rerun run_warplda_models to recreate tmp_models/fit_K*.rds.")
+    }
+    readRDS(fit_file)
   }
 
   selected <- list()
@@ -6328,7 +6358,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
 
   if (!length(selected)) {
     .log_inform("No valid model-selection indices; using first fitted model as fallback.")
-    fit <- fits[[1]]
+    fit <- pick_fit_by_K(metrics_tbl$K[[1L]])
     selected$fallback <- list(K = fit$K, theta = fit$theta, phi = fit$phi, metrics = fit$metrics)
     .save_all(out_dir, sprintf("theta_fallback_K%d", fit$K), fit$theta)
     .save_all(out_dir, sprintf("phi_fallback_K%d", fit$K), fit$phi)
@@ -6622,6 +6652,25 @@ build_tf_cluster_map_from_motif <- function(motif_path) {
   py
 }
 
+.python_has_pyarrow <- function(python) {
+  if (!is.character(python) || length(python) != 1L || !nzchar(python)) {
+    return(FALSE)
+  }
+  status <- tryCatch(
+    suppressWarnings(system2(python, c("-c", shQuote("import pyarrow")), stdout = FALSE, stderr = FALSE)),
+    error = function(e) 1L
+  )
+  identical(status, 0L)
+}
+
+.vae_doc_term_cache_plan <- function(has_r_arrow, python_has_pyarrow, save_full_doc_term_csv = FALSE) {
+  write_arrow <- isTRUE(has_r_arrow) && isTRUE(python_has_pyarrow)
+  list(
+    write_arrow = write_arrow,
+    save_full_doc_term_csv = isTRUE(save_full_doc_term_csv) || !write_arrow
+  )
+}
+
 .normalize_vae_python_variant <- function(vae_variant) {
   variant <- as.character(vae_variant %||% "")
   if (!length(variant) || !nzchar(variant[[1]])) {
@@ -6687,21 +6736,18 @@ run_vae_topic_report_py <- function(doc_term,
   t_cache <- proc.time()[["elapsed"]]
   doc_term$count <- doc_term[[count_col]]
   if (is.null(vae_python) || !nzchar(vae_python)) vae_python <- .resolve_vae_python()
-  python_has_pyarrow <- FALSE
-  if (is.character(vae_python) && length(vae_python) == 1L && nzchar(vae_python)) {
-    pyarrow_status <- suppressWarnings(system2(vae_python, c("-c", shQuote("import pyarrow")), stdout = FALSE, stderr = FALSE))
-    python_has_pyarrow <- identical(pyarrow_status, 0L)
-  }
-  if (!isTRUE(python_has_pyarrow)) {
-    .log_abort("Python environment for VAE does not have pyarrow installed: {vae_python}")
-  }
   has_r_arrow <- requireNamespace("arrow", quietly = TRUE)
+  cache_plan <- .vae_doc_term_cache_plan(
+    has_r_arrow = has_r_arrow,
+    python_has_pyarrow = .python_has_pyarrow(vae_python),
+    save_full_doc_term_csv = save_full_doc_term_csv
+  )
   cache_paths <- if (exists("write_doc_term_cache", mode = "function")) {
     write_doc_term_cache(
       doc_term,
       out_dir = out_dir,
-      save_full_doc_term_csv = isTRUE(save_full_doc_term_csv) || !isTRUE(has_r_arrow),
-      write_arrow = TRUE
+      save_full_doc_term_csv = cache_plan$save_full_doc_term_csv,
+      write_arrow = cache_plan$write_arrow
     )
   } else {
     data.table::fwrite(utils::head(doc_term, 100L), file.path(out_dir, "doc_term_first100.csv"))
@@ -6736,7 +6782,7 @@ run_vae_topic_report_py <- function(doc_term,
     dir.exists(file.path(out_dir, "vae_models"))
 
   if (!reuse_ok) {
-    doc_term_input <- if (isTRUE(has_r_arrow)) cache_paths$arrow else cache_paths$csv
+    doc_term_input <- if (isTRUE(cache_plan$write_arrow)) cache_paths$arrow else cache_paths$csv
     if (!is.character(doc_term_input) || !length(doc_term_input) || is.na(doc_term_input) || !file.exists(doc_term_input)) {
       .log_abort("Missing doc-term cache for VAE: {doc_term_input}")
     }

@@ -7,6 +7,18 @@ test_that("predicted_tfbs is compact and exportable", {
   export_predicted_tfbs_bed(pred, out_file = tmp)
   expect_true(file.exists(tmp))
   expect_equal(length(readLines(tmp)), 2L)
+
+  tf_tmp <- tempfile(fileext = ".bed")
+  export_predicted_tfbs_bed(pred, out_file = tf_tmp, tf = "TF_A")
+  expect_equal(length(readLines(tf_tmp)), 1L)
+  expect_match(readLines(tf_tmp), "TF_A|chr1:100-140", fixed = TRUE)
+
+  split_dir <- tempfile("predicted-tfbs-bed-")
+  manifest <- export_predicted_tfbs_bed(pred, out_dir = split_dir, tf = "TF_A", split_by = "tf")
+  expect_equal(manifest$tf, "TF_A")
+  expect_equal(manifest$n_rows, 1L)
+  expect_true(file.exists(file.path(split_dir, "TF_A.bed")))
+  expect_false(file.exists(file.path(split_dir, "TF_B.bed")))
 })
 
 test_that("Module 2 computes TF-target first and restricts FP-target candidates", {

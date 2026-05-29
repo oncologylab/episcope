@@ -399,7 +399,11 @@ export_predicted_tfbs_bed <- function(predicted_tfbs, out_file = NULL, out_dir =
   need <- c("chr", "start", "end", "tf", "fp_id")
   if (!all(need %in% names(predicted_tfbs))) .log_abort("predicted_tfbs is missing required BED columns.")
   dt <- data.table::as.data.table(predicted_tfbs)
-  if (!is.null(tf)) dt <- dt[tf %in% as.character(tf)]
+  if (!is.null(tf)) {
+    tf_filter <- unique(as.character(tf))
+    tf_filter <- tf_filter[nzchar(tf_filter)]
+    dt <- dt[as.character(dt[["tf"]]) %in% tf_filter]
+  }
   make_bed <- function(x) data.table::data.table(chrom = as.character(x$chr), chromStart = as.integer(x$start), chromEnd = as.integer(x$end), name = paste(as.character(x$tf), as.character(x$fp_id), sep = "|"), score = 1000L, strand = ".")
   if (identical(split_by, "none")) {
     if (is.null(out_file) || !nzchar(out_file)) .log_abort("out_file is required when split_by is none.")
@@ -411,7 +415,7 @@ export_predicted_tfbs_bed <- function(predicted_tfbs, out_file = NULL, out_dir =
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   tfs <- sort(unique(as.character(dt$tf)))
   manifest <- lapply(tfs, function(tf_i) {
-    x <- dt[tf == tf_i]
+    x <- dt[as.character(dt[["tf"]]) == tf_i]
     path <- file.path(out_dir, paste0(gsub("[^A-Za-z0-9_.-]+", "_", tf_i), ".bed"))
     data.table::fwrite(make_bed(x), path, sep = "\t", col.names = FALSE)
     data.frame(tf = tf_i, path = path, n_rows = nrow(x), stringsAsFactors = FALSE)

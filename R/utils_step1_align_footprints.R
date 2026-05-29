@@ -138,12 +138,18 @@ align_footprints <- function(
     if (!identical(format, "csv")) {
       return(list(fp_score = NA_integer_, fp_bound = NA_integer_, fp_annotation = NA_integer_, id_map = NA_integer_, fp_sites = NA_integer_))
     }
+    count_path <- function(path, missing = NA_integer_) {
+      if (is.null(path) || length(path) != 1L || is.na(path) || !nzchar(path) || !file.exists(path)) {
+        return(missing)
+      }
+      .count_rows_fast(path)
+    }
     list(
-      fp_score = if (file.exists(paths$fp_score)) .count_rows_fast(paths$fp_score) else NA_integer_,
-      fp_bound = if (file.exists(paths$fp_bound)) .count_rows_fast(paths$fp_bound) else NA_integer_,
-      fp_annotation = if (file.exists(paths$fp_annotation)) .count_rows_fast(paths$fp_annotation) else NA_integer_,
-      id_map = if (file.exists(paths$id_map)) .count_rows_fast(paths$id_map) else 0L,
-      fp_sites = if (file.exists(paths$fp_sites)) .count_rows_fast(paths$fp_sites) else 0L
+      fp_score = count_path(paths$fp_score),
+      fp_bound = count_path(paths$fp_bound),
+      fp_annotation = count_path(paths$fp_annotation, missing = 0L),
+      id_map = count_path(paths$id_map, missing = 0L),
+      fp_sites = count_path(paths$fp_sites, missing = 0L)
     )
   }
 
