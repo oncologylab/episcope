@@ -18,8 +18,8 @@ predict_tfbs(
   write_stats = FALSE,
   write_bed = FALSE,
   output_format = c("csv", "parquet", "auto"),
-  return_links = NULL,
-  link_return_limit = getOption("craftgrn.module1_link_return_limit", 5e+06),
+  return_prediction_stats = NULL,
+  prediction_return_limit = getOption("craftgrn.module1_prediction_return_limit", 5e+06),
   min_non_na = 3L,
   cores = NULL,
   verbose = TRUE,
@@ -55,15 +55,15 @@ all-expressed-TF prediction stage.}
 
 \item{write_stats}{Retain and write full FP-TF correlation statistics.}
 
-\item{write_bed}{Write optional BED-like browser files for high-confidence footprints and in-memory TFBS links.}
+\item{write_bed}{Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.}
 
-\item{output_format}{Output format for large streamed TFBS link chunks.}
+\item{output_format}{Output format for large streamed TFBS prediction statistic chunks.}
 
-\item{return_links}{Return the TFBS link table in memory. If `NULL`,
+\item{return_prediction_stats}{Return the TFBS prediction statistic table in memory. If `NULL`,
 large output-writing runs are streamed to disk and return a manifest.}
 
-\item{link_return_limit}{Maximum number of predicted links to keep in
-memory when `return_links = NULL` and `write_outputs = TRUE`.}
+\item{prediction_return_limit}{Maximum number of predicted events to keep in
+memory when `return_prediction_stats = NULL` and `write_outputs = TRUE`.}
 
 \item{min_non_na}{Minimum finite condition pairs required for correlation.}
 
@@ -76,11 +76,11 @@ If `NULL`, use available cores.}
 }
 \value{
 A list containing `omics_data`, `high_confidence_footprints`,
-  `motif_supported_correlations`, `tfbs_links`, `tfbs_stats`, `reports`, and
+  `motif_supported_correlations`, `prediction_stats`, `prediction_stats`, `reports`, and
   `parameters`.
 }
 \description{
 Run the Module 1 TFBS workflow as one user-facing operation. The function
 first uses motif-supported FP-TF correlations to define high-confidence
-footprints, then predicts sparse FP-TF binding links for expressed TFs.
+footprints, then predicts sparse FP-TF binding events for expressed TFs.
 }

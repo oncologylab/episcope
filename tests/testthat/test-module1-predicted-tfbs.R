@@ -37,7 +37,7 @@ test_that("Module 1 helpers merge Pearson and Spearman stats with best method", 
     spearman_p_adj = c(0.04, 0.03, 0.85)
   )
 
-  merged <- .module1_merge_tfbs_stats(pearson, spearman, r_cutoff = 0.8)
+  merged <- .module1_merge_correlation_stats(pearson, spearman, r_cutoff = 0.8)
 
   expect_equal(merged$best_method, c("pearson", "spearman", "spearman"))
   expect_equal(merged$pass, c(TRUE, TRUE, FALSE))
@@ -57,7 +57,7 @@ test_that("Module 1 helper cutoffs support optional p-value and FDR filters", {
     spearman_p_adj = c(0.030, 0.030, 0.030)
   )
 
-  merged <- .module1_merge_tfbs_stats(
+  merged <- .module1_merge_correlation_stats(
     pearson_stats = stats[, c("fp_id", "atac_peak", "tf", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
     spearman_stats = stats[, c("fp_id", "atac_peak", "tf", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
     r_cutoff = 0.8,
@@ -71,7 +71,7 @@ test_that("Module 1 helper cutoffs support optional p-value and FDR filters", {
   expect_equal(merged$pass, c(TRUE, FALSE, FALSE))
 })
 
-test_that("Module 1 helpers build sparse tfbs_links with multiple TFs per footprint", {
+test_that("Module 1 helpers build sparse prediction_stats with multiple TFs per footprint", {
   fixture <- module1_tiny_fixture()
   high_conf <- tibble::tibble(
     fp_id = c("chr1:100-140", "chr1:200-240"),
@@ -95,8 +95,8 @@ test_that("Module 1 helpers build sparse tfbs_links with multiple TFs per footpr
     pass = c(TRUE, TRUE, FALSE, TRUE)
   )
 
-  links <- .module1_build_tfbs_links(
-    tfbs_stats = stats,
+  links <- .module1_build_prediction_stats(
+    correlation_stats = stats,
     high_confidence_footprints = high_conf,
     omics_data = fixture$omics_data
   )

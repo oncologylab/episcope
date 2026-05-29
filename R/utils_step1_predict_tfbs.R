@@ -149,18 +149,6 @@
   if (!nrow(dt)) {
     return(tibble::tibble(fp_id = character(), atac_peak = character(), motifs = character(), tf = character()))
   }
-  if (length(tf_subset)) {
-    tf_index <- paste0(",", dt$tfs_clean, ",")
-    keep <- rep(FALSE, nrow(dt))
-    for (tf in tf_subset) {
-      keep <- keep | grepl(paste0(",", tf, ","), tf_index, fixed = TRUE)
-    }
-    dt <- dt[keep]
-  }
-  if (!nrow(dt)) {
-    return(tibble::tibble(fp_id = character(), atac_peak = character(), motifs = character(), tf = character()))
-  }
-
   dt[, tf := strsplit(tfs_clean, ",", fixed = TRUE)]
   out <- dt[, .(tf = unlist(tf, use.names = FALSE)), by = .(
     fp_id = fp_peak,
@@ -168,6 +156,7 @@
     motifs = motifs
   )]
   if (length(tf_subset)) out <- out[tf %chin% tf_subset]
+
   out <- unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf)])
   if (!nrow(out)) {
     return(tibble::tibble(fp_id = character(), atac_peak = character(), motifs = character(), tf = character()))
@@ -483,10 +472,10 @@
   }
 }
 
-.module1_write_link_chunk <- function(x, chunk_id, out_dir, output_format = c("csv", "parquet", "auto")) {
+.module1_write_prediction_stats_chunk <- function(x, chunk_id, out_dir, output_format = c("csv", "parquet", "auto")) {
   output_format <- .module1_output_format(output_format)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  stem <- sprintf("module1_tfbs_links_chunk_%04d", as.integer(chunk_id))
+  stem <- sprintf("module1_prediction_stats_chunk_%04d", as.integer(chunk_id))
   if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
     path <- file.path(out_dir, paste0(stem, ".parquet"))
     arrow::write_parquet(x, path, compression = "zstd")
@@ -499,18 +488,18 @@
     chunk_id = as.integer(chunk_id),
     path = path,
     format = output_format,
-    n_links = nrow(x)
+    n_rows = nrow(x)
   )
 }
 
-.module1_write_link_manifest <- function(manifest, out_dir) {
-  path <- file.path(out_dir, "module1_tfbs_links_manifest.csv")
+.module1_write_prediction_stats_manifest <- function(manifest, out_dir) {
+  path <- file.path(out_dir, "module1_prediction_stats_manifest.csv")
   readr::write_csv(manifest, path)
   path
 }
 
 
-.module1_write_bed_outputs <- function(high_confidence_footprints, tfbs_links, out_dir) {
+.module1_write_bed_outputs <- function(high_confidence_footprints, prediction_stats, out_dir) {
   if (!is.data.frame(high_confidence_footprints)) .log_abort("high_confidence_footprints must be a data.frame.")
   need_high <- c("chr", "start", "end", "fp_id")
   if (!all(need_high %in% names(high_confidence_footprints))) .log_abort("high_confidence_footprints is missing BED columns.")
@@ -522,12 +511,12 @@
   data.table::fwrite(data.table::as.data.table(high_bed), high_path, sep = "\t", col.names = FALSE)
   reports <- list(high_confidence_footprints_bed = high_path)
   need_links <- c("chr", "start", "end", "tf", "fp_id", "best_r")
-  if (is.data.frame(tfbs_links) && nrow(tfbs_links) && all(need_links %in% names(tfbs_links))) {
-    score <- pmax(0L, pmin(1000L, as.integer(round(as.numeric(tfbs_links$best_r) * 1000))))
-    bed <- data.frame(chrom = as.character(tfbs_links$chr), chromStart = as.integer(tfbs_links$start), chromEnd = as.integer(tfbs_links$end), name = paste(as.character(tfbs_links$tf), as.character(tfbs_links$fp_id), sep = "|"), score = score, strand = ".", stringsAsFactors = FALSE)
-    links_path <- file.path(out_dir, "module1_tfbs_links.bed")
+  if (is.data.frame(prediction_stats) && nrow(prediction_stats) && all(need_links %in% names(prediction_stats))) {
+    score <- pmax(0L, pmin(1000L, as.integer(round(as.numeric(prediction_stats$best_r) * 1000))))
+    bed <- data.frame(chrom = as.character(prediction_stats$chr), chromStart = as.integer(prediction_stats$start), chromEnd = as.integer(prediction_stats$end), name = paste(as.character(prediction_stats$tf), as.character(prediction_stats$fp_id), sep = "|"), score = score, strand = ".", stringsAsFactors = FALSE)
+    links_path <- file.path(out_dir, "module1_prediction_stats.bed")
     data.table::fwrite(data.table::as.data.table(bed), links_path, sep = "\t", col.names = FALSE)
-    reports$tfbs_links_bed <- links_path
+    reports$prediction_stats_bed <- links_path
   }
   reports
 }
@@ -610,7 +599,7 @@
   dplyr::bind_rows(out)
 }
 
-.module1_predict_links_streamed <- function(omics_data,
+.module1_predict_tfbs_streamed <- function(omics_data,
                                             high_confidence_footprints,
                                             r_cutoff = 0.3,
                                             p_cutoff = NULL,
@@ -618,8 +607,8 @@
                                             tf_subset = NULL,
                                             min_non_na = 3L,
                                             cores = NULL,
-                                            return_links = TRUE,
-                                            link_out_dir = NULL,
+                                            return_prediction_stats = TRUE,
+                                            prediction_stats_out_dir = NULL,
                                             output_format = c("csv", "parquet", "auto"),
                                             verbose = TRUE) {
   output_format <- .module1_output_format(output_format)
@@ -639,11 +628,11 @@
   high <- high_confidence_footprints[!duplicated(high_confidence_footprints$fp_id), need_high, drop = FALSE]
   tfs <- .module1_expressed_tfs(omics_data, tf_subset = tf_subset)
   pair_count <- as.double(nrow(high)) * as.double(length(tfs))
-  stream_links <- isFALSE(return_links) && !is.null(link_out_dir)
+  stream_prediction_stats <- isFALSE(return_prediction_stats) && !is.null(prediction_stats_out_dir)
 
   make_empty <- function() {
-    empty_links <- .module1_build_tfbs_links(
-      tfbs_stats = tibble::tibble(
+    empty_stats <- .module1_build_prediction_stats(
+      correlation_stats = tibble::tibble(
         fp_id = character(),
         atac_peak = character(),
         tf = character(),
@@ -655,12 +644,11 @@
       omics_data = omics_data
     )
     list(
-      tfbs_links = empty_links,
-      prediction_stats = empty_links[0, ],
+      prediction_stats = empty_stats,
       prediction_pair_count = pair_count,
-      link_manifest = NULL,
-      link_manifest_path = NULL,
-      n_tfbs_links = 0L
+      prediction_stats_manifest = NULL,
+      prediction_stats_manifest_path = NULL,
+      n_prediction_stats = 0L
     )
   }
   if (!nrow(high) || !length(tfs)) return(make_empty())
@@ -692,9 +680,8 @@
   tf_chunk_size <- suppressWarnings(as.integer(tf_chunk_size)[[1L]])
   if (!is.finite(tf_chunk_size) || tf_chunk_size < 1L) tf_chunk_size <- 50L
   chunks <- split(seq_along(tfs), ceiling(seq_along(tfs) / tf_chunk_size))
-  link_chunks <- if (stream_links) NULL else vector("list", length(chunks))
+  prediction_stats_chunks <- if (stream_prediction_stats) NULL else vector("list", length(chunks))
   manifest_chunks <- vector("list", length(chunks))
-  stat_chunks <- vector("list", 0L)
 
   for (chunk_i in seq_along(chunks)) {
     ii <- chunks[[chunk_i]]
@@ -728,30 +715,28 @@
         cores = cores
       )
     }
-    links_i <- .module1_build_tfbs_links(
-      tfbs_stats = prediction_stats_i,
+    prediction_stats_i <- .module1_build_prediction_stats(
+      correlation_stats = prediction_stats_i,
       high_confidence_footprints = high,
       omics_data = omics_data
     )
-    if (stream_links) {
-      manifest_chunks[[chunk_i]] <- .module1_write_link_chunk(
-        x = links_i,
+    if (stream_prediction_stats) {
+      manifest_chunks[[chunk_i]] <- .module1_write_prediction_stats_chunk(
+        x = prediction_stats_i,
         chunk_id = chunk_i,
-        out_dir = link_out_dir,
+        out_dir = prediction_stats_out_dir,
         output_format = output_format
       )
-      rm(links_i)
     } else {
-      link_chunks[[chunk_i]] <- links_i
+      prediction_stats_chunks[[chunk_i]] <- prediction_stats_i
     }
-    stat_chunks[[chunk_i]] <- prediction_stats_i[0, , drop = FALSE]
     rm(prediction_stats_i)
   }
 
-  if (stream_links) {
-    link_manifest <- dplyr::bind_rows(manifest_chunks)
-    link_manifest_path <- .module1_write_link_manifest(link_manifest, link_out_dir)
-    tfbs_links <- tibble::tibble(
+  if (stream_prediction_stats) {
+    prediction_stats_manifest <- dplyr::bind_rows(manifest_chunks)
+    prediction_stats_manifest_path <- .module1_write_prediction_stats_manifest(prediction_stats_manifest, prediction_stats_out_dir)
+    prediction_stats <- tibble::tibble(
       fp_id = character(),
       chr = character(),
       start = integer(),
@@ -762,29 +747,27 @@
       best_method = character(),
       condition_support = integer()
     )
-    n_tfbs_links <- sum(link_manifest$n_links)
+    n_prediction_stats <- sum(prediction_stats_manifest$n_rows)
   } else {
-    tfbs_links <- dplyr::bind_rows(link_chunks)
-    link_manifest <- NULL
-    link_manifest_path <- NULL
-    n_tfbs_links <- nrow(tfbs_links)
+    prediction_stats <- dplyr::bind_rows(prediction_stats_chunks)
+    prediction_stats_manifest <- NULL
+    prediction_stats_manifest_path <- NULL
+    n_prediction_stats <- nrow(prediction_stats)
   }
-  prediction_stats <- if (length(stat_chunks)) dplyr::bind_rows(stat_chunks) else tfbs_links[0, ]
 
   list(
-    tfbs_links = tfbs_links,
     prediction_stats = prediction_stats,
     prediction_pair_count = pair_count,
-    link_manifest = link_manifest,
-    link_manifest_path = link_manifest_path,
-    n_tfbs_links = n_tfbs_links
+    prediction_stats_manifest = prediction_stats_manifest,
+    prediction_stats_manifest_path = prediction_stats_manifest_path,
+    n_prediction_stats = n_prediction_stats
   )
 }
 #' Predict transcription factor binding sites from matched footprint and RNA data
 #'
 #' Run the Module 1 TFBS workflow as one user-facing operation. The function
 #' first uses motif-supported FP-TF correlations to define high-confidence
-#' footprints, then predicts sparse FP-TF binding links for expressed TFs.
+#' footprints, then predicts sparse FP-TF binding events for expressed TFs.
 #'
 #' @param omics_data Compact multiomic object created by `as_multiomic_object()` or `load_prep_multiomic_data()`.
 #' @param out_dir Output directory.
@@ -803,12 +786,12 @@
 #' @param tf_subset Optional TF subset.
 #' @param write_outputs Write compact Module 1 output files.
 #' @param write_stats Retain and write full FP-TF correlation statistics.
-#' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS links.
-#' @param output_format Output format for large streamed TFBS link chunks.
-#' @param return_links Return the TFBS link table in memory. If `NULL`,
+#' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.
+#' @param output_format Output format for large streamed TFBS prediction statistic chunks.
+#' @param return_prediction_stats Return the TFBS prediction statistic table in memory. If `NULL`,
 #'   large output-writing runs are streamed to disk and return a manifest.
-#' @param link_return_limit Maximum number of predicted links to keep in
-#'   memory when `return_links = NULL` and `write_outputs = TRUE`.
+#' @param prediction_return_limit Maximum number of predicted events to keep in
+#'   memory when `return_prediction_stats = NULL` and `write_outputs = TRUE`.
 #' @param min_non_na Minimum finite condition pairs required for correlation.
 #' @param cores Number of worker cores for the dense prediction correlation step.
 #'   If `NULL`, use available cores.
@@ -816,7 +799,7 @@
 #' @param time_log Logical; if TRUE, emit elapsed-time messages.
 #'
 #' @return A list containing `omics_data`, `high_confidence_footprints`,
-#'   `motif_supported_correlations`, `tfbs_links`, `tfbs_stats`, `reports`, and
+#'   `motif_supported_correlations`, `prediction_stats`, `prediction_stats`, `reports`, and
 #'   `parameters`.
 #' @export
 predict_tfbs <- function(omics_data,
@@ -832,8 +815,8 @@ predict_tfbs <- function(omics_data,
                          write_stats = FALSE,
                          write_bed = FALSE,
                          output_format = c("csv", "parquet", "auto"),
-                         return_links = NULL,
-                         link_return_limit = getOption("craftgrn.module1_link_return_limit", 5000000),
+                         return_prediction_stats = NULL,
+                         prediction_return_limit = getOption("craftgrn.module1_prediction_return_limit", 5000000),
                          min_non_na = 3L,
                          cores = NULL,
                          verbose = TRUE,
@@ -846,12 +829,12 @@ predict_tfbs <- function(omics_data,
     .log_abort("`db` must be a non-empty string.")
   }
   output_format <- .module1_output_format(output_format)
-  if (!is.null(return_links)) {
-    stopifnot(is.logical(return_links), length(return_links) == 1L, !is.na(return_links))
+  if (!is.null(return_prediction_stats)) {
+    stopifnot(is.logical(return_prediction_stats), length(return_prediction_stats) == 1L, !is.na(return_prediction_stats))
   }
-  link_return_limit <- suppressWarnings(as.numeric(link_return_limit)[[1L]])
-  if (!is.finite(link_return_limit) || link_return_limit < 0) {
-    .log_abort("`link_return_limit` must be a non-negative number.")
+  prediction_return_limit <- suppressWarnings(as.numeric(prediction_return_limit)[[1L]])
+  if (!is.finite(prediction_return_limit) || prediction_return_limit < 0) {
+    .log_abort("`prediction_return_limit` must be a non-negative number.")
   }
   cutoffs <- .module1_tfbs_cutoffs(r_cutoff = r_cutoff, p_cutoff = p_cutoff, fdr_cutoff = fdr_cutoff)
   r_cutoff <- cutoffs$r
@@ -894,7 +877,7 @@ predict_tfbs <- function(omics_data,
     min_non_na = min_non_na,
     cores = cores
   )
-  motif_supported_correlations <- .module1_merge_tfbs_stats(
+  motif_supported_correlations <- .module1_merge_correlation_stats(
     pearson_stats = motif_supported_correlations_raw[, c("fp_id", "atac_peak", "tf", "motifs", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
     spearman_stats = motif_supported_correlations_raw[, c("fp_id", "atac_peak", "tf", "motifs", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
     r_cutoff = r_cutoff,
@@ -941,18 +924,18 @@ predict_tfbs <- function(omics_data,
 
   if (isTRUE(verbose)) .log_inform("Module 1 TFBS prediction: prediction correlations.")
   prediction_pair_count <- 0
-  keep_links <- if (is.null(return_links)) {
-    !isTRUE(write_outputs) || (as.double(nrow(prediction_footprints)) * as.double(length(expressed_tfs))) <= link_return_limit
+  keep_prediction_stats <- if (is.null(return_prediction_stats)) {
+    !isTRUE(write_outputs) || (as.double(nrow(prediction_footprints)) * as.double(length(expressed_tfs))) <= prediction_return_limit
   } else {
-    isTRUE(return_links)
+    isTRUE(return_prediction_stats)
   }
-  link_chunk_dir <- if (isTRUE(write_outputs) && !isTRUE(keep_links) && !isTRUE(write_stats)) {
-    file.path(out_dir, "module1_tfbs_links_chunks")
+  prediction_stats_chunk_dir <- if (isTRUE(write_outputs) && !isTRUE(keep_prediction_stats) && !isTRUE(write_stats)) {
+    file.path(out_dir, "module1_prediction_stats_chunks")
   } else {
     NULL
   }
-  if (isTRUE(verbose) && !isTRUE(keep_links) && !isTRUE(write_stats)) {
-    .log_inform("Module 1 TFBS links will be streamed to disk in {output_format} chunks.")
+  if (isTRUE(verbose) && !isTRUE(keep_prediction_stats) && !isTRUE(write_stats)) {
+    .log_inform("Module 1 TFBS prediction statistics will be streamed to disk in {output_format} chunks.")
   }
 
   if (isTRUE(write_stats)) {
@@ -971,23 +954,23 @@ predict_tfbs <- function(omics_data,
       min_non_na = min_non_na,
       cores = cores
     )
-    prediction_stats <- .module1_merge_tfbs_stats(
+    prediction_stats <- .module1_merge_correlation_stats(
       pearson_stats = prediction_stats_raw[, c("fp_id", "atac_peak", "tf", "motifs", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
       spearman_stats = prediction_stats_raw[, c("fp_id", "atac_peak", "tf", "motifs", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
       r_cutoff = r_cutoff,
       p_cutoff = p_cutoff,
       fdr_cutoff = fdr_cutoff
     )
-    tfbs_links <- .module1_build_tfbs_links(
-      tfbs_stats = prediction_stats,
+    prediction_stats <- .module1_build_prediction_stats(
+      correlation_stats = prediction_stats,
       high_confidence_footprints = prediction_footprints,
       omics_data = omics_data
     )
-    link_manifest <- NULL
-    link_manifest_path <- NULL
-    n_tfbs_links <- nrow(tfbs_links)
+    prediction_stats_manifest <- NULL
+    prediction_stats_manifest_path <- NULL
+    n_prediction_stats <- nrow(prediction_stats)
   } else {
-    streamed <- .module1_predict_links_streamed(
+    streamed <- .module1_predict_tfbs_streamed(
       omics_data = omics_data,
       high_confidence_footprints = prediction_footprints,
       r_cutoff = r_cutoff,
@@ -996,26 +979,25 @@ predict_tfbs <- function(omics_data,
       tf_subset = expressed_tfs,
       min_non_na = min_non_na,
       cores = cores,
-      return_links = keep_links,
-      link_out_dir = link_chunk_dir,
+      return_prediction_stats = keep_prediction_stats,
+      prediction_stats_out_dir = prediction_stats_chunk_dir,
       output_format = output_format,
       verbose = verbose
     )
     prediction_stats <- streamed$prediction_stats
-    tfbs_links <- streamed$tfbs_links
     prediction_pair_count <- streamed$prediction_pair_count
-    link_manifest <- streamed$link_manifest
-    link_manifest_path <- streamed$link_manifest_path
-    n_tfbs_links <- streamed$n_tfbs_links
+    prediction_stats_manifest <- streamed$prediction_stats_manifest
+    prediction_stats_manifest_path <- streamed$prediction_stats_manifest_path
+    n_prediction_stats <- streamed$n_prediction_stats
     if (isTRUE(verbose)) {
       .log_inform("Module 1 TFBS prediction: {streamed$prediction_pair_count} prediction FP-TF pair(s) evaluated without materializing all pairs.")
     }
   }
 
   predicted_tfbs_paths <- NULL
-  if (!is.null(link_manifest_path) && !isTRUE(keep_links)) {
+  if (!is.null(prediction_stats_manifest_path) && !isTRUE(keep_prediction_stats)) {
     if (isTRUE(verbose)) .log_inform("Module 1 predicted TFBS handoff: writing compact chunks.")
-    predicted_tfbs_paths <- .write_predicted_tfbs_from_link_manifest(link_manifest, out_dir = out_dir, output_format = output_format)
+    predicted_tfbs_paths <- .write_predicted_tfbs_from_prediction_stats_manifest(prediction_stats_manifest, out_dir = out_dir, output_format = output_format)
     predicted_tfbs <- tibble::tibble(
       tfbs_id = character(),
       fp_id = character(),
@@ -1028,7 +1010,7 @@ predict_tfbs <- function(omics_data,
     )
     n_predicted_tfbs <- predicted_tfbs_paths$n_rows
   } else {
-    predicted_tfbs <- build_predicted_tfbs(tfbs_links)
+    predicted_tfbs <- build_predicted_tfbs(prediction_stats)
     n_predicted_tfbs <- nrow(predicted_tfbs)
   }
 
@@ -1041,7 +1023,7 @@ predict_tfbs <- function(omics_data,
     n_canonical_bound_fps = length(canonical_fp_ids),
     n_prediction_fps = nrow(prediction_footprints),
     n_prediction_pairs = as.numeric(prediction_pair_count),
-    n_tfbs_links = as.numeric(n_tfbs_links),
+    n_prediction_stats = as.numeric(n_prediction_stats),
     n_predicted_tfbs = as.numeric(n_predicted_tfbs)
   )
 
@@ -1049,44 +1031,44 @@ predict_tfbs <- function(omics_data,
   if (isTRUE(write_outputs)) {
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     high_path <- file.path(out_dir, "module1_high_confidence_footprints.csv")
-    canonical_stats_path <- file.path(out_dir, "module1_canonical_tfbs_stats.csv.gz")
+    canonical_stats_path <- file.path(out_dir, "module1_canonical_prediction_stats.csv.gz")
     qc_summary_path <- file.path(out_dir, "module1_qc_summary.csv")
-    links_path <- file.path(out_dir, "module1_tfbs_links.csv.gz")
+    links_path <- file.path(out_dir, "module1_prediction_stats.csv.gz")
     if (is.null(predicted_tfbs_paths)) predicted_tfbs_paths <- .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
     readr::write_csv(high_confidence_footprints, high_path)
     readr::write_csv(motif_supported_correlations, canonical_stats_path)
     readr::write_csv(tibble::tibble(metric = names(qc_summary), value = as.numeric(unlist(qc_summary, use.names = FALSE))), qc_summary_path)
-    if (!is.null(link_manifest_path)) {
+    if (!is.null(prediction_stats_manifest_path)) {
       reports <- c(reports, list(
         high_confidence_footprints = high_path,
-        canonical_tfbs_stats = canonical_stats_path,
+        canonical_correlation_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
         predicted_tfbs = predicted_tfbs_paths$path,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
-        tfbs_links_manifest = link_manifest_path,
-        tfbs_links_chunks = link_chunk_dir
+        prediction_stats_manifest = prediction_stats_manifest_path,
+        prediction_stats_chunks = prediction_stats_chunk_dir
       ))
     } else {
-      readr::write_csv(tfbs_links, links_path)
+      readr::write_csv(prediction_stats, links_path)
       reports <- c(reports, list(
         high_confidence_footprints = high_path,
-        canonical_tfbs_stats = canonical_stats_path,
+        canonical_correlation_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
         predicted_tfbs = predicted_tfbs_paths$path,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
-        tfbs_links = links_path
+        correlation_stats = links_path
       ))
     }
     if (isTRUE(write_stats)) {
-      stats_path <- file.path(out_dir, "module1_tfbs_stats.csv.gz")
+      stats_path <- file.path(out_dir, "module1_prediction_stats.csv.gz")
       readr::write_csv(prediction_stats, stats_path)
-      reports$tfbs_stats <- stats_path
+      reports$prediction_stats <- stats_path
     }
   }
   if (isTRUE(write_outputs) && isTRUE(write_bed)) {
     bed_reports <- .module1_write_bed_outputs(
       high_confidence_footprints = high_confidence_footprints,
-      tfbs_links = tfbs_links,
+      prediction_stats = prediction_stats,
       out_dir = out_dir
     )
     reports <- c(reports, bed_reports)
@@ -1096,10 +1078,9 @@ predict_tfbs <- function(omics_data,
     omics_data = omics_data,
     high_confidence_footprints = high_confidence_footprints,
     motif_supported_correlations = motif_supported_correlations,
-    tfbs_links = tfbs_links,
+    prediction_stats = prediction_stats,
     predicted_tfbs = predicted_tfbs,
-    tfbs_link_manifest = link_manifest,
-    tfbs_stats = if (isTRUE(write_stats)) prediction_stats else NULL,
+    prediction_stats_manifest = prediction_stats_manifest,
     reports = reports,
     parameters = list(
       db = db,
@@ -1116,8 +1097,11 @@ predict_tfbs <- function(omics_data,
       write_stats = isTRUE(write_stats),
       write_bed = isTRUE(write_bed),
       output_format = output_format,
-      return_links = isTRUE(keep_links),
+      return_prediction_stats = isTRUE(keep_prediction_stats),
       qc_summary = qc_summary
     )
   )
 }
+NA
+NA
+NA

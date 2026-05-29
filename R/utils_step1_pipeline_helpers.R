@@ -165,6 +165,13 @@ load_prep_multiomic_data <- function(
   if (is.null(threshold_fp_score)) {
     threshold_fp_score <- get_cfg("threshold_fp_score")
   }
+  if (is.null(tf_list)) {
+    tf_list <- get_cfg("tf_list")
+  }
+  if (is.null(motif_db)) {
+    motif_db <- get_cfg("motif_db")
+  }
+
   compact_rds_path <- NULL
   base_dir_cfg <- get_cfg("base_dir")
   if (is.character(base_dir_cfg) && nzchar(base_dir_cfg)) {

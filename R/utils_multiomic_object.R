@@ -107,22 +107,44 @@ is_multiomic_object <- function(x) {
 }
 
 .compact_fp_motifs <- function(omics_data) {
+  empty <- tibble::tibble(fp_id = character(), motif = character(), tf = character())
   ann <- omics_data$fp_annotation
-  if (is.data.frame(ann) && all(c("fp_peak", "motifs", "tfs") %in% names(ann))) {
+  if (!is.data.frame(ann)) return(empty)
+
+  if (all(c("fp_peak", "motifs", "tfs") %in% names(ann))) {
     dt <- data.table::as.data.table(ann[, c("fp_peak", "motifs", "tfs"), drop = FALSE])
     data.table::setnames(dt, c("fp_peak", "motifs", "tfs"), c("fp_id", "motif", "tf"))
-    dt <- unique(dt[!is.na(fp_id) & nzchar(fp_id)])
-    return(tibble::as_tibble(dt))
-  }
-  if (is.data.frame(omics_data$fp_tfs) && all(c("fp_peak", "tfs") %in% names(omics_data$fp_tfs))) {
+  } else if (all(c("fp_peak", "motifs") %in% names(ann))) {
+    dt <- data.table::as.data.table(ann[, c("fp_peak", "motifs"), drop = FALSE])
+    data.table::setnames(dt, c("fp_peak", "motifs"), c("fp_id", "motif"))
+    gene_col <- .module1_motif_gene_col(omics_data$motif_db)
+    if (is.data.frame(omics_data$motif_db) && !is.null(gene_col) && all(c("motif", gene_col) %in% names(omics_data$motif_db))) {
+      map <- data.table::as.data.table(omics_data$motif_db[, c("motif", gene_col), drop = FALSE])
+      data.table::setnames(map, c("motif", gene_col), c("motif", "tf"))
+      map[, motif := sub("^_+", "", as.character(motif))]
+      map <- unique(map[!is.na(motif) & nzchar(motif) & !is.na(tf) & nzchar(tf)])
+      dt[, motif := sub("^_+", "", as.character(motif))]
+      dt <- map[dt, on = "motif"]
+    }
+    if (!"tf" %in% names(dt) || all(is.na(dt$tf) | !nzchar(dt$tf))) {
+      dt[, tf := toupper(sub("\\..*$", "", sub("^_+", "", as.character(motif))))]
+      dt[, tf := gsub("[^A-Za-z0-9]+", "", tf)]
+    }
+  } else if (is.data.frame(omics_data$fp_tfs) && all(c("fp_peak", "tfs") %in% names(omics_data$fp_tfs))) {
     dt <- data.table::as.data.table(omics_data$fp_tfs[, c("fp_peak", "tfs"), drop = FALSE])
     data.table::setnames(dt, c("fp_peak", "tfs"), c("fp_id", "tf"))
     dt[, motif := NA_character_]
-    return(tibble::as_tibble(unique(dt[, .(fp_id, motif, tf)])))
+  } else {
+    return(empty)
   }
-  tibble::tibble(fp_id = character(), motif = character(), tf = character())
-}
 
+  dt[, tf := gsub("\\s*::\\s*", ",", as.character(tf))]
+  dt[, tf := strsplit(tf, ",", fixed = TRUE)]
+  dt <- dt[, .(tf = unlist(tf, use.names = FALSE)), by = .(fp_id, motif)]
+  dt[, tf := trimws(as.character(tf))]
+  dt <- unique(dt[!is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf)])
+  tibble::as_tibble(dt[, .(fp_id, motif, tf)])
+}
 .compact_gene_features <- function(omics_data) {
   rna <- omics_data$rna_condition
   if (!is.data.frame(rna)) .log_abort("`omics_data$rna_condition` is required.")

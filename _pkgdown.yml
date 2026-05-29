@@ -49,6 +49,10 @@ reference:
   desc: Work with motif resources, footprints, and TF-footprint correlations.
   contents:
   - predict_tfbs
+  - module1_prepare_tfbs_inputs
+  - module1_correlate_motif_supported_tfbs
+  - module1_select_prediction_footprints
+  - module1_predict_tfbs_from_correlations
   - build_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
@@ -66,6 +70,11 @@ reference:
   desc: Connect predicted TF binding sites to target genes and query compact Module 2 outputs.
   contents:
   - link_tf_targets
+  - module2_prepare_link_inputs
+  - module2_correlate_tf_targets
+  - module2_build_fp_target_candidates
+  - module2_correlate_fp_targets
+  - module2_assemble_links
   - load_gene_tss
   - load_module2_links
   - query_module2_links
@@ -78,6 +87,7 @@ reference:
 - title: Regulatory topic modeling
   desc: Build topic model inputs, train models, and extract regulatory topics.
   contents:
+  - module3_prepare_differential_links
   - train_topic_models
   - extract_regulatory_topics
   - starts_with("build_doc_term")

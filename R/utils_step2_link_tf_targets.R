@@ -3,7 +3,7 @@
 
 .module2_default_cores <- function(n_cores = NULL) {
   if (is.null(n_cores) || length(n_cores) == 0L || is.na(n_cores[[1L]])) {
-    return(max(1L, parallel::detectCores(logical = TRUE) - 1L))
+    return(max(1L, parallel::detectCores(logical = TRUE)))
   }
   max(1L, as.integer(n_cores[[1L]]))
 }
@@ -295,7 +295,7 @@
   corr_dir <- file.path(output_dir, "module2_fp_target_corr_chunks")
   link_dir <- file.path(output_dir, "module2_links_chunks")
   cand_manifest <- list()
-  fp_pair_dt <- data.table::data.table(fp_id = character(), target_gene = character())
+  fp_pair_chunks <- list()
   candidate_offset <- 0L
   for (i in seq_len(nrow(predicted_manifest))) {
     pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf", "chr", "start", "end", "atac_peak"))
@@ -304,7 +304,7 @@
     candidate_offset <- candidate_offset + nrow(cand_i)
     cand_manifest[[i]] <- .module2_write_chunk(cand_i, cand_dir, "module2_fp_target_candidates_chunk", i, output_format)
     if (nrow(cand_i)) {
-      fp_pair_dt <- unique(data.table::rbindlist(list(fp_pair_dt, data.table::as.data.table(cand_i[, c("fp_id", "target_gene"), drop = FALSE])), use.names = TRUE))
+      fp_pair_chunks[[length(fp_pair_chunks) + 1L]] <- data.table::as.data.table(cand_i[, c("fp_id", "target_gene"), drop = FALSE])
     }
     if (isTRUE(verbose)) .log_inform("Module 2 candidate chunks: {i}/{nrow(predicted_manifest)} done, {nrow(cand_i)} candidate row(s) in this chunk.")
     rm(pred_i, cand_i)
@@ -312,6 +312,11 @@
   cand_manifest <- dplyr::bind_rows(cand_manifest)
   cand_manifest_path <- file.path(output_dir, "module2_fp_target_candidates_manifest.csv")
   readr::write_csv(cand_manifest, cand_manifest_path)
+  fp_pair_dt <- if (length(fp_pair_chunks)) {
+    unique(data.table::rbindlist(fp_pair_chunks, use.names = TRUE))
+  } else {
+    data.table::data.table(fp_id = character(), target_gene = character())
+  }
   fp_pairs <- tibble::as_tibble(fp_pair_dt)
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target correlation: testing {nrow(fp_pairs)} unique restricted pair(s).")
   fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_r", 0.3))
@@ -326,6 +331,8 @@
 
   fp_pass_dt <- data.table::as.data.table(fp_target_pass[, c("fp_id", "target_gene"), drop = FALSE])
   data.table::setkey(fp_pass_dt, fp_id, target_gene)
+  tf_pass_dt <- unique(data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE]))
+  data.table::setkey(tf_pass_dt, tf, target_gene)
   link_manifest <- list()
   n_links <- 0L
   link_offset <- 0L
@@ -336,7 +343,6 @@
     if (nrow(cand_i) && nrow(pred_i)) {
       pred_dt <- unique(data.table::as.data.table(pred_i[, c("fp_id", "tf"), drop = FALSE]))
       cand_dt <- unique(data.table::as.data.table(cand_i[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]))
-      tf_pass_dt <- unique(data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE]))
       link_i <- pred_dt[cand_dt, on = "fp_id", allow.cartesian = TRUE, nomatch = 0L]
       link_i <- tf_pass_dt[link_i, on = c("tf", "target_gene"), nomatch = 0L]
       link_i <- fp_pass_dt[link_i, on = c("fp_id", "target_gene"), nomatch = 0L]

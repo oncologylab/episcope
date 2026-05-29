@@ -20,27 +20,25 @@ test_that("predict_tfbs returns the public Module 1 contract", {
       "omics_data",
       "high_confidence_footprints",
       "motif_supported_correlations",
-      "tfbs_links",
+      "prediction_stats",
       "predicted_tfbs",
-      "tfbs_link_manifest",
-      "tfbs_stats",
+      "prediction_stats_manifest",
       "reports",
       "parameters"
     )
   )
-  expect_s3_class(result$tfbs_links, "data.frame")
+  expect_s3_class(result$prediction_stats, "data.frame")
   expect_s3_class(result$predicted_tfbs, "data.frame")
   expect_false(any(c("best_r", "best_method") %in% names(result$predicted_tfbs)))
-  expect_true(all(c("fp_id", "chr", "start", "end", "atac_peak", "tf", "best_r", "best_method", "condition_support") %in% names(result$tfbs_links)))
+  expect_true(all(c("fp_id", "chr", "start", "end", "atac_peak", "tf", "best_r", "best_method", "condition_support") %in% names(result$prediction_stats)))
   expect_false(fixture$expected_excluded_fp %in% result$high_confidence_footprints$fp_id)
-  expect_false(fixture$expected_excluded_fp %in% result$tfbs_links$fp_id)
-  expect_null(result$tfbs_stats)
+  expect_false(fixture$expected_excluded_fp %in% result$prediction_stats$fp_id)
   expect_equal(result$parameters$db, "JASPAR2024")
   expect_equal(result$parameters$r_cutoff, 0.8)
   expect_true(result$parameters$filter_to_canonical_bound)
   expect_null(result$parameters$p_cutoff)
   expect_null(result$parameters$fdr_cutoff)
-  expect_named(result$parameters$qc_summary, c("n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_tfbs_links", "n_predicted_tfbs"))
+  expect_named(result$parameters$qc_summary, c("n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_prediction_stats", "n_predicted_tfbs"))
   expect_equal(result$parameters$qc_summary$n_prediction_fps, nrow(result$high_confidence_footprints))
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
 })
@@ -66,7 +64,7 @@ test_that("predict_tfbs can retain all bound FPs after canonical-bound labeling"
   expect_gt(retained$parameters$qc_summary$n_prediction_fps, strict$parameters$qc_summary$n_prediction_fps)
   expect_gt(retained$parameters$qc_summary$n_prediction_pairs, strict$parameters$qc_summary$n_prediction_pairs)
   expect_equal(nrow(retained$high_confidence_footprints), strict$parameters$qc_summary$n_canonical_bound_fps)
-  expect_false(fixture$expected_excluded_fp %in% retained$tfbs_links$fp_id)
+  expect_false(fixture$expected_excluded_fp %in% retained$prediction_stats$fp_id)
 })
 
 test_that("motif-supported pair construction filters TF subsets before expansion", {
@@ -157,7 +155,7 @@ test_that("streamed prediction links match pairwise prediction links", {
     pairs = motif_supported_pairs,
     min_non_na = 3L
   )
-  motif_supported_stats <- .module1_merge_tfbs_stats(
+  motif_supported_stats <- .module1_merge_correlation_stats(
     pearson_stats = motif_supported_stats_raw[, c("fp_id", "atac_peak", "tf", "motifs", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
     spearman_stats = motif_supported_stats_raw[, c("fp_id", "atac_peak", "tf", "motifs", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
     r_cutoff = 0.8
@@ -172,18 +170,18 @@ test_that("streamed prediction links match pairwise prediction links", {
     pairs = pairs,
     min_non_na = 3L
   )
-  pairwise_stats <- .module1_merge_tfbs_stats(
+  pairwise_stats <- .module1_merge_correlation_stats(
     pearson_stats = pairwise_raw[, c("fp_id", "atac_peak", "tf", "motifs", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE],
     spearman_stats = pairwise_raw[, c("fp_id", "atac_peak", "tf", "motifs", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE],
     r_cutoff = 0.8
   )
-  pairwise_links <- .module1_build_tfbs_links(
-    tfbs_stats = pairwise_stats,
+  pairwise_links <- .module1_build_prediction_stats(
+    correlation_stats = pairwise_stats,
     high_confidence_footprints = high_conf,
     omics_data = fixture$omics_data
   )
 
-  streamed <- .module1_predict_links_streamed(
+  streamed <- .module1_predict_tfbs_streamed(
     omics_data = fixture$omics_data,
     high_confidence_footprints = high_conf,
     r_cutoff = 0.8,
@@ -192,7 +190,7 @@ test_that("streamed prediction links match pairwise prediction links", {
 
   expect_equal(streamed$prediction_pair_count, nrow(pairs))
   expect_equal(
-    streamed$tfbs_links[order(streamed$tfbs_links$fp_id, streamed$tfbs_links$tf), names(pairwise_links)],
+    streamed$prediction_stats[order(streamed$prediction_stats$fp_id, streamed$prediction_stats$tf), names(pairwise_links)],
     pairwise_links[order(pairwise_links$fp_id, pairwise_links$tf), ]
   )
 })
@@ -222,7 +220,7 @@ test_that("sparse C++ pair correlations match the R fallback", {
   expect_equal(cpp_stats$spearman_p, r_stats$spearman_p, tolerance = 1e-10)
 })
 
-test_that("predict_tfbs streams large link outputs when return_links is disabled", {
+test_that("predict_tfbs streams large link outputs when return_prediction_stats is disabled", {
   fixture <- module1_tiny_fixture()
   out_dir <- file.path(tempdir(), paste0("craftgrn-module1-stream-", as.integer(stats::runif(1L, 1, 1e9))))
   result <- predict_tfbs(
@@ -232,24 +230,24 @@ test_that("predict_tfbs streams large link outputs when return_links is disabled
     write_outputs = TRUE,
     write_stats = FALSE,
     output_format = "csv",
-    return_links = FALSE,
+    return_prediction_stats = FALSE,
     verbose = FALSE
   )
 
-  expect_equal(nrow(result$tfbs_links), 0L)
-  expect_s3_class(result$tfbs_link_manifest, "data.frame")
-  expect_true(file.exists(result$reports$tfbs_links_manifest))
-  expect_true(dir.exists(result$reports$tfbs_links_chunks))
-  expect_true(all(file.exists(result$tfbs_link_manifest$path)))
-  expect_true(file.exists(result$reports$canonical_tfbs_stats))
+  expect_equal(nrow(result$prediction_stats), 0L)
+  expect_s3_class(result$prediction_stats_manifest, "data.frame")
+  expect_true(file.exists(result$reports$prediction_stats_manifest))
+  expect_true(dir.exists(result$reports$prediction_stats_chunks))
+  expect_true(all(file.exists(result$prediction_stats_manifest$path)))
+  expect_true(file.exists(result$reports$canonical_correlation_stats))
   expect_true(file.exists(result$reports$qc_summary))
   expect_true(file.exists(result$reports$predicted_tfbs_manifest))
   pred_manifest <- readr::read_csv(result$reports$predicted_tfbs_manifest, show_col_types = FALSE)
   expect_true(all(file.exists(pred_manifest$path)))
-  expect_equal(sum(pred_manifest$n_rows), sum(result$tfbs_link_manifest$n_links))
+  expect_equal(sum(pred_manifest$n_rows), sum(result$prediction_stats_manifest$n_rows))
   qc <- readr::read_csv(result$reports$qc_summary, show_col_types = FALSE)
   expect_true(all(c("metric", "value") %in% names(qc)))
-  expect_equal(sum(result$tfbs_link_manifest$n_links), result$parameters$qc_summary$n_tfbs_links)
+  expect_equal(sum(result$prediction_stats_manifest$n_rows), result$parameters$qc_summary$n_prediction_stats)
   expect_equal(sum(pred_manifest$n_rows), result$parameters$qc_summary$n_predicted_tfbs)
 })
 
@@ -275,7 +273,7 @@ test_that("predict_tfbs requires compact multiomic objects", {
     "compact multiomic object"
   )
   compact_result <- predict_tfbs(compact, r_cutoff = 0.8, write_outputs = FALSE, verbose = FALSE)
-  expect_s3_class(compact_result$tfbs_links, "data.frame")
+  expect_s3_class(compact_result$prediction_stats, "data.frame")
   expect_gt(nrow(compact_result$high_confidence_footprints), 0L)
 })
 
@@ -288,12 +286,12 @@ test_that("predict_tfbs writes optional BED outputs", {
     r_cutoff = 0.8,
     write_outputs = TRUE,
     write_bed = TRUE,
-    return_links = TRUE,
+    return_prediction_stats = TRUE,
     verbose = FALSE
   )
 
   expect_true(file.exists(result$reports$high_confidence_footprints_bed))
-  expect_true(file.exists(result$reports$tfbs_links_bed))
+  expect_true(file.exists(result$reports$prediction_stats_bed))
   expect_gt(length(readLines(result$reports$high_confidence_footprints_bed)), 0L)
-  expect_gt(length(readLines(result$reports$tfbs_links_bed)), 0L)
+  expect_gt(length(readLines(result$reports$prediction_stats_bed)), 0L)
 })

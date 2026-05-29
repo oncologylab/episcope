@@ -1,4 +1,4 @@
-# File: utils_step1_tfbs_links.R
+# File: utils_step1_predicted_tfbs.R
 # Purpose: Internal Module 1 helpers for compact TFBS prediction tables.
 
 .module1_parse_fp_coordinates <- function(fp_id) {
@@ -66,21 +66,41 @@
   tibble::as_tibble(x)
 }
 
-.module1_merge_tfbs_stats <- function(pearson_stats, spearman_stats, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL) {
+.module1_merge_correlation_stats <- function(pearson_stats, spearman_stats, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL) {
   keys <- c("fp_id", "atac_peak", "tf")
   if (!is.data.frame(pearson_stats)) .log_abort("`pearson_stats` must be a data.frame.")
   if (!is.data.frame(spearman_stats)) .log_abort("`spearman_stats` must be a data.frame.")
   if (!all(keys %in% names(pearson_stats))) .log_abort("`pearson_stats` is missing required key columns.")
   if (!all(keys %in% names(spearman_stats))) .log_abort("`spearman_stats` is missing required key columns.")
 
-  pearson_keep <- unique(c(keys, "pearson_r", "pearson_p", "pearson_p_adj", "motifs"))
-  spearman_keep <- unique(c(keys, "spearman_r", "spearman_p", "spearman_p_adj", "motifs"))
-  pearson_keep <- intersect(pearson_keep, names(pearson_stats))
-  spearman_keep <- intersect(spearman_keep, names(spearman_stats))
+  collapse_stats <- function(x, value_cols) {
+    keep <- intersect(unique(c(keys, value_cols, "motifs")), names(x))
+    dt <- data.table::as.data.table(x[, keep, drop = FALSE])
+    for (nm in keys) dt[, (nm) := as.character(get(nm))]
+    value_cols <- intersect(value_cols, names(dt))
+    if (!"motifs" %in% names(dt)) dt[, motifs := NA_character_]
+    first_non_missing <- function(v) {
+      idx <- which(!is.na(v))
+      if (length(idx)) v[[idx[[1L]]]] else v[NA_integer_][[1L]]
+    }
+    out <- dt[
+      ,
+      c(
+        lapply(.SD, first_non_missing),
+        list(motifs = paste(sort(unique(as.character(motifs[!is.na(motifs) & nzchar(motifs)]))), collapse = ";"))
+      ),
+      by = keys,
+      .SDcols = value_cols
+    ]
+    tibble::as_tibble(out)
+  }
+
+  pearson_tbl <- collapse_stats(pearson_stats, c("pearson_r", "pearson_p", "pearson_p_adj"))
+  spearman_tbl <- collapse_stats(spearman_stats, c("spearman_r", "spearman_p", "spearman_p_adj"))
 
   merged <- dplyr::full_join(
-    pearson_stats[, pearson_keep, drop = FALSE],
-    spearman_stats[, spearman_keep, drop = FALSE],
+    pearson_tbl,
+    spearman_tbl,
     by = keys,
     suffix = c(".pearson", ".spearman")
   )
@@ -185,16 +205,16 @@
   out
 }
 
-.module1_build_tfbs_links <- function(tfbs_stats, high_confidence_footprints, omics_data = NULL) {
-  if (!is.data.frame(tfbs_stats)) .log_abort("`tfbs_stats` must be a data.frame.")
+.module1_build_prediction_stats <- function(correlation_stats, high_confidence_footprints, omics_data = NULL) {
+  if (!is.data.frame(correlation_stats)) .log_abort("`correlation_stats` must be a data.frame.")
   if (!is.data.frame(high_confidence_footprints)) .log_abort("`high_confidence_footprints` must be a data.frame.")
   need_stats <- c("fp_id", "atac_peak", "tf", "best_r", "best_method", "pass")
   need_high <- c("fp_id", "chr", "start", "end", "atac_peak")
-  if (!all(need_stats %in% names(tfbs_stats))) .log_abort("`tfbs_stats` is missing required columns.")
+  if (!all(need_stats %in% names(correlation_stats))) .log_abort("`correlation_stats` is missing required columns.")
   if (!all(need_high %in% names(high_confidence_footprints))) .log_abort("`high_confidence_footprints` is missing required columns.")
 
   high <- high_confidence_footprints[!duplicated(high_confidence_footprints$fp_id), need_high, drop = FALSE]
-  stats_pass <- tfbs_stats[tfbs_stats$pass %in% TRUE, , drop = FALSE]
+  stats_pass <- correlation_stats[correlation_stats$pass %in% TRUE, , drop = FALSE]
   if (!nrow(stats_pass)) {
     return(tibble::tibble(
       fp_id = character(),
@@ -244,14 +264,14 @@
 
 # ---- Predicted TFBS handoff for Module 2 --------------------------------
 
-.build_predicted_tfbs_table <- function(tfbs_links, include_support = TRUE, id_offset = 0L) {
-  if (!is.data.frame(tfbs_links)) .log_abort("tfbs_links must be a data.frame.")
+.build_predicted_tfbs_table <- function(prediction_stats, include_support = TRUE, id_offset = 0L) {
+  if (!is.data.frame(prediction_stats)) .log_abort("prediction_stats must be a data.frame.")
   need <- c("fp_id", "chr", "start", "end", "atac_peak", "tf")
-  missing <- setdiff(need, names(tfbs_links))
-  if (length(missing)) .log_abort("tfbs_links is missing required predicted TFBS columns: {paste(missing, collapse = ', ')}.")
+  missing <- setdiff(need, names(prediction_stats))
+  if (length(missing)) .log_abort("prediction_stats is missing required predicted TFBS columns: {paste(missing, collapse = ', ')}.")
   keep <- need
-  if (isTRUE(include_support)) keep <- c(keep, intersect(c("condition_support", "sample_support"), names(tfbs_links)))
-  out <- data.table::as.data.table(tfbs_links[, keep, drop = FALSE])
+  if (isTRUE(include_support)) keep <- c(keep, intersect(c("condition_support"), names(prediction_stats)))
+  out <- data.table::as.data.table(prediction_stats[, keep, drop = FALSE])
   out <- unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf)])
   out[, tfbs_id := sprintf("tfbs_%08d", as.integer(id_offset) + seq_len(.N))]
   data.table::setcolorder(out, c("tfbs_id", setdiff(names(out), "tfbs_id")))
@@ -261,12 +281,12 @@
 
 #' Build the compact predicted TFBS handoff for Module 2
 #'
-#' @param tfbs_links Module 1 TFBS link table.
+#' @param prediction_stats Module 1 TFBS prediction statistic table.
 #' @param include_support Include compact condition support when available.
 #' @return A tibble with one row per predicted FP-TF binding event.
 #' @export
-build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
-  .build_predicted_tfbs_table(tfbs_links, include_support = include_support)
+build_predicted_tfbs <- function(prediction_stats, include_support = TRUE) {
+  .build_predicted_tfbs_table(prediction_stats, include_support = include_support)
 }
 
 .predicted_tfbs_output_format <- function(output_format = c("auto", "parquet", "csv")) {
@@ -295,25 +315,28 @@ build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
   list(path = path, manifest = manifest_path, format = output_format, n_rows = nrow(predicted_tfbs))
 }
 
-.write_predicted_tfbs_from_link_manifest <- function(link_manifest, out_dir, output_format = c("auto", "parquet", "csv")) {
-  if (!is.data.frame(link_manifest)) .log_abort("link_manifest must be a data.frame.")
-  if (!all(c("path", "format") %in% names(link_manifest))) .log_abort("link_manifest must contain path and format columns.")
+.write_predicted_tfbs_from_prediction_stats_manifest <- function(prediction_stats_manifest, out_dir, output_format = c("auto", "parquet", "csv")) {
+  if (!is.data.frame(prediction_stats_manifest)) .log_abort("prediction_stats_manifest must be a data.frame.")
+  if (!all(c("path", "format") %in% names(prediction_stats_manifest))) .log_abort("prediction_stats_manifest must contain path and format columns.")
   output_format <- .predicted_tfbs_output_format(output_format)
   chunk_dir <- file.path(out_dir, "module1_predicted_tfbs_chunks")
   dir.create(chunk_dir, recursive = TRUE, showWarnings = FALSE)
   offset <- 0L
-  manifest <- vector("list", nrow(link_manifest))
-  for (i in seq_len(nrow(link_manifest))) {
-    link_path <- as.character(link_manifest$path[[i]])
-    link_format <- as.character(link_manifest$format[[i]])
-    if (!file.exists(link_path)) .log_abort("TFBS link chunk not found: {link_path}")
-    if (identical(link_format, "parquet") || grepl("\\.parquet$", link_path, ignore.case = TRUE)) {
-      if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet TFBS link chunks.")
-      links_i <- tibble::as_tibble(arrow::read_parquet(link_path))
+  manifest <- vector("list", nrow(prediction_stats_manifest))
+  for (i in seq_len(nrow(prediction_stats_manifest))) {
+    stats_path <- as.character(prediction_stats_manifest$path[[i]])
+    stats_format <- as.character(prediction_stats_manifest$format[[i]])
+    if (!file.exists(stats_path)) .log_abort("TFBS prediction statistic chunk not found: {stats_path}")
+    if (identical(stats_format, "parquet") || grepl("\\.parquet$", stats_path, ignore.case = TRUE)) {
+      if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet TFBS prediction statistic chunks.")
+      stats_i <- tibble::as_tibble(arrow::read_parquet(
+        stats_path,
+        col_select = c("fp_id", "chr", "start", "end", "atac_peak", "tf", "condition_support")
+      ))
     } else {
-      links_i <- tibble::as_tibble(readr::read_csv(link_path, show_col_types = FALSE))
+      stats_i <- tibble::as_tibble(readr::read_csv(stats_path, show_col_types = FALSE))
     }
-    pred_i <- .build_predicted_tfbs_table(links_i, include_support = TRUE, id_offset = offset)
+    pred_i <- .build_predicted_tfbs_table(stats_i, include_support = TRUE, id_offset = offset)
     offset <- offset + nrow(pred_i)
     if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
       out_path <- file.path(chunk_dir, sprintf("module1_predicted_tfbs_chunk_%04d.parquet", i))
@@ -325,7 +348,7 @@ build_predicted_tfbs <- function(tfbs_links, include_support = TRUE) {
       readr::write_csv(pred_i, out_path)
     }
     manifest[[i]] <- tibble::tibble(chunk_id = i, path = out_path, format = fmt, n_rows = nrow(pred_i))
-    rm(links_i, pred_i)
+    rm(stats_i, pred_i)
   }
   manifest <- dplyr::bind_rows(manifest)
   manifest_path <- file.path(out_dir, "module1_predicted_tfbs_manifest.csv")

@@ -1,6 +1,6 @@
 test_that("predicted_tfbs is compact and exportable", {
-  tfbs_links <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:100-140"), chr = "chr1", start = 100L, end = 140L, atac_peak = "chr1:90-160", tf = c("TF_A", "TF_B"), best_r = c(0.9, 0.8), best_method = c("pearson", "spearman"), condition_support = c(2L, 1L))
-  pred <- build_predicted_tfbs(tfbs_links)
+  prediction_stats <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:100-140"), chr = "chr1", start = 100L, end = 140L, atac_peak = "chr1:90-160", tf = c("TF_A", "TF_B"), best_r = c(0.9, 0.8), best_method = c("pearson", "spearman"), condition_support = c(2L, 1L))
+  pred <- build_predicted_tfbs(prediction_stats)
   expect_true(all(c("tfbs_id", "fp_id", "chr", "start", "end", "atac_peak", "tf") %in% names(pred)))
   expect_false(any(c("best_r", "best_method") %in% names(pred)))
   tmp <- tempfile(fileext = ".bed")
