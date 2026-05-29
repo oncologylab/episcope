@@ -112,6 +112,7 @@ Primary package functions:
   inputs from a YAML configuration file.
 - `predict_tfbs()` performs direct-bound footprint filtering and TF binding site
   prediction across matched conditions.
+- `build_module1_qc_report()` writes an HTML QC report for input gates, canonical support, predicted TFBS chunks, and related Module 1 artifacts.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg" alt="Module 1 workflow" width="800">
 
@@ -121,6 +122,11 @@ Module 2 links TF binding sites to candidate target genes using enhancer-gene
 maps, genomic distance windows, or 3D chromatin interaction priors. Candidate
 TF->TFBS->target links are filtered by condition-specific expression, binding,
 footprint or peak signal, and cross-condition correlation evidence.
+
+Primary package functions:
+
+- `link_tf_targets()` connects predicted TFBS to target genes using TF-target and FP-target correlations.
+- `build_module2_qc_report()` writes an HTML QC report for Module 2 filters, distance-to-TSS candidates, final-link integrity, top TFs, and related browser reports.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg" alt="Module 2 workflow" width="800">
 

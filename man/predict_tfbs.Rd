@@ -17,6 +17,8 @@ predict_tfbs(
   write_outputs = TRUE,
   write_stats = FALSE,
   write_bed = FALSE,
+  write_qc_report = TRUE,
+  qc_report_scan = FALSE,
   output_format = c("csv", "parquet", "auto"),
   return_prediction_stats = NULL,
   prediction_return_limit = getOption("craftgrn.module1_prediction_return_limit", 5e+06),
@@ -56,6 +58,10 @@ all-expressed-TF prediction stage.}
 \item{write_stats}{Retain and write full FP-TF correlation statistics.}
 
 \item{write_bed}{Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.}
+
+\item{write_qc_report}{Write a Module 1 HTML QC report when outputs are written.}
+
+\item{qc_report_scan}{Scan predicted TFBS chunks for top-TF summaries in the QC report.}
 
 \item{output_format}{Output format for large streamed TFBS prediction statistic chunks.}
 

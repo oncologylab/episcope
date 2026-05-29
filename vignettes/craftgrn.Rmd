@@ -139,6 +139,12 @@ module1 <- predict_tfbs(
   out_dir = "predict_tf_binding_sites",
   output_format = "auto"
 )
+
+module1_qc <- build_module1_qc_report(
+  module1,
+  output_dir = file.path("predict_tf_binding_sites", "reports"),
+  scan_predicted_tfbs = TRUE
+)
 ```
 
 ### Outputs
@@ -152,6 +158,7 @@ Module 1 creates:
   for each aligned footprint.
 - `predicted_tfbs`, the compact FP-to-TF handoff used by Module 2.
 - Optional full TFBS correlation statistics for audit and debugging.
+- `module1_qc_report.html`: an HTML QC report summarizing input gates, canonical support, chunked predicted TFBS output, top TFs, motif complexity, and related PDF artifacts.
 - QC summaries reporting how many FPs, motif-supported pairs, canonical-bound
   FPs, prediction pairs, and predicted TFBS links pass each step.
 
@@ -197,6 +204,14 @@ module2 <- link_tf_targets(
 )
 
 hnf4a_links <- query_module2_links(module2, tf = "HNF4A")
+
+module2_qc <- build_module2_qc_report(
+  module2,
+  multiomic_data = module1$omics_data,
+  output_dir = file.path("connect_tf_target_genes", "reports"),
+  scan_large_tables = TRUE,
+  validate_integrity = TRUE
+)
 ```
 
 ### Outputs
@@ -210,6 +225,7 @@ Module 2 produces normalized compact tables:
 - `module2_links`: final TF-FP-target links as compact keys and pass flags.
 - `module2_condition_activity`: long condition-level activity flags.
 - `module2_qc_summary`: counts before and after each filter.
+- `module2_qc_report.html`: an HTML QC report summarizing correlation filters, FP-target candidate distance-to-TSS distributions, final-link integrity checks, top TFs, output manifests, and related HTML browser reports.
 
 ## Module 3: Learn regulatory topics and visualize differential GRNs
 

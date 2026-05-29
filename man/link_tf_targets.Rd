@@ -14,7 +14,9 @@ link_tf_targets(
   max_distance_bp = NULL,
   n_cores = NULL,
   output_format = c("auto", "parquet", "csv"),
-  verbose = TRUE
+  verbose = TRUE,
+  write_qc_report = TRUE,
+  qc_report_validate = FALSE
 )
 }
 \arguments{
@@ -39,6 +41,10 @@ configured `ref_genome`.}
 \item{output_format}{Output format: auto, parquet, or csv.}
 
 \item{verbose}{Emit concise progress messages.}
+
+\item{write_qc_report}{Write a Module 2 HTML QC report when `output_dir` is supplied.}
+
+\item{qc_report_validate}{Run relational integrity checks in the automatic QC report.}
 }
 \value{
 Compact Module 2 relational result list.

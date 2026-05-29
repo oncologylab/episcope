@@ -51,6 +51,7 @@ reference:
   desc: Work with motif resources, footprints, and TF-footprint correlations.
   contents:
   - predict_tfbs
+  - build_module1_qc_report
   - module1_prepare_tfbs_inputs
   - module1_correlate_motif_supported_tfbs
   - module1_select_prediction_footprints
@@ -72,6 +73,7 @@ reference:
   desc: Connect predicted TF binding sites to target genes and query compact Module 2 outputs.
   contents:
   - link_tf_targets
+  - build_module2_qc_report
   - module2_prepare_link_inputs
   - module2_correlate_tf_targets
   - module2_build_fp_target_candidates

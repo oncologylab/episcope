@@ -787,6 +787,8 @@
 #' @param write_outputs Write compact Module 1 output files.
 #' @param write_stats Retain and write full FP-TF correlation statistics.
 #' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.
+#' @param write_qc_report Write a Module 1 HTML QC report when outputs are written.
+#' @param qc_report_scan Scan predicted TFBS chunks for top-TF summaries in the QC report.
 #' @param output_format Output format for large streamed TFBS prediction statistic chunks.
 #' @param return_prediction_stats Return the TFBS prediction statistic table in memory. If `NULL`,
 #'   large output-writing runs are streamed to disk and return a manifest.
@@ -814,6 +816,8 @@ predict_tfbs <- function(omics_data,
                          write_outputs = TRUE,
                          write_stats = FALSE,
                          write_bed = FALSE,
+                         write_qc_report = TRUE,
+                         qc_report_scan = FALSE,
                          output_format = c("csv", "parquet", "auto"),
                          return_prediction_stats = NULL,
                          prediction_return_limit = getOption("craftgrn.module1_prediction_return_limit", 5000000),
@@ -829,6 +833,8 @@ predict_tfbs <- function(omics_data,
     .log_abort("`db` must be a non-empty string.")
   }
   output_format <- .module1_output_format(output_format)
+  stopifnot(is.logical(write_qc_report), length(write_qc_report) == 1L, !is.na(write_qc_report))
+  stopifnot(is.logical(qc_report_scan), length(qc_report_scan) == 1L, !is.na(qc_report_scan))
   if (!is.null(return_prediction_stats)) {
     stopifnot(is.logical(return_prediction_stats), length(return_prediction_stats) == 1L, !is.na(return_prediction_stats))
   }
@@ -1073,6 +1079,24 @@ predict_tfbs <- function(omics_data,
     )
     reports <- c(reports, bed_reports)
   }
+  if (isTRUE(write_outputs) && isTRUE(write_qc_report)) {
+    qc_report <- build_module1_qc_report(
+      module1 = list(
+        omics_data = omics_data,
+        high_confidence_footprints = high_confidence_footprints,
+        motif_supported_correlations = motif_supported_correlations,
+        prediction_stats = prediction_stats,
+        predicted_tfbs = predicted_tfbs,
+        prediction_stats_manifest = prediction_stats_manifest,
+        reports = reports,
+        parameters = list(qc_summary = qc_summary)
+      ),
+      output_dir = file.path(out_dir, "reports"),
+      scan_predicted_tfbs = isTRUE(qc_report_scan),
+      verbose = verbose
+    )
+    reports$qc_html <- qc_report
+  }
 
   list(
     omics_data = omics_data,
@@ -1096,6 +1120,8 @@ predict_tfbs <- function(omics_data,
       write_outputs = isTRUE(write_outputs),
       write_stats = isTRUE(write_stats),
       write_bed = isTRUE(write_bed),
+      write_qc_report = isTRUE(write_qc_report),
+      qc_report_scan = isTRUE(qc_report_scan),
       output_format = output_format,
       return_prediction_stats = isTRUE(keep_prediction_stats),
       qc_summary = qc_summary

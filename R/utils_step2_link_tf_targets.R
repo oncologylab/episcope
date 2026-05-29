@@ -254,8 +254,10 @@
   tibble::tibble(chunk_id = as.integer(chunk_id), path = path, format = fmt, n_rows = nrow(x))
 }
 
-.module2_link_tf_targets_streamed <- function(multiomic_data, predicted_manifest, gene_tss, regulatory_prior = NULL, project_config = NULL, output_dir, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
+.module2_link_tf_targets_streamed <- function(multiomic_data, predicted_manifest, gene_tss, regulatory_prior = NULL, project_config = NULL, output_dir, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE, write_qc_report = TRUE, qc_report_validate = FALSE) {
   output_format <- match.arg(output_format)
+  stopifnot(is.logical(write_qc_report), length(write_qc_report) == 1L, !is.na(write_qc_report))
+  stopifnot(is.logical(qc_report_validate), length(qc_report_validate) == 1L, !is.na(qc_report_validate))
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
   if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
@@ -379,8 +381,18 @@
   )
   manifest_path <- file.path(output_dir, "module2_manifest.csv")
   readr::write_csv(manifest, manifest_path)
-  out <- list(predicted_tfbs = tibble::tibble(), candidates = tibble::tibble(), tf_target_corr = tf_target_corr, fp_target_corr = tibble::tibble(), links = tibble::tibble(), module2_fp_target_candidates_manifest = cand_manifest, module2_fp_target_corr_manifest = corr_manifest, module2_links_manifest = link_manifest, condition_activity = tibble::tibble(), qc_summary = qc_summary, manifest = manifest, reports = list(manifest = manifest_path, candidates_manifest = cand_manifest_path, fp_target_corr_manifest = corr_manifest_path, links_manifest = link_manifest_path), parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format, streamed = TRUE))
+  out <- list(predicted_tfbs = tibble::tibble(), candidates = tibble::tibble(), tf_target_corr = tf_target_corr, fp_target_corr = tibble::tibble(), links = tibble::tibble(), module2_fp_target_candidates_manifest = cand_manifest, module2_fp_target_corr_manifest = corr_manifest, module2_links_manifest = link_manifest, condition_activity = tibble::tibble(), qc_summary = qc_summary, manifest = manifest, reports = list(manifest = manifest_path, candidates_manifest = cand_manifest_path, fp_target_corr_manifest = corr_manifest_path, links_manifest = link_manifest_path), parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format, streamed = TRUE, write_qc_report = isTRUE(write_qc_report), qc_report_validate = isTRUE(qc_report_validate)))
   class(out) <- c("craftgrn_module2", "list")
+  if (isTRUE(write_qc_report)) {
+    out$reports$qc_html <- build_module2_qc_report(
+      module2 = out,
+      multiomic_data = multiomic_data,
+      output_dir = file.path(output_dir, "reports"),
+      scan_large_tables = FALSE,
+      validate_integrity = isTRUE(qc_report_validate),
+      verbose = verbose
+    )
+  }
   out
 }
 
@@ -398,10 +410,14 @@
 #' @param n_cores Number of CPU cores.
 #' @param output_format Output format: auto, parquet, or csv.
 #' @param verbose Emit concise progress messages.
+#' @param write_qc_report Write a Module 2 HTML QC report when `output_dir` is supplied.
+#' @param qc_report_validate Run relational integrity checks in the automatic QC report.
 #' @return Compact Module 2 relational result list.
 #' @export
-link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
+link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE, write_qc_report = TRUE, qc_report_validate = FALSE) {
   output_format <- match.arg(output_format)
+  stopifnot(is.logical(write_qc_report), length(write_qc_report) == 1L, !is.na(write_qc_report))
+  stopifnot(is.logical(qc_report_validate), length(qc_report_validate) == 1L, !is.na(qc_report_validate))
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
   if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
@@ -419,7 +435,9 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
       max_distance_bp = max_distance_bp,
       n_cores = n_cores,
       output_format = output_format,
-      verbose = verbose
+      verbose = verbose,
+      write_qc_report = isTRUE(write_qc_report),
+      qc_report_validate = isTRUE(qc_report_validate)
     ))
   }
   if (is.character(predicted_tfbs) && length(predicted_tfbs) == 1L && file.exists(predicted_tfbs)) predicted_tfbs <- load_predicted_tfbs(predicted_tfbs)
@@ -477,8 +495,18 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
     readr::write_csv(manifest, manifest_path)
     reports$manifest <- manifest_path
   }
-  out <- list(predicted_tfbs = predicted_tfbs, candidates = candidates, tf_target_corr = tf_target_corr, fp_target_corr = fp_target_corr, links = links, condition_activity = activity, qc_summary = qc_summary, manifest = manifest, reports = reports, parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format))
+  out <- list(predicted_tfbs = predicted_tfbs, candidates = candidates, tf_target_corr = tf_target_corr, fp_target_corr = fp_target_corr, links = links, condition_activity = activity, qc_summary = qc_summary, manifest = manifest, reports = reports, parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format, write_qc_report = isTRUE(write_qc_report), qc_report_validate = isTRUE(qc_report_validate)))
   class(out) <- c("craftgrn_module2", "list")
+  if (!is.null(output_dir) && nzchar(output_dir) && isTRUE(write_qc_report)) {
+    out$reports$qc_html <- build_module2_qc_report(
+      module2 = out,
+      multiomic_data = multiomic_data,
+      output_dir = file.path(output_dir, "reports"),
+      scan_large_tables = FALSE,
+      validate_integrity = isTRUE(qc_report_validate),
+      verbose = verbose
+    )
+  }
   out
 }
 
