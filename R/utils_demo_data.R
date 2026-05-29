@@ -71,6 +71,12 @@ craftgrn_demo_data_info <- function(demo = c("nutrient_stress_chr22")) {
 #' extracted project directory. The demo bundle is external to the R package so
 #' package installation remains small and CRAN-friendly.
 #'
+#' If the download fails, inspect `craftgrn_demo_data_info()` and download the
+#' release asset manually. If checksum verification fails, rerun with
+#' `overwrite = TRUE` to replace a stale or partial archive. The extracted
+#' project uses `base_dir: "."`, so pass the returned directory or its
+#' project config path directly to package functions after moving the folder.
+#'
 #' @param destdir Directory where the archive should be downloaded and unpacked.
 #' @param demo Demo bundle name. Currently `"nutrient_stress_chr22"`.
 #' @param overwrite Logical; if `TRUE`, download the archive again and replace an

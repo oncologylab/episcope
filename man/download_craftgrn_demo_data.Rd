@@ -33,6 +33,13 @@ page, verifies its MD5 checksum by default, extracts it, and returns the
 extracted project directory. The demo bundle is external to the R package so
 package installation remains small and CRAN-friendly.
 }
+\details{
+If the download fails, inspect `craftgrn_demo_data_info()` and download the
+release asset manually. If checksum verification fails, rerun with
+`overwrite = TRUE` to replace a stale or partial archive. The extracted
+project uses `base_dir: "."`, so pass the returned directory or its
+project config path directly to package functions after moving the folder.
+}
 \examples{
 \dontrun{
 demo_dir <- download_craftgrn_demo_data(destdir = tempdir())

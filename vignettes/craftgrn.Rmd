@@ -34,14 +34,57 @@ library(craftgrn)
 ## Demo data
 
 The package provides a helper for downloading the small processed chr22 demo
-bundle from GitHub Releases. The bundle contains a portable `project.yaml`,
-matched RNA and ATAC inputs, and compact aligned footprint cache files. Raw
-TOBIAS outputs are not included.
+bundle from GitHub Releases:
+
+https://github.com/oncologylab/craftgrn/releases/tag/demo-data-v0.1.0
+
+The bundle contains a portable `project.yaml`, matched RNA and ATAC inputs,
+and compact aligned footprint cache files. Raw TOBIAS outputs and generated
+result folders are not included, so the download stays small.
 
 ```{r demo-data}
+craftgrn_demo_data_info()
+
 demo_dir <- download_craftgrn_demo_data(destdir = tempdir())
 config <- file.path(demo_dir, "project.yaml")
 ```
+
+Use the demo config directly with the normal Module 1 preparation function:
+
+```{r demo-data-load}
+omics <- load_prep_multiomic_data(
+  config = config,
+  label_col = "strict_match_rna",
+  do_preprocess = FALSE,
+  verbose = TRUE
+)
+```
+
+To run Module 1 on the demo:
+
+```{r demo-data-module1}
+module1 <- predict_tfbs(
+  omics_data = omics,
+  out_dir = file.path(demo_dir, "predict_tf_binding_sites"),
+  output_format = "auto",
+  write_stats = FALSE,
+  verbose = TRUE
+)
+```
+
+Troubleshooting demo data:
+
+- If `download_craftgrn_demo_data()` cannot reach GitHub, download the release
+  asset manually and unpack it with `utils::untar()`.
+- If checksum verification fails, call
+  `download_craftgrn_demo_data(overwrite = TRUE)` to replace a partial
+  download.
+- If file paths fail after moving the project, pass the extracted
+  `project.yaml` path explicitly. The demo config uses `base_dir: "."` so
+  paths are relative to the config location.
+- If the computer has limited memory, first run only `load_prep_multiomic_data()`
+  and Module 1. Module 2 is larger because it computes TF-target correlations
+  genome-wide before restricting FP-target candidates to chr22 TFBS.
 
 The examples below show generic project paths. To run the chr22 demo, replace
 `project.yaml` or `craftgrn_grn.yaml` with `config` from the chunk above.
