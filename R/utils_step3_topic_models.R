@@ -466,18 +466,22 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   list(dtm = dtm, doc_index = doc_index, term_index = term_index)
 }
 
-.assert_text2vec_warplda <- function() {
-  .assert_pkg("text2vec")
-  exports <- getNamespaceExports("text2vec")
-  has_lda <- "LDA" %in% exports
-  has_warplda <- "WarpLDA" %in% exports
-  if (!has_lda && !has_warplda) {
-    .log_abort("Your installed {.pkg text2vec} does not export WarpLDA or LDA.")
+.warplda_default_threads <- function(n_threads = NULL) {
+  if (!is.null(n_threads) && length(n_threads) > 0L && !is.na(n_threads[[1L]])) {
+    out <- suppressWarnings(as.integer(n_threads[[1L]]))
+    if (is.finite(out) && out > 0L) return(out)
   }
-  invisible(TRUE)
+  cores <- if (requireNamespace("parallelly", quietly = TRUE)) {
+    suppressWarnings(parallelly::availableCores())
+  } else {
+    suppressWarnings(parallel::detectCores(logical = TRUE))
+  }
+  cores <- suppressWarnings(as.integer(cores[[1L]]))
+  if (!is.finite(cores) || cores < 1L) cores <- 1L
+  cores
 }
 
-# Fit ONE WarpLDA model; returns theta/phi + perplexity + approx loglik
+# Fit ONE native WarpLDA-compatible model; returns theta/phi + metrics
 fit_warplda_one <- function(dtm,
                             K,
                             iterations = 2000L,
@@ -486,123 +490,60 @@ fit_warplda_one <- function(dtm,
                             seed = 1L,
                             convergence_tol = 1e-3,
                             n_check_convergence = 10L,
+                            n_iter_inference = 10L,
+                            n_threads = NULL,
                             progressbar = interactive()) {
   .assert_pkg("cli")
   .assert_pkg("Matrix")
-  .assert_text2vec_warplda()
 
   if (!inherits(dtm, "dgCMatrix")) dtm <- methods::as(dtm, "dgCMatrix")
   if (is.null(alpha)) alpha <- 50 / as.numeric(K)
   beta <- as.numeric(beta)
+  n_threads <- .warplda_default_threads(n_threads)
 
-  exports <- getNamespaceExports("text2vec")
-  has_lda <- "LDA" %in% exports
-  has_warplda <- "WarpLDA" %in% exports
-  lda_obj <- NULL
-  model <- NULL
-
-  set.seed(as.integer(seed))
-  if (has_warplda) {
-    warplda_class <- get("WarpLDA", envir = asNamespace("text2vec"))
-    model <- warplda_class$new(
-      n_topics = as.integer(K),
-      n_iter = as.integer(iterations),
-      alpha = alpha,
-      beta = beta
-    )
-    theta <- model$fit_transform(dtm)
-    theta <- as.matrix(theta)
-
-    phi <- NULL
-    if (!is.null(model$components_)) phi <- model$components_
-    if (is.null(phi) && !is.null(model$phi)) phi <- model$phi
-    if (is.null(phi) && "get_phi" %in% names(model)) phi <- tryCatch(model$get_phi(), error = function(e) NULL)
-  } else if (has_lda) {
-    lda_class <- get("LDA", envir = asNamespace("text2vec"))
-    has_method <- "method" %in% names(formals(lda_class$new))
-    lda_obj <- if (has_method) {
-      lda_class$new(
-        n_topics = as.integer(K),
-        doc_topic_prior = alpha,
-        topic_word_prior = beta,
-        method = "WarpLDA"
-      )
-    } else {
-      # text2vec LDA is implemented with WarpLDA sampler per docs
-      lda_class$new(
-        n_topics = as.integer(K),
-        doc_topic_prior = alpha,
-        topic_word_prior = beta
-      )
-    }
-    model <- lda_obj
-    theta <- model$fit_transform(
-      x = dtm,
-      n_iter = as.integer(iterations),
-      convergence_tol = as.numeric(convergence_tol),
-      n_check_convergence = as.integer(n_check_convergence),
-      progressbar = isTRUE(progressbar)
-    )
-    theta <- as.matrix(theta)
-
-    phi <- NULL
-    if (!is.null(model$topic_word_distribution)) phi <- model$topic_word_distribution
-    if (is.null(phi) && !is.null(model$components)) {
-      comp <- model$components
-      row_sums <- rowSums(comp)
-      row_sums[!is.finite(row_sums) | row_sums == 0] <- 1
-      phi <- comp / row_sums
-    }
-  } else {
-    .log_abort("Your installed {.pkg text2vec} does not export WarpLDA or LDA.")
+  if (isTRUE(progressbar)) {
+    .log_inform("Native WarpLDA does not use an interactive progress bar; use verbose Module 3 logs for progress.")
   }
 
-  if (is.null(phi)) .log_abort("WarpLDA fit succeeded but phi could not be extracted; adjust extractor for your text2vec version.")
-  phi <- as.matrix(phi)
+  fit <- .craftgrn_warplda_fit_cpp(
+    dtm = dtm,
+    K = as.integer(K),
+    iterations = as.integer(iterations),
+    alpha = as.numeric(alpha),
+    beta = as.numeric(beta),
+    seed = as.integer(seed),
+    convergence_tol = as.numeric(convergence_tol),
+    n_check_convergence = as.integer(n_check_convergence),
+    n_iter_inference = as.integer(n_iter_inference),
+    n_threads = as.integer(n_threads)
+  )
+  theta <- as.matrix(fit$theta)
+  phi <- as.matrix(fit$phi)
 
   if (!is.null(rownames(dtm)) && nrow(theta) == nrow(dtm)) rownames(theta) <- rownames(dtm)
   if (!is.null(colnames(dtm)) && ncol(phi) == ncol(dtm)) colnames(phi) <- colnames(dtm)
   if (is.null(colnames(theta))) colnames(theta) <- paste0("Topic", seq_len(ncol(theta)))
   if (is.null(rownames(phi))) rownames(phi) <- colnames(theta)
 
-  perp <- NA_real_
-  if ("perplexity" %in% getNamespaceExports("text2vec")) {
-    perp <- suppressWarnings(as.numeric(tryCatch(text2vec::perplexity(model, dtm), error = function(e) NA_real_)))
-    if (!is.finite(perp)) {
-      theta_prob <- theta
-      phi_prob <- phi
-      rs_theta <- rowSums(theta_prob)
-      rs_theta[!is.finite(rs_theta) | rs_theta == 0] <- 1
-      theta_prob <- theta_prob / rs_theta
-      rs_phi <- rowSums(phi_prob)
-      rs_phi[!is.finite(rs_phi) | rs_phi == 0] <- 1
-      phi_prob <- phi_prob / rs_phi
-      perp <- suppressWarnings(as.numeric(tryCatch(
-        text2vec::perplexity(dtm, topic_word_distribution = phi_prob, doc_topic_distribution = theta_prob),
-        error = function(e) NA_real_
-      )))
-    }
-  }
-
-  n_tokens <- as.numeric(sum(dtm))
-  loglik_approx <- NA_real_
-  if (is.finite(perp) && perp > 0 && is.finite(n_tokens) && n_tokens > 0) {
-    loglik_approx <- -log(perp) * n_tokens
-  }
-
   list(
-    model = model,
+    model = list(
+      backend = "craftgrn_native_warplda",
+      loglik_trace = fit$loglik_trace,
+      threads = as.integer(fit$threads)
+    ),
     K = as.integer(K),
-    iterations = as.integer(iterations),
+    iterations = as.integer(fit$iterations),
     alpha = alpha,
     beta = beta,
     seed = as.integer(seed),
     theta = theta,
     phi = phi,
     metrics = list(
-      n_tokens = n_tokens,
-      perplexity = perp,
-      loglik_approx = loglik_approx
+      n_tokens = as.numeric(fit$n_tokens),
+      perplexity = as.numeric(fit$perplexity),
+      loglik_approx = as.numeric(fit$loglik),
+      backend = "craftgrn_native_warplda",
+      threads = as.integer(fit$threads)
     )
   )
 }
@@ -642,6 +583,7 @@ run_warplda_models <- function(dtm,
                                seed = 123,
                                save_tmp_dir = NULL,
                                workers = 1L,
+                               threads_per_model = NULL,
                                metrics_file = NULL,
                                verbose = TRUE) {
   .assert_pkg("cli")
@@ -661,7 +603,13 @@ run_warplda_models <- function(dtm,
   if (!is.finite(workers) || workers < 1L) {
     workers <- 1L
   }
+  threads_per_model_is_null <- is.null(threads_per_model) || length(threads_per_model) == 0L || is.na(threads_per_model[[1L]])
   workers <- min(workers, length(K_grid))
+  if (isTRUE(threads_per_model_is_null) && workers > 1L) {
+    threads_per_model <- max(1L, floor(.warplda_default_threads() / workers))
+  } else {
+    threads_per_model <- .warplda_default_threads(threads_per_model)
+  }
 
   existing_metrics <- data.table::data.table()
   if (!is.null(metrics_file) && file.exists(metrics_file)) {
@@ -702,7 +650,8 @@ run_warplda_models <- function(dtm,
         iterations = iterations,
         alpha = a,
         beta = beta,
-        seed = seed
+        seed = seed,
+        n_threads = threads_per_model
       ),
       error = function(e) {
         .log_abort(c(
@@ -735,7 +684,7 @@ run_warplda_models <- function(dtm,
 
   if (isTRUE(verbose)) {
     .log_inform(
-      "WarpLDA: dtm dims = {nrow(dtm)} x {ncol(dtm)}, nnzero = {Matrix::nnzero(dtm)}, tokens = {sum(dtm)}; completed K = {sum(done_from_file | done_from_metrics)}/{length(K_grid)}; workers = {workers}"
+      "WarpLDA: dtm dims = {nrow(dtm)} x {ncol(dtm)}, nnzero = {Matrix::nnzero(dtm)}, tokens = {sum(dtm)}; completed K = {sum(done_from_file | done_from_metrics)}/{length(K_grid)}; workers = {workers}; threads/model = {threads_per_model}"
     )
   }
 
@@ -6144,7 +6093,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   .assert_pkg("cli")
   .assert_pkg("data.table")
   .assert_pkg("Matrix")
-  .assert_pkg("text2vec")
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(file.path(out_dir, "tmp_models"), recursive = TRUE, showWarnings = FALSE)
@@ -6301,12 +6249,14 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     K_grid = K_grid,
     iterations = iterations,
     alpha_by_topic = alpha_by_topic,
-        alpha = NULL,
-        beta = beta,
-        seed = seed,
-        save_tmp_dir = file.path(out_dir, "tmp_models"),
-        metrics_file = file.path(out_dir, "model_metrics.csv")
-      )
+    alpha = NULL,
+    beta = beta,
+    seed = seed,
+    save_tmp_dir = file.path(out_dir, "tmp_models"),
+    workers = 1L,
+    threads_per_model = NULL,
+    metrics_file = file.path(out_dir, "model_metrics.csv")
+  )
   fit_files <- fits_out$fit_files
   metrics_tbl <- fits_out$metrics
   data.table::fwrite(metrics_tbl, file.path(out_dir, "model_metrics.csv"))
@@ -7596,7 +7546,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
-#' @param local_threads Optional local thread count for data.table and BLAS.
+#' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. `NULL` uses all available cores.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.
@@ -7643,20 +7593,16 @@ train_topic_models <- function(Kgrid,
                                topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("cli")
-  if (!is.null(local_threads)) {
-    local_threads <- suppressWarnings(as.integer(local_threads))
-    if (is.finite(local_threads) && local_threads > 0L) {
-      data.table::setDTthreads(local_threads)
-      Sys.setenv(
-        OMP_NUM_THREADS = as.character(local_threads),
-        OPENBLAS_NUM_THREADS = as.character(local_threads),
-        MKL_NUM_THREADS = as.character(local_threads),
-        VECLIB_MAXIMUM_THREADS = as.character(local_threads),
-        NUMEXPR_NUM_THREADS = as.character(local_threads)
-      )
-      .log_inform("train_topic_models using {data.table::getDTthreads()} data.table thread(s).")
-    }
-  }
+  local_threads <- .warplda_default_threads(local_threads)
+  data.table::setDTthreads(local_threads)
+  Sys.setenv(
+    OMP_NUM_THREADS = as.character(local_threads),
+    OPENBLAS_NUM_THREADS = as.character(local_threads),
+    MKL_NUM_THREADS = as.character(local_threads),
+    VECLIB_MAXIMUM_THREADS = as.character(local_threads),
+    NUMEXPR_NUM_THREADS = as.character(local_threads)
+  )
+  .log_inform("train_topic_models using {data.table::getDTthreads()} data.table thread(s).")
 
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   gene_term_mode <- match.arg(gene_term_mode)
@@ -7886,7 +7832,8 @@ train_topic_models <- function(Kgrid,
         beta = 0.1,
         seed = 123,
         save_tmp_dir = file.path(out_dir, "tmp_models"),
-        workers = max(1L, min(local_threads, length(Kgrid))),
+        workers = 1L,
+        threads_per_model = local_threads,
         metrics_file = file.path(out_dir, "model_metrics.csv")
       )
       .log_inform("{cell}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")
