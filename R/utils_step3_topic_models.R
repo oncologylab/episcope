@@ -466,11 +466,7 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   list(dtm = dtm, doc_index = doc_index, term_index = term_index)
 }
 
-.warplda_default_threads <- function(n_threads = NULL) {
-  if (!is.null(n_threads) && length(n_threads) > 0L && !is.na(n_threads[[1L]])) {
-    out <- suppressWarnings(as.integer(n_threads[[1L]]))
-    if (is.finite(out) && out > 0L) return(out)
-  }
+.warplda_available_threads <- function() {
   cores <- if (requireNamespace("parallelly", quietly = TRUE)) {
     suppressWarnings(parallelly::availableCores())
   } else {
@@ -479,6 +475,98 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   cores <- suppressWarnings(as.integer(cores[[1L]]))
   if (!is.finite(cores) || cores < 1L) cores <- 1L
   cores
+}
+
+.warplda_thread_cap <- function(cores) {
+  opt_cap <- getOption("craftgrn.warplda.max_threads", NULL)
+  if (!is.null(opt_cap) && length(opt_cap) > 0L && !is.na(opt_cap[[1L]])) {
+    out <- suppressWarnings(as.integer(opt_cap[[1L]]))
+    if (is.finite(out) && out > 0L) return(min(cores, out))
+  }
+
+  env_cap <- Sys.getenv("CRAFTGRN_WARPLDA_MAX_THREADS", unset = "")
+  if (nzchar(env_cap)) {
+    out <- suppressWarnings(as.integer(env_cap))
+    if (is.finite(out) && out > 0L) return(min(cores, out))
+  }
+
+  min(cores, max(1L, min(16L, floor(cores * 0.75))))
+}
+
+.warplda_default_threads <- function(n_threads = NULL) {
+  if (!is.null(n_threads) && length(n_threads) > 0L && !is.na(n_threads[[1L]])) {
+    out <- suppressWarnings(as.integer(n_threads[[1L]]))
+    if (is.finite(out) && out > 0L) return(out)
+  }
+  .warplda_thread_cap(.warplda_available_threads())
+}
+
+.format_bytes <- function(bytes) {
+  bytes <- suppressWarnings(as.numeric(bytes[[1L]]))
+  if (!is.finite(bytes) || bytes < 0) return("unknown")
+  units <- c("B", "KB", "MB", "GB", "TB")
+  unit_i <- 1L
+  while (bytes >= 1024 && unit_i < length(units)) {
+    bytes <- bytes / 1024
+    unit_i <- unit_i + 1L
+  }
+  sprintf("%.2f %s", bytes, units[[unit_i]])
+}
+
+.available_memory_bytes <- function() {
+  meminfo <- "/proc/meminfo"
+  if (!file.exists(meminfo)) return(NA_real_)
+  lines <- readLines(meminfo, warn = FALSE)
+  mem_avail <- grep("^MemAvailable:", lines, value = TRUE)
+  if (!length(mem_avail)) return(NA_real_)
+  kb <- suppressWarnings(as.numeric(gsub("[^0-9.]", "", mem_avail[[1L]])))
+  if (!is.finite(kb) || kb <= 0) return(NA_real_)
+  kb * 1024
+}
+
+.warplda_memory_estimate <- function(dtm,
+                                     K,
+                                     n_threads = NULL,
+                                     safety_factor = 1.6) {
+  .assert_pkg("Matrix")
+  if (!inherits(dtm, "dgCMatrix")) dtm <- methods::as(dtm, "dgCMatrix")
+
+  K <- suppressWarnings(as.integer(K[[1L]]))
+  if (!is.finite(K) || K < 2L) .log_abort("K must be an integer >= 2.")
+
+  n_threads <- .warplda_default_threads(n_threads)
+  safety_factor <- suppressWarnings(as.numeric(safety_factor[[1L]]))
+  if (!is.finite(safety_factor) || safety_factor < 1) safety_factor <- 1.6
+
+  n_doc <- as.numeric(nrow(dtm))
+  n_word <- as.numeric(ncol(dtm))
+  n_nz <- as.numeric(Matrix::nnzero(dtm))
+  n_tokens <- as.numeric(sum(dtm))
+
+  bytes_int <- 4
+  bytes_double <- 8
+
+  token_bytes <- n_tokens * bytes_int * 5
+  sparse_index_bytes <- ((n_doc + 1) + (n_word + 1) + (n_nz * 3)) * bytes_int
+  count_bytes <- ((n_doc * K) + (n_word * K) + K) * bytes_int
+  output_bytes <- ((n_doc * K) + (n_word * K) + (n_doc * K)) * bytes_double
+  thread_bytes <- as.numeric(n_threads) * K * bytes_double * 2
+  dtm_bytes <- as.numeric(utils::object.size(dtm))
+  base_bytes <- token_bytes + sparse_index_bytes + count_bytes + output_bytes + thread_bytes + dtm_bytes
+  estimated_peak_bytes <- ceiling(base_bytes * safety_factor)
+
+  list(
+    n_doc = n_doc,
+    n_terms = n_word,
+    n_nonzero = n_nz,
+    n_tokens = n_tokens,
+    K = as.integer(K),
+    n_threads = as.integer(n_threads),
+    base_bytes = as.numeric(base_bytes),
+    estimated_peak_bytes = as.numeric(estimated_peak_bytes),
+    estimated_peak_gb = as.numeric(estimated_peak_bytes) / 1024^3,
+    label = .format_bytes(estimated_peak_bytes)
+  )
 }
 
 # Fit ONE native WarpLDA-compatible model; returns theta/phi + metrics
@@ -500,6 +588,7 @@ fit_warplda_one <- function(dtm,
   if (is.null(alpha)) alpha <- 50 / as.numeric(K)
   beta <- as.numeric(beta)
   n_threads <- .warplda_default_threads(n_threads)
+  memory_estimate <- .warplda_memory_estimate(dtm, K = K, n_threads = n_threads)
 
   if (isTRUE(progressbar)) {
     .log_inform("Native WarpLDA does not use an interactive progress bar; use verbose Module 3 logs for progress.")
@@ -543,7 +632,9 @@ fit_warplda_one <- function(dtm,
       perplexity = as.numeric(fit$perplexity),
       loglik_approx = as.numeric(fit$loglik),
       backend = "craftgrn_native_warplda",
-      threads = as.integer(fit$threads)
+      threads = as.integer(fit$threads),
+      estimated_peak_memory_gb = as.numeric(memory_estimate$estimated_peak_gb),
+      estimated_peak_memory = memory_estimate$label
     )
   )
 }
@@ -681,11 +772,28 @@ run_warplda_models <- function(dtm,
   done_from_file <- cache_status$done_from_file
   done_from_metrics <- cache_status$done_from_metrics
   todo <- K_grid[!(done_from_file | done_from_metrics)]
+  max_k_memory <- .warplda_memory_estimate(dtm, K = max(K_grid), n_threads = threads_per_model)
+  concurrent_peak_bytes <- max_k_memory$estimated_peak_bytes * max(1L, workers)
+  available_bytes <- .available_memory_bytes()
+  per_model_memory_label <- .format_bytes(max_k_memory$estimated_peak_bytes)
+  concurrent_memory_label <- .format_bytes(concurrent_peak_bytes)
+  available_memory_label <- .format_bytes(available_bytes)
 
   if (isTRUE(verbose)) {
     .log_inform(
       "WarpLDA: dtm dims = {nrow(dtm)} x {ncol(dtm)}, nnzero = {Matrix::nnzero(dtm)}, tokens = {sum(dtm)}; completed K = {sum(done_from_file | done_from_metrics)}/{length(K_grid)}; workers = {workers}; threads/model = {threads_per_model}"
     )
+    .log_inform(
+      "WarpLDA memory estimate: peak per model <= {per_model_memory_label} at max K={max(K_grid)}; concurrent peak <= {concurrent_memory_label}."
+    )
+    if (is.finite(available_bytes)) {
+      .log_inform("WarpLDA memory available now: {available_memory_label}.")
+      if (concurrent_peak_bytes > 0.8 * available_bytes) {
+        .log_warn(
+          "WarpLDA estimated concurrent peak uses >80% of currently available memory; reduce workers or threads_per_model if this is not intentional."
+        )
+      }
+    }
   }
 
   metrics_list <- list()
@@ -7546,7 +7654,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
-#' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. `NULL` uses all available cores.
+#' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses a safety-capped default; set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to change the cap.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.

@@ -201,31 +201,81 @@ void rebuild_training_counts(const SparseDtmTokens& dat,
                              std::vector<int>& doc_topic,
                              std::vector<int>& word_topic,
                              std::vector<int>& topic_count,
-                             int K) {
+                             int K,
+                             int n_threads) {
   std::fill(doc_topic.begin(), doc_topic.end(), 0);
   std::fill(word_topic.begin(), word_topic.end(), 0);
   std::fill(topic_count.begin(), topic_count.end(), 0);
-  const int n_token = static_cast<int>(topic.size());
-  for (int tok = 0; tok < n_token; ++tok) {
-    const int k = topic[tok];
-    const int d = dat.token_doc[tok];
-    const int w = dat.token_word[tok];
-    doc_topic[d * K + k] += 1;
-    word_topic[w * K + k] += 1;
-    topic_count[k] += 1;
+
+  if (n_threads <= 1) {
+    const int n_token = static_cast<int>(topic.size());
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int k = topic[tok];
+      const int d = dat.token_doc[tok];
+      const int w = dat.token_word[tok];
+      doc_topic[d * K + k] += 1;
+      word_topic[w * K + k] += 1;
+      topic_count[k] += 1;
+    }
+    return;
+  }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+  for (int d = 0; d < dat.n_doc; ++d) {
+    int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
+    for (int ptr = dat.doc_ptr[d]; ptr < dat.doc_ptr[d + 1]; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      doc_row[topic[tok]] += 1;
+    }
+  }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+  for (int w = 0; w < dat.n_word; ++w) {
+    int* word_row = &word_topic[static_cast<std::size_t>(w) * static_cast<std::size_t>(K)];
+    for (int tok = dat.word_ptr[w]; tok < dat.word_ptr[w + 1]; ++tok) {
+      word_row[topic[tok]] += 1;
+    }
+  }
+
+  for (int k = 0; k < K; ++k) {
+    int total = 0;
+    for (int w = 0; w < dat.n_word; ++w) {
+      total += word_topic[w * K + k];
+    }
+    topic_count[k] = total;
   }
 }
 
 void rebuild_doc_counts(const SparseDtmTokens& dat,
                         const std::vector<int>& topic,
                         std::vector<int>& doc_topic,
-                        int K) {
+                        int K,
+                        int n_threads) {
   std::fill(doc_topic.begin(), doc_topic.end(), 0);
-  const int n_token = static_cast<int>(topic.size());
-  for (int tok = 0; tok < n_token; ++tok) {
-    const int k = topic[tok];
-    const int d = dat.token_doc[tok];
-    doc_topic[d * K + k] += 1;
+
+  if (n_threads <= 1) {
+    const int n_token = static_cast<int>(topic.size());
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int k = topic[tok];
+      const int d = dat.token_doc[tok];
+      doc_topic[d * K + k] += 1;
+    }
+    return;
+  }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#endif
+  for (int d = 0; d < dat.n_doc; ++d) {
+    int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
+    for (int ptr = dat.doc_ptr[d]; ptr < dat.doc_ptr[d + 1]; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      doc_row[topic[tok]] += 1;
+    }
   }
 }
 
@@ -239,12 +289,14 @@ void sample_training_iteration(const SparseDtmTokens& dat,
                                int K,
                                int n_threads,
                                std::uint64_t seed,
-                               int iter) {
-  // Sample from the previous iteration counts, then rebuild counts serially.
-  // This keeps output invariant to OpenMP thread count and scheduling.
+                               int iter,
+                               std::vector<int>& next_topic) {
+  // Sample from the previous iteration counts, then rebuild counts by
+  // independent doc/word partitions. This keeps output invariant to
+  // OpenMP thread count and scheduling.
   const int n_token = static_cast<int>(topic.size());
+  next_topic.resize(static_cast<std::size_t>(n_token));
   const double beta_sum = static_cast<double>(dat.n_word) * beta;
-  std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
 
 #ifdef _OPENMP
 #pragma omp parallel num_threads(n_threads)
@@ -276,7 +328,7 @@ void sample_training_iteration(const SparseDtmTokens& dat,
   }
 
   topic.swap(next_topic);
-  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K);
+  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
 }
 
 void sample_inference_iteration(const SparseDtmTokens& dat,
@@ -289,11 +341,12 @@ void sample_inference_iteration(const SparseDtmTokens& dat,
                                 int K,
                                 int n_threads,
                                 std::uint64_t seed,
-                                int iter) {
+                                int iter,
+                                std::vector<int>& next_topic) {
   // Keep inference thread-invariant for the same reason as training.
   const int n_token = static_cast<int>(topic.size());
+  next_topic.resize(static_cast<std::size_t>(n_token));
   const double beta_sum = static_cast<double>(dat.n_word) * beta;
-  std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
 
 #ifdef _OPENMP
 #pragma omp parallel num_threads(n_threads)
@@ -324,7 +377,7 @@ void sample_inference_iteration(const SparseDtmTokens& dat,
   }
 
   topic.swap(next_topic);
-  rebuild_doc_counts(dat, topic, doc_topic, K);
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
 }
 
 } // namespace
@@ -367,6 +420,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   std::vector<int> doc_topic(static_cast<std::size_t>(dat.n_doc) * static_cast<std::size_t>(K), 0);
   std::vector<int> word_topic(static_cast<std::size_t>(dat.n_word) * static_cast<std::size_t>(K), 0);
   std::vector<int> topic_count(static_cast<std::size_t>(K), 0);
+  std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
 
   std::mt19937_64 init_rng(static_cast<std::uint64_t>(seed));
   for (int tok = 0; tok < n_token; ++tok) {
@@ -386,7 +440,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   for (int iter = 1; iter <= iterations; ++iter) {
     sample_training_iteration(dat, topic, doc_topic, word_topic, topic_count,
                               alpha, beta, K, n_threads,
-                              static_cast<std::uint64_t>(seed), iter);
+                              static_cast<std::uint64_t>(seed), iter, next_topic);
     if (n_check_convergence > 0 && iter % n_check_convergence == 0) {
       const double ll = compute_loglik(dat, doc_topic, word_topic, topic_count, alpha, beta, K);
       trace_iter.push_back(iter);
@@ -408,7 +462,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   for (int iter = 1; iter <= inference_burnin; ++iter) {
     sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
                                alpha, beta, K, n_threads,
-                               static_cast<std::uint64_t>(seed), iter);
+                               static_cast<std::uint64_t>(seed), iter, next_topic);
     if (iter % 10 == 0) Rcpp::checkUserInterrupt();
   }
 
@@ -422,7 +476,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     for (int iter = 1; iter <= n_iter_inference; ++iter) {
       sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
                                  alpha, beta, K, n_threads,
-                                 static_cast<std::uint64_t>(seed + 104729), iter);
+                                 static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
       for (std::size_t idx = 0; idx < doc_topic.size(); ++idx) {
         doc_topic_accum[idx] += static_cast<double>(doc_topic[idx]);
       }

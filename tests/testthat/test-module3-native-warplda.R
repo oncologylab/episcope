@@ -96,6 +96,26 @@ test_that("native WarpLDA is thread-count invariant for fixed seeds", {
   expect_identical(fit1$metrics$loglik_approx, fitn$metrics$loglik_approx)
 })
 
+test_that("native WarpLDA estimates memory before large fits", {
+  dtm <- make_native_warplda_dtm()
+
+  estimate <- .warplda_memory_estimate(dtm, K = 2L, n_threads = 4L, safety_factor = 1)
+
+  expect_identical(estimate$n_tokens, as.numeric(sum(dtm)))
+  expect_identical(estimate$n_threads, 4L)
+  expect_gt(estimate$base_bytes, 0)
+  expect_gte(estimate$estimated_peak_bytes, estimate$base_bytes)
+  expect_gt(estimate$estimated_peak_gb, 0)
+})
+
+test_that("native WarpLDA thread defaults are safety capped unless explicit", {
+  withr::local_options(list(craftgrn.warplda.max_threads = 2L))
+  withr::local_envvar(c(CRAFTGRN_WARPLDA_MAX_THREADS = NA))
+
+  expect_lte(.warplda_default_threads(NULL), 2L)
+  expect_identical(.warplda_default_threads(36L), 36L)
+})
+
 test_that("native WarpLDA validates positive integer-like counts", {
   skip_if_not_installed("Matrix")
   dtm <- Matrix::sparseMatrix(
@@ -155,4 +175,28 @@ test_that("run_warplda_models uses native fit files and cache reuse", {
   )
   expect_equal(out2$metrics$K, c(2L, 3L))
   expect_equal(out1$fit_files, out2$fit_files)
+})
+
+test_that("run_warplda_models logs memory estimates when verbose", {
+  skip_if_not_installed("data.table")
+  dtm <- make_native_warplda_dtm()
+  tmp <- withr::local_tempdir()
+
+  expect_message(
+    run_warplda_models(
+      dtm,
+      K_grid = 2L,
+      iterations = 2L,
+      alpha_by_topic = FALSE,
+      alpha = 0.5,
+      beta = 0.1,
+      seed = 10L,
+      save_tmp_dir = file.path(tmp, "tmp_models"),
+      workers = 1L,
+      threads_per_model = 2L,
+      metrics_file = file.path(tmp, "model_metrics.csv"),
+      verbose = TRUE
+    ),
+    "WarpLDA memory estimate"
+  )
 })

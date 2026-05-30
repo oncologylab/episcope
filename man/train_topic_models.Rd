@@ -106,7 +106,7 @@ values are present.}
 
 \item{save_full_doc_term_csv}{Whether to save the full document-term CSV.}
 
-\item{local_threads}{Optional local thread count for data.table, BLAS, and native WarpLDA. `NULL` uses all available cores.}
+\item{local_threads}{Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses a safety-capped default; set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to change the cap.}
 
 \item{check_repeated_values}{Warn about repeated inconsistent term values.}
 
