@@ -380,6 +380,189 @@ void sample_inference_iteration(const SparseDtmTokens& dat,
   rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
 }
 
+void sample_warp_doc_pass(const SparseDtmTokens& dat,
+                          std::vector<int>& topic,
+                          std::vector<int>& proposal_topic,
+                          const std::vector<int>& doc_topic,
+                          const std::vector<int>& topic_count,
+                          double alpha,
+                          double beta,
+                          int K,
+                          int n_threads,
+                          std::uint64_t seed,
+                          int iter,
+                          std::uint64_t phase_offset,
+                          std::vector<int>& next_topic) {
+  const double beta_bar = static_cast<double>(K) * beta;
+  next_topic.resize(topic.size());
+
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+  {
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+    for (int d = 0; d < dat.n_doc; ++d) {
+      const int bgn = dat.doc_ptr[d];
+      const int end = dat.doc_ptr[d + 1];
+      const int len = end - bgn;
+      if (len <= 0) continue;
+
+      for (int ptr = bgn; ptr < end; ++ptr) {
+        const int tok = dat.doc_token_index[ptr];
+        const int old_topic = topic[tok];
+        const int new_topic = proposal_topic[tok];
+        int accepted_topic = old_topic;
+        if (new_topic != old_topic) {
+          const double num_doc = static_cast<double>(doc_topic[d * K + new_topic]) + alpha;
+          const double den_doc = static_cast<double>(doc_topic[d * K + old_topic]) + alpha;
+          const double num_all = static_cast<double>(topic_count[old_topic]) + beta_bar;
+          const double den_all = static_cast<double>(topic_count[new_topic]) + beta_bar;
+          const double accept_prob = (num_doc / den_doc) * (num_all / den_all);
+          const double u_accept = token_unif(seed, phase_offset + 1U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
+          if (u_accept < accept_prob) accepted_topic = new_topic;
+        }
+        next_topic[tok] = accepted_topic;
+      }
+
+      const double copy_prob = static_cast<double>(len) /
+        (static_cast<double>(len) + static_cast<double>(K) * alpha);
+      for (int ptr = bgn; ptr < end; ++ptr) {
+        const int tok = dat.doc_token_index[ptr];
+        const double u_kind = token_unif(seed, phase_offset + 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
+        if (u_kind < copy_prob) {
+          const double u_pos = token_unif(seed, phase_offset + 3U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
+          int offset = static_cast<int>(std::floor(u_pos * static_cast<double>(len)));
+          if (offset >= len) offset = len - 1;
+          const int source_tok = dat.doc_token_index[bgn + offset];
+          proposal_topic[tok] = next_topic[source_tok];
+        } else {
+          const double u_topic = token_unif(seed, phase_offset + 4U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
+          int sampled_topic = static_cast<int>(std::floor(u_topic * static_cast<double>(K)));
+          if (sampled_topic >= K) sampled_topic = K - 1;
+          proposal_topic[tok] = sampled_topic;
+        }
+      }
+    }
+  }
+
+  topic.swap(next_topic);
+}
+
+void sample_warp_word_pass(const SparseDtmTokens& dat,
+                           std::vector<int>& topic,
+                           std::vector<int>& proposal_topic,
+                           const std::vector<int>& word_topic,
+                           const std::vector<int>& topic_count,
+                           double beta,
+                           int K,
+                           int n_threads,
+                           std::uint64_t seed,
+                           int iter,
+                           std::uint64_t phase_offset,
+                           bool update_word_counts_within_pass,
+                           std::vector<int>& next_topic) {
+  const double beta_bar = static_cast<double>(K) * beta;
+  next_topic.resize(topic.size());
+
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+  {
+    std::vector<int> local_count(static_cast<std::size_t>(K));
+    std::vector<double> prob(static_cast<std::size_t>(K));
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+    for (int w = 0; w < dat.n_word; ++w) {
+      const int bgn = dat.word_ptr[w];
+      const int end = dat.word_ptr[w + 1];
+      if (bgn >= end) continue;
+
+      for (int k = 0; k < K; ++k) {
+        local_count[k] = word_topic[w * K + k];
+      }
+
+      for (int tok = bgn; tok < end; ++tok) {
+        const int old_topic = topic[tok];
+        const int new_topic = proposal_topic[tok];
+        int accepted_topic = old_topic;
+        if (new_topic != old_topic) {
+          const double num_word = static_cast<double>(local_count[new_topic]) + beta;
+          const double den_word = static_cast<double>(local_count[old_topic]) + beta;
+          const double num_all = static_cast<double>(topic_count[old_topic]) + beta_bar;
+          const double den_all = static_cast<double>(topic_count[new_topic]) + beta_bar;
+          const double accept_prob = (num_word / den_word) * (num_all / den_all);
+          const double u_accept = token_unif(seed, phase_offset + 1U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
+          if (u_accept < accept_prob) accepted_topic = new_topic;
+        }
+
+        if (update_word_counts_within_pass && accepted_topic != old_topic) {
+          local_count[accepted_topic] += 1;
+          local_count[old_topic] -= 1;
+        }
+        next_topic[tok] = accepted_topic;
+      }
+
+      double total = 0.0;
+      for (int k = 0; k < K; ++k) {
+        prob[k] = static_cast<double>(local_count[k]) + beta;
+        total += prob[k];
+      }
+      for (int tok = bgn; tok < end; ++tok) {
+        proposal_topic[tok] = sample_topic_from_unit(
+          prob, total, token_unif(seed, phase_offset + 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok))
+        );
+      }
+    }
+  }
+
+  topic.swap(next_topic);
+}
+
+void sample_warp_training_iteration(const SparseDtmTokens& dat,
+                                    std::vector<int>& topic,
+                                    std::vector<int>& proposal_topic,
+                                    std::vector<int>& doc_topic,
+                                    std::vector<int>& word_topic,
+                                    std::vector<int>& topic_count,
+                                    double alpha,
+                                    double beta,
+                                    int K,
+                                    int n_threads,
+                                    std::uint64_t seed,
+                                    int iter,
+                                    std::vector<int>& next_topic) {
+  sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
+                       alpha, beta, K, n_threads, seed, iter, 10U, next_topic);
+  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
+  sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
+                        beta, K, n_threads, seed, iter, 20U, true, next_topic);
+  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
+}
+
+void sample_warp_inference_iteration(const SparseDtmTokens& dat,
+                                     std::vector<int>& topic,
+                                     std::vector<int>& proposal_topic,
+                                     std::vector<int>& doc_topic,
+                                     const std::vector<int>& word_topic,
+                                     const std::vector<int>& topic_count,
+                                     double alpha,
+                                     double beta,
+                                     int K,
+                                     int n_threads,
+                                     std::uint64_t seed,
+                                     int iter,
+                                     std::vector<int>& next_topic) {
+  sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
+                       alpha, beta, K, n_threads, seed, iter, 30U, next_topic);
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+  sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
+                        beta, K, n_threads, seed, iter, 40U, false, next_topic);
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+}
+
 } // namespace
 
 // [[Rcpp::plugins(openmp)]]
@@ -393,13 +576,17 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
                               double convergence_tol = 1e-3,
                               int n_check_convergence = 10,
                               int n_iter_inference = 10,
-                              int n_threads = 1) {
+                              int n_threads = 1,
+                              std::string sampler = "gibbs_sync") {
   if (K <= 1) stop("K must be greater than 1.");
   if (iterations < 1) stop("iterations must be positive.");
   if (!R_finite(alpha) || alpha <= 0.0) stop("alpha must be positive.");
   if (!R_finite(beta) || beta <= 0.0) stop("beta must be positive.");
   if (n_check_convergence < 0) stop("n_check_convergence must be non-negative.");
   if (n_iter_inference < 0) stop("n_iter_inference must be non-negative.");
+  if (sampler != "gibbs_sync" && sampler != "warp_mh") {
+    stop("sampler must be 'gibbs_sync' or 'warp_mh'.");
+  }
   if (n_threads < 1) n_threads = 1;
 #ifdef _OPENMP
   const int max_threads = omp_get_max_threads();
@@ -421,13 +608,16 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   std::vector<int> word_topic(static_cast<std::size_t>(dat.n_word) * static_cast<std::size_t>(K), 0);
   std::vector<int> topic_count(static_cast<std::size_t>(K), 0);
   std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
+  std::vector<int> proposal_topic(static_cast<std::size_t>(n_token), 0);
 
   std::mt19937_64 init_rng(static_cast<std::uint64_t>(seed));
   for (int tok = 0; tok < n_token; ++tok) {
     const int k = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
+    const int proposal = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
     const int d = dat.token_doc[tok];
     const int w = dat.token_word[tok];
     topic[tok] = k;
+    proposal_topic[tok] = proposal;
     doc_topic[d * K + k] += 1;
     word_topic[w * K + k] += 1;
     topic_count[k] += 1;
@@ -438,9 +628,15 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   double previous_loglik = NA_REAL;
   int actual_iterations = iterations;
   for (int iter = 1; iter <= iterations; ++iter) {
-    sample_training_iteration(dat, topic, doc_topic, word_topic, topic_count,
-                              alpha, beta, K, n_threads,
-                              static_cast<std::uint64_t>(seed), iter, next_topic);
+    if (sampler == "warp_mh") {
+      sample_warp_training_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                                     alpha, beta, K, n_threads,
+                                     static_cast<std::uint64_t>(seed), iter, next_topic);
+    } else {
+      sample_training_iteration(dat, topic, doc_topic, word_topic, topic_count,
+                                alpha, beta, K, n_threads,
+                                static_cast<std::uint64_t>(seed), iter, next_topic);
+    }
     if (n_check_convergence > 0 && iter % n_check_convergence == 0) {
       const double ll = compute_loglik(dat, doc_topic, word_topic, topic_count, alpha, beta, K);
       trace_iter.push_back(iter);
@@ -458,11 +654,35 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     if (iter % 10 == 0) Rcpp::checkUserInterrupt();
   }
 
+  std::vector<int> trained_word_topic;
+  std::vector<int> trained_topic_count;
+  if (sampler == "warp_mh") {
+    trained_word_topic = word_topic;
+    trained_topic_count = topic_count;
+
+    std::fill(topic.begin(), topic.end(), 0);
+    std::fill(proposal_topic.begin(), proposal_topic.end(), 0);
+    std::mt19937_64 infer_rng(static_cast<std::uint64_t>(seed));
+    for (int tok = 0; tok < n_token; ++tok) {
+      topic[tok] = static_cast<int>(infer_rng() % static_cast<std::uint64_t>(K));
+      proposal_topic[tok] = static_cast<int>(infer_rng() % static_cast<std::uint64_t>(K));
+    }
+    word_topic = trained_word_topic;
+    topic_count = trained_topic_count;
+    rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+  }
+
   const int inference_burnin = iterations;
   for (int iter = 1; iter <= inference_burnin; ++iter) {
-    sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
-                               alpha, beta, K, n_threads,
-                               static_cast<std::uint64_t>(seed), iter, next_topic);
+    if (sampler == "warp_mh") {
+      sample_warp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                                      alpha, beta, K, n_threads,
+                                      static_cast<std::uint64_t>(seed), iter, next_topic);
+    } else {
+      sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
+                                 alpha, beta, K, n_threads,
+                                 static_cast<std::uint64_t>(seed), iter, next_topic);
+    }
     if (iter % 10 == 0) Rcpp::checkUserInterrupt();
   }
 
@@ -474,9 +694,15 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     }
   } else {
     for (int iter = 1; iter <= n_iter_inference; ++iter) {
-      sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
-                                 alpha, beta, K, n_threads,
-                                 static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
+      if (sampler == "warp_mh") {
+        sample_warp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                                        alpha, beta, K, n_threads,
+                                        static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
+      } else {
+        sample_inference_iteration(dat, topic, doc_topic, word_topic, topic_count,
+                                   alpha, beta, K, n_threads,
+                                   static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
+      }
       for (std::size_t idx = 0; idx < doc_topic.size(); ++idx) {
         doc_topic_accum[idx] += static_cast<double>(doc_topic[idx]);
       }
@@ -526,6 +752,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     _["loglik"] = ll,
     _["iterations"] = actual_iterations,
     _["threads"] = n_threads,
+    _["sampler"] = sampler,
     _["loglik_trace"] = DataFrame::create(
       _["iter"] = wrap(trace_iter),
       _["loglikelihood"] = wrap(trace_loglik),

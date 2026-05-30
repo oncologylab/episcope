@@ -38,6 +38,7 @@ fp
 FP
 FPs
 GeneHancer
+gibbs
 golem
 GRN
 GRNs
@@ -58,6 +59,7 @@ kb
 Lifecycle
 magrittr
 methylation
+mh
 MLP
 multilayer
 multiomic
@@ -102,6 +104,7 @@ TSV
 vae
 VAE
 variational
+vec
 WarpLDA
 warplda
 xL

@@ -587,18 +587,21 @@ fit_warplda_one <- function(dtm,
                             K,
                             iterations = 2000L,
                             alpha = NULL,
-                            beta = 0.1,
+                            beta = NULL,
                             seed = 1L,
                             convergence_tol = 1e-3,
                             n_check_convergence = 10L,
                             n_iter_inference = 10L,
                             n_threads = NULL,
+                            sampler = c("warp_mh", "gibbs_sync"),
                             progressbar = interactive()) {
   .assert_pkg("cli")
   .assert_pkg("Matrix")
 
+  sampler <- match.arg(sampler)
   if (!inherits(dtm, "dgCMatrix")) dtm <- methods::as(dtm, "dgCMatrix")
   if (is.null(alpha)) alpha <- 50 / as.numeric(K)
+  if (is.null(beta)) beta <- 1 / as.numeric(K)
   beta <- as.numeric(beta)
   n_threads <- .warplda_default_threads(n_threads)
   memory_estimate <- .warplda_memory_estimate(dtm, K = K, n_threads = n_threads)
@@ -617,7 +620,8 @@ fit_warplda_one <- function(dtm,
     convergence_tol = as.numeric(convergence_tol),
     n_check_convergence = as.integer(n_check_convergence),
     n_iter_inference = as.integer(n_iter_inference),
-    n_threads = as.integer(n_threads)
+    n_threads = as.integer(n_threads),
+    sampler = sampler
   )
   theta <- as.matrix(fit$theta)
   phi <- as.matrix(fit$phi)
@@ -631,7 +635,8 @@ fit_warplda_one <- function(dtm,
     model = list(
       backend = "craftgrn_native_warplda",
       loglik_trace = fit$loglik_trace,
-      threads = as.integer(fit$threads)
+      threads = as.integer(fit$threads),
+      sampler = sampler
     ),
     K = as.integer(K),
     iterations = as.integer(fit$iterations),
@@ -646,6 +651,7 @@ fit_warplda_one <- function(dtm,
       loglik_approx = as.numeric(fit$loglik),
       backend = "craftgrn_native_warplda",
       threads = as.integer(fit$threads),
+      sampler = sampler,
       estimated_peak_memory_gb = as.numeric(memory_estimate$estimated_peak_gb),
       estimated_peak_memory = memory_estimate$label
     )
@@ -656,7 +662,8 @@ fit_warplda_one <- function(dtm,
   is.character(path) & !is.na(path) & nzchar(path) & file.exists(path)
 }
 
-.warplda_completed_from_cache <- function(K_grid, existing_metrics, fit_files_all) {
+.warplda_completed_from_cache <- function(K_grid, existing_metrics, fit_files_all, sampler = NULL) {
+  sampler_value <- if (is.null(sampler)) NULL else as.character(sampler[[1L]])
   done_from_file <- .existing_file(fit_files_all)
   done_from_metrics <- rep(FALSE, length(K_grid))
   if (nrow(existing_metrics) && "K" %in% names(existing_metrics)) {
@@ -664,6 +671,14 @@ fit_warplda_one <- function(dtm,
     for (idx in seq_along(K_grid)) {
       k_value <- as.integer(K_grid[[idx]])
       rows <- metrics_dt[as.integer(metrics_dt[["K"]]) == k_value]
+      if (!nrow(rows)) next
+      if (!is.null(sampler_value)) {
+        if ("sampler" %in% names(rows)) {
+          rows <- rows[as.character(rows[["sampler"]]) == sampler_value]
+        } else if (!identical(sampler_value, "gibbs_sync")) {
+          rows <- rows[0L]
+        }
+      }
       if (!nrow(rows)) next
       metric_paths <- character()
       if ("fit_file" %in% names(rows)) {
@@ -688,12 +703,14 @@ run_warplda_models <- function(dtm,
                                save_tmp_dir = NULL,
                                workers = 1L,
                                threads_per_model = NULL,
+                               sampler = c("warp_mh", "gibbs_sync"),
                                metrics_file = NULL,
                                verbose = TRUE) {
   .assert_pkg("cli")
   .assert_pkg("data.table")
   .assert_pkg("Matrix")
 
+  sampler <- match.arg(sampler)
   K_grid <- as.integer(K_grid)
   K_grid <- sort(unique(K_grid[is.finite(K_grid) & K_grid > 1L]))
   if (!length(K_grid)) .log_abort("K_grid must include integers > 1.")
@@ -719,28 +736,31 @@ run_warplda_models <- function(dtm,
     if (is.null(save_tmp_dir)) {
       return(NA_character_)
     }
-    file.path(save_tmp_dir, sprintf("fit_K%d.rds", as.integer(K)))
+    file.path(save_tmp_dir, sprintf("fit_K%d_%s.rds", as.integer(K), sampler))
   }
 
   metric_from_fit <- function(K, fit_file) {
     fit <- readRDS(fit_file)
+    fit_sampler <- if (!is.null(fit$metrics$sampler)) as.character(fit$metrics$sampler) else "gibbs_sync"
     data.table::data.table(
       K = as.integer(fit$K),
       perplexity = as.numeric(fit$metrics$perplexity),
       loglik = as.numeric(fit$metrics$loglik_approx),
       n_tokens = as.numeric(fit$metrics$n_tokens),
+      sampler = fit_sampler,
       fit_file = fit_file
     )
   }
 
   fit_one_k <- function(K) {
     a <- if (isTRUE(alpha_by_topic)) 50 / as.numeric(K) else alpha
+    beta_display <- if (is.null(beta)) "1/K" else signif(as.numeric(beta), 4)
     fit_file <- fit_file_for_k(K)
     if (!is.na(fit_file) && file.exists(fit_file)) {
       return(metric_from_fit(K, fit_file))
     }
     if (isTRUE(verbose)) {
-      .log_inform("WarpLDA: fitting K={K}, iterations={iterations}, alpha={signif(a, 4)}, beta={beta}, seed={seed}")
+      .log_inform("WarpLDA: fitting K={K}, iterations={iterations}, alpha={signif(a, 4)}, beta={beta_display}, seed={seed}")
     }
     fit <- tryCatch(
       fit_warplda_one(
@@ -750,12 +770,13 @@ run_warplda_models <- function(dtm,
         alpha = a,
         beta = beta,
         seed = seed,
-        n_threads = threads_per_model
+        n_threads = threads_per_model,
+        sampler = sampler
       ),
       error = function(e) {
         .log_abort(c(
           "WarpLDA fit failed.",
-          i = paste0("K=", K, ", iterations=", iterations, ", alpha=", signif(a, 4), ", beta=", beta, ", seed=", seed),
+          i = paste0("K=", K, ", iterations=", iterations, ", alpha=", signif(a, 4), ", beta=", beta_display, ", seed=", seed),
           i = paste0("dtm dims=", nrow(dtm), "x", ncol(dtm), ", nnzero=", Matrix::nnzero(dtm), ", tokens=", sum(dtm))
         ), parent = e)
       }
@@ -768,6 +789,7 @@ run_warplda_models <- function(dtm,
       perplexity = as.numeric(fit$metrics$perplexity),
       loglik = as.numeric(fit$metrics$loglik_approx),
       n_tokens = as.numeric(fit$metrics$n_tokens),
+      sampler = sampler,
       fit_file = fit_file
     )
     rm(fit)
@@ -776,7 +798,7 @@ run_warplda_models <- function(dtm,
   }
 
   fit_files_all <- vapply(K_grid, fit_file_for_k, character(1))
-  cache_status <- .warplda_completed_from_cache(K_grid, existing_metrics, fit_files_all)
+  cache_status <- .warplda_completed_from_cache(K_grid, existing_metrics, fit_files_all, sampler = sampler)
   done_from_file <- cache_status$done_from_file
   done_from_metrics <- cache_status$done_from_metrics
   todo <- K_grid[!(done_from_file | done_from_metrics)]
@@ -791,6 +813,7 @@ run_warplda_models <- function(dtm,
     .log_inform(
       "WarpLDA: dtm dims = {nrow(dtm)} x {ncol(dtm)}, nnzero = {Matrix::nnzero(dtm)}, tokens = {sum(dtm)}; completed K = {sum(done_from_file | done_from_metrics)}/{length(K_grid)}; workers = {workers}; threads/model = {threads_per_model}"
     )
+    .log_inform("WarpLDA sampler = {sampler}.")
     .log_inform(
       "WarpLDA memory estimate: peak per model <= {per_model_memory_label} at max K={max(K_grid)}; concurrent peak <= {concurrent_memory_label}."
     )
@@ -816,7 +839,8 @@ run_warplda_models <- function(dtm,
       }
       keep <- keep[.existing_file(fit_file)]
       if (nrow(keep)) {
-        metrics_list <- c(metrics_list, list(keep[, .(K, perplexity, loglik, n_tokens, fit_file)]))
+        if (!"sampler" %in% names(keep)) keep[, sampler := "gibbs_sync"]
+        metrics_list <- c(metrics_list, list(keep[, .(K, perplexity, loglik, n_tokens, sampler, fit_file)]))
       }
     }
   }
@@ -852,7 +876,7 @@ run_warplda_models <- function(dtm,
     data.table::fwrite(metrics_tbl, metrics_file)
   }
   fit_files <- stats::setNames(as.character(metrics_tbl$fit_file), as.character(metrics_tbl$K))
-  list(fit_files = fit_files, metrics = metrics_tbl[, .(K, perplexity, loglik, n_tokens)])
+  list(fit_files = fit_files, metrics = metrics_tbl[, .(K, perplexity, loglik, n_tokens, sampler)])
 }
 
 # =============================================================================
@@ -6132,7 +6156,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           K_grid = c(2:15, 20, 25, 35, 40, 45, 50),
                                           iterations = 2000L,
                                           alpha_by_topic = TRUE,
-                                          beta = 0.1,
+                                          beta = NULL,
+                                          sampler = c("warp_mh", "gibbs_sync"),
                                           seed = 123,
                                           # topic definition
                                           binarize_method = c("gammafit", "topn"),
@@ -6192,6 +6217,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   joint_weight_fp <- match.arg(joint_weight_fp)
   joint_weight_gene <- match.arg(joint_weight_gene)
   joint_balance <- match.arg(joint_balance)
+  sampler <- match.arg(sampler)
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
@@ -6237,7 +6263,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       iterations = as.integer(iterations),
       alpha = if (isTRUE(alpha_by_topic)) "50/K" else NA_character_,
       alphaByTopic = isTRUE(alpha_by_topic),
-      beta = as.numeric(beta),
+      beta = if (is.null(beta)) "1/K" else as.numeric(beta),
+      sampler = sampler,
       K_grid = as.integer(K_grid)
     ),
     topic_definition = list(
@@ -6371,6 +6398,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     save_tmp_dir = file.path(out_dir, "tmp_models"),
     workers = 1L,
     threads_per_model = NULL,
+    sampler = sampler,
     metrics_file = file.path(out_dir, "model_metrics.csv")
   )
   fit_files <- fits_out$fit_files
@@ -7659,6 +7687,11 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param count_input Count column passed to the topic backend.
 #' @param vae_variant VAE variant name.
 #' @param backend Topic model backend, either `"vae"` or `"warplda"`.
+#' @param warplda_sampler Native WarpLDA sampler, either `"warp_mh"` for the
+#'   text2vec-style alternating doc/word Metropolis-Hastings sampler or
+#'   `"gibbs_sync"` for the faster deterministic collapsed sampler.
+#' @param warplda_beta Topic-word prior for native WarpLDA. NULL uses `1/K`,
+#'   matching the text2vec default.
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
@@ -7698,6 +7731,8 @@ train_topic_models <- function(Kgrid,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
                                backend = c("vae", "warplda"),
+                               warplda_sampler = c("warp_mh", "gibbs_sync"),
+                               warplda_beta = NULL,
                                reuse_if_exists = TRUE,
                                save_full_doc_term_csv = FALSE,
                                local_threads = NULL,
@@ -7725,6 +7760,7 @@ train_topic_models <- function(Kgrid,
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   count_input <- match.arg(count_input)
   backend <- match.arg(backend)
+  warplda_sampler <- match.arg(warplda_sampler)
   doc_mode <- match.arg(doc_mode)
   doc_design <- match.arg(doc_design)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
@@ -7874,6 +7910,14 @@ train_topic_models <- function(Kgrid,
       old_metrics <- tryCatch(data.table::fread(metrics_path), error = function(e) data.table::data.table())
       if (nrow(old_metrics) && "K" %in% names(old_metrics)) {
         metrics_have_required_k <- all(required_k %in% as.integer(old_metrics$K))
+        if (identical(backend, "warplda")) {
+          if ("sampler" %in% names(old_metrics)) {
+            metrics_have_required_k <- metrics_have_required_k &&
+              all(as.character(old_metrics$sampler[as.integer(old_metrics$K) %in% required_k]) == warplda_sampler)
+          } else {
+            metrics_have_required_k <- metrics_have_required_k && identical(warplda_sampler, "gibbs_sync")
+          }
+        }
       }
     }
     model_files_have_required_k <- if (dir.exists(models_dir)) {
@@ -7945,11 +7989,12 @@ train_topic_models <- function(Kgrid,
         iterations = 2000L,
         alpha_by_topic = TRUE,
         alpha = NULL,
-        beta = 0.1,
+        beta = warplda_beta,
         seed = 123,
         save_tmp_dir = file.path(out_dir, "tmp_models"),
         workers = 1L,
         threads_per_model = local_threads,
+        sampler = warplda_sampler,
         metrics_file = file.path(out_dir, "model_metrics.csv")
       )
       .log_inform("{cell}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")

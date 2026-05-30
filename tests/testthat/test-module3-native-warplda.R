@@ -35,6 +35,7 @@ test_that("native WarpLDA returns normalized topic matrices", {
   )
 
   expect_identical(fit$model$backend, "craftgrn_native_warplda")
+  expect_identical(fit$model$sampler, "warp_mh")
   expect_probability_matrix(fit$theta, nrow(dtm), 2L)
   expect_probability_matrix(fit$phi, 2L, ncol(dtm))
   expect_equal(rownames(fit$theta), rownames(dtm))
@@ -79,6 +80,44 @@ test_that("native WarpLDA supports multicore fitting and recovers marker terms",
   overlap_b <- max(apply(top_terms, 2L, function(z) sum(z %in% marker_b)))
   expect_gte(overlap_a, 3L)
   expect_gte(overlap_b, 3L)
+})
+
+test_that("native WarpLDA supports text2vec-style warp_mh sampler defaults", {
+  dtm <- make_native_warplda_dtm()
+
+  fit <- fit_warplda_one(
+    dtm,
+    K = 3L,
+    iterations = 4L,
+    alpha = 50 / 3,
+    beta = NULL,
+    seed = 123L,
+    n_check_convergence = 0L,
+    n_iter_inference = 1L,
+    n_threads = 1L,
+    sampler = "warp_mh",
+    progressbar = FALSE
+  )
+
+  expect_identical(fit$model$sampler, "warp_mh")
+  expect_identical(fit$metrics$sampler, "warp_mh")
+  expect_equal(fit$beta, 1 / 3, tolerance = 1e-12)
+  expect_probability_matrix(fit$theta, nrow(dtm), 3L)
+  expect_probability_matrix(fit$phi, 3L, ncol(dtm))
+})
+
+test_that("native warp_mh sampler is thread-count invariant for fixed seeds", {
+  dtm <- make_native_warplda_dtm()
+  n_threads <- min(4L, .warplda_default_threads())
+  skip_if(n_threads < 2L, "OpenMP multicore test needs at least two threads.")
+
+  fit1 <- fit_warplda_one(dtm, K = 2L, iterations = 8L, alpha = 0.5, beta = 0.1, seed = 303L, n_check_convergence = 0L, n_iter_inference = 2L, n_threads = 1L, sampler = "warp_mh", progressbar = FALSE)
+  fitn <- fit_warplda_one(dtm, K = 2L, iterations = 8L, alpha = 0.5, beta = 0.1, seed = 303L, n_check_convergence = 0L, n_iter_inference = 2L, n_threads = n_threads, sampler = "warp_mh", progressbar = FALSE)
+
+  expect_identical(fit1$theta, fitn$theta)
+  expect_identical(fit1$phi, fitn$phi)
+  expect_identical(fit1$metrics$perplexity, fitn$metrics$perplexity)
+  expect_identical(fit1$metrics$loglik_approx, fitn$metrics$loglik_approx)
 })
 
 

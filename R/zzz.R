@@ -55,7 +55,7 @@ utils::globalVariables(c(
   "peak_term", "peaks_gamma_cutoff", "perplexity",
   "plot_tf_network_delta", "prob", "pseudo_count", "pseudo_count_bin",
   "pseudo_count_log", "pval", "rid___", "row_index", "row_order",
-  "run_id", "score_num", "score_val", "size_val", "sub_cluster_name",
+  "run_id", "sampler", "score_num", "score_val", "size_val", "sub_cluster_name",
   "target_total", "term_base", "term_id", "term_pass", "term_prefix",
   "term_str", "tf", "tf_doc", "tf_expr_case", "tf_expr_condition",
   "tf_expr_ctrl", "tf_expr_flag_case", "tf_expr_flag_ctrl", "tf_idx",
