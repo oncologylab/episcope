@@ -48,29 +48,31 @@ struct SparseDtmTokens {
   std::vector<int> nz_count;
 };
 
-static inline double rng_unif(std::mt19937_64& rng) {
-  return (static_cast<double>(rng()) + 0.5) /
-    (static_cast<double>(std::numeric_limits<std::uint64_t>::max()) + 1.0);
+
+static inline std::uint64_t splitmix64(std::uint64_t x) {
+  x += 0x9e3779b97f4a7c15ULL;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+  return x ^ (x >> 31);
 }
 
-static inline std::uint64_t mix_seed(std::uint64_t seed,
-                                     std::uint64_t phase,
-                                     std::uint64_t iter,
-                                     std::uint64_t thread_id) {
-  std::uint64_t x = seed + 0x9e3779b97f4a7c15ULL;
-  x ^= phase + 0xbf58476d1ce4e5b9ULL + (x << 6) + (x >> 2);
-  x ^= iter + 0x94d049bb133111ebULL + (x << 6) + (x >> 2);
-  x ^= thread_id + 0xda942042e4dd58b5ULL + (x << 6) + (x >> 2);
-  return x;
+static inline double token_unif(std::uint64_t seed,
+                                std::uint64_t phase,
+                                std::uint64_t iter,
+                                std::uint64_t token) {
+  const std::uint64_t x = splitmix64(seed ^ (phase * 0xbf58476d1ce4e5b9ULL) ^
+                                     (iter * 0x94d049bb133111ebULL) ^ token);
+  return static_cast<double>(x >> 11) * (1.0 / 9007199254740992.0);
 }
 
-static inline int sample_topic(const std::vector<double>& prob,
-                               double total,
-                               std::mt19937_64& rng) {
+static inline int sample_topic_from_unit(const std::vector<double>& prob,
+                                         double total,
+                                         double u) {
   if (!(total > 0.0) || !R_finite(total)) {
-    return static_cast<int>(rng() % static_cast<std::uint64_t>(prob.size()));
+    const std::uint64_t idx = static_cast<std::uint64_t>(std::floor(u * static_cast<double>(prob.size())));
+    return static_cast<int>(std::min<std::uint64_t>(idx, static_cast<std::uint64_t>(prob.size() - 1)));
   }
-  const double target = rng_unif(rng) * total;
+  const double target = u * total;
   double acc = 0.0;
   for (std::size_t k = 0; k < prob.size(); ++k) {
     acc += prob[k];
@@ -194,6 +196,39 @@ double compute_loglik(const SparseDtmTokens& dat,
   return ll;
 }
 
+void rebuild_training_counts(const SparseDtmTokens& dat,
+                             const std::vector<int>& topic,
+                             std::vector<int>& doc_topic,
+                             std::vector<int>& word_topic,
+                             std::vector<int>& topic_count,
+                             int K) {
+  std::fill(doc_topic.begin(), doc_topic.end(), 0);
+  std::fill(word_topic.begin(), word_topic.end(), 0);
+  std::fill(topic_count.begin(), topic_count.end(), 0);
+  const int n_token = static_cast<int>(topic.size());
+  for (int tok = 0; tok < n_token; ++tok) {
+    const int k = topic[tok];
+    const int d = dat.token_doc[tok];
+    const int w = dat.token_word[tok];
+    doc_topic[d * K + k] += 1;
+    word_topic[w * K + k] += 1;
+    topic_count[k] += 1;
+  }
+}
+
+void rebuild_doc_counts(const SparseDtmTokens& dat,
+                        const std::vector<int>& topic,
+                        std::vector<int>& doc_topic,
+                        int K) {
+  std::fill(doc_topic.begin(), doc_topic.end(), 0);
+  const int n_token = static_cast<int>(topic.size());
+  for (int tok = 0; tok < n_token; ++tok) {
+    const int k = topic[tok];
+    const int d = dat.token_doc[tok];
+    doc_topic[d * K + k] += 1;
+  }
+}
+
 void sample_training_iteration(const SparseDtmTokens& dat,
                                std::vector<int>& topic,
                                std::vector<int>& doc_topic,
@@ -205,84 +240,43 @@ void sample_training_iteration(const SparseDtmTokens& dat,
                                int n_threads,
                                std::uint64_t seed,
                                int iter) {
-  const std::size_t word_k = static_cast<std::size_t>(dat.n_word) * static_cast<std::size_t>(K);
-  std::vector< std::vector<int> > local_word_delta(static_cast<std::size_t>(n_threads));
-  std::vector< std::vector<int> > touched(static_cast<std::size_t>(n_threads));
-  std::vector<int> local_topic_delta(static_cast<std::size_t>(n_threads) * static_cast<std::size_t>(K), 0);
-  for (int t = 0; t < n_threads; ++t) {
-    local_word_delta[t].assign(word_k, 0);
-    touched[t].reserve(1024);
-  }
+  // Sample from the previous iteration counts, then rebuild counts serially.
+  // This keeps output invariant to OpenMP thread count and scheduling.
+  const int n_token = static_cast<int>(topic.size());
   const double beta_sum = static_cast<double>(dat.n_word) * beta;
+  std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
 
 #ifdef _OPENMP
 #pragma omp parallel num_threads(n_threads)
 #endif
   {
-#ifdef _OPENMP
-    const int tid = omp_get_thread_num();
-#else
-    const int tid = 0;
-#endif
-    std::mt19937_64 rng(mix_seed(seed, 1U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tid)));
     std::vector<double> prob(static_cast<std::size_t>(K));
-    std::vector<int>& delta = local_word_delta[tid];
-    std::vector<int>& touched_t = touched[tid];
-    int* topic_delta = &local_topic_delta[static_cast<std::size_t>(tid) * static_cast<std::size_t>(K)];
-
 #ifdef _OPENMP
 #pragma omp for schedule(static)
 #endif
-    for (int d = 0; d < dat.n_doc; ++d) {
-      for (int ptr = dat.doc_ptr[d]; ptr < dat.doc_ptr[d + 1]; ++ptr) {
-        const int tok = dat.doc_token_index[ptr];
-        const int w = dat.token_word[tok];
-        const int old_topic = topic[tok];
-
-        doc_topic[d * K + old_topic] -= 1;
-        const int old_idx = w * K + old_topic;
-        if (delta[old_idx] == 0) touched_t.push_back(old_idx);
-        delta[old_idx] -= 1;
-        topic_delta[old_topic] -= 1;
-
-        double total = 0.0;
-        for (int k = 0; k < K; ++k) {
-          const int wk = w * K + k;
-          const double wt = static_cast<double>(word_topic[wk] + delta[wk]) + beta;
-          const double dt = static_cast<double>(doc_topic[d * K + k]) + alpha;
-          double denom = static_cast<double>(topic_count[k] + topic_delta[k]) + beta_sum;
-          if (!(denom > 0.0)) denom = beta_sum;
-          const double val = dt * wt / denom;
-          prob[k] = val;
-          total += val;
-        }
-
-        const int new_topic = sample_topic(prob, total, rng);
-        topic[tok] = new_topic;
-        doc_topic[d * K + new_topic] += 1;
-        const int new_idx = w * K + new_topic;
-        if (delta[new_idx] == 0) touched_t.push_back(new_idx);
-        delta[new_idx] += 1;
-        topic_delta[new_topic] += 1;
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int d = dat.token_doc[tok];
+      const int w = dat.token_word[tok];
+      const int old_topic = topic[tok];
+      double total = 0.0;
+      for (int k = 0; k < K; ++k) {
+        const int old = (old_topic == k) ? 1 : 0;
+        const double dt = static_cast<double>(doc_topic[d * K + k] - old) + alpha;
+        const double wt = static_cast<double>(word_topic[w * K + k] - old) + beta;
+        double denom = static_cast<double>(topic_count[k] - old) + beta_sum;
+        if (!(denom > 0.0)) denom = beta_sum;
+        const double val = dt * wt / denom;
+        prob[k] = val;
+        total += val;
       }
+      next_topic[tok] = sample_topic_from_unit(
+        prob, total, token_unif(seed, 1U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok))
+      );
     }
   }
 
-  for (int tid = 0; tid < n_threads; ++tid) {
-    std::vector<int>& touched_t = touched[tid];
-    if (!touched_t.empty()) {
-      std::sort(touched_t.begin(), touched_t.end());
-      touched_t.erase(std::unique(touched_t.begin(), touched_t.end()), touched_t.end());
-      std::vector<int>& delta = local_word_delta[tid];
-      for (std::size_t i = 0; i < touched_t.size(); ++i) {
-        const int idx = touched_t[i];
-        word_topic[idx] += delta[idx];
-      }
-    }
-    for (int k = 0; k < K; ++k) {
-      topic_count[k] += local_topic_delta[static_cast<std::size_t>(tid) * static_cast<std::size_t>(K) + k];
-    }
-  }
+  topic.swap(next_topic);
+  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K);
 }
 
 void sample_inference_iteration(const SparseDtmTokens& dat,
@@ -296,46 +290,41 @@ void sample_inference_iteration(const SparseDtmTokens& dat,
                                 int n_threads,
                                 std::uint64_t seed,
                                 int iter) {
+  // Keep inference thread-invariant for the same reason as training.
+  const int n_token = static_cast<int>(topic.size());
   const double beta_sum = static_cast<double>(dat.n_word) * beta;
+  std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
 
 #ifdef _OPENMP
 #pragma omp parallel num_threads(n_threads)
 #endif
   {
-#ifdef _OPENMP
-    const int tid = omp_get_thread_num();
-#else
-    const int tid = 0;
-#endif
-    std::mt19937_64 rng(mix_seed(seed, 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tid)));
     std::vector<double> prob(static_cast<std::size_t>(K));
-
 #ifdef _OPENMP
 #pragma omp for schedule(static)
 #endif
-    for (int d = 0; d < dat.n_doc; ++d) {
-      for (int ptr = dat.doc_ptr[d]; ptr < dat.doc_ptr[d + 1]; ++ptr) {
-        const int tok = dat.doc_token_index[ptr];
-        const int w = dat.token_word[tok];
-        const int old_topic = topic[tok];
-        doc_topic[d * K + old_topic] -= 1;
-
-        double total = 0.0;
-        for (int k = 0; k < K; ++k) {
-          const double wt = static_cast<double>(word_topic[w * K + k]) + beta;
-          const double dt = static_cast<double>(doc_topic[d * K + k]) + alpha;
-          const double denom = static_cast<double>(topic_count[k]) + beta_sum;
-          const double val = dt * wt / denom;
-          prob[k] = val;
-          total += val;
-        }
-
-        const int new_topic = sample_topic(prob, total, rng);
-        topic[tok] = new_topic;
-        doc_topic[d * K + new_topic] += 1;
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int d = dat.token_doc[tok];
+      const int w = dat.token_word[tok];
+      const int old_topic = topic[tok];
+      double total = 0.0;
+      for (int k = 0; k < K; ++k) {
+        const int old = (old_topic == k) ? 1 : 0;
+        const double wt = static_cast<double>(word_topic[w * K + k]) + beta;
+        const double dt = static_cast<double>(doc_topic[d * K + k] - old) + alpha;
+        const double denom = static_cast<double>(topic_count[k]) + beta_sum;
+        const double val = dt * wt / denom;
+        prob[k] = val;
+        total += val;
       }
+      next_topic[tok] = sample_topic_from_unit(
+        prob, total, token_unif(seed, 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok))
+      );
     }
   }
+
+  topic.swap(next_topic);
+  rebuild_doc_counts(dat, topic, doc_topic, K);
 }
 
 } // namespace

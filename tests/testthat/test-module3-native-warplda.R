@@ -81,6 +81,21 @@ test_that("native WarpLDA supports multicore fitting and recovers marker terms",
   expect_gte(overlap_b, 3L)
 })
 
+
+test_that("native WarpLDA is thread-count invariant for fixed seeds", {
+  dtm <- make_native_warplda_dtm()
+  n_threads <- min(4L, .warplda_default_threads())
+  skip_if(n_threads < 2L, "OpenMP multicore test needs at least two threads.")
+
+  fit1 <- fit_warplda_one(dtm, K = 2L, iterations = 12L, alpha = 0.5, beta = 0.1, seed = 101L, n_check_convergence = 0L, n_iter_inference = 2L, n_threads = 1L, progressbar = FALSE)
+  fitn <- fit_warplda_one(dtm, K = 2L, iterations = 12L, alpha = 0.5, beta = 0.1, seed = 101L, n_check_convergence = 0L, n_iter_inference = 2L, n_threads = n_threads, progressbar = FALSE)
+
+  expect_identical(fit1$theta, fitn$theta)
+  expect_identical(fit1$phi, fitn$phi)
+  expect_identical(fit1$metrics$perplexity, fitn$metrics$perplexity)
+  expect_identical(fit1$metrics$loglik_approx, fitn$metrics$loglik_approx)
+})
+
 test_that("native WarpLDA validates positive integer-like counts", {
   skip_if_not_installed("Matrix")
   dtm <- Matrix::sparseMatrix(
