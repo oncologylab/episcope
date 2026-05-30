@@ -490,7 +490,7 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
     if (is.finite(out) && out > 0L) return(min(cores, out))
   }
 
-  min(cores, max(1L, min(16L, floor(cores * 0.75))))
+  cores
 }
 
 .warplda_default_threads <- function(n_threads = NULL) {
@@ -499,6 +499,19 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
     if (is.finite(out) && out > 0L) return(out)
   }
   .warplda_thread_cap(.warplda_available_threads())
+}
+
+.warplda_resolve_threads_per_model <- function(threads_per_model = NULL,
+                                               workers = 1L) {
+  workers <- suppressWarnings(as.integer(workers[[1L]]))
+  if (!is.finite(workers) || workers < 1L) workers <- 1L
+  is_null <- is.null(threads_per_model) ||
+    length(threads_per_model) == 0L ||
+    is.na(threads_per_model[[1L]])
+  if (isTRUE(is_null) && workers > 1L) {
+    return(as.integer(max(1L, floor(.warplda_default_threads() / workers))))
+  }
+  .warplda_default_threads(threads_per_model)
 }
 
 .format_bytes <- function(bytes) {
@@ -694,13 +707,8 @@ run_warplda_models <- function(dtm,
   if (!is.finite(workers) || workers < 1L) {
     workers <- 1L
   }
-  threads_per_model_is_null <- is.null(threads_per_model) || length(threads_per_model) == 0L || is.na(threads_per_model[[1L]])
   workers <- min(workers, length(K_grid))
-  if (isTRUE(threads_per_model_is_null) && workers > 1L) {
-    threads_per_model <- max(1L, floor(.warplda_default_threads() / workers))
-  } else {
-    threads_per_model <- .warplda_default_threads(threads_per_model)
-  }
+  threads_per_model <- .warplda_resolve_threads_per_model(threads_per_model, workers = workers)
 
   existing_metrics <- data.table::data.table()
   if (!is.null(metrics_file) && file.exists(metrics_file)) {
@@ -7654,7 +7662,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
-#' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses a safety-capped default; set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to change the cap.
+#' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses all available cores. Set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to cap automatic thread use.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.

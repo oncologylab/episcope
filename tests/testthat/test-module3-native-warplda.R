@@ -108,12 +108,23 @@ test_that("native WarpLDA estimates memory before large fits", {
   expect_gt(estimate$estimated_peak_gb, 0)
 })
 
-test_that("native WarpLDA thread defaults are safety capped unless explicit", {
-  withr::local_options(list(craftgrn.warplda.max_threads = 2L))
+test_that("native WarpLDA defaults to available cores unless capped", {
   withr::local_envvar(c(CRAFTGRN_WARPLDA_MAX_THREADS = NA))
 
-  expect_lte(.warplda_default_threads(NULL), 2L)
+  expect_identical(.warplda_default_threads(NULL), .warplda_available_threads())
+
+  withr::local_options(list(craftgrn.warplda.max_threads = 2L))
+  expect_identical(.warplda_default_threads(NULL), min(.warplda_available_threads(), 2L))
   expect_identical(.warplda_default_threads(36L), 36L)
+})
+
+test_that("native WarpLDA divides available threads across parallel K workers", {
+  withr::local_options(list(craftgrn.warplda.max_threads = 4L))
+  withr::local_envvar(c(CRAFTGRN_WARPLDA_MAX_THREADS = NA))
+
+  expected_threads <- as.integer(max(1L, floor(min(.warplda_available_threads(), 4L) / 2L)))
+  expect_identical(.warplda_resolve_threads_per_model(NULL, workers = 2L), expected_threads)
+  expect_identical(.warplda_resolve_threads_per_model(36L, workers = 2L), 36L)
 })
 
 test_that("native WarpLDA validates positive integer-like counts", {
