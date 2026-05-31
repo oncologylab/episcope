@@ -139,7 +139,8 @@ to topics, and summarizes pathway and master TF programs.
 Primary package functions:
 
 - `train_topic_models()` trains regulatory topic models across a user-defined
-  topic-number grid.
+  topic-number grid using the native `text2vec_compat` WarpLDA sampler by
+  default.
 - `extract_regulatory_topics()` assigns links and terms to selected regulatory
   topics.
 - `run_diff_grn_pathway_analysis()` and related plotting functions summarize

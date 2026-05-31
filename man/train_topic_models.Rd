@@ -33,7 +33,7 @@ train_topic_models(
   count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
   vae_variant = "multivi_encoder",
   backend = c("vae", "warplda"),
-  warplda_sampler = c("warp_mh", "gibbs_sync"),
+  warplda_sampler = c("text2vec_compat", "warp_mh", "gibbs_sync"),
   warplda_beta = NULL,
   reuse_if_exists = TRUE,
   save_full_doc_term_csv = FALSE,
@@ -103,9 +103,10 @@ train_topic_models(
 
 \item{backend}{Topic model backend, either `"vae"` or `"warplda"`.}
 
-\item{warplda_sampler}{Native WarpLDA sampler, either `"warp_mh"` for the
-text2vec-style alternating doc/word Metropolis-Hastings sampler or
-`"gibbs_sync"` for the faster deterministic collapsed sampler.}
+\item{warplda_sampler}{Native WarpLDA sampler. `"text2vec_compat"` is the
+default text2vec-style alternating doc/word Metropolis-Hastings sampler,
+`"warp_mh"` is the earlier CraftGRN approximation, and `"gibbs_sync"` is
+the faster deterministic collapsed sampler.}
 
 \item{warplda_beta}{Topic-word prior for native WarpLDA. NULL uses `1/K`,
 matching the text2vec default.}

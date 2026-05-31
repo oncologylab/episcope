@@ -13,7 +13,9 @@ centric
 chr
 ChromHMM
 cond
+compat
 cpu
+CraftGRN's
 CraftGRN
 CRISPR
 csv
@@ -70,6 +72,7 @@ Normalizations
 NxN
 omic
 omics
+OpenMP
 params
 perceptron
 PFM

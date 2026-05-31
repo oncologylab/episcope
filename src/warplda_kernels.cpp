@@ -16,6 +16,7 @@
 // CraftGRN modifications:
 //   - package-local Rcpp entrypoint
 //   - OpenMP document-parallel sampling
+//   - text2vec-compatible transform semantics for the default sampler
 //   - no runtime dependency on text2vec
 //
 #include <Rcpp.h>
@@ -563,6 +564,31 @@ void sample_warp_inference_iteration(const SparseDtmTokens& dat,
   rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
 }
 
+void sample_text2vec_compat_inference_iteration(const SparseDtmTokens& dat,
+                                                std::vector<int>& topic,
+                                                std::vector<int>& proposal_topic,
+                                                std::vector<int>& doc_topic,
+                                                const std::vector<int>& word_topic,
+                                                const std::vector<int>& topic_count,
+                                                double alpha,
+                                                double beta,
+                                                int K,
+                                                int n_threads,
+                                                std::uint64_t seed,
+                                                int iter,
+                                                std::vector<int>& next_topic) {
+  // text2vec transform() keeps word-topic counts fixed and reports
+  // document-topic counts after the document pass. The word pass still updates
+  // latent token topics for the next iteration, but it does not refresh the
+  // reported document-topic counts.
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+  sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
+                       alpha, beta, K, n_threads, seed, iter, 50U, next_topic);
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+  sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
+                        beta, K, n_threads, seed, iter, 60U, false, next_topic);
+}
+
 } // namespace
 
 // [[Rcpp::plugins(openmp)]]
@@ -577,15 +603,15 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
                               int n_check_convergence = 10,
                               int n_iter_inference = 10,
                               int n_threads = 1,
-                              std::string sampler = "gibbs_sync") {
+                              std::string sampler = "text2vec_compat") {
   if (K <= 1) stop("K must be greater than 1.");
   if (iterations < 1) stop("iterations must be positive.");
   if (!R_finite(alpha) || alpha <= 0.0) stop("alpha must be positive.");
   if (!R_finite(beta) || beta <= 0.0) stop("beta must be positive.");
   if (n_check_convergence < 0) stop("n_check_convergence must be non-negative.");
   if (n_iter_inference < 0) stop("n_iter_inference must be non-negative.");
-  if (sampler != "gibbs_sync" && sampler != "warp_mh") {
-    stop("sampler must be 'gibbs_sync' or 'warp_mh'.");
+  if (sampler != "gibbs_sync" && sampler != "warp_mh" && sampler != "text2vec_compat") {
+    stop("sampler must be 'text2vec_compat', 'warp_mh', or 'gibbs_sync'.");
   }
   if (n_threads < 1) n_threads = 1;
 #ifdef _OPENMP
@@ -628,7 +654,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   double previous_loglik = NA_REAL;
   int actual_iterations = iterations;
   for (int iter = 1; iter <= iterations; ++iter) {
-    if (sampler == "warp_mh") {
+    if (sampler == "warp_mh" || sampler == "text2vec_compat") {
       sample_warp_training_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                      alpha, beta, K, n_threads,
                                      static_cast<std::uint64_t>(seed), iter, next_topic);
@@ -656,7 +682,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
 
   std::vector<int> trained_word_topic;
   std::vector<int> trained_topic_count;
-  if (sampler == "warp_mh") {
+  if (sampler == "warp_mh" || sampler == "text2vec_compat") {
     trained_word_topic = word_topic;
     trained_topic_count = topic_count;
 
@@ -667,14 +693,23 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
       topic[tok] = static_cast<int>(infer_rng() % static_cast<std::uint64_t>(K));
       proposal_topic[tok] = static_cast<int>(infer_rng() % static_cast<std::uint64_t>(K));
     }
-    word_topic = trained_word_topic;
-    topic_count = trained_topic_count;
-    rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+    if (sampler == "text2vec_compat") {
+      rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
+      word_topic = trained_word_topic;
+    } else {
+      word_topic = trained_word_topic;
+      topic_count = trained_topic_count;
+      rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+    }
   }
 
   const int inference_burnin = iterations;
   for (int iter = 1; iter <= inference_burnin; ++iter) {
-    if (sampler == "warp_mh") {
+    if (sampler == "text2vec_compat") {
+      sample_text2vec_compat_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                                                 alpha, beta, K, n_threads,
+                                                 static_cast<std::uint64_t>(seed), iter, next_topic);
+    } else if (sampler == "warp_mh") {
       sample_warp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                       alpha, beta, K, n_threads,
                                       static_cast<std::uint64_t>(seed), iter, next_topic);
@@ -694,7 +729,11 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     }
   } else {
     for (int iter = 1; iter <= n_iter_inference; ++iter) {
-      if (sampler == "warp_mh") {
+      if (sampler == "text2vec_compat") {
+        sample_text2vec_compat_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                                                   alpha, beta, K, n_threads,
+                                                   static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
+      } else if (sampler == "warp_mh") {
         sample_warp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                         alpha, beta, K, n_threads,
                                         static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
@@ -725,8 +764,16 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
 
   NumericMatrix phi(K, dat.n_word);
   const double beta_sum = static_cast<double>(dat.n_word) * beta;
+  std::vector<int> phi_topic_count(static_cast<std::size_t>(K), 0);
   for (int k = 0; k < K; ++k) {
-    const double denom = static_cast<double>(topic_count[k]) + beta_sum;
+    int total = 0;
+    for (int w = 0; w < dat.n_word; ++w) {
+      total += word_topic[w * K + k];
+    }
+    phi_topic_count[k] = total;
+  }
+  for (int k = 0; k < K; ++k) {
+    const double denom = static_cast<double>(phi_topic_count[k]) + beta_sum;
     for (int w = 0; w < dat.n_word; ++w) {
       phi(k, w) = (static_cast<double>(word_topic[w * K + k]) + beta) / denom;
     }

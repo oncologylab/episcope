@@ -252,6 +252,9 @@ The topic modeling workflow builds documents such as
 weights are derived from RNA log2 fold changes and footprint or peak signal
 deltas. The model balances RNA and footprint contributions before converting
 weights into pseudocounts for topic modeling.
+By default, WarpLDA uses CraftGRN's native `text2vec_compat` sampler, which
+keeps text2vec-style doc/word Metropolis-Hastings semantics while using
+OpenMP threads inside each model fit.
 
 ```{r module-3-topic-models}
 train_topic_models(
