@@ -58,6 +58,57 @@
   paste0("<div class=\"cards\">", paste(cards, collapse = ""), "</div>")
 }
 
+.qc_key_value_table <- function(x) {
+  if (is.null(x) || !length(x)) return(tibble::tibble(item = character(), value = character()))
+  vals <- lapply(x, function(v) {
+    if (is.null(v) || !length(v)) return("NA")
+    if (length(v) > 1L) return(paste(as.character(v), collapse = ", "))
+    as.character(v)
+  })
+  tibble::tibble(item = names(vals), value = unname(unlist(vals, use.names = FALSE)))
+}
+
+.qc_status_table <- function(x) {
+  if (!is.data.frame(x) || !nrow(x)) return(tibble::tibble(check = character(), status = character(), detail = character()))
+  need <- c("check", "status", "detail")
+  for (nm in setdiff(need, names(x))) x[[nm]] <- ""
+  x[, need, drop = FALSE]
+}
+
+.qc_status <- function(pass = NA, detail = "") {
+  if (is.na(pass)) {
+    list(status = "NOT RUN", detail = detail)
+  } else if (isTRUE(pass)) {
+    list(status = "PASS", detail = detail)
+  } else {
+    list(status = "CHECK", detail = detail)
+  }
+}
+
+.qc_manifest_checks <- function(manifest) {
+  if (!is.data.frame(manifest) || !nrow(manifest) || !"path" %in% names(manifest)) {
+    return(tibble::tibble(table = character(), path = character(), n_rows = character(), file_exists = character(), format = character()))
+  }
+  n_rows <- if ("n_rows" %in% names(manifest)) .qc_format_number(manifest$n_rows) else rep("NA", nrow(manifest))
+  fmt <- if ("format" %in% names(manifest)) as.character(manifest$format) else rep("NA", nrow(manifest))
+  table <- if ("table" %in% names(manifest)) as.character(manifest$table) else if ("chunk_id" %in% names(manifest)) paste0("chunk_", manifest$chunk_id) else basename(as.character(manifest$path))
+  tibble::tibble(
+    table = table,
+    path = basename(as.character(manifest$path)),
+    n_rows = n_rows,
+    file_exists = ifelse(file.exists(as.character(manifest$path)), "yes", "no"),
+    format = fmt
+  )
+}
+
+.qc_pass_rate_table <- function(rows) {
+  if (!is.data.frame(rows) || !nrow(rows)) return(tibble::tibble())
+  rows$pass_rate <- vapply(seq_len(nrow(rows)), function(i) {
+    .qc_percent(rows$pass[[i]], rows$tested[[i]])
+  }, character(1L))
+  rows
+}
+
 .qc_bar_svg <- function(x, label_col, value_col, title = NULL, width = 860L, bar_height = 24L) {
   if (!is.data.frame(x) || !nrow(x) || !all(c(label_col, value_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
   x <- as.data.frame(x, stringsAsFactors = FALSE)
@@ -210,29 +261,58 @@
 }
 
 .module1_qc_scan_predicted_tfbs <- function(manifest, top_n = 20L, verbose = TRUE) {
-  condition_support <- fp_id <- mean_condition_support <- n_fp <- n_predicted_tfbs <- tf <- N <- NULL
+  chr <- condition_support <- end <- file_exists <- fp_id <- mean_condition_support <- n_bad_coord <- n_bad_coordinate <- n_duplicate_fp_tf_keys <- n_duplicate_key <- n_fp <- n_predicted_tfbs <- n_rows_scanned <- n_tf <- start <- tf <- N <- NULL
   if (!is.data.frame(manifest) || !nrow(manifest)) {
-    return(list(tf_summary = tibble::tibble(), condition_support = tibble::tibble()))
+    return(list(
+      tf_summary = tibble::tibble(),
+      fp_summary = tibble::tibble(),
+      condition_support = tibble::tibble(),
+      integrity = tibble::tibble()
+    ))
   }
   top_n <- max(1L, as.integer(top_n[[1L]]))
   tf_rows <- vector("list", nrow(manifest))
+  fp_rows <- vector("list", nrow(manifest))
   support_rows <- vector("list", nrow(manifest))
+  integrity_rows <- vector("list", nrow(manifest))
   for (i in seq_len(nrow(manifest))) {
     path <- as.character(manifest$path[[i]])
     fmt <- as.character(manifest$format[[i]])
     dt <- tryCatch(
-      .qc_read_table_file(path, fmt, columns = c("tf", "fp_id", "condition_support")),
+      .qc_read_table_file(path, fmt, columns = c("tf", "fp_id", "chr", "start", "end", "condition_support")),
       error = function(e) .qc_read_table_file(path, fmt, columns = c("tf", "fp_id"))
     )
     dt <- data.table::as.data.table(dt)
     if (!nrow(dt)) next
     if (!"condition_support" %in% names(dt)) dt[, condition_support := NA_real_]
+    if (!"chr" %in% names(dt)) dt[, chr := NA_character_]
+    if (!"start" %in% names(dt)) dt[, start := NA_real_]
+    if (!"end" %in% names(dt)) dt[, end := NA_real_]
+    dt[, `:=`(
+      tf = as.character(tf),
+      fp_id = as.character(fp_id),
+      start = suppressWarnings(as.numeric(start)),
+      end = suppressWarnings(as.numeric(end))
+    )]
     tf_rows[[i]] <- dt[, .(
       n_predicted_tfbs = .N,
       n_fp = data.table::uniqueN(fp_id),
       mean_condition_support = mean(suppressWarnings(as.numeric(condition_support)), na.rm = TRUE)
     ), by = .(tf)]
+    fp_rows[[i]] <- dt[, .(
+      n_predicted_tfbs = .N,
+      n_tf = data.table::uniqueN(tf)
+    ), by = .(fp_id)]
     support_rows[[i]] <- dt[, .N, by = .(condition_support)]
+    bad_coord <- sum(is.na(chr) | !nzchar(chr) | !is.finite(start) | !is.finite(end) | end <= start)
+    duplicate_key <- sum(duplicated(dt[, .(fp_id, tf)]))
+    integrity_rows[[i]] <- data.table::data.table(
+      chunk_id = if ("chunk_id" %in% names(manifest)) manifest$chunk_id[[i]] else i,
+      n_rows_scanned = nrow(dt),
+      n_bad_coordinate = bad_coord,
+      n_duplicate_fp_tf_keys = duplicate_key,
+      file_exists = file.exists(path)
+    )
     if (isTRUE(verbose)) .log_inform("Module 1 QC report: scanned predicted TFBS chunk {i}/{nrow(manifest)}.")
   }
   tf_summary <- data.table::rbindlist(tf_rows, use.names = TRUE, fill = TRUE)
@@ -245,12 +325,36 @@
     data.table::setorder(tf_summary, -n_predicted_tfbs, tf)
     tf_summary <- head(tf_summary, top_n)
   }
+  fp_summary <- data.table::rbindlist(fp_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(fp_summary)) {
+    fp_summary <- fp_summary[, .(
+      n_predicted_tfbs = sum(n_predicted_tfbs, na.rm = TRUE),
+      n_tf = sum(n_tf, na.rm = TRUE)
+    ), by = fp_id]
+    data.table::setorder(fp_summary, -n_predicted_tfbs, fp_id)
+    fp_summary <- head(fp_summary, top_n)
+  }
   support <- data.table::rbindlist(support_rows, use.names = TRUE, fill = TRUE)
   if (nrow(support)) {
     support <- support[, .(n_predicted_tfbs = sum(N, na.rm = TRUE)), by = condition_support]
     data.table::setorder(support, condition_support)
   }
-  list(tf_summary = tibble::as_tibble(tf_summary), condition_support = tibble::as_tibble(support))
+  integrity <- data.table::rbindlist(integrity_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(integrity)) {
+    integrity <- integrity[, .(
+      n_chunks_scanned = .N,
+      n_rows_scanned = sum(n_rows_scanned, na.rm = TRUE),
+      n_bad_coordinate = sum(n_bad_coordinate, na.rm = TRUE),
+      n_duplicate_fp_tf_keys = sum(n_duplicate_fp_tf_keys, na.rm = TRUE),
+      n_missing_files = sum(!file_exists, na.rm = TRUE)
+    )]
+  }
+  list(
+    tf_summary = tibble::as_tibble(tf_summary),
+    fp_summary = tibble::as_tibble(fp_summary),
+    condition_support = tibble::as_tibble(support),
+    integrity = tibble::as_tibble(integrity)
+  )
 }
 
 .module1_qc_input_metrics <- function(omics_data) {
@@ -291,12 +395,125 @@
   list(summary = tibble::as_tibble(summary), values = counts$n_tfs)
 }
 
+.module1_qc_parameters <- function(module1, scan_predicted_tfbs = FALSE) {
+  params <- if (is.list(module1)) module1$parameters else NULL
+  keep <- c(
+    "db", "r_cutoff", "p_cutoff", "fdr_cutoff", "filter_to_canonical_bound",
+    "min_non_na", "cores", "output_format", "write_stats", "write_bed"
+  )
+  out <- params[intersect(keep, names(params))]
+  out$scan_predicted_tfbs <- isTRUE(scan_predicted_tfbs)
+  .qc_key_value_table(out)
+}
+
+.module1_qc_gate_table <- function(qc_summary, omics_data = NULL) {
+  n_aligned <- if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else .qc_metric_value(qc_summary, "n_fp_input")
+  n_bound <- .qc_metric_value(qc_summary, "n_fp_bound_accessible")
+  n_motif <- .qc_metric_value(qc_summary, "n_motif_supported_pairs")
+  n_canon_pair <- .qc_metric_value(qc_summary, "n_canonical_pairs_pass")
+  n_canon_fp <- .qc_metric_value(qc_summary, "n_canonical_bound_fps")
+  n_pred_pair <- .qc_metric_value(qc_summary, "n_prediction_pairs")
+  n_pred_tfbs <- .qc_metric_value(qc_summary, "n_predicted_tfbs")
+  .qc_pass_rate_table(tibble::tibble(
+    gate = c(
+      "Aligned FP to bound/accessibility-supported FP",
+      "Motif-supported FP-TF pairs to canonical-bound pairs",
+      "Bound/accessibility-supported FP to canonical-bound FP",
+      "Prediction FP-TF pairs to predicted TFBS"
+    ),
+    tested = c(n_aligned, n_motif, n_bound, n_pred_pair),
+    pass = c(n_bound, n_canon_pair, n_canon_fp, n_pred_tfbs),
+    removed = c(n_aligned - n_bound, n_motif - n_canon_pair, n_bound - n_canon_fp, n_pred_pair - n_pred_tfbs)
+  ))
+}
+
+.module1_qc_read_canonical_stats <- function(module1, module1_dir = NULL) {
+  if (is.list(module1) && is.data.frame(module1$motif_supported_correlations) && nrow(module1$motif_supported_correlations)) {
+    return(tibble::as_tibble(module1$motif_supported_correlations))
+  }
+  if (!is.null(module1_dir)) {
+    path <- file.path(module1_dir, "module1_canonical_prediction_stats.csv.gz")
+    if (file.exists(path)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
+  }
+  tibble::tibble()
+}
+
+.module1_qc_read_prediction_stats <- function(module1, module1_dir = NULL) {
+  if (is.list(module1) && is.data.frame(module1$prediction_stats) && nrow(module1$prediction_stats)) {
+    return(tibble::as_tibble(module1$prediction_stats))
+  }
+  if (!is.null(module1_dir)) {
+    path <- file.path(module1_dir, "module1_prediction_stats.csv.gz")
+    if (file.exists(path)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
+  }
+  tibble::tibble()
+}
+
+.module1_qc_corr_summary <- function(x, label = "correlation") {
+  best_r <- fp_id <- n_pass <- pass <- tf <- NULL
+  if (!is.data.frame(x) || !nrow(x)) {
+    return(list(summary = tibble::tibble(), top_tf = tibble::tibble(), best_r = numeric()))
+  }
+  dt <- data.table::as.data.table(x)
+  if (!"pass" %in% names(dt)) dt[, pass := FALSE]
+  if (!"best_r" %in% names(dt)) dt[, best_r := NA_real_]
+  dt[, best_r := suppressWarnings(as.numeric(best_r))]
+  summary <- tibble::tibble(
+    table = label,
+    n_rows = nrow(dt),
+    n_pass = sum(dt$pass %in% TRUE, na.rm = TRUE),
+    pass_rate = .qc_percent(sum(dt$pass %in% TRUE, na.rm = TRUE), nrow(dt)),
+    median_best_r = stats::median(dt$best_r, na.rm = TRUE),
+    p95_best_r = as.numeric(stats::quantile(dt$best_r, 0.95, na.rm = TRUE)),
+    max_best_r = suppressWarnings(max(dt$best_r, na.rm = TRUE))
+  )
+  top_tf <- tibble::tibble()
+  if ("tf" %in% names(dt)) {
+    top_tf_dt <- dt[pass %in% TRUE, .(
+      n_pass = .N,
+      n_fp = if ("fp_id" %in% names(dt)) data.table::uniqueN(fp_id) else NA_integer_,
+      median_best_r = stats::median(best_r, na.rm = TRUE)
+    ), by = tf]
+    if (nrow(top_tf_dt)) {
+      data.table::setorder(top_tf_dt, -n_pass, tf)
+      top_tf <- tibble::as_tibble(head(top_tf_dt, 20L))
+    }
+  }
+  list(summary = summary, top_tf = top_tf, best_r = dt$best_r[is.finite(dt$best_r)])
+}
+
+.module1_qc_warning_checks <- function(pred_manifest, support_check, predicted_scan, canonical_stats, prediction_stats) {
+  manifest_check <- if (is.data.frame(pred_manifest) && nrow(pred_manifest)) {
+    all(file.exists(as.character(pred_manifest$path)))
+  } else {
+    NA
+  }
+  canonical_missing <- .qc_metric_value(support_check, "predicted_fp_without_motif_supported_predicted_tf", default = NA_real_)
+  scan_integrity <- predicted_scan$integrity
+  bad_coord <- .qc_metric_value(scan_integrity, "n_bad_coordinate", default = NA_real_)
+  bad_duplicate <- .qc_metric_value(scan_integrity, "n_duplicate_fp_tf_keys", default = NA_real_)
+  status_rows <- list(
+    list("Predicted TFBS manifest files exist", .qc_status(manifest_check, "Every listed chunk path should exist.")),
+    list("Predicted FPs retain canonical support", .qc_status(if (is.finite(canonical_missing)) canonical_missing == 0 else NA, paste0("Missing canonical support count: ", .qc_format_number(canonical_missing)))),
+    list("Predicted TFBS coordinates are valid", .qc_status(if (is.finite(bad_coord)) bad_coord == 0 else NA, paste0("Bad coordinate rows: ", .qc_format_number(bad_coord)))),
+    list("Predicted FP-TF keys are not duplicated within chunks", .qc_status(if (is.finite(bad_duplicate)) bad_duplicate == 0 else NA, paste0("Duplicate keys detected within chunks: ", .qc_format_number(bad_duplicate)))),
+    list("Motif-supported correlation table is available", .qc_status(is.data.frame(canonical_stats) && nrow(canonical_stats) > 0, paste0("Rows: ", .qc_format_number(nrow(canonical_stats))))),
+    list("Prediction correlation statistics are available", .qc_status(is.data.frame(prediction_stats) && nrow(prediction_stats) > 0, paste0("Rows: ", .qc_format_number(nrow(prediction_stats)))))
+  )
+  tibble::tibble(
+    check = vapply(status_rows, `[[`, character(1L), 1L),
+    status = vapply(status_rows, function(x) x[[2L]]$status, character(1L)),
+    detail = vapply(status_rows, function(x) x[[2L]]$detail, character(1L))
+  )
+}
+
 #' Build a Module 1 QC HTML report
 #'
-#' Builds a compact HTML report for Module 1 input gates, canonical support,
-#' prediction output scale, and related QC artifacts. The report can consume a
-#' `predict_tfbs()` result, a step-by-step Module 1 result list, or a Module 1
-#' output directory.
+#' Builds a comprehensive HTML report for Module 1 run parameters, input gates,
+#' motif-supported canonical support, prediction output integrity, correlation
+#' diagnostics, condition support, top TFs/FPs, warning checks, and related QC
+#' artifacts. The report can consume a `predict_tfbs()` result, a step-by-step
+#' Module 1 result list, or a Module 1 output directory.
 #'
 #' @param module1 Module 1 result list or Module 1 output directory.
 #' @param omics_data Optional compact multiomic object. Used when `module1` is
@@ -361,8 +578,20 @@ build_module1_qc_report <- function(module1,
   predicted_scan <- if (isTRUE(scan_predicted_tfbs)) {
     .module1_qc_scan_predicted_tfbs(pred_manifest, top_n = top_n, verbose = verbose)
   } else {
-    list(tf_summary = tibble::tibble(), condition_support = tibble::tibble())
+    list(tf_summary = tibble::tibble(), fp_summary = tibble::tibble(), condition_support = tibble::tibble(), integrity = tibble::tibble())
   }
+  canonical_stats <- if (isTRUE(scan_predicted_tfbs)) {
+    .module1_qc_read_canonical_stats(module1, module1_dir = module1_dir)
+  } else {
+    tibble::tibble()
+  }
+  prediction_stats <- if (isTRUE(scan_predicted_tfbs)) {
+    .module1_qc_read_prediction_stats(module1, module1_dir = module1_dir)
+  } else {
+    tibble::tibble()
+  }
+  canonical_corr <- .module1_qc_corr_summary(canonical_stats, label = "Motif-supported FP-TF correlations")
+  prediction_corr <- .module1_qc_corr_summary(prediction_stats, label = "Prediction FP-TF correlations")
   motif_complexity <- .module1_qc_motif_complexity(omics_data)
   input_cards <- .module1_qc_input_metrics(omics_data)
   predicted_rows <- if (nrow(pred_manifest)) sum(suppressWarnings(as.numeric(pred_manifest$n_rows)), na.rm = TRUE) else .qc_metric_value(qc_summary, "n_predicted_tfbs")
@@ -382,6 +611,16 @@ build_module1_qc_report <- function(module1,
       value = c(.qc_format_number(predicted_rows), .qc_format_number(nrow(pred_manifest)), gsub("<[^>]+>", "", canonical_status))
     )
   )
+  parameter_table <- .module1_qc_parameters(module1, scan_predicted_tfbs = scan_predicted_tfbs)
+  gate_table <- .module1_qc_gate_table(qc_summary, omics_data = omics_data)
+  manifest_checks <- .qc_manifest_checks(pred_manifest)
+  warning_checks <- .module1_qc_warning_checks(
+    pred_manifest = pred_manifest,
+    support_check = support_check,
+    predicted_scan = predicted_scan,
+    canonical_stats = canonical_stats,
+    prediction_stats = prediction_stats
+  )
   funnel <- tibble::tibble(
     step = c("Input FPs", "Bound FPs", "Canonical-bound FPs", "Prediction FPs", "Predicted TFBS"),
     n = c(
@@ -400,7 +639,17 @@ build_module1_qc_report <- function(module1,
     )
   }
   sections <- list(
+    .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
+    .qc_section("Input Gates", paste0(
+      .qc_table_html(gate_table, max_rows = 20L),
+      .qc_bar_svg(gate_table, "gate", "pass", title = "Rows passing each Module 1 gate")
+    )),
+    .qc_section("Motif-Supported Correlations", paste0(
+      .qc_table_html(canonical_corr$summary, max_rows = 10L),
+      .qc_bar_svg(canonical_corr$top_tf, "tf", "n_pass", title = "Top canonical-bound TFs"),
+      .qc_table_html(canonical_corr$top_tf, max_rows = top_n)
+    )),
     .qc_section("Correctness Checks", paste0(
       "<p>Canonical-supported predicted FP check: ", canonical_status, "</p>",
       .qc_table_html(support_check, max_rows = 20L)
@@ -410,14 +659,32 @@ build_module1_qc_report <- function(module1,
       .qc_bar_svg(pred_manifest, "chunk_id", "n_rows", title = "Predicted TFBS rows per chunk"),
       .qc_table_html(pred_manifest, max_rows = 25L)
     )),
+    .qc_section("Prediction Output Integrity", paste0(
+      .qc_table_html(predicted_scan$integrity, max_rows = 20L),
+      .qc_table_html(manifest_checks, max_rows = 25L)
+    )),
     .qc_section("Top Predicted TFs", paste0(
       .qc_bar_svg(predicted_scan$tf_summary, "tf", "n_predicted_tfbs", title = "Top TFs by predicted TFBS rows"),
       .qc_table_html(predicted_scan$tf_summary, max_rows = top_n)
+    )),
+    .qc_section("Top Predicted FPs", paste0(
+      .qc_bar_svg(predicted_scan$fp_summary, "fp_id", "n_predicted_tfbs", title = "Top FPs by predicted TFBS rows"),
+      .qc_table_html(predicted_scan$fp_summary, max_rows = top_n)
+    )),
+    .qc_section("Correlation Diagnostics", paste0(
+      .qc_hist_svg(canonical_corr$best_r, title = "Motif-supported best r distribution", bins = 40L),
+      .qc_hist_svg(prediction_corr$best_r, title = "Prediction best r distribution", bins = 40L),
+      .qc_table_html(dplyr::bind_rows(canonical_corr$summary, prediction_corr$summary), max_rows = 20L)
+    )),
+    .qc_section("Condition Support", paste0(
+      .qc_bar_svg(predicted_scan$condition_support, "condition_support", "n_predicted_tfbs", title = "Predicted TFBS by condition support"),
+      .qc_table_html(predicted_scan$condition_support, max_rows = 20L)
     )),
     .qc_section("Motif Complexity", paste0(
       .qc_hist_svg(motif_complexity$values, title = "TFs per aligned FP from canonical motif support", bins = 30L),
       .qc_table_html(motif_complexity$summary, max_rows = 10L)
     )),
+    .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
     .qc_section("Related Files", .qc_links_html(related, from_dir = output_dir))
   )
   out <- file.path(output_dir, report_name)
@@ -441,35 +708,113 @@ build_module1_qc_report <- function(module1,
 }
 
 .module2_qc_scan_candidates <- function(module2, bins = 40L, verbose = TRUE) {
-  candidate_source <- distance_to_tss <- n_candidates <- NULL
+  abs_distance_to_tss <- candidate_source <- distance_to_tss <- fp_id <- median_abs_distance_to_tss <- n_candidates <- n_fp <- n_missing_candidate_source <- n_missing_distance_to_tss <- n_missing_fp_or_target <- n_prior_supported <- n_rows_scanned <- n_target_genes <- p95_abs_distance_to_tss <- prior_supported <- target_gene <- N <- NULL
   man <- .module2_qc_manifest_for(module2, "module2_fp_target_candidates")
-  if (!nrow(man)) return(list(distance_values = numeric(), source_summary = tibble::tibble()))
+  if (!nrow(man)) {
+    return(list(
+      distance_values = numeric(),
+      source_summary = tibble::tibble(),
+      top_target = tibble::tibble(),
+      top_fp = tibble::tibble(),
+      integrity = tibble::tibble()
+    ))
+  }
   dist_sample <- numeric()
   src_rows <- vector("list", nrow(man))
+  target_rows <- vector("list", nrow(man))
+  fp_rows <- vector("list", nrow(man))
+  integrity_rows <- vector("list", nrow(man))
   for (i in seq_len(nrow(man))) {
-    dt <- data.table::as.data.table(.qc_read_table_file(as.character(man$path[[i]]), as.character(man$format[[i]]), columns = c("distance_to_tss", "candidate_source", "prior_supported")))
+    dt <- data.table::as.data.table(.qc_read_table_file(as.character(man$path[[i]]), as.character(man$format[[i]]), columns = c("fp_id", "target_gene", "distance_to_tss", "candidate_source", "prior_supported")))
     if (!nrow(dt)) next
-    src_rows[[i]] <- dt[, .(n_candidates = .N), by = .(candidate_source)]
+    if (!"prior_supported" %in% names(dt)) dt[, prior_supported := FALSE]
+    if (!"candidate_source" %in% names(dt)) dt[, candidate_source := NA_character_]
+    d_all <- suppressWarnings(as.numeric(dt$distance_to_tss))
+    dt[, abs_distance_to_tss := abs(d_all)]
+    src_rows[[i]] <- dt[, .(
+      n_candidates = .N,
+      n_fp = data.table::uniqueN(fp_id),
+      n_target_genes = data.table::uniqueN(target_gene),
+      n_prior_supported = sum(prior_supported %in% TRUE, na.rm = TRUE),
+      median_abs_distance_to_tss = stats::median(abs_distance_to_tss, na.rm = TRUE),
+      p95_abs_distance_to_tss = as.numeric(stats::quantile(abs_distance_to_tss, 0.95, na.rm = TRUE))
+    ), by = .(candidate_source)]
+    target_rows[[i]] <- dt[, .(n_candidates = .N, n_fp = data.table::uniqueN(fp_id)), by = target_gene]
+    fp_rows[[i]] <- dt[, .(n_candidates = .N, n_target_genes = data.table::uniqueN(target_gene)), by = fp_id]
+    integrity_rows[[i]] <- data.table::data.table(
+      chunk_id = if ("chunk_id" %in% names(man)) man$chunk_id[[i]] else i,
+      n_rows_scanned = nrow(dt),
+      n_missing_candidate_source = sum(is.na(dt$candidate_source) | !nzchar(dt$candidate_source)),
+      n_missing_distance_to_tss = sum(!is.finite(d_all)),
+      n_missing_fp_or_target = sum(is.na(dt$fp_id) | !nzchar(dt$fp_id) | is.na(dt$target_gene) | !nzchar(dt$target_gene))
+    )
     d <- suppressWarnings(as.numeric(dt$distance_to_tss))
     d <- d[is.finite(d)]
     if (length(d)) dist_sample <- c(dist_sample, if (length(d) > 50000L) utils::head(d, 50000L) else d)
     if (isTRUE(verbose)) .log_inform("Module 2 QC report: scanned candidate chunk {i}/{nrow(man)}.")
   }
   src <- data.table::rbindlist(src_rows, use.names = TRUE, fill = TRUE)
-  if (nrow(src)) src <- src[, .(n_candidates = sum(n_candidates, na.rm = TRUE)), by = candidate_source]
-  list(distance_values = dist_sample, source_summary = tibble::as_tibble(src))
+  if (nrow(src)) {
+    src <- src[, .(
+      n_candidates = sum(n_candidates, na.rm = TRUE),
+      n_fp = sum(n_fp, na.rm = TRUE),
+      n_target_genes = sum(n_target_genes, na.rm = TRUE),
+      n_prior_supported = sum(n_prior_supported, na.rm = TRUE),
+      median_abs_distance_to_tss = stats::median(median_abs_distance_to_tss, na.rm = TRUE),
+      p95_abs_distance_to_tss = max(p95_abs_distance_to_tss, na.rm = TRUE)
+    ), by = candidate_source]
+    data.table::setorder(src, -n_candidates, candidate_source)
+  }
+  top_target <- data.table::rbindlist(target_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(top_target)) {
+    top_target <- top_target[, .(n_candidates = sum(n_candidates, na.rm = TRUE), n_fp = sum(n_fp, na.rm = TRUE)), by = target_gene]
+    data.table::setorder(top_target, -n_candidates, target_gene)
+    top_target <- head(top_target, 20L)
+  }
+  top_fp <- data.table::rbindlist(fp_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(top_fp)) {
+    top_fp <- top_fp[, .(n_candidates = sum(n_candidates, na.rm = TRUE), n_target_genes = sum(n_target_genes, na.rm = TRUE)), by = fp_id]
+    data.table::setorder(top_fp, -n_candidates, fp_id)
+    top_fp <- head(top_fp, 20L)
+  }
+  integrity <- data.table::rbindlist(integrity_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(integrity)) {
+    integrity <- integrity[, .(
+      n_chunks_scanned = .N,
+      n_rows_scanned = sum(n_rows_scanned, na.rm = TRUE),
+      n_missing_candidate_source = sum(n_missing_candidate_source, na.rm = TRUE),
+      n_missing_distance_to_tss = sum(n_missing_distance_to_tss, na.rm = TRUE),
+      n_missing_fp_or_target = sum(n_missing_fp_or_target, na.rm = TRUE)
+    )]
+  }
+  list(
+    distance_values = dist_sample,
+    source_summary = tibble::as_tibble(src),
+    top_target = tibble::as_tibble(top_target),
+    top_fp = tibble::as_tibble(top_fp),
+    integrity = tibble::as_tibble(integrity)
+  )
 }
 
 .module2_qc_scan_links <- function(module2, top_n = 20L, validate_integrity = TRUE, verbose = TRUE) {
-  fp_id <- module2_link_pass <- n_fp <- n_links <- n_target_genes <- pass <- target_gene <- tf <- NULL
+  fp_id <- module2_link_pass <- n_fp <- n_links <- n_target_genes <- n_tf <- pass <- target_gene <- tf <- NULL
   link_man <- .module2_qc_manifest_for(module2, "module2_links")
   if (!nrow(link_man) && is.data.frame(module2$links) && nrow(module2$links)) {
     dt <- data.table::as.data.table(module2$links)
     top <- dt[, .(n_links = .N, n_fp = data.table::uniqueN(fp_id), n_target_genes = data.table::uniqueN(target_gene)), by = tf]
     data.table::setorder(top, -n_links, tf)
-    return(list(top_tf = tibble::as_tibble(head(top, top_n)), validation = tibble::tibble(metric = "n_links_scanned", value = nrow(dt))))
+    top_target <- dt[, .(n_links = .N, n_tf = data.table::uniqueN(tf), n_fp = data.table::uniqueN(fp_id)), by = target_gene]
+    data.table::setorder(top_target, -n_links, target_gene)
+    top_fp <- dt[, .(n_links = .N, n_tf = data.table::uniqueN(tf), n_target_genes = data.table::uniqueN(target_gene)), by = fp_id]
+    data.table::setorder(top_fp, -n_links, fp_id)
+    return(list(
+      top_tf = tibble::as_tibble(head(top, top_n)),
+      top_target = tibble::as_tibble(head(top_target, top_n)),
+      top_fp = tibble::as_tibble(head(top_fp, top_n)),
+      validation = tibble::tibble(metric = "n_links_scanned", value = nrow(dt))
+    ))
   }
-  if (!nrow(link_man)) return(list(top_tf = tibble::tibble(), validation = tibble::tibble()))
+  if (!nrow(link_man)) return(list(top_tf = tibble::tibble(), top_target = tibble::tibble(), top_fp = tibble::tibble(), validation = tibble::tibble()))
   tf_keys <- character()
   fp_keys <- character()
   if (isTRUE(validate_integrity)) {
@@ -481,6 +826,8 @@ build_module1_qc_report <- function(module1,
     if (nrow(fp_dt)) fp_keys <- paste(fp_dt[pass %in% TRUE]$fp_id, fp_dt[pass %in% TRUE]$target_gene, sep = "\r")
   }
   rows <- vector("list", nrow(link_man))
+  target_rows <- vector("list", nrow(link_man))
+  fp_rows <- vector("list", nrow(link_man))
   n_scanned <- 0
   n_bad_tf <- 0
   n_bad_fp <- 0
@@ -490,6 +837,8 @@ build_module1_qc_report <- function(module1,
     dt <- dt[module2_link_pass %in% TRUE]
     n_scanned <- n_scanned + nrow(dt)
     rows[[i]] <- dt[, .(n_links = .N, n_fp = data.table::uniqueN(fp_id), n_target_genes = data.table::uniqueN(target_gene)), by = tf]
+    target_rows[[i]] <- dt[, .(n_links = .N, n_tf = data.table::uniqueN(tf), n_fp = data.table::uniqueN(fp_id)), by = target_gene]
+    fp_rows[[i]] <- dt[, .(n_links = .N, n_tf = data.table::uniqueN(tf), n_target_genes = data.table::uniqueN(target_gene)), by = fp_id]
     if (isTRUE(validate_integrity) && length(tf_keys)) n_bad_tf <- n_bad_tf + sum(!paste(dt$tf, dt$target_gene, sep = "\r") %in% tf_keys)
     if (isTRUE(validate_integrity) && length(fp_keys)) n_bad_fp <- n_bad_fp + sum(!paste(dt$fp_id, dt$target_gene, sep = "\r") %in% fp_keys)
     if (isTRUE(verbose)) .log_inform("Module 2 QC report: scanned link chunk {i}/{nrow(link_man)}.")
@@ -500,11 +849,23 @@ build_module1_qc_report <- function(module1,
     data.table::setorder(top, -n_links, tf)
     top <- head(top, top_n)
   }
+  top_target <- data.table::rbindlist(target_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(top_target)) {
+    top_target <- top_target[, .(n_links = sum(n_links, na.rm = TRUE), n_tf = sum(n_tf, na.rm = TRUE), n_fp = sum(n_fp, na.rm = TRUE)), by = target_gene]
+    data.table::setorder(top_target, -n_links, target_gene)
+    top_target <- head(top_target, top_n)
+  }
+  top_fp <- data.table::rbindlist(fp_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(top_fp)) {
+    top_fp <- top_fp[, .(n_links = sum(n_links, na.rm = TRUE), n_tf = sum(n_tf, na.rm = TRUE), n_target_genes = sum(n_target_genes, na.rm = TRUE)), by = fp_id]
+    data.table::setorder(top_fp, -n_links, fp_id)
+    top_fp <- head(top_fp, top_n)
+  }
   validation <- tibble::tibble(
     metric = c("n_links_scanned", "n_links_with_missing_tf_target_pass", "n_links_with_missing_fp_target_pass"),
     value = c(n_scanned, n_bad_tf, n_bad_fp)
   )
-  list(top_tf = tibble::as_tibble(top), validation = validation)
+  list(top_tf = tibble::as_tibble(top), top_target = tibble::as_tibble(top_target), top_fp = tibble::as_tibble(top_fp), validation = validation)
 }
 
 .module2_qc_related_html <- function(module2_dir, output_dir) {
@@ -513,11 +874,155 @@ build_module1_qc_report <- function(module1,
   hits[normalizePath(hits, winslash = "/", mustWork = FALSE) != normalizePath(file.path(output_dir, "module2_qc_report.html"), winslash = "/", mustWork = FALSE)]
 }
 
+.module2_qc_parameters <- function(module2, scan_large_tables = FALSE, validate_integrity = FALSE) {
+  params <- if (is.list(module2)) module2$parameters else NULL
+  keep <- c("max_distance_bp", "n_cores", "output_format", "streamed", "write_qc_report", "qc_report_validate")
+  out <- params[intersect(keep, names(params))]
+  out$scan_large_tables <- isTRUE(scan_large_tables)
+  out$validate_integrity <- isTRUE(validate_integrity)
+  .qc_key_value_table(out)
+}
+
+.module2_qc_input_handoff <- function(module2, multiomic_data = NULL, qc_summary = NULL) {
+  omics_cards <- tibble::tibble(label = character(), value = character())
+  if (is_multiomic_object(multiomic_data)) {
+    mats <- multiomic_data$matrices
+    safe_nrow <- function(x) if (is.null(x)) NA_integer_ else nrow(x)
+    safe_ncol <- function(x) if (is.null(x)) NA_integer_ else ncol(x)
+    omics_cards <- tibble::tibble(
+      label = c("Conditions", "FP score rows", "Gene expression rows", "ATAC score rows"),
+      value = c(
+        .qc_format_number(safe_ncol(mats$fp_score)),
+        .qc_format_number(safe_nrow(mats$fp_score)),
+        .qc_format_number(safe_nrow(mats$gene_expr)),
+        .qc_format_number(safe_nrow(mats$atac_score))
+      )
+    )
+  }
+  module_cards <- tibble::tibble(
+    label = c("Predicted TFBS rows", "TFs", "Target genes", "Final links"),
+    value = c(
+      .qc_format_number(.qc_metric_value(qc_summary, "n_predicted_tfbs")),
+      .qc_format_number(.qc_metric_value(qc_summary, "n_tfs")),
+      .qc_format_number(.qc_metric_value(qc_summary, "n_target_genes")),
+      .qc_format_number(.qc_metric_value(qc_summary, "n_module2_links"))
+    )
+  )
+  rbind(module_cards, omics_cards)
+}
+
+.module2_qc_corr_summary <- function(module2, table_name, label, group_cols = character(), top_n = 20L, scan = TRUE) {
+  best_r <- n_pass <- pass <- NULL
+  if (!isTRUE(scan)) {
+    return(list(summary = tibble::tibble(), top = tibble::tibble(), best_r = numeric()))
+  }
+  x <- .module2_qc_table_from_module(
+    module2,
+    table_name,
+    columns = unique(c(group_cols, "pearson_r", "pearson_p", "pearson_fdr", "spearman_r", "spearman_p", "spearman_fdr", "best_r", "best_p", "best_fdr", "best_method", "pass"))
+  )
+  if (!is.data.frame(x) || !nrow(x)) {
+    return(list(summary = tibble::tibble(), top = tibble::tibble(), best_r = numeric()))
+  }
+  dt <- data.table::as.data.table(x)
+  if (!"pass" %in% names(dt)) dt[, pass := FALSE]
+  if (!"best_r" %in% names(dt)) dt[, best_r := NA_real_]
+  dt[, best_r := suppressWarnings(as.numeric(best_r))]
+  summary <- tibble::tibble(
+    table = label,
+    n_rows = nrow(dt),
+    n_pass = sum(dt$pass %in% TRUE, na.rm = TRUE),
+    pass_rate = .qc_percent(sum(dt$pass %in% TRUE, na.rm = TRUE), nrow(dt)),
+    median_best_r = stats::median(dt$best_r, na.rm = TRUE),
+    p95_best_r = as.numeric(stats::quantile(dt$best_r, 0.95, na.rm = TRUE)),
+    max_best_r = suppressWarnings(max(dt$best_r, na.rm = TRUE))
+  )
+  top <- tibble::tibble()
+  first_group <- group_cols[[1L]] %||% NA_character_
+  second_group <- group_cols[[2L]] %||% NA_character_
+  if (!is.na(first_group) && first_group %in% names(dt)) {
+    by_cols <- first_group
+    top_dt <- dt[pass %in% TRUE, .(
+      n_pass = .N,
+      n_unique_partner = if (!is.na(second_group) && second_group %in% names(dt)) data.table::uniqueN(get(second_group)) else NA_integer_,
+      median_best_r = stats::median(best_r, na.rm = TRUE)
+    ), by = by_cols]
+    if (nrow(top_dt)) {
+      data.table::setorder(top_dt, -n_pass)
+      top <- tibble::as_tibble(head(top_dt, top_n))
+    }
+  }
+  list(summary = summary, top = top, best_r = dt$best_r[is.finite(dt$best_r)])
+}
+
+.module2_qc_condition_activity <- function(module2, scan = TRUE, top_n = 20L) {
+  active <- condition <- n_active <- NULL
+  if (!isTRUE(scan)) return(list(summary = tibble::tibble(), signal_summary = tibble::tibble()))
+  activity <- .module2_qc_table_from_module(
+    module2,
+    "module2_condition_activity",
+    columns = c("condition", "active", "tf_expr", "target_expr", "fp_score", "fp_bound", "atac_score")
+  )
+  if (!is.data.frame(activity) || !nrow(activity)) return(list(summary = tibble::tibble(), signal_summary = tibble::tibble()))
+  dt <- data.table::as.data.table(activity)
+  if (!"active" %in% names(dt)) dt[, active := FALSE]
+  dt[, active := active %in% TRUE]
+  summary <- dt[, .(
+    n_rows = .N,
+    n_active = sum(active, na.rm = TRUE),
+    active_rate = .qc_percent(sum(active, na.rm = TRUE), .N)
+  ), by = condition]
+  data.table::setorder(summary, -n_active, condition)
+  signal_cols <- intersect(c("tf_expr", "target_expr", "fp_score", "atac_score"), names(dt))
+  signal_summary <- tibble::tibble(metric = character(), median_active_value = numeric())
+  if (length(signal_cols)) {
+    signal_summary <- tibble::tibble(
+      metric = signal_cols,
+      median_active_value = vapply(signal_cols, function(nm) {
+        stats::median(suppressWarnings(as.numeric(dt[active %in% TRUE][[nm]])), na.rm = TRUE)
+      }, numeric(1L))
+    )
+  }
+  list(summary = tibble::as_tibble(head(summary, top_n)), signal_summary = signal_summary)
+}
+
+.module2_qc_warning_checks <- function(qc_summary, manifest_checks, candidate_scan, link_scan, tf_corr_scan, fp_corr_scan, condition_scan) {
+  bad_tf <- .qc_metric_value(link_scan$validation, "n_links_with_missing_tf_target_pass", default = NA_real_)
+  bad_fp <- .qc_metric_value(link_scan$validation, "n_links_with_missing_fp_target_pass", default = NA_real_)
+  missing_manifest <- if (is.data.frame(manifest_checks) && nrow(manifest_checks)) {
+    sum(as.character(manifest_checks$file_exists) != "yes", na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+  missing_source <- .qc_metric_value(candidate_scan$integrity, "n_missing_candidate_source", default = NA_real_)
+  missing_dist <- .qc_metric_value(candidate_scan$integrity, "n_missing_distance_to_tss", default = NA_real_)
+  tf_pass <- .qc_metric_value(qc_summary, "n_tf_target_pairs_pass", default = NA_real_)
+  fp_pass <- .qc_metric_value(qc_summary, "n_fp_target_pairs_pass", default = NA_real_)
+  n_links <- .qc_metric_value(qc_summary, "n_module2_links", default = NA_real_)
+  status_rows <- list(
+    list("Output manifest files exist", .qc_status(if (is.finite(missing_manifest)) missing_manifest == 0 else NA, paste0("Missing files: ", .qc_format_number(missing_manifest)))),
+    list("Final links have passing TF-target support", .qc_status(if (is.finite(bad_tf)) bad_tf == 0 else NA, paste0("Missing support rows: ", .qc_format_number(bad_tf)))),
+    list("Final links have passing FP-target support", .qc_status(if (is.finite(bad_fp)) bad_fp == 0 else NA, paste0("Missing support rows: ", .qc_format_number(bad_fp)))),
+    list("Candidate source is annotated", .qc_status(if (is.finite(missing_source)) missing_source == 0 else NA, paste0("Missing candidate_source rows: ", .qc_format_number(missing_source)))),
+    list("Candidate distance to TSS is available", .qc_status(if (is.finite(missing_dist)) missing_dist == 0 else NA, paste0("Missing distance rows: ", .qc_format_number(missing_dist)))),
+    list("TF-target correlation produced passing pairs", .qc_status(if (is.finite(tf_pass)) tf_pass > 0 else nrow(tf_corr_scan$summary) > 0, paste0("Passing pairs: ", .qc_format_number(tf_pass)))),
+    list("FP-target correlation produced passing pairs", .qc_status(if (is.finite(fp_pass)) fp_pass > 0 else nrow(fp_corr_scan$summary) > 0, paste0("Passing pairs: ", .qc_format_number(fp_pass)))),
+    list("Final Module 2 links are present", .qc_status(if (is.finite(n_links)) n_links > 0 else NA, paste0("Final links: ", .qc_format_number(n_links)))),
+    list("Condition activity table is available", .qc_status(nrow(condition_scan$summary) > 0, paste0("Condition rows: ", .qc_format_number(nrow(condition_scan$summary)))))
+  )
+  tibble::tibble(
+    check = vapply(status_rows, `[[`, character(1L), 1L),
+    status = vapply(status_rows, function(x) x[[2L]]$status, character(1L)),
+    detail = vapply(status_rows, function(x) x[[2L]]$detail, character(1L))
+  )
+}
+
 #' Build a Module 2 QC HTML report
 #'
-#' Builds a compact HTML report for Module 2 correlation filters, candidate
-#' construction, final TF-FP-target links, integrity checks, and related browser
-#' reports.
+#' Builds a comprehensive HTML report for Module 2 run parameters, compact input
+#' handoff, TF-target and FP-target correlation filters, candidate source and
+#' distance-to-TSS evidence, final TF-FP-target links, condition activity,
+#' warning checks, integrity checks, and related browser reports.
 #'
 #' @param module2 Module 2 result list, loaded Module 2 list, or output
 #'   directory.
@@ -566,8 +1071,35 @@ build_module2_qc_report <- function(module2,
   } else {
     tibble::tibble()
   }
-  candidate_scan <- if (isTRUE(scan_large_tables)) .module2_qc_scan_candidates(module2, verbose = verbose) else list(distance_values = numeric(), source_summary = tibble::tibble())
-  link_scan <- if (isTRUE(scan_large_tables)) .module2_qc_scan_links(module2, top_n = top_n, validate_integrity = validate_integrity, verbose = verbose) else list(top_tf = tibble::tibble(), validation = tibble::tibble())
+  candidate_scan <- if (isTRUE(scan_large_tables)) {
+    .module2_qc_scan_candidates(module2, verbose = verbose)
+  } else {
+    list(distance_values = numeric(), source_summary = tibble::tibble(), top_target = tibble::tibble(), top_fp = tibble::tibble(), integrity = tibble::tibble())
+  }
+  link_scan <- if (isTRUE(scan_large_tables)) {
+    .module2_qc_scan_links(module2, top_n = top_n, validate_integrity = validate_integrity, verbose = verbose)
+  } else {
+    list(top_tf = tibble::tibble(), top_target = tibble::tibble(), top_fp = tibble::tibble(), validation = tibble::tibble())
+  }
+  tf_corr_scan <- .module2_qc_corr_summary(
+    module2,
+    table_name = "module2_tf_target_corr",
+    label = "TF expression to target expression",
+    group_cols = c("tf", "target_gene"),
+    top_n = top_n,
+    scan = isTRUE(scan_large_tables)
+  )
+  fp_corr_scan <- .module2_qc_corr_summary(
+    module2,
+    table_name = "module2_fp_target_corr",
+    label = "FP score to target expression",
+    group_cols = c("fp_id", "target_gene"),
+    top_n = top_n,
+    scan = isTRUE(scan_large_tables)
+  )
+  condition_scan <- .module2_qc_condition_activity(module2, scan = isTRUE(scan_large_tables), top_n = top_n)
+  parameter_table <- .module2_qc_parameters(module2, scan_large_tables = scan_large_tables, validate_integrity = validate_integrity)
+  input_cards <- .module2_qc_input_handoff(module2, multiomic_data = multiomic_data, qc_summary = qc_summary)
   cards <- tibble::tibble(
     label = c("Predicted TFBS", "TFs", "Target genes", "TF-target pass", "FP-target pass", "Final links"),
     value = c(
@@ -597,10 +1129,39 @@ build_module2_qc_report <- function(module2,
     integrity_status <- if (is.finite(bad_tf) && is.finite(bad_fp) && bad_tf == 0 && bad_fp == 0) "PASS" else "CHECK"
   }
   integrity_class <- if (identical(integrity_status, "PASS")) "status-pass" else "status-warn"
+  warning_checks <- .module2_qc_warning_checks(
+    qc_summary = qc_summary,
+    manifest_checks = manifest_checks,
+    candidate_scan = candidate_scan,
+    link_scan = link_scan,
+    tf_corr_scan = tf_corr_scan,
+    fp_corr_scan = fp_corr_scan,
+    condition_scan = condition_scan
+  )
   related <- .module2_qc_related_html(module2_dir, output_dir)
   sections <- list(
+    .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
+    .qc_section("Input Handoff", .qc_cards_html(input_cards)),
     .qc_section("Workflow Funnel", .qc_bar_svg(funnel, "step", "n", title = "Module 2 row counts by processing stage")),
+    .qc_section("TF-Target Correlation QC", paste0(
+      .qc_table_html(tf_corr_scan$summary, max_rows = 10L),
+      .qc_hist_svg(tf_corr_scan$best_r, title = "TF-target best r distribution", bins = 40L),
+      .qc_bar_svg(tf_corr_scan$top, "tf", "n_pass", title = "Top TFs by passing TF-target pairs"),
+      .qc_table_html(tf_corr_scan$top, max_rows = top_n)
+    )),
+    .qc_section("Candidate Source QC", paste0(
+      .qc_hist_svg(candidate_scan$distance_values, title = "Candidate FP distance to target TSS", bins = 60L),
+      .qc_bar_svg(candidate_scan$source_summary, "candidate_source", "n_candidates", title = "FP-target candidates by source"),
+      .qc_table_html(candidate_scan$source_summary, max_rows = 20L),
+      .qc_table_html(candidate_scan$integrity, max_rows = 10L)
+    )),
+    .qc_section("FP-Target Correlation QC", paste0(
+      .qc_table_html(fp_corr_scan$summary, max_rows = 10L),
+      .qc_hist_svg(fp_corr_scan$best_r, title = "FP-target best r distribution", bins = 40L),
+      .qc_bar_svg(fp_corr_scan$top, "fp_id", "n_pass", title = "Top FPs by passing FP-target pairs"),
+      .qc_table_html(fp_corr_scan$top, max_rows = top_n)
+    )),
     .qc_section("Integrity Checks", paste0(
       "<p>Final-link relational integrity: <span class=\"", integrity_class, "\">", integrity_status, "</span></p>",
       .qc_table_html(link_scan$validation, max_rows = 20L),
@@ -614,6 +1175,18 @@ build_module2_qc_report <- function(module2,
       .qc_bar_svg(link_scan$top_tf, "tf", "n_links", title = "Top TFs by final Module 2 links"),
       .qc_table_html(link_scan$top_tf, max_rows = top_n)
     )),
+    .qc_section("Top Targets And FPs In Final Links", paste0(
+      .qc_bar_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links"),
+      .qc_table_html(link_scan$top_target, max_rows = top_n),
+      .qc_bar_svg(link_scan$top_fp, "fp_id", "n_links", title = "Top FPs by final links"),
+      .qc_table_html(link_scan$top_fp, max_rows = top_n)
+    )),
+    .qc_section("Condition Activity QC", paste0(
+      .qc_bar_svg(condition_scan$summary, "condition", "n_active", title = "Active Module 2 links by condition"),
+      .qc_table_html(condition_scan$summary, max_rows = top_n),
+      .qc_table_html(condition_scan$signal_summary, max_rows = 20L)
+    )),
+    .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
     .qc_section("QC Summary Table", .qc_table_html(qc_summary, max_rows = 50L)),
     .qc_section("Related HTML Reports", .qc_links_html(related, from_dir = output_dir))
   )

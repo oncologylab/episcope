@@ -41,7 +41,8 @@ passing TF-target and FP-target keys while scanning link chunks.}
 Normalized path to the HTML report.
 }
 \description{
-Builds a compact HTML report for Module 2 correlation filters, candidate
-construction, final TF-FP-target links, integrity checks, and related browser
-reports.
+Builds a comprehensive HTML report for Module 2 run parameters, compact input
+handoff, TF-target and FP-target correlation filters, candidate source and
+distance-to-TSS evidence, final TF-FP-target links, condition activity,
+warning checks, integrity checks, and related browser reports.
 }

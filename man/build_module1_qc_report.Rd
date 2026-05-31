@@ -38,8 +38,9 @@ extra time on full projects.}
 Normalized path to the HTML report.
 }
 \description{
-Builds a compact HTML report for Module 1 input gates, canonical support,
-prediction output scale, and related QC artifacts. The report can consume a
-`predict_tfbs()` result, a step-by-step Module 1 result list, or a Module 1
-output directory.
+Builds a comprehensive HTML report for Module 1 run parameters, input gates,
+motif-supported canonical support, prediction output integrity, correlation
+diagnostics, condition support, top TFs/FPs, warning checks, and related QC
+artifacts. The report can consume a `predict_tfbs()` result, a step-by-step
+Module 1 result list, or a Module 1 output directory.
 }

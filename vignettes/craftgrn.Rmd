@@ -158,7 +158,7 @@ Module 1 creates:
   for each aligned footprint.
 - `predicted_tfbs`, the compact FP-to-TF handoff used by Module 2.
 - Optional full TFBS correlation statistics for audit and debugging.
-- `module1_qc_report.html`: an HTML QC report summarizing input gates, canonical support, chunked predicted TFBS output, top TFs, motif complexity, and related PDF artifacts.
+- `module1_qc_report.html`: an HTML QC report summarizing run parameters, input gates, motif-supported canonical support, correlation diagnostics, chunked predicted TFBS integrity, top TFs/FPs, condition support, motif complexity, warning checks, and related artifacts.
 - QC summaries reporting how many FPs, motif-supported pairs, canonical-bound
   FPs, prediction pairs, and predicted TFBS links pass each step.
 
@@ -225,7 +225,7 @@ Module 2 produces normalized compact tables:
 - `module2_links`: final TF-FP-target links as compact keys and pass flags.
 - `module2_condition_activity`: long condition-level activity flags.
 - `module2_qc_summary`: counts before and after each filter.
-- `module2_qc_report.html`: an HTML QC report summarizing correlation filters, FP-target candidate distance-to-TSS distributions, final-link integrity checks, top TFs, output manifests, and related HTML browser reports.
+- `module2_qc_report.html`: an HTML QC report summarizing compact handoff checks, TF-target and FP-target correlation filters, FP-target candidate source and distance-to-TSS evidence, final-link integrity checks, condition activity, warning checks, top TF/target/FP summaries, output manifests, and related HTML browser reports.
 
 ## Module 3: Learn regulatory topics and visualize differential GRNs
 
