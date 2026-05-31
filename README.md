@@ -140,6 +140,8 @@ Primary package functions:
 
 - `train_topic_models()` trains regulatory topic models across a user-defined
   topic-number grid using the native `warp_omp` WarpLDA sampler by default.
+  Use `warplda_sampler = "warp_ref"` only when you need a slower sequential
+  reference run that reproduces the text2vec fixed-seed WarpLDA path.
 - `extract_regulatory_topics()` assigns links and terms to selected regulatory
   topics.
 - `run_diff_grn_pathway_analysis()` and related plotting functions summarize

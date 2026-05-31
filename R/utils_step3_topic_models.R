@@ -582,6 +582,46 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   )
 }
 
+.warplda_reference_init <- function(dtm, K, seed) {
+  .assert_pkg("Matrix")
+  if (!inherits(dtm, "dgCMatrix")) dtm <- methods::as(dtm, "dgCMatrix")
+  n_tokens <- as.numeric(sum(dtm))
+  if (!is.finite(n_tokens) || n_tokens <= 0) {
+    .log_abort("warp_ref requires a DTM with positive integer token counts.")
+  }
+  if (abs(n_tokens - round(n_tokens)) > 1e-7) {
+    .log_abort("warp_ref requires positive integer-like DTM counts.")
+  }
+  if (n_tokens > .Machine$integer.max) {
+    .log_abort("warp_ref expanded token count exceeds the supported integer limit.")
+  }
+
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+    get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  } else {
+    NULL
+  }
+  on.exit({
+    if (is.null(old_seed)) {
+      if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    } else {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+
+  set.seed(as.integer(seed[[1L]]))
+  ref_seeds <- as.integer(stats::runif(2L, 1, 2^31 - 1))
+  set.seed(ref_seeds[[1L]])
+  n_tokens_i <- as.integer(round(n_tokens))
+  list(
+    topic = sample.int(n = as.integer(K), size = n_tokens_i, replace = TRUE) - 1L,
+    proposal = sample.int(n = as.integer(K), size = n_tokens_i, replace = TRUE) - 1L,
+    seeds = ref_seeds
+  )
+}
+
 # Fit ONE native WarpLDA-compatible model; returns theta/phi + metrics
 fit_warplda_one <- function(dtm,
                             K,
@@ -593,7 +633,7 @@ fit_warplda_one <- function(dtm,
                             n_check_convergence = 10L,
                             n_iter_inference = 10L,
                             n_threads = NULL,
-                            sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
+                            sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                             progressbar = interactive()) {
   .assert_pkg("cli")
   .assert_pkg("Matrix")
@@ -604,6 +644,10 @@ fit_warplda_one <- function(dtm,
   if (is.null(beta)) beta <- 1 / as.numeric(K)
   beta <- as.numeric(beta)
   n_threads <- .warplda_default_threads(n_threads)
+  ref_init <- NULL
+  if (identical(sampler, "warp_ref")) {
+    ref_init <- .warplda_reference_init(dtm, K = K, seed = seed)
+  }
   memory_estimate <- .warplda_memory_estimate(dtm, K = K, n_threads = n_threads)
 
   if (isTRUE(progressbar)) {
@@ -621,7 +665,10 @@ fit_warplda_one <- function(dtm,
     n_check_convergence = as.integer(n_check_convergence),
     n_iter_inference = as.integer(n_iter_inference),
     n_threads = as.integer(n_threads),
-    sampler = sampler
+    sampler = sampler,
+    ref_topic = if (is.null(ref_init)) NULL else ref_init$topic,
+    ref_proposal = if (is.null(ref_init)) NULL else ref_init$proposal,
+    ref_seeds = if (is.null(ref_init)) NULL else ref_init$seeds
   )
   theta <- as.matrix(fit$theta)
   phi <- as.matrix(fit$phi)
@@ -703,7 +750,7 @@ run_warplda_models <- function(dtm,
                                save_tmp_dir = NULL,
                                workers = 1L,
                                threads_per_model = NULL,
-                               sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
+                               sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                metrics_file = NULL,
                                verbose = TRUE) {
   .assert_pkg("cli")
@@ -6157,7 +6204,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           iterations = 2000L,
                                           alpha_by_topic = TRUE,
                                           beta = NULL,
-                                          sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
+                                          sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                           seed = 123,
                                           # topic definition
                                           binarize_method = c("gammafit", "topn"),
@@ -7688,9 +7735,10 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param vae_variant VAE variant name.
 #' @param backend Topic model backend, either `"vae"` or `"warplda"`.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
-#'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_mh"` is
-#'   the earlier CraftGRN approximation, and `"gibbs_sync"` is the faster
-#'   deterministic collapsed sampler.
+#'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
+#'   the slower sequential reference sampler for text2vec validation,
+#'   `"warp_mh"` is the earlier CraftGRN approximation, and `"gibbs_sync"` is
+#'   the faster deterministic collapsed sampler.
 #' @param warplda_beta Topic-word prior for native WarpLDA. NULL uses `1/K`,
 #'   matching the text2vec default.
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
@@ -7732,7 +7780,7 @@ train_topic_models <- function(Kgrid,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
                                backend = c("vae", "warplda"),
-                               warplda_sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
+                               warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
                                reuse_if_exists = TRUE,
                                save_full_doc_term_csv = FALSE,

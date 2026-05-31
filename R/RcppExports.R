@@ -9,7 +9,7 @@
     .Call(`_craftgrn_dense_prediction_stats_cpp`, fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads)
 }
 
-.craftgrn_warplda_fit_cpp <- function(dtm, K, iterations = 1000L, alpha = 0.1, beta = 0.1, seed = 1L, convergence_tol = 1e-3, n_check_convergence = 10L, n_iter_inference = 10L, n_threads = 1L, sampler = "warp_omp") {
-    .Call(`_craftgrn_craftgrn_warplda_fit_cpp`, dtm, K, iterations, alpha, beta, seed, convergence_tol, n_check_convergence, n_iter_inference, n_threads, sampler)
+.craftgrn_warplda_fit_cpp <- function(dtm, K, iterations = 1000L, alpha = 0.1, beta = 0.1, seed = 1L, convergence_tol = 1e-3, n_check_convergence = 10L, n_iter_inference = 10L, n_threads = 1L, sampler = "warp_omp", ref_topic = NULL, ref_proposal = NULL, ref_seeds = NULL) {
+    .Call(`_craftgrn_craftgrn_warplda_fit_cpp`, dtm, K, iterations, alpha, beta, seed, convergence_tol, n_check_convergence, n_iter_inference, n_threads, sampler, ref_topic, ref_proposal, ref_seeds)
 }
 

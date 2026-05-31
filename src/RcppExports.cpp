@@ -49,8 +49,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // craftgrn_warplda_fit_cpp
-List craftgrn_warplda_fit_cpp(const S4& dtm, int K, int iterations, double alpha, double beta, int seed, double convergence_tol, int n_check_convergence, int n_iter_inference, int n_threads, std::string sampler);
-RcppExport SEXP _craftgrn_craftgrn_warplda_fit_cpp(SEXP dtmSEXP, SEXP KSEXP, SEXP iterationsSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP seedSEXP, SEXP convergence_tolSEXP, SEXP n_check_convergenceSEXP, SEXP n_iter_inferenceSEXP, SEXP n_threadsSEXP, SEXP samplerSEXP) {
+List craftgrn_warplda_fit_cpp(const S4& dtm, int K, int iterations, double alpha, double beta, int seed, double convergence_tol, int n_check_convergence, int n_iter_inference, int n_threads, std::string sampler, Nullable<IntegerVector> ref_topic, Nullable<IntegerVector> ref_proposal, Nullable<IntegerVector> ref_seeds);
+RcppExport SEXP _craftgrn_craftgrn_warplda_fit_cpp(SEXP dtmSEXP, SEXP KSEXP, SEXP iterationsSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP seedSEXP, SEXP convergence_tolSEXP, SEXP n_check_convergenceSEXP, SEXP n_iter_inferenceSEXP, SEXP n_threadsSEXP, SEXP samplerSEXP, SEXP ref_topicSEXP, SEXP ref_proposalSEXP, SEXP ref_seedsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -65,7 +65,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type n_iter_inference(n_iter_inferenceSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
     Rcpp::traits::input_parameter< std::string >::type sampler(samplerSEXP);
-    rcpp_result_gen = Rcpp::wrap(craftgrn_warplda_fit_cpp(dtm, K, iterations, alpha, beta, seed, convergence_tol, n_check_convergence, n_iter_inference, n_threads, sampler));
+    Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type ref_topic(ref_topicSEXP);
+    Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type ref_proposal(ref_proposalSEXP);
+    Rcpp::traits::input_parameter< Nullable<IntegerVector> >::type ref_seeds(ref_seedsSEXP);
+    rcpp_result_gen = Rcpp::wrap(craftgrn_warplda_fit_cpp(dtm, K, iterations, alpha, beta, seed, convergence_tol, n_check_convergence, n_iter_inference, n_threads, sampler, ref_topic, ref_proposal, ref_seeds));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -73,7 +76,7 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_craftgrn_sparse_pair_correlations_cpp", (DL_FUNC) &_craftgrn_sparse_pair_correlations_cpp, 7},
     {"_craftgrn_dense_prediction_stats_cpp", (DL_FUNC) &_craftgrn_dense_prediction_stats_cpp, 11},
-    {"_craftgrn_craftgrn_warplda_fit_cpp", (DL_FUNC) &_craftgrn_craftgrn_warplda_fit_cpp, 11},
+    {"_craftgrn_craftgrn_warplda_fit_cpp", (DL_FUNC) &_craftgrn_craftgrn_warplda_fit_cpp, 14},
     {NULL, NULL, 0}
 };
 

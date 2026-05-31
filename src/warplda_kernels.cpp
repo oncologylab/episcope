@@ -17,6 +17,7 @@
 //   - package-local Rcpp entrypoint
 //   - OpenMP document-parallel sampling
 //   - OpenMP-accelerated doc/word Metropolis-Hastings sampler
+//   - sequential warp_ref sampler for text2vec validation
 //   - no runtime dependency on text2vec
 //
 #include <Rcpp.h>
@@ -65,6 +66,98 @@ static inline double token_unif(std::uint64_t seed,
                                      (iter * 0x94d049bb133111ebULL) ^ token);
   return static_cast<double>(x >> 11) * (1.0 / 9007199254740992.0);
 }
+
+struct Xor128Plus {
+  std::uint64_t s0;
+  std::uint64_t s1;
+
+  Xor128Plus(std::uint64_t seed0 = 0xDEADBEEFULL,
+             std::uint64_t seed1 = 0xCAFEBABEULL) {
+    seed(seed0, seed1);
+  }
+
+  void seed(std::uint64_t seed0, std::uint64_t seed1 = 0xCAFEBABEULL) {
+    s0 = seed0;
+    s1 = seed1;
+  }
+
+  std::uint64_t sample() {
+    std::uint64_t x = s0;
+    const std::uint64_t y = s1;
+    s0 = y;
+    x ^= x << 23;
+    s1 = x ^ y ^ (x >> 17) ^ (y >> 26);
+    return s1 + y;
+  }
+
+  double drand() {
+    return static_cast<double>(sample()) /
+      static_cast<double>(std::numeric_limits<std::uint64_t>::max());
+  }
+};
+
+struct RefAliasEntry {
+  unsigned lo;
+  unsigned hi;
+  double p;
+  RefAliasEntry(unsigned lo_, unsigned hi_, double p_) : lo(lo_), hi(hi_), p(p_) {}
+};
+
+class RefAliasUrn {
+public:
+  explicit RefAliasUrn(Xor128Plus& rng) : rng_(rng) {}
+
+  void setup(const std::vector<double>& prob) {
+    entries_.clear();
+    if (prob.empty()) return;
+
+    double sum_prob = 0.0;
+    for (double x : prob) sum_prob += x;
+    if (!(sum_prob > 0.0) || !R_finite(sum_prob)) {
+      for (unsigned i = 0; i < prob.size(); ++i) entries_.emplace_back(i, i, 1.0);
+      return;
+    }
+
+    std::vector<std::pair<unsigned, double> > small;
+    std::vector<std::pair<unsigned, double> > large;
+    const std::size_t K = prob.size();
+    const double threshold = static_cast<double>(1.0f / static_cast<float>(K));
+    for (std::size_t i = 0; i < K; ++i) {
+      const double p = prob[i] / sum_prob;
+      if (p >= threshold) {
+        large.emplace_back(static_cast<unsigned>(i), p);
+      } else {
+        small.emplace_back(static_cast<unsigned>(i), p);
+      }
+    }
+
+    while (!large.empty() && !small.empty()) {
+      const std::pair<unsigned, double> L = large.back();
+      const std::pair<unsigned, double> S = small.back();
+      large.pop_back();
+      small.pop_back();
+      entries_.emplace_back(S.first, L.first, static_cast<double>(K) * S.second);
+      const double Lprob = L.second - (threshold - S.second);
+      if (Lprob >= threshold) {
+        large.emplace_back(L.first, Lprob);
+      } else {
+        small.emplace_back(L.first, Lprob);
+      }
+    }
+    for (const auto& x : large) entries_.emplace_back(x.first, x.first, 1.0);
+    for (const auto& x : small) entries_.emplace_back(x.first, x.first, 1.0);
+  }
+
+  int sample() {
+    if (entries_.empty()) return 0;
+    const RefAliasEntry& entry = entries_[rng_.sample() % entries_.size()];
+    return rng_.drand() < entry.p ? static_cast<int>(entry.lo) : static_cast<int>(entry.hi);
+  }
+
+private:
+  Xor128Plus& rng_;
+  std::vector<RefAliasEntry> entries_;
+};
 
 static inline int sample_topic_from_unit(const std::vector<double>& prob,
                                          double total,
@@ -322,6 +415,183 @@ void rebuild_word_counts(const SparseDtmTokens& dat,
   }
 
   recompute_topic_count_from_word_topic(word_topic, topic_count, dat.n_word, K);
+}
+
+void assign_ref_initial_topics(const SparseDtmTokens& dat,
+                               const IntegerVector& init_topic,
+                               const IntegerVector& init_proposal,
+                               std::vector<int>& topic,
+                               std::vector<int>& proposal_topic,
+                               std::vector<int>& doc_topic,
+                               std::vector<int>& word_topic,
+                               std::vector<int>& topic_count,
+                               int K) {
+  const int n_token = static_cast<int>(topic.size());
+  if (init_topic.size() != n_token || init_proposal.size() != n_token) {
+    stop("warp_ref initial topic vectors must have one value per expanded DTM token.");
+  }
+
+  std::fill(topic.begin(), topic.end(), 0);
+  std::fill(proposal_topic.begin(), proposal_topic.end(), 0);
+  std::fill(doc_topic.begin(), doc_topic.end(), 0);
+  std::fill(word_topic.begin(), word_topic.end(), 0);
+  std::fill(topic_count.begin(), topic_count.end(), 0);
+
+  int j = 0;
+  for (int d = 0; d < dat.n_doc; ++d) {
+    for (int ptr = dat.doc_ptr[d]; ptr < dat.doc_ptr[d + 1]; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      const int k = init_topic[j];
+      const int p = init_proposal[j];
+      if (k < 0 || k >= K || p < 0 || p >= K) {
+        stop("warp_ref initial topic values are outside the topic range.");
+      }
+      const int w = dat.token_word[tok];
+      topic[tok] = k;
+      proposal_topic[tok] = p;
+      doc_topic[d * K + k] += 1;
+      word_topic[w * K + k] += 1;
+      topic_count[k] += 1;
+      ++j;
+    }
+  }
+}
+
+void sample_ref_doc_pass(const SparseDtmTokens& dat,
+                         std::vector<int>& topic,
+                         std::vector<int>& proposal_topic,
+                         std::vector<int>& doc_topic,
+                         std::vector<int>& topic_count,
+                         double alpha,
+                         double beta,
+                         int K,
+                         bool update_topics,
+                         Xor128Plus& rng) {
+  const float alpha_f = static_cast<float>(alpha);
+  const float beta_f = static_cast<float>(beta);
+  const float alpha_bar = static_cast<float>(K) * alpha_f;
+  const float beta_bar = static_cast<float>(K) * beta_f;
+
+  for (int d = 0; d < dat.n_doc; ++d) {
+    const int bgn = dat.doc_ptr[d];
+    const int end = dat.doc_ptr[d + 1];
+    const int len = end - bgn;
+    int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
+
+    std::fill(doc_row, doc_row + K, 0);
+    for (int ptr = bgn; ptr < end; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      doc_row[topic[tok]] += 1;
+    }
+
+    for (int ptr = bgn; ptr < end; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      const int old_topic = topic[tok];
+      const int new_topic = proposal_topic[tok];
+      if (new_topic != old_topic) {
+        const double accept_prob =
+          (static_cast<float>(doc_row[new_topic]) + alpha_f) /
+          (static_cast<float>(doc_row[old_topic]) + alpha_f) *
+          (static_cast<float>(topic_count[old_topic]) + beta_bar) /
+          (static_cast<float>(topic_count[new_topic]) + beta_bar);
+        if (rng.drand() < accept_prob) {
+          if (update_topics) {
+            topic_count[new_topic] += 1;
+            topic_count[old_topic] -= 1;
+          }
+          topic[tok] = new_topic;
+        }
+      }
+    }
+
+    if (len <= 0) continue;
+    const double position_sample_prob = static_cast<float>(len) /
+      (static_cast<float>(len) + alpha_bar);
+    for (int ptr = bgn; ptr < end; ++ptr) {
+      const int tok = dat.doc_token_index[ptr];
+      if (rng.drand() < position_sample_prob) {
+        const int offset = static_cast<int>(rng.sample() % static_cast<std::uint64_t>(len));
+        const int source_tok = dat.doc_token_index[bgn + offset];
+        proposal_topic[tok] = topic[source_tok];
+      } else {
+        proposal_topic[tok] = static_cast<int>(rng.sample() % static_cast<std::uint64_t>(K));
+      }
+    }
+  }
+}
+
+void sample_ref_word_pass(const SparseDtmTokens& dat,
+                          std::vector<int>& topic,
+                          std::vector<int>& proposal_topic,
+                          std::vector<int>& word_topic,
+                          std::vector<int>& topic_count,
+                          double beta,
+                          int K,
+                          bool update_topics,
+                          Xor128Plus& rng) {
+  const float beta_f = static_cast<float>(beta);
+  const float beta_bar = static_cast<float>(K) * beta_f;
+  std::vector<double> prob(static_cast<std::size_t>(K));
+
+  for (int w = 0; w < dat.n_word; ++w) {
+    const int bgn = dat.word_ptr[w];
+    const int end = dat.word_ptr[w + 1];
+    int* word_row = &word_topic[static_cast<std::size_t>(w) * static_cast<std::size_t>(K)];
+
+    if (update_topics) {
+      std::fill(word_row, word_row + K, 0);
+      for (int tok = bgn; tok < end; ++tok) {
+        word_row[topic[tok]] += 1;
+      }
+    }
+
+    for (int tok = bgn; tok < end; ++tok) {
+      const int old_topic = topic[tok];
+      const int new_topic = proposal_topic[tok];
+      if (new_topic != old_topic) {
+        const double accept_prob =
+          (static_cast<float>(word_row[new_topic]) + beta_f) /
+          (static_cast<float>(word_row[old_topic]) + beta_f) *
+          (static_cast<float>(topic_count[old_topic]) + beta_bar) /
+          (static_cast<float>(topic_count[new_topic]) + beta_bar);
+        if (rng.drand() < accept_prob) {
+          if (update_topics) {
+            word_row[new_topic] += 1;
+            word_row[old_topic] -= 1;
+            topic_count[new_topic] += 1;
+            topic_count[old_topic] -= 1;
+          }
+          topic[tok] = new_topic;
+        }
+      }
+    }
+
+    for (int k = 0; k < K; ++k) {
+      prob[k] = static_cast<double>(static_cast<float>(word_row[k]) + beta_f);
+    }
+    RefAliasUrn urn(rng);
+    urn.setup(prob);
+    for (int tok = bgn; tok < end; ++tok) {
+      proposal_topic[tok] = urn.sample();
+    }
+  }
+}
+
+void sample_ref_iteration(const SparseDtmTokens& dat,
+                          std::vector<int>& topic,
+                          std::vector<int>& proposal_topic,
+                          std::vector<int>& doc_topic,
+                          std::vector<int>& word_topic,
+                          std::vector<int>& topic_count,
+                          double alpha,
+                          double beta,
+                          int K,
+                          bool update_topics,
+                          Xor128Plus& rng) {
+  sample_ref_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
+                      alpha, beta, K, update_topics, rng);
+  sample_ref_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
+                       beta, K, update_topics, rng);
 }
 
 void sample_training_iteration(const SparseDtmTokens& dat,
@@ -675,15 +945,18 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
                               int n_check_convergence = 10,
                               int n_iter_inference = 10,
                               int n_threads = 1,
-                              std::string sampler = "warp_omp") {
+                              std::string sampler = "warp_omp",
+                              Nullable<IntegerVector> ref_topic = R_NilValue,
+                              Nullable<IntegerVector> ref_proposal = R_NilValue,
+                              Nullable<IntegerVector> ref_seeds = R_NilValue) {
   if (K <= 1) stop("K must be greater than 1.");
   if (iterations < 1) stop("iterations must be positive.");
   if (!R_finite(alpha) || alpha <= 0.0) stop("alpha must be positive.");
   if (!R_finite(beta) || beta <= 0.0) stop("beta must be positive.");
   if (n_check_convergence < 0) stop("n_check_convergence must be non-negative.");
   if (n_iter_inference < 0) stop("n_iter_inference must be non-negative.");
-  if (sampler != "gibbs_sync" && sampler != "warp_mh" && sampler != "warp_omp") {
-    stop("sampler must be 'warp_omp', 'warp_mh', or 'gibbs_sync'.");
+  if (sampler != "gibbs_sync" && sampler != "warp_mh" && sampler != "warp_omp" && sampler != "warp_ref") {
+    stop("sampler must be 'warp_omp', 'warp_ref', 'warp_mh', or 'gibbs_sync'.");
   }
   if (n_threads < 1) n_threads = 1;
 #ifdef _OPENMP
@@ -692,6 +965,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
 #else
   n_threads = 1;
 #endif
+  if (sampler == "warp_ref") n_threads = 1;
 
   SparseDtmTokens dat = read_dgC_tokens(dtm);
   const double delta_cells_per_thread = static_cast<double>(dat.n_word) * static_cast<double>(K);
@@ -708,25 +982,47 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   std::vector<int> next_topic(static_cast<std::size_t>(n_token), 0);
   std::vector<int> proposal_topic(static_cast<std::size_t>(n_token), 0);
 
-  std::mt19937_64 init_rng(static_cast<std::uint64_t>(seed));
-  for (int tok = 0; tok < n_token; ++tok) {
-    const int k = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
-    const int proposal = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
-    const int d = dat.token_doc[tok];
-    const int w = dat.token_word[tok];
-    topic[tok] = k;
-    proposal_topic[tok] = proposal;
-    doc_topic[d * K + k] += 1;
-    word_topic[w * K + k] += 1;
-    topic_count[k] += 1;
+  IntegerVector ref_topic_vec;
+  IntegerVector ref_proposal_vec;
+  std::uint64_t ref_seed0 = static_cast<std::uint64_t>(seed);
+  std::uint64_t ref_seed1 = 0xCAFEBABEULL;
+  if (sampler == "warp_ref") {
+    if (ref_topic.isNull() || ref_proposal.isNull() || ref_seeds.isNull()) {
+      stop("warp_ref requires text2vec-style initial topics and RNG seeds.");
+    }
+    ref_topic_vec = as<IntegerVector>(ref_topic);
+    ref_proposal_vec = as<IntegerVector>(ref_proposal);
+    IntegerVector ref_seed_vec = as<IntegerVector>(ref_seeds);
+    if (ref_seed_vec.size() < 2) stop("warp_ref requires two RNG seeds.");
+    ref_seed0 = static_cast<std::uint64_t>(ref_seed_vec[0]);
+    ref_seed1 = static_cast<std::uint64_t>(ref_seed_vec[1]);
+    assign_ref_initial_topics(dat, ref_topic_vec, ref_proposal_vec,
+                              topic, proposal_topic, doc_topic, word_topic, topic_count, K);
+  } else {
+    std::mt19937_64 init_rng(static_cast<std::uint64_t>(seed));
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int k = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
+      const int proposal = static_cast<int>(init_rng() % static_cast<std::uint64_t>(K));
+      const int d = dat.token_doc[tok];
+      const int w = dat.token_word[tok];
+      topic[tok] = k;
+      proposal_topic[tok] = proposal;
+      doc_topic[d * K + k] += 1;
+      word_topic[w * K + k] += 1;
+      topic_count[k] += 1;
+    }
   }
 
   std::vector<int> trace_iter;
   std::vector<double> trace_loglik;
   double previous_loglik = NA_REAL;
   int actual_iterations = iterations;
+  Xor128Plus ref_train_rng(ref_seed0, ref_seed1);
   for (int iter = 1; iter <= iterations; ++iter) {
-    if (sampler == "warp_mh" || sampler == "warp_omp") {
+    if (sampler == "warp_ref") {
+      sample_ref_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                           alpha, beta, K, true, ref_train_rng);
+    } else if (sampler == "warp_mh" || sampler == "warp_omp") {
       sample_warp_training_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                      alpha, beta, K, n_threads,
                                      static_cast<std::uint64_t>(seed), iter, next_topic);
@@ -754,7 +1050,13 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
 
   std::vector<int> trained_word_topic;
   std::vector<int> trained_topic_count;
-  if (sampler == "warp_mh" || sampler == "warp_omp") {
+  if (sampler == "warp_ref") {
+    trained_word_topic = word_topic;
+    trained_topic_count = topic_count;
+    assign_ref_initial_topics(dat, ref_topic_vec, ref_proposal_vec,
+                              topic, proposal_topic, doc_topic, word_topic, topic_count, K);
+    word_topic = trained_word_topic;
+  } else if (sampler == "warp_mh" || sampler == "warp_omp") {
     trained_word_topic = word_topic;
     trained_topic_count = topic_count;
 
@@ -776,8 +1078,12 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   }
 
   const int inference_burnin = iterations;
+  Xor128Plus ref_infer_rng(ref_seed0, ref_seed1);
   for (int iter = 1; iter <= inference_burnin; ++iter) {
-    if (sampler == "warp_omp") {
+    if (sampler == "warp_ref") {
+      sample_ref_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                           alpha, beta, K, false, ref_infer_rng);
+    } else if (sampler == "warp_omp") {
       sample_warp_omp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                           alpha, beta, K, n_threads,
                                           static_cast<std::uint64_t>(seed), iter, next_topic);
@@ -801,7 +1107,10 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     }
   } else {
     for (int iter = 1; iter <= n_iter_inference; ++iter) {
-      if (sampler == "warp_omp") {
+      if (sampler == "warp_ref") {
+        sample_ref_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
+                             alpha, beta, K, false, ref_infer_rng);
+      } else if (sampler == "warp_omp") {
         sample_warp_omp_inference_iteration(dat, topic, proposal_topic, doc_topic, word_topic, topic_count,
                                             alpha, beta, K, n_threads,
                                             static_cast<std::uint64_t>(seed + 104729), iter, next_topic);
@@ -825,12 +1134,22 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   for (int d = 0; d < dat.n_doc; ++d) {
     const int doc_len = dat.doc_ptr[d + 1] - dat.doc_ptr[d];
     double row_sum = 0.0;
-    for (int k = 0; k < K; ++k) {
-      const double v = doc_topic_accum[d * K + k] / static_cast<double>(n_accum) + alpha;
-      theta(d, k) = v;
-      row_sum += v;
+    if (sampler == "warp_ref") {
+      for (int k = 0; k < K; ++k) {
+        const double v = doc_topic_accum[d * K + k];
+        theta(d, k) = v;
+        row_sum += v;
+      }
+      if (!(row_sum > 0.0)) row_sum = static_cast<double>(doc_len);
+      if (!(row_sum > 0.0)) row_sum = 1.0;
+    } else {
+      for (int k = 0; k < K; ++k) {
+        const double v = doc_topic_accum[d * K + k] / static_cast<double>(n_accum) + alpha;
+        theta(d, k) = v;
+        row_sum += v;
+      }
+      if (!(row_sum > 0.0)) row_sum = static_cast<double>(doc_len) + alpha_sum;
     }
-    if (!(row_sum > 0.0)) row_sum = static_cast<double>(doc_len) + alpha_sum;
     for (int k = 0; k < K; ++k) theta(d, k) /= row_sum;
   }
 
@@ -845,9 +1164,19 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
     phi_topic_count[k] = total;
   }
   for (int k = 0; k < K; ++k) {
-    const double denom = static_cast<double>(phi_topic_count[k]) + beta_sum;
+    const double denom = sampler == "warp_ref" ?
+      static_cast<double>(phi_topic_count[k]) :
+      static_cast<double>(phi_topic_count[k]) + beta_sum;
     for (int w = 0; w < dat.n_word; ++w) {
-      phi(k, w) = (static_cast<double>(word_topic[w * K + k]) + beta) / denom;
+      if (sampler == "warp_ref") {
+        if (denom > 0.0) {
+          phi(k, w) = static_cast<double>(word_topic[w * K + k]) / denom;
+        } else {
+          phi(k, w) = 1.0 / static_cast<double>(dat.n_word);
+        }
+      } else {
+        phi(k, w) = (static_cast<double>(word_topic[w * K + k]) + beta) / denom;
+      }
     }
   }
 

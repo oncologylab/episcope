@@ -254,7 +254,9 @@ deltas. The model balances RNA and footprint contributions before converting
 weights into pseudocounts for topic modeling.
 By default, WarpLDA uses CraftGRN's native `warp_omp` sampler, which keeps
 doc/word Metropolis-Hastings semantics while using OpenMP threads inside each
-model fit.
+model fit. For validation against old text2vec runs, set
+`warplda_sampler = "warp_ref"`; this sequential reference sampler reproduces
+the text2vec fixed-seed path but is much slower than `warp_omp`.
 
 ```{r module-3-topic-models}
 train_topic_models(
