@@ -143,6 +143,81 @@
   )
 }
 
+.qc_plot_grid <- function(...) {
+  plots <- list(...)
+  plots <- plots[lengths(plots) > 0L]
+  if (!length(plots)) return("")
+  cards <- vapply(plots, function(plot) paste0("<div class=\"plot-card\">", plot, "</div>"), character(1L))
+  paste0("<div class=\"plot-grid\">", paste(cards, collapse = ""), "</div>")
+}
+
+.qc_finite_numeric <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+  x[is.finite(x)]
+}
+
+.qc_rescale <- function(x, from = NULL, to = c(0, 1)) {
+  x <- suppressWarnings(as.numeric(x))
+  if (is.null(from)) from <- range(x[is.finite(x)], na.rm = TRUE)
+  if (!all(is.finite(from)) || from[[1L]] == from[[2L]]) return(rep(mean(to), length(x)))
+  to[[1L]] + (x - from[[1L]]) / (from[[2L]] - from[[1L]]) * (to[[2L]] - to[[1L]])
+}
+
+.qc_color_gradient <- function(x) {
+  x <- pmin(1, pmax(0, suppressWarnings(as.numeric(x))))
+  low <- c(237, 244, 251)
+  mid <- c(32, 178, 170)
+  high <- c(22, 41, 73)
+  vapply(x, function(v) {
+    if (!is.finite(v)) v <- 0
+    if (v <= 0.5) {
+      z <- v / 0.5
+      rgb <- low + (mid - low) * z
+    } else {
+      z <- (v - 0.5) / 0.5
+      rgb <- mid + (high - mid) * z
+    }
+    grDevices::rgb(rgb[[1L]], rgb[[2L]], rgb[[3L]], maxColorValue = 255)
+  }, character(1L))
+}
+
+.qc_funnel_svg <- function(x, label_col, value_col, title = NULL, width = 860L, height = 320L) {
+  if (!is.data.frame(x) || !nrow(x) || !all(c(label_col, value_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
+  x <- as.data.frame(x, stringsAsFactors = FALSE)
+  x[[value_col]] <- suppressWarnings(as.numeric(x[[value_col]]))
+  x <- x[is.finite(x[[value_col]]) & x[[value_col]] >= 0, , drop = FALSE]
+  if (!nrow(x)) return("<p class=\"empty\">No finite plot data available.</p>")
+  max_val <- max(x[[value_col]], na.rm = TRUE)
+  if (!is.finite(max_val) || max_val <= 0) max_val <- 1
+  top <- if (is.null(title)) 16L else 44L
+  bottom <- 18L
+  left <- 16L
+  right <- 16L
+  gap <- 10L
+  stage_h <- max(24, (height - top - bottom - gap * (nrow(x) - 1L)) / nrow(x))
+  plot_w <- width - left - right
+  rows <- lapply(seq_len(nrow(x)), function(i) {
+    val <- x[[value_col]][[i]]
+    y <- top + (i - 1L) * (stage_h + gap)
+    bw <- max(38, plot_w * sqrt(val / max_val))
+    bx <- left + (plot_w - bw) / 2
+    fill <- .qc_color_gradient((i - 1L) / max(1L, nrow(x) - 1L))
+    label <- substr(as.character(x[[label_col]][[i]]), 1L, 42L)
+    paste0(
+      "<rect x=\"", bx, "\" y=\"", y, "\" width=\"", bw, "\" height=\"", stage_h, "\" rx=\"5\" fill=\"", fill, "\" class=\"funnel-bar\"/>",
+      "<text x=\"", left + 8L, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
+      "<text x=\"", width - right - 128L, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"value-label\">", .qc_html_escape(.qc_format_number(val)), "</text>"
+    )
+  })
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-funnel\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    paste(rows, collapse = ""),
+    "</svg>"
+  )
+}
+
 .qc_hist_svg <- function(values, title = NULL, bins = 20L, width = 860L, height = 280L) {
   values <- suppressWarnings(as.numeric(values))
   values <- values[is.finite(values)]
@@ -173,6 +248,243 @@
     "<text x=\"", left, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(min(values))), "</text>",
     "<text x=\"", width - right - 90L, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(max(values))), "</text>",
     paste(bars, collapse = ""),
+    "</svg>"
+  )
+}
+
+.qc_density_svg <- function(values, title = NULL, width = 860L, height = 280L) {
+  values <- .qc_finite_numeric(values)
+  if (!length(values)) return("<p class=\"empty\">No finite plot data available.</p>")
+  if (length(unique(values)) < 2L) {
+    values <- c(values, values + 1e-6)
+  }
+  dens <- stats::density(values, n = 160L, na.rm = TRUE)
+  left <- 56L
+  right <- 18L
+  top <- if (is.null(title)) 16L else 44L
+  bottom <- 40L
+  plot_w <- width - left - right
+  plot_h <- height - top - bottom
+  x <- .qc_rescale(dens$x, to = c(left, left + plot_w))
+  y <- .qc_rescale(dens$y, to = c(top + plot_h, top))
+  base_y <- top + plot_h
+  points <- paste(paste0(round(x, 2), ",", round(y, 2)), collapse = " ")
+  area <- paste0(left, ",", base_y, " ", points, " ", left + plot_w, ",", base_y)
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-density\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    "<line x1=\"", left, "\" y1=\"", base_y, "\" x2=\"", width - right, "\" y2=\"", base_y, "\" class=\"axis\"/>",
+    "<polygon points=\"", area, "\" class=\"density-area\"/>",
+    "<polyline points=\"", points, "\" class=\"density-line\"/>",
+    "<text x=\"", left, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(min(values))), "</text>",
+    "<text x=\"", width - right - 90L, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(max(values))), "</text>",
+    "</svg>"
+  )
+}
+
+.qc_cumulative_svg <- function(values, title = NULL, width = 860L, height = 280L, max_points = 300L) {
+  values <- sort(.qc_finite_numeric(values))
+  if (!length(values)) return("<p class=\"empty\">No finite plot data available.</p>")
+  if (length(values) > max_points) {
+    keep <- unique(round(seq(1L, length(values), length.out = max_points)))
+    values <- values[keep]
+    total_n <- max(keep)
+    yvals <- keep / total_n
+  } else {
+    yvals <- seq_along(values) / length(values)
+  }
+  left <- 56L
+  right <- 18L
+  top <- if (is.null(title)) 16L else 44L
+  bottom <- 40L
+  plot_w <- width - left - right
+  plot_h <- height - top - bottom
+  x <- .qc_rescale(values, to = c(left, left + plot_w))
+  y <- .qc_rescale(yvals, from = c(0, 1), to = c(top + plot_h, top))
+  points <- paste(paste0(round(x, 2), ",", round(y, 2)), collapse = " ")
+  base_y <- top + plot_h
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-cumulative\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    "<line x1=\"", left, "\" y1=\"", base_y, "\" x2=\"", width - right, "\" y2=\"", base_y, "\" class=\"axis\"/>",
+    "<line x1=\"", left, "\" y1=\"", top, "\" x2=\"", left, "\" y2=\"", base_y, "\" class=\"axis\"/>",
+    "<polyline points=\"", points, "\" class=\"line-strong\"/>",
+    "<text x=\"", left, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(min(values))), "</text>",
+    "<text x=\"", width - right - 90L, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(max(values))), "</text>",
+    "<text x=\"", left + 6L, "\" y=\"", top + 14L, "\" class=\"tick\">1.0</text>",
+    "</svg>"
+  )
+}
+
+.qc_lollipop_svg <- function(x, label_col, value_col, title = NULL, width = 860L, height = NULL, max_rows = 20L) {
+  if (!is.data.frame(x) || !nrow(x) || !all(c(label_col, value_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
+  x <- as.data.frame(utils::head(x, max_rows), stringsAsFactors = FALSE)
+  x[[value_col]] <- suppressWarnings(as.numeric(x[[value_col]]))
+  x <- x[is.finite(x[[value_col]]) & x[[value_col]] >= 0, , drop = FALSE]
+  if (!nrow(x)) return("<p class=\"empty\">No finite plot data available.</p>")
+  if (is.null(height)) height <- max(180L, 48L + nrow(x) * 24L)
+  max_val <- max(x[[value_col]], na.rm = TRUE)
+  if (!is.finite(max_val) || max_val <= 0) max_val <- 1
+  left <- 230L
+  right <- 120L
+  top <- if (is.null(title)) 14L else 44L
+  plot_w <- width - left - right
+  row_h <- max(18, (height - top - 22L) / nrow(x))
+  rows <- lapply(seq_len(nrow(x)), function(i) {
+    y <- top + (i - 0.5) * row_h
+    val <- x[[value_col]][[i]]
+    px <- left + plot_w * val / max_val
+    label <- substr(as.character(x[[label_col]][[i]]), 1L, 34L)
+    paste0(
+      "<text x=\"0\" y=\"", y + 4L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
+      "<line x1=\"", left, "\" y1=\"", y, "\" x2=\"", px, "\" y2=\"", y, "\" class=\"stem\"/>",
+      "<circle cx=\"", px, "\" cy=\"", y, "\" r=\"5\" class=\"point-accent\"/>",
+      "<text x=\"", px + 9L, "\" y=\"", y + 4L, "\" class=\"value-label\">", .qc_html_escape(.qc_format_number(val)), "</text>"
+    )
+  })
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-lollipop\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    "<line x1=\"", left, "\" y1=\"", top, "\" x2=\"", left, "\" y2=\"", height - 16L, "\" class=\"axis-light\"/>",
+    paste(rows, collapse = ""),
+    "</svg>"
+  )
+}
+
+.qc_scatter_svg <- function(x, x_col, y_col, label_col = NULL, size_col = NULL, title = NULL, width = 860L, height = 320L, max_points = 120L) {
+  if (!is.data.frame(x) || !nrow(x) || !all(c(x_col, y_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
+  x <- as.data.frame(x, stringsAsFactors = FALSE)
+  x[[x_col]] <- suppressWarnings(as.numeric(x[[x_col]]))
+  x[[y_col]] <- suppressWarnings(as.numeric(x[[y_col]]))
+  x <- x[is.finite(x[[x_col]]) & is.finite(x[[y_col]]), , drop = FALSE]
+  if (!nrow(x)) return("<p class=\"empty\">No finite plot data available.</p>")
+  if (nrow(x) > max_points) x <- x[seq_len(max_points), , drop = FALSE]
+  left <- 58L
+  right <- 24L
+  top <- if (is.null(title)) 18L else 44L
+  bottom <- 44L
+  plot_w <- width - left - right
+  plot_h <- height - top - bottom
+  px <- .qc_rescale(x[[x_col]], to = c(left, left + plot_w))
+  py <- .qc_rescale(x[[y_col]], to = c(top + plot_h, top))
+  radius <- rep(4.5, nrow(x))
+  if (!is.null(size_col) && size_col %in% names(x)) {
+    radius <- .qc_rescale(suppressWarnings(as.numeric(x[[size_col]])), to = c(3.5, 9))
+  }
+  pts <- vapply(seq_len(nrow(x)), function(i) {
+    label <- if (!is.null(label_col) && label_col %in% names(x)) as.character(x[[label_col]][[i]]) else ""
+    paste0(
+      "<circle cx=\"", round(px[[i]], 2), "\" cy=\"", round(py[[i]], 2), "\" r=\"", round(radius[[i]], 2), "\" class=\"point\"/>",
+      if (nzchar(label) && i <= 8L) paste0("<text x=\"", round(px[[i]] + 7, 2), "\" y=\"", round(py[[i]] + 4, 2), "\" class=\"point-label\">", .qc_html_escape(substr(label, 1L, 18L)), "</text>") else ""
+    )
+  }, character(1L))
+  base_y <- top + plot_h
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-scatter\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    "<line x1=\"", left, "\" y1=\"", base_y, "\" x2=\"", width - right, "\" y2=\"", base_y, "\" class=\"axis\"/>",
+    "<line x1=\"", left, "\" y1=\"", top, "\" x2=\"", left, "\" y2=\"", base_y, "\" class=\"axis\"/>",
+    paste(pts, collapse = ""),
+    "<text x=\"", left, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(x_col), "</text>",
+    "<text x=\"", left + 6L, "\" y=\"", top + 14L, "\" class=\"tick\">", .qc_html_escape(y_col), "</text>",
+    "</svg>"
+  )
+}
+
+.qc_metric_heatmap_svg <- function(x, row_col, value_cols, title = NULL, width = 860L, cell_h = 24L, max_rows = 24L) {
+  value_cols <- intersect(value_cols, names(x))
+  if (!is.data.frame(x) || !nrow(x) || !(row_col %in% names(x)) || !length(value_cols)) return("<p class=\"empty\">No plot data available.</p>")
+  x <- as.data.frame(utils::head(x, max_rows), stringsAsFactors = FALSE)
+  mat <- as.data.frame(lapply(x[value_cols], function(v) suppressWarnings(as.numeric(v))), stringsAsFactors = FALSE)
+  keep <- rowSums(is.finite(as.matrix(mat))) > 0
+  x <- x[keep, , drop = FALSE]
+  mat <- mat[keep, , drop = FALSE]
+  if (!nrow(x)) return("<p class=\"empty\">No finite plot data available.</p>")
+  left <- 190L
+  top <- if (is.null(title)) 34L else 58L
+  right <- 20L
+  col_w <- (width - left - right) / length(value_cols)
+  height <- top + nrow(x) * cell_h + 24L
+  scaled <- as.data.frame(lapply(mat, function(v) .qc_rescale(v, to = c(0, 1))), stringsAsFactors = FALSE)
+  cells <- list()
+  k <- 1L
+  for (i in seq_len(nrow(x))) {
+    y <- top + (i - 1L) * cell_h
+    cells[[k]] <- paste0("<text x=\"0\" y=\"", y + 16L, "\" class=\"axis-label\">", .qc_html_escape(substr(as.character(x[[row_col]][[i]]), 1L, 28L)), "</text>")
+    k <- k + 1L
+    for (j in seq_along(value_cols)) {
+      val <- mat[[value_cols[[j]]]][[i]]
+      fill <- .qc_color_gradient(scaled[[value_cols[[j]]]][[i]])
+      cells[[k]] <- paste0(
+        "<rect x=\"", left + (j - 1L) * col_w, "\" y=\"", y, "\" width=\"", max(1, col_w - 2), "\" height=\"", cell_h - 2L, "\" rx=\"2\" fill=\"", fill, "\" class=\"heat-cell\"/>",
+        "<text x=\"", left + (j - 1L) * col_w + 5L, "\" y=\"", y + 16L, "\" class=\"heat-label\">", .qc_html_escape(.qc_format_number(val)), "</text>"
+      )
+      k <- k + 1L
+    }
+  }
+  headers <- vapply(seq_along(value_cols), function(j) {
+    paste0("<text x=\"", left + (j - 1L) * col_w + 5L, "\" y=\"", top - 9L, "\" class=\"tick\">", .qc_html_escape(substr(value_cols[[j]], 1L, 20L)), "</text>")
+  }, character(1L))
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-heatmap\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    paste(headers, collapse = ""),
+    paste(cells, collapse = ""),
+    "</svg>"
+  )
+}
+
+.qc_flow_svg <- function(x, label_col, value_col, title = NULL, width = 860L, height = 260L) {
+  if (!is.data.frame(x) || !nrow(x) || !all(c(label_col, value_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
+  x <- as.data.frame(x, stringsAsFactors = FALSE)
+  x[[value_col]] <- suppressWarnings(as.numeric(x[[value_col]]))
+  x <- x[is.finite(x[[value_col]]) & x[[value_col]] >= 0, , drop = FALSE]
+  if (!nrow(x)) return("<p class=\"empty\">No finite plot data available.</p>")
+  top <- if (is.null(title)) 20L else 48L
+  bottom <- 44L
+  node_w <- 86L
+  gap <- (width - 40L - node_w * nrow(x)) / max(1L, nrow(x) - 1L)
+  max_val <- max(x[[value_col]], na.rm = TRUE)
+  if (!is.finite(max_val) || max_val <= 0) max_val <- 1
+  center_y <- top + (height - top - bottom) / 2
+  max_h <- height - top - bottom
+  node_h <- pmax(16, max_h * sqrt(x[[value_col]] / max_val))
+  nodes <- lapply(seq_len(nrow(x)), function(i) {
+    nx <- 20L + (i - 1L) * (node_w + gap)
+    ny <- center_y - node_h[[i]] / 2
+    fill <- .qc_color_gradient((i - 1L) / max(1L, nrow(x) - 1L))
+    label <- substr(as.character(x[[label_col]][[i]]), 1L, 16L)
+    paste0(
+      "<rect x=\"", nx, "\" y=\"", ny, "\" width=\"", node_w, "\" height=\"", node_h[[i]], "\" rx=\"6\" fill=\"", fill, "\" class=\"flow-node\"/>",
+      "<text x=\"", nx, "\" y=\"", height - 24L, "\" class=\"tick\">", .qc_html_escape(label), "</text>",
+      "<text x=\"", nx, "\" y=\"", height - 8L, "\" class=\"tick\">", .qc_html_escape(.qc_format_number(x[[value_col]][[i]])), "</text>"
+    )
+  })
+  bands <- character()
+  if (nrow(x) > 1L) {
+    bands <- vapply(seq_len(nrow(x) - 1L), function(i) {
+      x1 <- 20L + (i - 1L) * (node_w + gap) + node_w
+      x2 <- 20L + i * (node_w + gap)
+      bh <- max(8, min(node_h[[i]], node_h[[i + 1L]]) * 0.62)
+      y1 <- center_y - bh / 2
+      y2 <- center_y + bh / 2
+      paste0(
+        "<path d=\"M", x1, " ", y1, " C", x1 + gap * 0.45, " ", y1, " ", x2 - gap * 0.45, " ", y1, " ", x2, " ", y1,
+        " L", x2, " ", y2, " C", x2 - gap * 0.45, " ", y2, " ", x1 + gap * 0.45, " ", y2, " ", x1, " ", y2, " Z\" class=\"flow-band\"/>"
+      )
+    }, character(1L))
+  }
+  title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
+  paste0(
+    "<svg class=\"qc-plot qc-plot-flow\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    title_svg,
+    paste(bands, collapse = ""),
+    paste(nodes, collapse = ""),
     "</svg>"
   )
 }
@@ -220,8 +532,10 @@
     "section{background:white;border:1px solid #d9e2ef;border-radius:8px;margin:18px 0;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04)}",
     ".subtitle{color:#cbd5e1;font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}",
     ".card{border:1px solid #d9e2ef;border-radius:7px;padding:12px;background:#fbfdff}.card-label{font-size:12px;color:#536173;font-weight:700}.card-value{font-size:24px;font-weight:800;margin-top:5px;color:#0f766e}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;align-items:start}.plot-card{border:1px solid #e2eaf4;border-radius:7px;background:#fbfdff;padding:10px;overflow:hidden}",
     "table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid #e5edf6;padding:7px 8px;text-align:left}th{background:#edf4fb;color:#253246}",
-    ".qc-plot{width:100%;height:auto;max-height:520px}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1}.axis-label,.value-label,.tick{font-size:12px;fill:#253246}.plot-title{font-size:15px;font-weight:700;fill:#101827}",
+    ".qc-plot{width:100%;height:auto;max-height:540px}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1}.axis-light{stroke:#c8d3e1;stroke-width:1}.axis-label,.value-label,.tick{font-size:12px;fill:#253246}.plot-title{font-size:15px;font-weight:700;fill:#101827}",
+    ".density-area{fill:#20b2aa;opacity:.2}.density-line,.line-strong{fill:none;stroke:#0f766e;stroke-width:2.5}.stem{stroke:#168b87;stroke-width:2}.point,.point-accent{fill:#168b87;stroke:white;stroke-width:1.2;opacity:.86}.point-label{font-size:11px;fill:#253246}.heat-label{font-size:10px;fill:#0f172a}.flow-band{fill:#20b2aa;opacity:.18}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.9}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#0f766e;font-weight:800}.status-warn{color:#b45309;font-weight:800}.links{columns:2;line-height:1.8}a{color:#0f5f8f;text-decoration:none}a:hover{text-decoration:underline}",
     sep = "\n"
   )
@@ -271,12 +585,12 @@
       canonical_support_check = tibble::tibble()
     ))
   }
-  canonical_keys <- character()
+  canonical_fps <- character()
   if (is.data.frame(canonical_stats) && nrow(canonical_stats) && all(c("fp_id", "tf") %in% names(canonical_stats))) {
     canon_dt <- data.table::as.data.table(canonical_stats)
     if (!"pass" %in% names(canon_dt)) canon_dt[, pass := TRUE]
     canon_dt <- unique(canon_dt[pass %in% TRUE & !is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf), .(fp_id = as.character(fp_id), tf = as.character(tf))])
-    canonical_keys <- paste(canon_dt$fp_id, canon_dt$tf, sep = "\r")
+    canonical_fps <- unique(canon_dt$fp_id)
   }
   top_n <- max(1L, as.integer(top_n[[1L]]))
   tf_rows <- vector("list", nrow(manifest))
@@ -312,10 +626,10 @@
       n_predicted_tfbs = .N,
       n_tf = data.table::uniqueN(tf)
     ), by = .(fp_id)]
-    if (length(canonical_keys)) {
-      pred_pairs <- unique(dt[, .(fp_id, tf)])
-      pred_pairs[, has_canonical_support := paste(fp_id, tf, sep = "\r") %in% canonical_keys]
-      canonical_support_rows[[i]] <- pred_pairs[, .(has_canonical_support = any(has_canonical_support)), by = fp_id]
+    if (length(canonical_fps)) {
+      pred_fps <- unique(dt[, .(fp_id)])
+      pred_fps[, has_canonical_support := fp_id %in% canonical_fps]
+      canonical_support_rows[[i]] <- pred_fps
     }
     support_rows[[i]] <- dt[, .N, by = .(condition_support)]
     bad_coord <- sum(is.na(chr) | !nzchar(chr) | !is.finite(start) | !is.finite(end) | end <= start)
@@ -673,25 +987,79 @@ build_module1_qc_report <- function(module1,
       pred_manifest_path
     )
   }
+  predicted_tf_plots <- .qc_plot_grid(
+    .qc_scatter_svg(
+      predicted_scan$tf_summary,
+      x_col = "n_fp",
+      y_col = "n_predicted_tfbs",
+      label_col = "tf",
+      size_col = "mean_condition_support",
+      title = "Predicted TFBS breadth by TF"
+    ),
+    .qc_metric_heatmap_svg(
+      predicted_scan$tf_summary,
+      row_col = "tf",
+      value_cols = c("n_predicted_tfbs", "n_fp", "mean_condition_support"),
+      title = "Top predicted TF signal matrix"
+    ),
+    .qc_lollipop_svg(
+      predicted_scan$tf_summary,
+      label_col = "tf",
+      value_col = "n_predicted_tfbs",
+      title = "Top TFs by predicted TFBS"
+    )
+  )
+  correlation_plots <- .qc_plot_grid(
+    .qc_density_svg(canonical_corr$best_r, title = "Motif-supported best r density"),
+    .qc_density_svg(prediction_corr$best_r, title = "Prediction best r density"),
+    .qc_metric_heatmap_svg(
+      canonical_corr$top_tf,
+      row_col = "tf",
+      value_cols = c("n_pass", "n_fp", "median_best_r"),
+      title = "Canonical-bound TF summary"
+    )
+  )
+  fp_plots <- .qc_plot_grid(
+    .qc_scatter_svg(
+      predicted_scan$fp_summary,
+      x_col = "n_tf",
+      y_col = "n_predicted_tfbs",
+      label_col = "fp_id",
+      title = "Predicted TF multiplicity per FP"
+    ),
+    .qc_lollipop_svg(
+      predicted_scan$fp_summary,
+      label_col = "fp_id",
+      value_col = "n_predicted_tfbs",
+      title = "Top FPs by predicted TFBS"
+    ),
+    .qc_density_svg(motif_complexity$values, title = "Canonical TFs per aligned FP density")
+  )
   sections <- list(
     .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
     .qc_section("Input Gates", paste0(
       .qc_table_html(gate_table, max_rows = 20L),
-      .qc_bar_svg(gate_table, "gate", "pass", title = "Rows passing each Module 1 gate")
+      .qc_plot_grid(
+        .qc_funnel_svg(funnel, "step", "n", title = "Module 1 processing funnel"),
+        .qc_lollipop_svg(gate_table, "gate", "pass", title = "Rows passing each Module 1 gate")
+      )
     )),
     .qc_section("Motif-Supported Correlations", paste0(
       .qc_table_html(canonical_corr$summary, max_rows = 10L),
-      .qc_bar_svg(canonical_corr$top_tf, "tf", "n_pass", title = "Top canonical-bound TFs"),
+      .qc_plot_grid(
+        .qc_lollipop_svg(canonical_corr$top_tf, "tf", "n_pass", title = "Top canonical-bound TFs"),
+        .qc_metric_heatmap_svg(canonical_corr$top_tf, "tf", c("n_pass", "n_fp", "median_best_r"), title = "Canonical-bound TF metrics")
+      ),
       .qc_table_html(canonical_corr$top_tf, max_rows = top_n)
     )),
     .qc_section("Correctness Checks", paste0(
       "<p>Canonical-supported predicted FP check: ", canonical_status, "</p>",
       .qc_table_html(support_check, max_rows = 20L)
     )),
-    .qc_section("Workflow Funnel", .qc_bar_svg(funnel, "step", "n", title = "Module 1 row counts by processing stage")),
+    .qc_section("Workflow Funnel", .qc_funnel_svg(funnel, "step", "n", title = "Module 1 row counts by processing stage")),
     .qc_section("Predicted TFBS Chunks", paste0(
-      .qc_bar_svg(pred_manifest, "chunk_id", "n_rows", title = "Predicted TFBS rows per chunk"),
+      .qc_lollipop_svg(pred_manifest, "chunk_id", "n_rows", title = "Predicted TFBS rows per chunk"),
       .qc_table_html(pred_manifest, max_rows = 25L)
     )),
     .qc_section("Prediction Output Integrity", paste0(
@@ -699,24 +1067,29 @@ build_module1_qc_report <- function(module1,
       .qc_table_html(manifest_checks, max_rows = 25L)
     )),
     .qc_section("Top Predicted TFs", paste0(
-      .qc_bar_svg(predicted_scan$tf_summary, "tf", "n_predicted_tfbs", title = "Top TFs by predicted TFBS rows"),
+      predicted_tf_plots,
       .qc_table_html(predicted_scan$tf_summary, max_rows = top_n)
     )),
     .qc_section("Top Predicted FPs", paste0(
-      .qc_bar_svg(predicted_scan$fp_summary, "fp_id", "n_predicted_tfbs", title = "Top FPs by predicted TFBS rows"),
+      fp_plots,
       .qc_table_html(predicted_scan$fp_summary, max_rows = top_n)
     )),
     .qc_section("Correlation Diagnostics", paste0(
-      .qc_hist_svg(canonical_corr$best_r, title = "Motif-supported best r distribution", bins = 40L),
-      .qc_hist_svg(prediction_corr$best_r, title = "Prediction best r distribution", bins = 40L),
+      correlation_plots,
       .qc_table_html(dplyr::bind_rows(canonical_corr$summary, prediction_corr$summary), max_rows = 20L)
     )),
     .qc_section("Condition Support", paste0(
-      .qc_bar_svg(predicted_scan$condition_support, "condition_support", "n_predicted_tfbs", title = "Predicted TFBS by condition support"),
+      .qc_plot_grid(
+        .qc_lollipop_svg(predicted_scan$condition_support, "condition_support", "n_predicted_tfbs", title = "Predicted TFBS by condition support"),
+        .qc_metric_heatmap_svg(predicted_scan$condition_support, "condition_support", c("n_predicted_tfbs"), title = "Condition-support heatmap")
+      ),
       .qc_table_html(predicted_scan$condition_support, max_rows = 20L)
     )),
     .qc_section("Motif Complexity", paste0(
-      .qc_hist_svg(motif_complexity$values, title = "TFs per aligned FP from canonical motif support", bins = 30L),
+      .qc_plot_grid(
+        .qc_density_svg(motif_complexity$values, title = "TFs per aligned FP from canonical motif support"),
+        .qc_cumulative_svg(motif_complexity$values, title = "Cumulative TF multiplicity per FP")
+      ),
       .qc_table_html(motif_complexity$summary, max_rows = 10L)
     )),
     .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
@@ -738,8 +1111,12 @@ build_module1_qc_report <- function(module1,
   man <- module2$manifest
   if (!is.data.frame(man) || !nrow(man)) return(tibble::tibble())
   hit <- man[as.character(man$table) == name, , drop = FALSE]
-  if (!nrow(hit) || !identical(as.character(hit$format[[1L]]), "manifest")) return(tibble::tibble())
-  .qc_read_manifest_chunks(as.character(hit$path[[1L]]))
+  if (!nrow(hit)) return(tibble::tibble())
+  if (identical(as.character(hit$format[[1L]]), "manifest")) {
+    return(.qc_read_manifest_chunks(as.character(hit$path[[1L]])))
+  }
+  hit$chunk_id <- seq_len(nrow(hit))
+  tibble::as_tibble(hit[, intersect(c("chunk_id", "path", "format", "n_rows"), names(hit)), drop = FALSE])
 }
 
 .module2_qc_scan_candidates <- function(module2, bins = 40L, verbose = TRUE) {
@@ -1174,27 +1551,85 @@ build_module2_qc_report <- function(module2,
     condition_scan = condition_scan
   )
   related <- .module2_qc_related_html(module2_dir, output_dir)
+  tf_corr_plots <- .qc_plot_grid(
+    .qc_density_svg(tf_corr_scan$best_r, title = "TF-target best r density"),
+    .qc_scatter_svg(
+      tf_corr_scan$top,
+      x_col = "n_unique_partner",
+      y_col = "n_pass",
+      label_col = "tf",
+      size_col = "median_best_r",
+      title = "TF-target passing breadth"
+    ),
+    .qc_metric_heatmap_svg(
+      tf_corr_scan$top,
+      row_col = "tf",
+      value_cols = c("n_pass", "n_unique_partner", "median_best_r"),
+      title = "Top TF-target correlation metrics"
+    )
+  )
+  fp_corr_plots <- .qc_plot_grid(
+    .qc_density_svg(fp_corr_scan$best_r, title = "FP-target best r density"),
+    .qc_scatter_svg(
+      fp_corr_scan$top,
+      x_col = "n_unique_partner",
+      y_col = "n_pass",
+      label_col = "fp_id",
+      size_col = "median_best_r",
+      title = "FP-target passing breadth"
+    ),
+    .qc_metric_heatmap_svg(
+      fp_corr_scan$top,
+      row_col = "fp_id",
+      value_cols = c("n_pass", "n_unique_partner", "median_best_r"),
+      title = "Top FP-target correlation metrics"
+    )
+  )
+  candidate_plots <- .qc_plot_grid(
+    .qc_density_svg(candidate_scan$distance_values, title = "Candidate signed distance density"),
+    .qc_cumulative_svg(abs(candidate_scan$distance_values), title = "Cumulative absolute distance to TSS"),
+    .qc_metric_heatmap_svg(
+      candidate_scan$source_summary,
+      row_col = "candidate_source",
+      value_cols = c("n_candidates", "n_fp", "n_target_genes", "n_prior_supported", "median_abs_distance_to_tss", "p95_abs_distance_to_tss"),
+      title = "Candidate source evidence matrix"
+    )
+  )
+  final_link_plots <- .qc_plot_grid(
+    .qc_scatter_svg(
+      link_scan$top_tf,
+      x_col = "n_target_genes",
+      y_col = "n_links",
+      label_col = "tf",
+      size_col = "n_fp",
+      title = "Final-link breadth by TF"
+    ),
+    .qc_metric_heatmap_svg(
+      link_scan$top_tf,
+      row_col = "tf",
+      value_cols = c("n_links", "n_fp", "n_target_genes"),
+      title = "Top final-link TF metrics"
+    ),
+    .qc_lollipop_svg(link_scan$top_tf, "tf", "n_links", title = "Top TFs by final links")
+  )
   sections <- list(
     .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
     .qc_section("Input Handoff", .qc_cards_html(input_cards)),
-    .qc_section("Workflow Funnel", .qc_bar_svg(funnel, "step", "n", title = "Module 2 row counts by processing stage")),
+    .qc_section("Workflow Funnel", .qc_flow_svg(funnel, "step", "n", title = "Module 2 relational flow")),
     .qc_section("TF-Target Correlation QC", paste0(
       .qc_table_html(tf_corr_scan$summary, max_rows = 10L),
-      .qc_hist_svg(tf_corr_scan$best_r, title = "TF-target best r distribution", bins = 40L),
-      .qc_bar_svg(tf_corr_scan$top, "tf", "n_pass", title = "Top TFs by passing TF-target pairs"),
+      tf_corr_plots,
       .qc_table_html(tf_corr_scan$top, max_rows = top_n)
     )),
     .qc_section("Candidate Source QC", paste0(
-      .qc_hist_svg(candidate_scan$distance_values, title = "Candidate FP distance to target TSS", bins = 60L),
-      .qc_bar_svg(candidate_scan$source_summary, "candidate_source", "n_candidates", title = "FP-target candidates by source"),
+      candidate_plots,
       .qc_table_html(candidate_scan$source_summary, max_rows = 20L),
       .qc_table_html(candidate_scan$integrity, max_rows = 10L)
     )),
     .qc_section("FP-Target Correlation QC", paste0(
       .qc_table_html(fp_corr_scan$summary, max_rows = 10L),
-      .qc_hist_svg(fp_corr_scan$best_r, title = "FP-target best r distribution", bins = 40L),
-      .qc_bar_svg(fp_corr_scan$top, "fp_id", "n_pass", title = "Top FPs by passing FP-target pairs"),
+      fp_corr_plots,
       .qc_table_html(fp_corr_scan$top, max_rows = top_n)
     )),
     .qc_section("Integrity Checks", paste0(
@@ -1203,21 +1638,30 @@ build_module2_qc_report <- function(module2,
       .qc_table_html(manifest_checks, max_rows = 20L)
     )),
     .qc_section("Candidate Distance To TSS", paste0(
-      .qc_hist_svg(candidate_scan$distance_values, title = "Candidate FP distance to target TSS", bins = 60L),
+      .qc_plot_grid(
+        .qc_density_svg(candidate_scan$distance_values, title = "Signed FP to target TSS distance"),
+        .qc_cumulative_svg(abs(candidate_scan$distance_values), title = "Absolute distance cumulative curve")
+      ),
       .qc_table_html(candidate_scan$source_summary, max_rows = 20L)
     )),
     .qc_section("Top TFs In Final Links", paste0(
-      .qc_bar_svg(link_scan$top_tf, "tf", "n_links", title = "Top TFs by final Module 2 links"),
+      final_link_plots,
       .qc_table_html(link_scan$top_tf, max_rows = top_n)
     )),
     .qc_section("Top Targets And FPs In Final Links", paste0(
-      .qc_bar_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links"),
+      .qc_plot_grid(
+        .qc_lollipop_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links"),
+        .qc_lollipop_svg(link_scan$top_fp, "fp_id", "n_links", title = "Top FPs by final links")
+      ),
       .qc_table_html(link_scan$top_target, max_rows = top_n),
-      .qc_bar_svg(link_scan$top_fp, "fp_id", "n_links", title = "Top FPs by final links"),
       .qc_table_html(link_scan$top_fp, max_rows = top_n)
     )),
     .qc_section("Condition Activity QC", paste0(
-      .qc_bar_svg(condition_scan$summary, "condition", "n_active", title = "Active Module 2 links by condition"),
+      .qc_plot_grid(
+        .qc_lollipop_svg(condition_scan$summary, "condition", "n_active", title = "Active Module 2 links by condition"),
+        .qc_metric_heatmap_svg(condition_scan$summary, "condition", c("n_rows", "n_active"), title = "Condition activity matrix"),
+        .qc_metric_heatmap_svg(condition_scan$signal_summary, "metric", c("median_active_value"), title = "Active-link signal medians")
+      ),
       .qc_table_html(condition_scan$summary, max_rows = top_n),
       .qc_table_html(condition_scan$signal_summary, max_rows = 20L)
     )),

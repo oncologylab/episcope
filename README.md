@@ -112,7 +112,7 @@ Primary package functions:
   inputs from a YAML configuration file.
 - `predict_tfbs()` performs direct-bound footprint filtering and TF binding site
   prediction across matched conditions.
-- `build_module1_qc_report()` writes an HTML QC report for run parameters, input gates, canonical support, correlation diagnostics, predicted TFBS chunk integrity, top TFs/FPs, condition support, warning checks, and related Module 1 artifacts.
+- `build_module1_qc_report()` writes an HTML QC report for run parameters, input gates, canonical support, correlation diagnostics, predicted TFBS chunk integrity, top TFs/FPs, condition support, warning checks, and related Module 1 artifacts. The report uses multiple static plot types, including processing funnels, density curves, scatter summaries, heatmaps, lollipop rank plots, and cumulative curves.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg" alt="Module 1 workflow" width="800">
 
@@ -126,7 +126,7 @@ footprint or peak signal, and cross-condition correlation evidence.
 Primary package functions:
 
 - `link_tf_targets()` connects predicted TFBS to target genes using TF-target and FP-target correlations.
-- `build_module2_qc_report()` writes an HTML QC report for compact handoff checks, TF-target and FP-target filters, candidate source and distance-to-TSS evidence, final-link integrity, condition activity, warning checks, top TF/target/FP summaries, and related browser reports.
+- `build_module2_qc_report()` writes an HTML QC report for compact handoff checks, TF-target and FP-target filters, candidate source and distance-to-TSS evidence, final-link integrity, condition activity, warning checks, top TF/target/FP summaries, and related browser reports. The report combines relational flow diagrams, density and cumulative distance plots, scatter summaries, heatmaps, and lollipop rank plots.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg" alt="Module 2 workflow" width="800">
 

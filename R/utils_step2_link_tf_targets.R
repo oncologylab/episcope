@@ -57,8 +57,8 @@
   best <- .module1_best_corr(x$pearson_r, x$spearman_r)
   x$best_r <- best$best_r
   x$best_method <- best$best_method
-  use_p <- x$best_method == "pearson"
-  use_s <- x$best_method == "spearman"
+  use_p <- !is.na(x$best_method) & x$best_method == "pearson"
+  use_s <- !is.na(x$best_method) & x$best_method == "spearman"
   x$best_p <- NA_real_
   x$best_fdr <- NA_real_
   x$best_p[use_p] <- x$pearson_p[use_p]

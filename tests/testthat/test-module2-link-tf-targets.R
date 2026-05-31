@@ -42,6 +42,27 @@ test_that("Module 2 computes TF-target first and restricts FP-target candidates"
   expect_true(all(res$links$module2_link_pass))
 })
 
+test_that("Module 2 correlation cutoffs tolerate rows without a best method", {
+  x <- tibble::tibble(
+    tf = c("TF_A", "TF_B"),
+    target_gene = c("GENE_A", "GENE_B"),
+    pearson_r = c(0.9, NA_real_),
+    pearson_p = c(0.01, NA_real_),
+    pearson_fdr = c(0.02, NA_real_),
+    spearman_r = c(0.8, NA_real_),
+    spearman_p = c(0.02, NA_real_),
+    spearman_fdr = c(0.03, NA_real_)
+  )
+
+  out <- .module2_apply_corr_cutoffs(x, list(r = 0.3, p = 0.05, fdr = NULL))
+
+  expect_true(out$pass[[1L]])
+  expect_false(out$pass[[2L]])
+  expect_equal(out$best_method[[1L]], "pearson")
+  expect_true(is.na(out$best_method[[2L]]))
+  expect_true(is.na(out$best_p[[2L]]))
+})
+
 test_that("Module 2 keeps regulatory-prior-only candidates outside TSS windows", {
   predicted_tfbs <- tibble::tibble(
     fp_id = "fp1",

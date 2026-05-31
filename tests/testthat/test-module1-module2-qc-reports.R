@@ -34,6 +34,11 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("Correctness Checks", page, fixed = TRUE))
   expect_true(grepl("Workflow Funnel", page, fixed = TRUE))
   expect_true(grepl("Canonical-supported predicted FP check: <span class=\"status-pass\">PASS</span>", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-funnel", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-density", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-scatter", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-heatmap", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
 })
 
 test_that("Module 2 QC report writes an HTML summary", {
@@ -90,4 +95,10 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Integrity Checks", page, fixed = TRUE))
   expect_true(grepl("Top TFs In Final Links", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-flow", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-density", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-cumulative", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-scatter", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-heatmap", page, fixed = TRUE))
+  expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
 })
