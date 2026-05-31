@@ -17,7 +17,7 @@
 //   - package-local Rcpp entrypoint
 //   - OpenMP document-parallel sampling
 //   - OpenMP-accelerated doc/word Metropolis-Hastings sampler
-//   - sequential warp_ref sampler for text2vec validation
+//   - sequential warp_ref sampler for fixed-seed legacy validation
 //   - no runtime dependency on text2vec
 //
 #include <Rcpp.h>
@@ -988,7 +988,7 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   std::uint64_t ref_seed1 = 0xCAFEBABEULL;
   if (sampler == "warp_ref") {
     if (ref_topic.isNull() || ref_proposal.isNull() || ref_seeds.isNull()) {
-      stop("warp_ref requires text2vec-style initial topics and RNG seeds.");
+      stop("warp_ref requires reference initial topics and RNG seeds.");
     }
     ref_topic_vec = as<IntegerVector>(ref_topic);
     ref_proposal_vec = as<IntegerVector>(ref_proposal);

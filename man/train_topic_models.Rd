@@ -105,12 +105,12 @@ train_topic_models(
 
 \item{warplda_sampler}{Native WarpLDA sampler. `"warp_omp"` is the default
 OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
-the slower sequential reference sampler for text2vec validation,
+the slower sequential fixed-seed reference sampler,
 `"warp_mh"` is the earlier CraftGRN approximation, and `"gibbs_sync"` is
 the faster deterministic collapsed sampler.}
 
 \item{warplda_beta}{Topic-word prior for native WarpLDA. NULL uses `1/K`,
-matching the text2vec default.}
+matching the legacy WarpLDA default.}
 
 \item{reuse_if_exists}{Reuse existing model outputs when all requested K
 values are present.}

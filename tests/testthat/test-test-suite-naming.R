@@ -24,3 +24,26 @@ test_that("test case names describe package behavior", {
   expect_false(any(grepl("^multiplication works$|^.* works$", descriptions)))
   expect_false(any(grepl("obsolete|deprecated|legacy placeholder", descriptions, ignore.case = TRUE)))
 })
+
+test_that("package tests do not require text2vec", {
+  files <- list.files(testthat::test_path(), pattern = "^[a-z0-9-]+[.]R$", full.names = TRUE)
+  lines <- unlist(lapply(files, readLines, warn = FALSE), use.names = FALSE)
+  package_name <- "text2vec"
+  forbidden <- c(
+    paste0("skip_if_not_installed(\"", package_name, "\")"),
+    paste0("asNamespace(\"", package_name, "\")"),
+    paste0("requireNamespace(\"", package_name, "\""),
+    paste0(package_name, "::"),
+    paste0("library(", package_name, ")"),
+    paste0("require(", package_name, ")")
+  )
+  hits <- unlist(lapply(forbidden, grep, x = lines, value = TRUE, fixed = TRUE), use.names = FALSE)
+  expect_length(hits, 0L)
+})
+
+test_that("package DESCRIPTION does not depend on text2vec", {
+  desc <- as.list(utils::packageDescription("craftgrn"))
+  dependency_fields <- intersect(c("Depends", "Imports", "Suggests", "Enhances", "LinkingTo"), names(desc))
+  dependency_text <- paste(unlist(desc[dependency_fields], use.names = FALSE), collapse = "\n")
+  expect_false(grepl("text2vec", dependency_text, fixed = TRUE))
+})

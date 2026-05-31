@@ -130,49 +130,6 @@ test_that("native WarpLDA supports warp_ref reference sampler", {
   expect_probability_matrix(fit$phi, 3L, ncol(dtm))
 })
 
-test_that("native warp_ref matches text2vec on a fixed-seed tiny DTM", {
-  skip_if_not_installed("text2vec")
-  dtm <- make_native_warplda_dtm()
-  K <- 3L
-  iterations <- 5L
-  n_iter_inference <- 3L
-
-  fit <- fit_warplda_one(
-    dtm,
-    K = K,
-    iterations = iterations,
-    alpha = 50 / K,
-    beta = NULL,
-    seed = 123L,
-    n_check_convergence = 0L,
-    n_iter_inference = n_iter_inference,
-    n_threads = 4L,
-    sampler = "warp_ref",
-    progressbar = FALSE
-  )
-
-  set.seed(123L)
-  text2vec_namespace <- asNamespace("text2vec")
-  lda_constructor <- get("LatentDirichletAllocation", envir = text2vec_namespace)
-  lda <- lda_constructor$new(
-    n_topics = K,
-    doc_topic_prior = 50 / K,
-    topic_word_prior = 1 / K,
-    n_iter_inference = n_iter_inference
-  )
-  theta <- lda$fit_transform(
-    dtm,
-    n_iter = iterations,
-    convergence_tol = -1,
-    n_check_convergence = iterations + 1L,
-    progressbar = FALSE
-  )
-
-  expect_equal(unname(fit$theta), unname(as.matrix(theta)), tolerance = 1e-12)
-  expect_equal(unname(fit$phi), unname(lda$topic_word_distribution), tolerance = 1e-12)
-  expect_identical(fit$metrics$threads, 1L)
-})
-
 test_that("native warp_omp sampler is thread-count invariant", {
   dtm <- make_native_warplda_dtm()
   n_threads <- min(4L, .warplda_default_threads())

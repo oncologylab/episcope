@@ -7736,11 +7736,11 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param backend Topic model backend, either `"vae"` or `"warplda"`.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
-#'   the slower sequential reference sampler for text2vec validation,
+#'   the slower sequential fixed-seed reference sampler,
 #'   `"warp_mh"` is the earlier CraftGRN approximation, and `"gibbs_sync"` is
 #'   the faster deterministic collapsed sampler.
 #' @param warplda_beta Topic-word prior for native WarpLDA. NULL uses `1/K`,
-#'   matching the text2vec default.
+#'   matching the legacy WarpLDA default.
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
