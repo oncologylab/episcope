@@ -16,13 +16,11 @@ Imports:
     future,
     future.apply,
     ggplot2,
-    golem,
     jsonlite,
     magrittr,
     methods,
     readr,
     Rcpp,
-    shiny,
     tibble,
     tidyr,
     yaml
@@ -34,6 +32,7 @@ Suggests:
     EnsDb.Hsapiens.v86,
     EnsDb.Mmusculus.v79,
     fgsea,
+    golem,
     ggraph,
     ggrepel,
     gtable,
@@ -51,10 +50,14 @@ Suggests:
     rmarkdown,
     rstudioapi,
     scales,
+    shiny,
     spelling,
     testthat,
     withr
 VignetteBuilder: knitr
+SystemRequirements: Optional Shiny app support on Linux may require libuv
+    headers, for example libuv1-dev, or cmake for bundled libuv builds in
+    transitive dependencies.
 Config/testthat/edition: 3
 Encoding: UTF-8
 Language: en-US

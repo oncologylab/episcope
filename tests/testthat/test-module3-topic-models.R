@@ -36,6 +36,12 @@ test_that("condition doc_tf applies condition thresholds and TF self terms", {
   expect_false("PEAK:P2" %in% cond_terms)
 })
 
+test_that("WarpLDA one-option runner exposes pathway dotplot control", {
+  fmls <- names(formals(run_tfdocs_warplda_one_option))
+  expect_true("pathway_make_heatmap" %in% fmls)
+  expect_true("pathway_make_dotplot" %in% fmls)
+})
+
 test_that("condition document terms use one condition-specific value per term", {
   edges <- data.table::data.table(
     condition_label = rep("CondA", 4),

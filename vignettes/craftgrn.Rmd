@@ -26,7 +26,7 @@ three modules:
 The full pipeline is designed around a project YAML file that records paths,
 sample metadata, threshold values, genome settings, and output directories.
 
-```{r install}
+```{r install, eval=FALSE, purl=FALSE}
 remotes::install_github("oncologylab/craftgrn")
 library(craftgrn)
 ```

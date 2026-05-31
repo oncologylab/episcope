@@ -8,30 +8,29 @@
 #'
 #' @examples
 #' list_to_li(c("a", "b"))
-#' @importFrom shiny tags tagAppendAttributes tagList
 list_to_li <- function(list, class = NULL) {
   if (is.null(class)) {
-    tagList(
+    shiny::tagList(
       lapply(
         list,
-        tags$li
+        shiny::tags$li
       )
     )
   } else {
     res <- lapply(
       list,
-      tags$li
+      shiny::tags$li
     )
     res <- lapply(
       res,
       function(x) {
-        tagAppendAttributes(
+        shiny::tagAppendAttributes(
           x,
           class = class
         )
       }
     )
-    tagList(res)
+    shiny::tagList(res)
   }
 }
 #' Turn an R list into corresponding HTML paragraph tags
@@ -44,41 +43,40 @@ list_to_li <- function(list, class = NULL) {
 #'
 #' @examples
 #' list_to_p(c("This is the first paragraph", "this is the second paragraph"))
-#' @importFrom shiny tags tagAppendAttributes tagList
 #'
 list_to_p <- function(list, class = NULL) {
   if (is.null(class)) {
-    tagList(
+    shiny::tagList(
       lapply(
         list,
-        tags$p
+        shiny::tags$p
       )
     )
   } else {
     res <- lapply(
       list,
-      tags$p
+      shiny::tags$p
     )
     res <- lapply(
       res,
       function(x) {
-        tagAppendAttributes(
+        shiny::tagAppendAttributes(
           x,
           class = class
         )
       }
     )
-    tagList(res)
+    shiny::tagList(res)
   }
 }
 
-#' @importFrom shiny tags tagAppendAttributes tagList
+#' @noRd
 named_to_li <- function(list, class = NULL) {
   if (is.null(class)) {
     res <- mapply(
       function(x, y) {
-        tags$li(
-          HTML(
+        shiny::tags$li(
+          shiny::HTML(
             sprintf("<b>%s:</b> %s", y, x)
           )
         )
@@ -87,12 +85,12 @@ named_to_li <- function(list, class = NULL) {
       names(list),
       SIMPLIFY = FALSE
     )
-    tagList(res)
+    shiny::tagList(res)
   } else {
     res <- mapply(
       function(x, y) {
-        tags$li(
-          HTML(
+        shiny::tags$li(
+          shiny::HTML(
             sprintf("<b>%s:</b> %s", y, x)
           )
         )
@@ -104,13 +102,13 @@ named_to_li <- function(list, class = NULL) {
     res <- lapply(
       res,
       function(x) {
-        tagAppendAttributes(
+        shiny::tagAppendAttributes(
           x,
           class = class
         )
       }
     )
-    tagList(res)
+    shiny::tagList(res)
   }
 }
 
@@ -146,7 +144,6 @@ tagRemoveAttributes <- function(tag, ...) {
 #' undisplay(a)
 #' b <- shiny::actionButton("go_filter", "go")
 #' undisplay(b)
-#' @importFrom shiny tagList
 undisplay <- function(tag) {
   # if not already hidden
   if (
@@ -163,7 +160,7 @@ undisplay <- function(tag) {
   tag
 }
 
-#' @importFrom shiny tagList
+#' @noRd
 display <- function(tag) {
   if (
     !is.null(tag$attribs$style) &&
@@ -184,9 +181,8 @@ display <- function(tag) {
 #'
 #' @noRd
 #'
-#' @importFrom shiny tags
 jq_hide <- function(id) {
-  tags$script(sprintf("$('#%s').hide()", id))
+  shiny::tags$script(sprintf("$('#%s').hide()", id))
 }
 
 #' Add a red star at the end of the text
@@ -201,10 +197,9 @@ jq_hide <- function(id) {
 #'
 #' @examples
 #' with_red_star("Enter your name here")
-#' @importFrom shiny tags HTML
 with_red_star <- function(text) {
   shiny::tags$span(
-    HTML(
+    shiny::HTML(
       paste0(
         text,
         shiny::tags$span(
@@ -227,9 +222,8 @@ with_red_star <- function(text) {
 #'
 #' @examples
 #' rep_br(5)
-#' @importFrom shiny HTML
 rep_br <- function(times = 1) {
-  HTML(rep("<br/>", times = times))
+  shiny::HTML(rep("<br/>", times = times))
 }
 
 #' Create an url
@@ -242,9 +236,8 @@ rep_br <- function(times = 1) {
 #'
 #' @examples
 #' enurl("https://www.thinkr.fr", "ThinkR")
-#' @importFrom shiny tags
 enurl <- function(url, text) {
-  tags$a(href = url, text)
+  shiny::tags$a(href = url, text)
 }
 
 #' Columns wrappers
@@ -254,48 +247,47 @@ enurl <- function(url, text) {
 #'
 #' @noRd
 #'
-#' @importFrom shiny column
 col_12 <- function(...) {
-  column(12, ...)
+  shiny::column(12, ...)
 }
 
-#' @importFrom shiny column
+#' @noRd
 col_10 <- function(...) {
-  column(10, ...)
+  shiny::column(10, ...)
 }
 
-#' @importFrom shiny column
+#' @noRd
 col_8 <- function(...) {
-  column(8, ...)
+  shiny::column(8, ...)
 }
 
-#' @importFrom shiny column
+#' @noRd
 col_6 <- function(...) {
-  column(6, ...)
+  shiny::column(6, ...)
 }
 
 
-#' @importFrom shiny column
+#' @noRd
 col_4 <- function(...) {
-  column(4, ...)
+  shiny::column(4, ...)
 }
 
 
-#' @importFrom shiny column
+#' @noRd
 col_3 <- function(...) {
-  column(3, ...)
+  shiny::column(3, ...)
 }
 
 
-#' @importFrom shiny column
+#' @noRd
 col_2 <- function(...) {
-  column(2, ...)
+  shiny::column(2, ...)
 }
 
 
-#' @importFrom shiny column
+#' @noRd
 col_1 <- function(...) {
-  column(1, ...)
+  shiny::column(1, ...)
 }
 
 
@@ -313,21 +305,19 @@ col_1 <- function(...) {
 #'
 #' @examples
 #' if (interactive()) {
-#'   library(shiny)
+#'   link <- shiny::tags$a(href = "#", "My super link", style = "color: lightblue;")
 #'
-#'   link <- a(href = "#", "My super link", style = "color: lightblue;")
-#'
-#'   ui <- fluidPage(
+#'   ui <- shiny::fluidPage(
 #'     make_action_button(link, inputId = "mylink")
 #'   )
 #'
 #'   server <- function(input, output, session) {
-#'     observeEvent(input$mylink, {
-#'       showNotification("Pouic!")
+#'     shiny::observeEvent(input$mylink, {
+#'       shiny::showNotification("Pouic!")
 #'     })
 #'   }
 #'
-#'   shinyApp(ui, server)
+#'   shiny::shinyApp(ui, server)
 #' }
 make_action_button <- function(tag, inputId = NULL) {
   # some obvious checks
@@ -383,7 +373,7 @@ make_action_button <- function(tag, inputId = NULL) {
 # #'
 # #' @importFrom rmarkdown render
 # #' @importFrom markdown markdownToHTML
-# #' @importFrom shiny HTML
+# #' Uses shiny::HTML.
 # includeRMarkdown <- function(path){
 #
 #   md <- tempfile(fileext = '.md')

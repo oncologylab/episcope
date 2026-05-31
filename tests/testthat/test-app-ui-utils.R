@@ -1,3 +1,5 @@
+testthat::skip_if_not_installed("shiny")
+
 test_that("with_red_star marks required UI labels", {
   expect_s3_class(with_red_star("golem"), "shiny.tag")
   expect_equal(
@@ -93,16 +95,16 @@ test_that("undisplay hides tags without dropping existing attributes", {
 
   b <- shiny::actionButton("go_filter", "go")
   expect_s3_class(b, "shiny.tag")
-  expect_equal(
-    as.character(b),
-    '<button id="go_filter" type="button" class="btn btn-default action-button">go</button>'
-  )
+  expect_equal(b$name, "button")
+  expect_equal(b$attribs$id, "go_filter")
+  expect_true(grepl("action-button", b$attribs$class, fixed = TRUE))
+  expect_true(grepl("go", as.character(b), fixed = TRUE))
   b_undisplay <- undisplay(b)
-  expect_s3_class(b, "shiny.tag")
-  expect_equal(
-    as.character(b_undisplay),
-    '<button id="go_filter" type="button" class="btn btn-default action-button" style="display: none;">go</button>'
-  )
+  expect_s3_class(b_undisplay, "shiny.tag")
+  expect_equal(b_undisplay$attribs$id, "go_filter")
+  expect_true(grepl("action-button", b_undisplay$attribs$class, fixed = TRUE))
+  expect_equal(b_undisplay$attribs$style, "display: none;")
+  expect_true(grepl("go", as.character(b_undisplay), fixed = TRUE))
 
   c <- shiny::tags$p(src = "plop", style = "some_style", "pouet")
   expect_s3_class(c, "shiny.tag")
@@ -178,7 +180,7 @@ test_that("column wrappers create Bootstrap grid containers", {
 })
 
 test_that("make_action_button converts compatible tags into Shiny action buttons", {
-  tmp_tag <- a(href = "#", "My super link", style = "color: lightblue;")
+  tmp_tag <- shiny::tags$a(href = "#", "My super link", style = "color: lightblue;")
   button <- make_action_button(
     tmp_tag,
     inputId = "mylink"

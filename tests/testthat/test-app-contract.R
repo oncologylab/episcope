@@ -1,3 +1,6 @@
+testthat::skip_if_not_installed("shiny")
+testthat::skip_if_not_installed("golem")
+
 test_that("app_ui returns a Shiny tag list and keeps request argument", {
   ui <- app_ui()
   golem::expect_shinytaglist(ui)

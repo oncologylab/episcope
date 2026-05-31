@@ -47,3 +47,21 @@ test_that("package DESCRIPTION does not depend on text2vec", {
   dependency_text <- paste(unlist(desc[dependency_fields], use.names = FALSE), collapse = "\n")
   expect_false(grepl("text2vec", dependency_text, fixed = TRUE))
 })
+
+test_that("Shiny app packages stay optional dependencies", {
+  desc <- as.list(utils::packageDescription("craftgrn"))
+  imports <- desc$Imports %||% ""
+  suggests <- desc$Suggests %||% ""
+
+  expect_false(grepl("shiny", imports, fixed = TRUE))
+  expect_false(grepl("golem", imports, fixed = TRUE))
+  expect_true(grepl("shiny", suggests, fixed = TRUE))
+  expect_true(grepl("golem", suggests, fixed = TRUE))
+
+  namespace_file <- system.file("NAMESPACE", package = "craftgrn")
+  expect_true(nzchar(namespace_file))
+  namespace_lines <- readLines(namespace_file, warn = FALSE)
+  expect_false(any(grepl("import(shiny)", namespace_lines, fixed = TRUE)))
+  expect_false(any(grepl("importFrom(shiny", namespace_lines, fixed = TRUE)))
+  expect_false(any(grepl("importFrom(golem", namespace_lines, fixed = TRUE)))
+})

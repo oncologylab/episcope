@@ -42,6 +42,82 @@ test_that("Module 2 computes TF-target first and restricts FP-target candidates"
   expect_true(all(res$links$module2_link_pass))
 })
 
+test_that("Module 2 keeps regulatory-prior-only candidates outside TSS windows", {
+  predicted_tfbs <- tibble::tibble(
+    fp_id = "fp1",
+    tf = "TF_A",
+    chr = "chr1",
+    start = 100L,
+    end = 120L,
+    atac_peak = "chr1:90-160"
+  )
+  tf_target_pass <- tibble::tibble(tf = "TF_A", target_gene = "GENE_FAR")
+  gene_tss <- tibble::tibble(
+    target_gene = "GENE_FAR",
+    target_chr = "chr1",
+    target_tss = 1000000L,
+    target_strand = "+"
+  )
+  regulatory_prior <- tibble::tibble(
+    fp_id = "fp1",
+    target_gene = "GENE_FAR",
+    prior_id = "prior1",
+    prior_source = "test_prior",
+    prior_score = 0.9,
+    prior_status = "supported"
+  )
+
+  candidates <- .module2_build_candidates(
+    predicted_tfbs = predicted_tfbs,
+    tf_target_pass = tf_target_pass,
+    gene_tss = gene_tss,
+    regulatory_prior = regulatory_prior,
+    max_distance_bp = 100L
+  )
+
+  expect_equal(nrow(candidates), 1L)
+  expect_equal(candidates$candidate_source, "regulatory_prior")
+  expect_false(candidates$within_tss_window)
+  expect_true(candidates$prior_supported)
+  expect_equal(candidates$prior_id, "prior1")
+  expect_equal(candidates$prior_source, "test_prior")
+  expect_equal(candidates$distance_to_tss, -999890)
+})
+
+test_that("Module 2 empty FP-target candidate sets keep the standard schema", {
+  predicted_tfbs <- tibble::tibble(
+    fp_id = "fp1",
+    tf = "TF_A",
+    chr = "chr1",
+    start = 100L,
+    end = 120L,
+    atac_peak = "chr1:90-160"
+  )
+  tf_target_pass <- tibble::tibble(tf = "TF_A", target_gene = "GENE_FAR")
+  gene_tss <- tibble::tibble(
+    target_gene = "GENE_FAR",
+    target_chr = "chr1",
+    target_tss = 1000000L,
+    target_strand = "+"
+  )
+
+  candidates <- .module2_build_candidates(
+    predicted_tfbs = predicted_tfbs,
+    tf_target_pass = tf_target_pass,
+    gene_tss = gene_tss,
+    max_distance_bp = 100L
+  )
+
+  expect_equal(nrow(candidates), 0L)
+  expect_true(all(c(
+    "candidate_id", "fp_id", "target_gene", "chr", "start", "end",
+    "atac_peak", "target_chr", "target_tss", "target_strand",
+    "distance_to_tss", "candidate_source", "within_tss_window",
+    "prior_supported", "prior_id", "prior_source", "prior_score",
+    "prior_status"
+  ) %in% names(candidates)))
+})
+
 
 test_that("Module 2 streams predicted TFBS manifests", {
   omics <- list(

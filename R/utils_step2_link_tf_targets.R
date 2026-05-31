@@ -156,66 +156,131 @@
   unique(prior[, c("fp_id", "target_gene", "prior_id", "prior_source", "prior_score", "prior_status"), drop = FALSE])
 }
 
+.module2_empty_candidates <- function() {
+  tibble::tibble(
+    candidate_id = character(),
+    fp_id = character(),
+    target_gene = character(),
+    chr = character(),
+    start = integer(),
+    end = integer(),
+    atac_peak = character(),
+    target_chr = character(),
+    target_tss = integer(),
+    target_strand = character(),
+    distance_to_tss = numeric(),
+    candidate_source = character(),
+    within_tss_window = logical(),
+    prior_supported = logical(),
+    prior_id = character(),
+    prior_source = character(),
+    prior_score = numeric(),
+    prior_status = character()
+  )
+}
 
 .module2_build_candidates <- function(predicted_tfbs, tf_target_pass, gene_tss, regulatory_prior = NULL, max_distance_bp = 100000, id_offset = 0L) {
+  empty <- .module2_empty_candidates()
   if (!nrow(predicted_tfbs) || !nrow(tf_target_pass)) {
-    return(tibble::tibble(candidate_id = character(), fp_id = character(), target_gene = character(), chr = character(), start = integer(), end = integer(), atac_peak = character(), target_chr = character(), target_tss = integer(), target_strand = character(), distance_to_tss = numeric(), candidate_source = character(), within_tss_window = logical(), prior_supported = logical(), prior_id = character(), prior_source = character(), prior_score = numeric(), prior_status = character()))
+    return(empty)
   }
   pred <- data.table::as.data.table(predicted_tfbs[, c("fp_id", "tf", "chr", "start", "end", "atac_peak"), drop = FALSE])
   pred <- unique(pred[!is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf) & !is.na(chr) & is.finite(start) & is.finite(end)])
-  if (!nrow(pred)) return(tibble::tibble())
+  if (!nrow(pred)) return(empty)
   pred[, fp_center := as.integer(floor((as.integer(start) + as.integer(end)) / 2))]
   pred[, point_start := fp_center]
   pred[, point_end := fp_center]
 
   pass <- data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE])
   pass <- unique(pass[!is.na(tf) & nzchar(tf) & !is.na(target_gene) & nzchar(target_gene)])
-  gt <- data.table::as.data.table(gene_tss)
-  data.table::setnames(gt, c("target_chr"), c("chr"), skip_absent = TRUE)
-  gt <- unique(gt[target_gene %in% pass$target_gene & !is.na(chr) & is.finite(target_tss), .(target_gene, chr, target_tss, target_strand)])
-  if (!nrow(gt)) return(tibble::tibble())
-  gt[, window_start := pmax(0L, as.integer(target_tss - as.numeric(max_distance_bp)))]
-  gt[, window_end := as.integer(target_tss + as.numeric(max_distance_bp))]
-  pass_gt <- pass[gt, on = "target_gene", allow.cartesian = TRUE, nomatch = 0L]
-  if (!nrow(pass_gt)) return(tibble::tibble())
+  if (!nrow(pass)) return(empty)
 
-  fps <- pred[, .(fp_id, tf, chr, point_start, point_end, start, end, atac_peak)]
-  wins <- pass_gt[, .(tf, target_gene, chr, window_start, window_end, target_tss, target_strand)]
-  data.table::setkey(fps, tf, chr, point_start, point_end)
-  data.table::setkey(wins, tf, chr, window_start, window_end)
-  hit <- data.table::foverlaps(
-    fps,
-    wins,
-    by.x = c("tf", "chr", "point_start", "point_end"),
-    by.y = c("tf", "chr", "window_start", "window_end"),
-    type = "within",
-    nomatch = 0L
-  )
-  if (!nrow(hit)) return(tibble::tibble())
-  hit[, distance_to_tss := as.numeric(point_start) - as.numeric(target_tss)]
-  hit[target_strand == "-", distance_to_tss := -distance_to_tss]
-  hit[, within_tss_window := TRUE]
-  hit[, prior_supported := FALSE]
-  hit[, `:=`(prior_id = NA_character_, prior_source = NA_character_, prior_score = NA_real_, prior_status = NA_character_)]
-  hit[, candidate_source := "tss_window"]
-  cand <- unique(hit[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr = chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)])
+  gt_all <- data.table::as.data.table(gene_tss)
+  gt_all <- unique(gt_all[!is.na(target_gene) & nzchar(target_gene) & !is.na(target_chr) & is.finite(target_tss), .(target_gene, target_chr, target_tss, target_strand)])
+  cand_parts <- list()
+
+  gt <- data.table::copy(gt_all[target_gene %in% pass$target_gene])
+  if (nrow(gt)) {
+    data.table::setnames(gt, c("target_chr"), c("chr"), skip_absent = TRUE)
+    gt[, window_start := pmax(0L, as.integer(target_tss - as.numeric(max_distance_bp)))]
+    gt[, window_end := as.integer(target_tss + as.numeric(max_distance_bp))]
+    pass_gt <- pass[gt, on = "target_gene", allow.cartesian = TRUE, nomatch = 0L]
+
+    if (nrow(pass_gt)) {
+      fps <- pred[, .(fp_id, tf, chr, point_start, point_end, start, end, atac_peak)]
+      wins <- pass_gt[, .(tf, target_gene, chr, window_start, window_end, target_tss, target_strand)]
+      data.table::setkey(fps, tf, chr, point_start, point_end)
+      data.table::setkey(wins, tf, chr, window_start, window_end)
+      hit <- data.table::foverlaps(
+        fps,
+        wins,
+        by.x = c("tf", "chr", "point_start", "point_end"),
+        by.y = c("tf", "chr", "window_start", "window_end"),
+        type = "within",
+        nomatch = 0L
+      )
+
+      if (nrow(hit)) {
+        hit[, distance_to_tss := as.numeric(point_start) - as.numeric(target_tss)]
+        hit[target_strand == "-", distance_to_tss := -distance_to_tss]
+        hit[, within_tss_window := TRUE]
+        hit[, prior_supported := FALSE]
+        hit[, `:=`(prior_id = NA_character_, prior_source = NA_character_, prior_score = NA_real_, prior_status = NA_character_)]
+        hit[, candidate_source := "tss_window"]
+        cand_parts[[length(cand_parts) + 1L]] <- unique(hit[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr = chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)])
+      }
+    }
+  }
 
   prior <- .module2_normalize_prior(regulatory_prior, predicted_tfbs = predicted_tfbs)
   if (nrow(prior)) {
-    fp_meta <- unique(pred[, .(fp_id, chr, start, end, atac_peak, fp_center)])
+    fp_meta <- unique(pred[, .(fp_id, tf, chr, start, end, atac_peak, fp_center)])
     prior_dt <- data.table::as.data.table(prior)
-    prior_dt <- fp_meta[prior_dt, on = "fp_id", nomatch = 0L]
-    gt_prior <- data.table::as.data.table(gene_tss)
+    prior_dt <- fp_meta[prior_dt, on = "fp_id", allow.cartesian = TRUE, nomatch = 0L]
+    prior_dt <- pass[prior_dt, on = c("tf", "target_gene"), nomatch = 0L]
+    gt_prior <- data.table::copy(gt_all)
     prior_dt <- gt_prior[prior_dt, on = "target_gene", nomatch = 0L]
     if (nrow(prior_dt)) {
       d_genomic <- as.numeric(prior_dt$fp_center) - as.numeric(prior_dt$target_tss)
       prior_dt[, distance_to_tss := ifelse(as.character(target_strand) == "-", -d_genomic, d_genomic)]
-      prior_dt[, `:=`(candidate_source = "regulatory_prior", within_tss_window = is.finite(distance_to_tss) & abs(distance_to_tss) <= as.numeric(max_distance_bp), prior_supported = TRUE)]
-      prior_dt[within_tss_window %in% TRUE, candidate_source := "both"]
-      cand <- unique(data.table::rbindlist(list(cand, prior_dt[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)]), fill = TRUE))
+      prior_dt[, `:=`(
+        candidate_source = "regulatory_prior",
+        within_tss_window = is.finite(distance_to_tss) & abs(distance_to_tss) <= as.numeric(max_distance_bp),
+        prior_supported = TRUE
+      )]
+      cand_parts[[length(cand_parts) + 1L]] <- unique(prior_dt[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)])
     }
   }
-  cand <- unique(cand, by = c("fp_id", "target_gene"))
+
+  if (!length(cand_parts)) return(empty)
+  cand <- data.table::rbindlist(cand_parts, use.names = TRUE, fill = TRUE)
+  if (!nrow(cand)) return(empty)
+  cand$prior_supported_sort <- as.integer(cand$prior_supported %in% TRUE)
+  cand$within_tss_window_sort <- as.integer(cand$within_tss_window %in% TRUE)
+  cand <- cand[order(
+    cand$fp_id,
+    cand$target_gene,
+    -cand$prior_supported_sort,
+    -cand$within_tss_window_sort
+  )]
+  cand$prior_supported_sort <- NULL
+  cand$within_tss_window_sort <- NULL
+  cand <- data.table::as.data.table(cand)
+  cand <- cand[, {
+    within_any <- any(.SD$within_tss_window %in% TRUE)
+    prior_any <- any(.SD$prior_supported %in% TRUE)
+    x <- .SD[1L]
+    x[, `:=`(
+      within_tss_window = within_any,
+      prior_supported = prior_any
+    )]
+    x[, candidate_source := fifelse(
+      within_tss_window %in% TRUE & prior_supported %in% TRUE,
+      "both",
+      fifelse(within_tss_window %in% TRUE, "tss_window", "regulatory_prior")
+    )]
+    x
+  }, by = .(fp_id, target_gene)]
   cand[, candidate_id := sprintf("cand_%08d", as.integer(id_offset) + seq_len(.N))]
   data.table::setcolorder(cand, c("candidate_id", setdiff(names(cand), "candidate_id")))
   tibble::as_tibble(cand)

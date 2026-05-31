@@ -45,6 +45,7 @@ test_that("%|NA|% returns the fallback only for NA", {
 })
 
 test_that("rv and rvtl wrap Shiny reactive value helpers", {
+  testthat::skip_if_not_installed("shiny")
   expect_true(
     inherits(rv, "function")
   )
@@ -53,7 +54,7 @@ test_that("rv and rvtl wrap Shiny reactive value helpers", {
   )
 
   rv_test_1 <- rv(a = "a", b = 2)
-  rv_test_2 <- reactiveValues(a = "a", b = 2)
+  rv_test_2 <- shiny::reactiveValues(a = "a", b = 2)
   shiny::reactiveConsole(TRUE)
   expect_identical(rv_test_1$a, rv_test_2$a)
   expect_identical(rv_test_1$b, rv_test_2$b)
