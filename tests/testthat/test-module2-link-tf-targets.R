@@ -148,6 +148,43 @@ test_that("Module 2 streams predicted TFBS manifests", {
   expect_true(all(q$tf == "TF_A"))
 })
 
+test_that("Module 2 streams one deduplicated FP-target candidate universe", {
+  omics <- list(
+    fp_score_condition_qn = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1, 9), s2 = c(2, 8), s3 = c(8, 2), s4 = c(9, 1)),
+    fp_bound_condition = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1L, 1L), s2 = c(1L, 1L), s3 = c(1L, 1L), s4 = c(1L, 1L)),
+    fp_annotation = tibble::tibble(fp_peak = c("chr1:100-140", "chr1:500-540"), atac_peak = c("chr1:90-160", "chr1:490-560"), motifs = c("M_A", "M_B"), tfs = c("TF_A", "TF_B")),
+    rna_condition = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = c(1, 9, 1, 9), s2 = c(2, 8, 2, 8), s3 = c(8, 2, 8, 2), s4 = c(9, 1, 9, 1)),
+    rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
+    tf_list = c("TF_A", "TF_B")
+  )
+  compact <- as_multiomic_object(omics, verbose = FALSE)
+  pred_dir <- tempfile("predicted-tfbs-dedup-")
+  dir.create(pred_dir)
+  pred1 <- tibble::tibble(fp_id = "chr1:100-140", chr = "chr1", start = 100L, end = 140L, atac_peak = "chr1:90-160", tf = "TF_A")
+  pred2 <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_B", "TF_B"))
+  pred_path1 <- file.path(pred_dir, "module1_predicted_tfbs_chunk_0001.csv")
+  pred_path2 <- file.path(pred_dir, "module1_predicted_tfbs_chunk_0002.csv")
+  readr::write_csv(pred1, pred_path1)
+  readr::write_csv(pred2, pred_path2)
+  pred_manifest_path <- file.path(pred_dir, "module1_predicted_tfbs_manifest.csv")
+  readr::write_csv(tibble::tibble(
+    chunk_id = c(1L, 2L),
+    path = c(pred_path1, pred_path2),
+    format = "csv",
+    n_rows = c(nrow(pred1), nrow(pred2))
+  ), pred_manifest_path)
+  gene_tss <- tibble::tibble(target_gene = c("GENE_UP", "GENE_DOWN"), target_chr = "chr1", target_tss = c(120L, 520L), target_strand = "+")
+  out_dir <- tempfile("module2-stream-dedup-")
+
+  res <- link_tf_targets(compact, pred_manifest_path, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), output_dir = out_dir, max_distance_bp = 1000, n_cores = 1, output_format = "csv", verbose = FALSE)
+
+  expect_true(validate_module2_links(res))
+  cand_manifest <- readr::read_csv(file.path(out_dir, "module2_fp_target_candidates_manifest.csv"), show_col_types = FALSE)
+  expect_equal(nrow(cand_manifest), 1L)
+  candidates <- .module2_read_predicted_chunk(cand_manifest$path[[1L]], cand_manifest$format[[1L]])
+  expect_equal(nrow(candidates), nrow(unique(candidates[, c("fp_id", "target_gene")])))
+})
+
 test_that("Module 2 top TF target reports write self-contained HTML", {
   omics <- list(
     fp_score_condition_qn = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1, 9), s2 = c(2, 8), s3 = c(8, 2), s4 = c(9, 1)),

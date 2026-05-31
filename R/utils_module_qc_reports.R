@@ -260,21 +260,30 @@
   if (length(hits)) hits[[1L]] else NA_character_
 }
 
-.module1_qc_scan_predicted_tfbs <- function(manifest, top_n = 20L, verbose = TRUE) {
-  chr <- condition_support <- end <- file_exists <- fp_id <- mean_condition_support <- n_bad_coord <- n_bad_coordinate <- n_duplicate_fp_tf_keys <- n_duplicate_key <- n_fp <- n_predicted_tfbs <- n_rows_scanned <- n_tf <- start <- tf <- N <- NULL
+.module1_qc_scan_predicted_tfbs <- function(manifest, top_n = 20L, verbose = TRUE, canonical_stats = NULL) {
+  chr <- condition_support <- end <- file_exists <- fp_id <- has_canonical_support <- mean_condition_support <- n_bad_coord <- n_bad_coordinate <- n_duplicate_fp_tf_keys <- n_duplicate_key <- n_fp <- n_predicted_tfbs <- n_rows_scanned <- n_tf <- pass <- start <- tf <- N <- NULL
   if (!is.data.frame(manifest) || !nrow(manifest)) {
     return(list(
       tf_summary = tibble::tibble(),
       fp_summary = tibble::tibble(),
       condition_support = tibble::tibble(),
-      integrity = tibble::tibble()
+      integrity = tibble::tibble(),
+      canonical_support_check = tibble::tibble()
     ))
+  }
+  canonical_keys <- character()
+  if (is.data.frame(canonical_stats) && nrow(canonical_stats) && all(c("fp_id", "tf") %in% names(canonical_stats))) {
+    canon_dt <- data.table::as.data.table(canonical_stats)
+    if (!"pass" %in% names(canon_dt)) canon_dt[, pass := TRUE]
+    canon_dt <- unique(canon_dt[pass %in% TRUE & !is.na(fp_id) & nzchar(fp_id) & !is.na(tf) & nzchar(tf), .(fp_id = as.character(fp_id), tf = as.character(tf))])
+    canonical_keys <- paste(canon_dt$fp_id, canon_dt$tf, sep = "\r")
   }
   top_n <- max(1L, as.integer(top_n[[1L]]))
   tf_rows <- vector("list", nrow(manifest))
   fp_rows <- vector("list", nrow(manifest))
   support_rows <- vector("list", nrow(manifest))
   integrity_rows <- vector("list", nrow(manifest))
+  canonical_support_rows <- vector("list", nrow(manifest))
   for (i in seq_len(nrow(manifest))) {
     path <- as.character(manifest$path[[i]])
     fmt <- as.character(manifest$format[[i]])
@@ -303,6 +312,11 @@
       n_predicted_tfbs = .N,
       n_tf = data.table::uniqueN(tf)
     ), by = .(fp_id)]
+    if (length(canonical_keys)) {
+      pred_pairs <- unique(dt[, .(fp_id, tf)])
+      pred_pairs[, has_canonical_support := paste(fp_id, tf, sep = "\r") %in% canonical_keys]
+      canonical_support_rows[[i]] <- pred_pairs[, .(has_canonical_support = any(has_canonical_support)), by = fp_id]
+    }
     support_rows[[i]] <- dt[, .N, by = .(condition_support)]
     bad_coord <- sum(is.na(chr) | !nzchar(chr) | !is.finite(start) | !is.finite(end) | end <= start)
     duplicate_key <- sum(duplicated(dt[, .(fp_id, tf)]))
@@ -349,11 +363,29 @@
       n_missing_files = sum(!file_exists, na.rm = TRUE)
     )]
   }
+  canonical_support_check <- tibble::tibble()
+  canonical_support <- data.table::rbindlist(canonical_support_rows, use.names = TRUE, fill = TRUE)
+  if (nrow(canonical_support)) {
+    canonical_support <- canonical_support[, .(has_canonical_support = any(has_canonical_support, na.rm = TRUE)), by = fp_id]
+    canonical_support_check <- tibble::tibble(
+      metric = c(
+        "predicted_unique_fp",
+        "predicted_fp_with_motif_supported_predicted_tf",
+        "predicted_fp_without_motif_supported_predicted_tf"
+      ),
+      value = c(
+        nrow(canonical_support),
+        sum(canonical_support$has_canonical_support %in% TRUE, na.rm = TRUE),
+        sum(!(canonical_support$has_canonical_support %in% TRUE), na.rm = TRUE)
+      )
+    )
+  }
   list(
     tf_summary = tibble::as_tibble(tf_summary),
     fp_summary = tibble::as_tibble(fp_summary),
     condition_support = tibble::as_tibble(support),
-    integrity = tibble::as_tibble(integrity)
+    integrity = tibble::as_tibble(integrity),
+    canonical_support_check = canonical_support_check
   )
 }
 
@@ -575,11 +607,6 @@ build_module1_qc_report <- function(module1,
     if (file.exists(support_path)) support_check <- readr::read_csv(support_path, show_col_types = FALSE)
   }
 
-  predicted_scan <- if (isTRUE(scan_predicted_tfbs)) {
-    .module1_qc_scan_predicted_tfbs(pred_manifest, top_n = top_n, verbose = verbose)
-  } else {
-    list(tf_summary = tibble::tibble(), fp_summary = tibble::tibble(), condition_support = tibble::tibble(), integrity = tibble::tibble())
-  }
   canonical_stats <- if (isTRUE(scan_predicted_tfbs)) {
     .module1_qc_read_canonical_stats(module1, module1_dir = module1_dir)
   } else {
@@ -589,6 +616,14 @@ build_module1_qc_report <- function(module1,
     .module1_qc_read_prediction_stats(module1, module1_dir = module1_dir)
   } else {
     tibble::tibble()
+  }
+  predicted_scan <- if (isTRUE(scan_predicted_tfbs)) {
+    .module1_qc_scan_predicted_tfbs(pred_manifest, top_n = top_n, verbose = verbose, canonical_stats = canonical_stats)
+  } else {
+    list(tf_summary = tibble::tibble(), fp_summary = tibble::tibble(), condition_support = tibble::tibble(), integrity = tibble::tibble(), canonical_support_check = tibble::tibble())
+  }
+  if (!nrow(support_check) && is.data.frame(predicted_scan$canonical_support_check)) {
+    support_check <- predicted_scan$canonical_support_check
   }
   canonical_corr <- .module1_qc_corr_summary(canonical_stats, label = "Motif-supported FP-TF correlations")
   prediction_corr <- .module1_qc_corr_summary(prediction_stats, label = "Prediction FP-TF correlations")

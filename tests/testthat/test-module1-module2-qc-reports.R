@@ -33,6 +33,7 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Correctness Checks", page, fixed = TRUE))
   expect_true(grepl("Workflow Funnel", page, fixed = TRUE))
+  expect_true(grepl("Canonical-supported predicted FP check: <span class=\"status-pass\">PASS</span>", page, fixed = TRUE))
 })
 
 test_that("Module 2 QC report writes an HTML summary", {

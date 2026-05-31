@@ -286,6 +286,111 @@
   tibble::as_tibble(cand)
 }
 
+.module2_build_candidates_from_fp_meta <- function(fp_meta, tf_target_pass, gene_tss, regulatory_prior = NULL, max_distance_bp = 100000, id_offset = 0L) {
+  atac_peak <- candidate_source <- chr <- distance_to_tss <- end <- fp_center <- fp_id <- point_end <- point_start <- prior_id <- prior_score <- prior_source <- prior_status <- prior_supported <- start <- target_gene <- target_strand <- target_tss <- within_tss_window <- NULL
+  empty <- .module2_empty_candidates()
+  if (!nrow(fp_meta) || !nrow(tf_target_pass)) {
+    return(empty)
+  }
+  fp <- data.table::as.data.table(fp_meta[, c("fp_id", "chr", "start", "end", "atac_peak"), drop = FALSE])
+  fp <- unique(fp[!is.na(fp_id) & nzchar(fp_id) & !is.na(chr) & is.finite(start) & is.finite(end)])
+  if (!nrow(fp)) return(empty)
+  fp[, fp_center := as.integer(floor((as.integer(start) + as.integer(end)) / 2))]
+  fp[, point_start := fp_center]
+  fp[, point_end := fp_center]
+
+  pass <- data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE])
+  pass <- unique(pass[!is.na(target_gene) & nzchar(target_gene)])
+  target_keep <- unique(as.character(pass$target_gene))
+  if (!length(target_keep)) return(empty)
+
+  gt_all <- data.table::as.data.table(gene_tss)
+  gt_all <- unique(gt_all[!is.na(target_gene) & nzchar(target_gene) & !is.na(target_chr) & is.finite(target_tss), .(target_gene, target_chr, target_tss, target_strand)])
+  cand_parts <- list()
+
+  gt <- data.table::copy(gt_all[target_gene %in% target_keep])
+  if (nrow(gt)) {
+    data.table::setnames(gt, c("target_chr"), c("chr"), skip_absent = TRUE)
+    gt[, window_start := pmax(0L, as.integer(target_tss - as.numeric(max_distance_bp)))]
+    gt[, window_end := as.integer(target_tss + as.numeric(max_distance_bp))]
+    fps <- unique(fp[, .(fp_id, chr, point_start, point_end, start, end, atac_peak)])
+    wins <- gt[, .(target_gene, chr, window_start, window_end, target_tss, target_strand)]
+    data.table::setkey(fps, chr, point_start, point_end)
+    data.table::setkey(wins, chr, window_start, window_end)
+    hit <- data.table::foverlaps(
+      fps,
+      wins,
+      by.x = c("chr", "point_start", "point_end"),
+      by.y = c("chr", "window_start", "window_end"),
+      type = "within",
+      nomatch = 0L
+    )
+
+    if (nrow(hit)) {
+      hit[, distance_to_tss := as.numeric(point_start) - as.numeric(target_tss)]
+      hit[target_strand == "-", distance_to_tss := -distance_to_tss]
+      hit[, within_tss_window := TRUE]
+      hit[, prior_supported := FALSE]
+      hit[, `:=`(prior_id = NA_character_, prior_source = NA_character_, prior_score = NA_real_, prior_status = NA_character_)]
+      hit[, candidate_source := "tss_window"]
+      cand_parts[[length(cand_parts) + 1L]] <- unique(hit[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr = chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)])
+    }
+  }
+
+  prior <- .module2_normalize_prior(regulatory_prior, predicted_tfbs = fp_meta)
+  if (nrow(prior)) {
+    fp_meta_dt <- unique(fp[, .(fp_id, chr, start, end, atac_peak, fp_center)])
+    prior_dt <- data.table::as.data.table(prior)
+    prior_dt <- prior_dt[target_gene %in% target_keep]
+    prior_dt <- fp_meta_dt[prior_dt, on = "fp_id", allow.cartesian = TRUE, nomatch = 0L]
+    gt_prior <- data.table::copy(gt_all)
+    prior_dt <- gt_prior[prior_dt, on = "target_gene", nomatch = 0L]
+    if (nrow(prior_dt)) {
+      d_genomic <- as.numeric(prior_dt$fp_center) - as.numeric(prior_dt$target_tss)
+      prior_dt[, distance_to_tss := ifelse(as.character(target_strand) == "-", -d_genomic, d_genomic)]
+      prior_dt[, `:=`(
+        candidate_source = "regulatory_prior",
+        within_tss_window = is.finite(distance_to_tss) & abs(distance_to_tss) <= as.numeric(max_distance_bp),
+        prior_supported = TRUE
+      )]
+      cand_parts[[length(cand_parts) + 1L]] <- unique(prior_dt[, .(fp_id, target_gene, chr, start, end, atac_peak, target_chr, target_tss, target_strand, distance_to_tss, candidate_source, within_tss_window, prior_supported, prior_id, prior_source, prior_score, prior_status)])
+    }
+  }
+
+  if (!length(cand_parts)) return(empty)
+  cand <- data.table::rbindlist(cand_parts, use.names = TRUE, fill = TRUE)
+  if (!nrow(cand)) return(empty)
+  cand$prior_supported_sort <- as.integer(cand$prior_supported %in% TRUE)
+  cand$within_tss_window_sort <- as.integer(cand$within_tss_window %in% TRUE)
+  cand <- cand[order(
+    cand$fp_id,
+    cand$target_gene,
+    -cand$prior_supported_sort,
+    -cand$within_tss_window_sort
+  )]
+  cand$prior_supported_sort <- NULL
+  cand$within_tss_window_sort <- NULL
+  cand <- data.table::as.data.table(cand)
+  cand <- cand[, {
+    within_any <- any(.SD$within_tss_window %in% TRUE)
+    prior_any <- any(.SD$prior_supported %in% TRUE)
+    x <- .SD[1L]
+    x[, `:=`(
+      within_tss_window = within_any,
+      prior_supported = prior_any
+    )]
+    x[, candidate_source := fifelse(
+      within_tss_window %in% TRUE & prior_supported %in% TRUE,
+      "both",
+      fifelse(within_tss_window %in% TRUE, "tss_window", "regulatory_prior")
+    )]
+    x
+  }, by = .(fp_id, target_gene)]
+  cand[, candidate_id := sprintf("cand_%08d", as.integer(id_offset) + seq_len(.N))]
+  data.table::setcolorder(cand, c("candidate_id", setdiff(names(cand), "candidate_id")))
+  tibble::as_tibble(cand)
+}
+
 .module2_predicted_manifest <- function(predicted_tfbs) {
   if (!is.character(predicted_tfbs) || length(predicted_tfbs) != 1L || !file.exists(predicted_tfbs)) return(NULL)
   if (!grepl("_manifest\\.csv$", basename(predicted_tfbs))) return(NULL)
@@ -339,15 +444,25 @@
 
   tfs <- character()
   n_predicted_tfbs <- 0
+  fp_meta_chunks <- vector("list", nrow(predicted_manifest))
   for (i in seq_len(nrow(predicted_manifest))) {
-    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf"))
+    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf", "chr", "start", "end", "atac_peak"))
     pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% expressed_genes, , drop = FALSE]
     n_predicted_tfbs <- n_predicted_tfbs + nrow(pred_i)
     tfs <- union(tfs, as.character(pred_i$tf))
+    if (nrow(pred_i)) {
+      fp_meta_chunks[[i]] <- unique(pred_i[, c("fp_id", "chr", "start", "end", "atac_peak"), drop = FALSE])
+    }
     rm(pred_i)
   }
+  fp_meta_chunks <- fp_meta_chunks[!vapply(fp_meta_chunks, is.null, logical(1L))]
+  fp_meta <- if (length(fp_meta_chunks)) {
+    tibble::as_tibble(unique(data.table::rbindlist(fp_meta_chunks, use.names = TRUE, fill = TRUE)))
+  } else {
+    tibble::tibble(fp_id = character(), chr = character(), start = integer(), end = integer(), atac_peak = character())
+  }
   tfs <- sort(tfs)
-  if (isTRUE(verbose)) .log_inform("Module 2 inputs: {length(tfs)} TF(s), {length(target_genes)} target gene(s), {n_predicted_tfbs} predicted TFBS row(s), streamed from {nrow(predicted_manifest)} chunk(s).")
+  if (isTRUE(verbose)) .log_inform("Module 2 inputs: {length(tfs)} TF(s), {length(target_genes)} target gene(s), {n_predicted_tfbs} predicted TFBS row(s), {nrow(fp_meta)} unique predicted FP(s), streamed from {nrow(predicted_manifest)} chunk(s).")
   tf_pairs <- tidyr::crossing(tf = tfs, target_gene = target_genes)
   if (isTRUE(verbose)) .log_inform("Module 2 TF-target correlation: testing {nrow(tf_pairs)} pair(s).")
   tf_cutoffs <- .module2_corr_cutoffs(cfg, "tf_target", r_default = .module2_cfg_value(cfg, "threshold_rna_gene_corr_r", 0.3))
@@ -361,29 +476,16 @@
   cand_dir <- file.path(output_dir, "module2_fp_target_candidates_chunks")
   corr_dir <- file.path(output_dir, "module2_fp_target_corr_chunks")
   link_dir <- file.path(output_dir, "module2_links_chunks")
-  cand_manifest <- list()
-  fp_pair_chunks <- list()
-  candidate_offset <- 0L
-  for (i in seq_len(nrow(predicted_manifest))) {
-    pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf", "chr", "start", "end", "atac_peak"))
-    pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% tfs, , drop = FALSE]
-    cand_i <- .module2_build_candidates(pred_i, tf_target_pass, gene_tss, regulatory_prior = regulatory_prior, max_distance_bp = max_distance_bp, id_offset = candidate_offset)
-    candidate_offset <- candidate_offset + nrow(cand_i)
-    cand_manifest[[i]] <- .module2_write_chunk(cand_i, cand_dir, "module2_fp_target_candidates_chunk", i, output_format)
-    if (nrow(cand_i)) {
-      fp_pair_chunks[[length(fp_pair_chunks) + 1L]] <- data.table::as.data.table(cand_i[, c("fp_id", "target_gene"), drop = FALSE])
-    }
-    if (isTRUE(verbose)) .log_inform("Module 2 candidate chunks: {i}/{nrow(predicted_manifest)} done, {nrow(cand_i)} candidate row(s) in this chunk.")
-    rm(pred_i, cand_i)
-  }
-  cand_manifest <- dplyr::bind_rows(cand_manifest)
+  candidates <- .module2_build_candidates_from_fp_meta(fp_meta, tf_target_pass, gene_tss, regulatory_prior = regulatory_prior, max_distance_bp = max_distance_bp)
+  cand_manifest <- .module2_write_chunk(candidates, cand_dir, "module2_fp_target_candidates_chunk", 1L, output_format)
   cand_manifest_path <- file.path(output_dir, "module2_fp_target_candidates_manifest.csv")
   readr::write_csv(cand_manifest, cand_manifest_path)
-  fp_pair_dt <- if (length(fp_pair_chunks)) {
-    unique(data.table::rbindlist(fp_pair_chunks, use.names = TRUE))
+  fp_pair_dt <- if (nrow(candidates)) {
+    unique(data.table::as.data.table(candidates[, c("fp_id", "target_gene"), drop = FALSE]))
   } else {
     data.table::data.table(fp_id = character(), target_gene = character())
   }
+  if (isTRUE(verbose)) .log_inform("Module 2 FP-target candidates: {nrow(candidates)} unique candidate row(s) from {nrow(fp_meta)} predicted FP(s).")
   fp_pairs <- tibble::as_tibble(fp_pair_dt)
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target correlation: testing {nrow(fp_pairs)} unique restricted pair(s).")
   fp_cutoffs <- .module2_corr_cutoffs(cfg, "fp_target", r_default = .module2_cfg_value(cfg, "threshold_fp_gene_corr_r", 0.3))
@@ -400,16 +502,22 @@
   data.table::setkey(fp_pass_dt, fp_id, target_gene)
   tf_pass_dt <- unique(data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE]))
   data.table::setkey(tf_pass_dt, tf, target_gene)
+  cand_all <- if (nrow(cand_manifest)) {
+    .module2_read_predicted_chunk(as.character(cand_manifest$path[[1L]]), as.character(cand_manifest$format[[1L]]), columns = c("candidate_id", "fp_id", "target_gene"))
+  } else {
+    tibble::tibble(candidate_id = character(), fp_id = character(), target_gene = character())
+  }
+  cand_all_dt <- unique(data.table::as.data.table(cand_all[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]))
+  data.table::setkey(cand_all_dt, fp_id)
   link_manifest <- list()
   n_links <- 0L
   link_offset <- 0L
   for (i in seq_len(nrow(predicted_manifest))) {
     pred_i <- .module2_read_predicted_chunk(as.character(predicted_manifest$path[[i]]), as.character(predicted_manifest$format[[i]]), columns = c("fp_id", "tf"))
     pred_i <- pred_i[pred_i$fp_id %in% bound_fps & pred_i$tf %in% tfs, , drop = FALSE]
-    cand_i <- .module2_read_predicted_chunk(as.character(cand_manifest$path[[i]]), as.character(cand_manifest$format[[i]]), columns = c("candidate_id", "fp_id", "target_gene"))
-    if (nrow(cand_i) && nrow(pred_i)) {
+    if (nrow(cand_all_dt) && nrow(pred_i)) {
       pred_dt <- unique(data.table::as.data.table(pred_i[, c("fp_id", "tf"), drop = FALSE]))
-      cand_dt <- unique(data.table::as.data.table(cand_i[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]))
+      cand_dt <- cand_all_dt[unique(pred_dt$fp_id), on = "fp_id", nomatch = 0L]
       link_i <- pred_dt[cand_dt, on = "fp_id", allow.cartesian = TRUE, nomatch = 0L]
       link_i <- tf_pass_dt[link_i, on = c("tf", "target_gene"), nomatch = 0L]
       link_i <- fp_pass_dt[link_i, on = c("fp_id", "target_gene"), nomatch = 0L]
@@ -426,7 +534,7 @@
     n_links <- n_links + nrow(link_i)
     link_manifest[[i]] <- .module2_write_chunk(tibble::as_tibble(link_i), link_dir, "module2_links_chunk", i, output_format)
     if (isTRUE(verbose)) .log_inform("Module 2 link chunks: {i}/{nrow(predicted_manifest)} done, {nrow(link_i)} link row(s) in this chunk.")
-    rm(pred_i, cand_i, link_i)
+    rm(pred_i, link_i)
   }
   link_manifest <- dplyr::bind_rows(link_manifest)
   link_manifest_path <- file.path(output_dir, "module2_links_manifest.csv")
