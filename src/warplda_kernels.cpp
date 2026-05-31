@@ -222,7 +222,7 @@ void rebuild_training_counts(const SparseDtmTokens& dat,
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) num_threads(n_threads)
+#pragma omp parallel for schedule(dynamic, 16) num_threads(n_threads)
 #endif
   for (int d = 0; d < dat.n_doc; ++d) {
     int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
@@ -233,7 +233,7 @@ void rebuild_training_counts(const SparseDtmTokens& dat,
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) num_threads(n_threads)
+#pragma omp parallel for schedule(dynamic, 8) num_threads(n_threads)
 #endif
   for (int w = 0; w < dat.n_word; ++w) {
     int* word_row = &word_topic[static_cast<std::size_t>(w) * static_cast<std::size_t>(K)];
@@ -269,7 +269,7 @@ void rebuild_doc_counts(const SparseDtmTokens& dat,
   }
 
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) num_threads(n_threads)
+#pragma omp parallel for schedule(dynamic, 16) num_threads(n_threads)
 #endif
   for (int d = 0; d < dat.n_doc; ++d) {
     int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
@@ -278,6 +278,50 @@ void rebuild_doc_counts(const SparseDtmTokens& dat,
       doc_row[topic[tok]] += 1;
     }
   }
+}
+
+void recompute_topic_count_from_word_topic(const std::vector<int>& word_topic,
+                                           std::vector<int>& topic_count,
+                                           int n_word,
+                                           int K) {
+  std::fill(topic_count.begin(), topic_count.end(), 0);
+  for (int k = 0; k < K; ++k) {
+    int total = 0;
+    for (int w = 0; w < n_word; ++w) {
+      total += word_topic[w * K + k];
+    }
+    topic_count[k] = total;
+  }
+}
+
+void rebuild_word_counts(const SparseDtmTokens& dat,
+                         const std::vector<int>& topic,
+                         std::vector<int>& word_topic,
+                         std::vector<int>& topic_count,
+                         int K,
+                         int n_threads) {
+  std::fill(word_topic.begin(), word_topic.end(), 0);
+
+  if (n_threads <= 1) {
+    const int n_token = static_cast<int>(topic.size());
+    for (int tok = 0; tok < n_token; ++tok) {
+      const int k = topic[tok];
+      const int w = dat.token_word[tok];
+      word_topic[w * K + k] += 1;
+    }
+  } else {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 8) num_threads(n_threads)
+#endif
+    for (int w = 0; w < dat.n_word; ++w) {
+      int* word_row = &word_topic[static_cast<std::size_t>(w) * static_cast<std::size_t>(K)];
+      for (int tok = dat.word_ptr[w]; tok < dat.word_ptr[w + 1]; ++tok) {
+        word_row[topic[tok]] += 1;
+      }
+    }
+  }
+
+  recompute_topic_count_from_word_topic(word_topic, topic_count, dat.n_word, K);
 }
 
 void sample_training_iteration(const SparseDtmTokens& dat,
@@ -384,7 +428,7 @@ void sample_inference_iteration(const SparseDtmTokens& dat,
 void sample_warp_doc_pass(const SparseDtmTokens& dat,
                           std::vector<int>& topic,
                           std::vector<int>& proposal_topic,
-                          const std::vector<int>& doc_topic,
+                          std::vector<int>& doc_topic,
                           const std::vector<int>& topic_count,
                           double alpha,
                           double beta,
@@ -393,6 +437,8 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
                           std::uint64_t seed,
                           int iter,
                           std::uint64_t phase_offset,
+                          bool refresh_doc_counts_from_topic,
+                          bool update_doc_counts_after_pass,
                           std::vector<int>& next_topic) {
   const double beta_bar = static_cast<double>(K) * beta;
   next_topic.resize(topic.size());
@@ -401,14 +447,26 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
 #pragma omp parallel num_threads(n_threads)
 #endif
   {
+    std::vector<int> local_doc_count(static_cast<std::size_t>(K));
 #ifdef _OPENMP
-#pragma omp for schedule(static)
+#pragma omp for schedule(dynamic, 16)
 #endif
     for (int d = 0; d < dat.n_doc; ++d) {
       const int bgn = dat.doc_ptr[d];
       const int end = dat.doc_ptr[d + 1];
       const int len = end - bgn;
       if (len <= 0) continue;
+      int* doc_row = &doc_topic[static_cast<std::size_t>(d) * static_cast<std::size_t>(K)];
+      const int* doc_count = doc_row;
+
+      if (refresh_doc_counts_from_topic) {
+        std::fill(local_doc_count.begin(), local_doc_count.end(), 0);
+        for (int ptr = bgn; ptr < end; ++ptr) {
+          const int tok = dat.doc_token_index[ptr];
+          local_doc_count[topic[tok]] += 1;
+        }
+        doc_count = local_doc_count.data();
+      }
 
       for (int ptr = bgn; ptr < end; ++ptr) {
         const int tok = dat.doc_token_index[ptr];
@@ -416,8 +474,8 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
         const int new_topic = proposal_topic[tok];
         int accepted_topic = old_topic;
         if (new_topic != old_topic) {
-          const double num_doc = static_cast<double>(doc_topic[d * K + new_topic]) + alpha;
-          const double den_doc = static_cast<double>(doc_topic[d * K + old_topic]) + alpha;
+          const double num_doc = static_cast<double>(doc_count[new_topic]) + alpha;
+          const double den_doc = static_cast<double>(doc_count[old_topic]) + alpha;
           const double num_all = static_cast<double>(topic_count[old_topic]) + beta_bar;
           const double den_all = static_cast<double>(topic_count[new_topic]) + beta_bar;
           const double accept_prob = (num_doc / den_doc) * (num_all / den_all);
@@ -429,6 +487,9 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
 
       const double copy_prob = static_cast<double>(len) /
         (static_cast<double>(len) + static_cast<double>(K) * alpha);
+      if (update_doc_counts_after_pass) {
+        std::fill(doc_row, doc_row + K, 0);
+      }
       for (int ptr = bgn; ptr < end; ++ptr) {
         const int tok = dat.doc_token_index[ptr];
         const double u_kind = token_unif(seed, phase_offset + 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok));
@@ -444,6 +505,9 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
           if (sampled_topic >= K) sampled_topic = K - 1;
           proposal_topic[tok] = sampled_topic;
         }
+        if (update_doc_counts_after_pass) {
+          doc_row[next_topic[tok]] += 1;
+        }
       }
     }
   }
@@ -454,7 +518,7 @@ void sample_warp_doc_pass(const SparseDtmTokens& dat,
 void sample_warp_word_pass(const SparseDtmTokens& dat,
                            std::vector<int>& topic,
                            std::vector<int>& proposal_topic,
-                           const std::vector<int>& word_topic,
+                           std::vector<int>& word_topic,
                            const std::vector<int>& topic_count,
                            double beta,
                            int K,
@@ -463,6 +527,7 @@ void sample_warp_word_pass(const SparseDtmTokens& dat,
                            int iter,
                            std::uint64_t phase_offset,
                            bool update_word_counts_within_pass,
+                           bool write_word_counts_after_pass,
                            std::vector<int>& next_topic) {
   const double beta_bar = static_cast<double>(K) * beta;
   next_topic.resize(topic.size());
@@ -474,7 +539,7 @@ void sample_warp_word_pass(const SparseDtmTokens& dat,
     std::vector<int> local_count(static_cast<std::size_t>(K));
     std::vector<double> prob(static_cast<std::size_t>(K));
 #ifdef _OPENMP
-#pragma omp for schedule(static)
+#pragma omp for schedule(dynamic, 8)
 #endif
     for (int w = 0; w < dat.n_word; ++w) {
       const int bgn = dat.word_ptr[w];
@@ -511,6 +576,12 @@ void sample_warp_word_pass(const SparseDtmTokens& dat,
         prob[k] = static_cast<double>(local_count[k]) + beta;
         total += prob[k];
       }
+      if (write_word_counts_after_pass) {
+        int* word_row = &word_topic[static_cast<std::size_t>(w) * static_cast<std::size_t>(K)];
+        for (int k = 0; k < K; ++k) {
+          word_row[k] = local_count[k];
+        }
+      }
       for (int tok = bgn; tok < end; ++tok) {
         proposal_topic[tok] = sample_topic_from_unit(
           prob, total, token_unif(seed, phase_offset + 2U, static_cast<std::uint64_t>(iter), static_cast<std::uint64_t>(tok))
@@ -536,18 +607,20 @@ void sample_warp_training_iteration(const SparseDtmTokens& dat,
                                     int iter,
                                     std::vector<int>& next_topic) {
   sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
-                       alpha, beta, K, n_threads, seed, iter, 10U, next_topic);
-  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
+                       alpha, beta, K, n_threads, seed, iter, 10U,
+                       false, true, next_topic);
+  rebuild_word_counts(dat, topic, word_topic, topic_count, K, n_threads);
   sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
-                        beta, K, n_threads, seed, iter, 20U, true, next_topic);
-  rebuild_training_counts(dat, topic, doc_topic, word_topic, topic_count, K, n_threads);
+                        beta, K, n_threads, seed, iter, 20U, true, true, next_topic);
+  recompute_topic_count_from_word_topic(word_topic, topic_count, dat.n_word, K);
+  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
 }
 
 void sample_warp_inference_iteration(const SparseDtmTokens& dat,
                                      std::vector<int>& topic,
                                      std::vector<int>& proposal_topic,
                                      std::vector<int>& doc_topic,
-                                     const std::vector<int>& word_topic,
+                                     std::vector<int>& word_topic,
                                      const std::vector<int>& topic_count,
                                      double alpha,
                                      double beta,
@@ -557,10 +630,10 @@ void sample_warp_inference_iteration(const SparseDtmTokens& dat,
                                      int iter,
                                      std::vector<int>& next_topic) {
   sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
-                       alpha, beta, K, n_threads, seed, iter, 30U, next_topic);
-  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+                       alpha, beta, K, n_threads, seed, iter, 30U,
+                       false, true, next_topic);
   sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
-                        beta, K, n_threads, seed, iter, 40U, false, next_topic);
+                        beta, K, n_threads, seed, iter, 40U, false, false, next_topic);
   rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
 }
 
@@ -568,7 +641,7 @@ void sample_text2vec_compat_inference_iteration(const SparseDtmTokens& dat,
                                                 std::vector<int>& topic,
                                                 std::vector<int>& proposal_topic,
                                                 std::vector<int>& doc_topic,
-                                                const std::vector<int>& word_topic,
+                                                std::vector<int>& word_topic,
                                                 const std::vector<int>& topic_count,
                                                 double alpha,
                                                 double beta,
@@ -581,12 +654,11 @@ void sample_text2vec_compat_inference_iteration(const SparseDtmTokens& dat,
   // document-topic counts after the document pass. The word pass still updates
   // latent token topics for the next iteration, but it does not refresh the
   // reported document-topic counts.
-  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
   sample_warp_doc_pass(dat, topic, proposal_topic, doc_topic, topic_count,
-                       alpha, beta, K, n_threads, seed, iter, 50U, next_topic);
-  rebuild_doc_counts(dat, topic, doc_topic, K, n_threads);
+                       alpha, beta, K, n_threads, seed, iter, 50U,
+                       true, true, next_topic);
   sample_warp_word_pass(dat, topic, proposal_topic, word_topic, topic_count,
-                        beta, K, n_threads, seed, iter, 60U, false, next_topic);
+                        beta, K, n_threads, seed, iter, 60U, false, false, next_topic);
 }
 
 } // namespace
