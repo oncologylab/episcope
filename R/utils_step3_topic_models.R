@@ -593,7 +593,7 @@ fit_warplda_one <- function(dtm,
                             n_check_convergence = 10L,
                             n_iter_inference = 10L,
                             n_threads = NULL,
-                            sampler = c("text2vec_compat", "warp_mh", "gibbs_sync"),
+                            sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
                             progressbar = interactive()) {
   .assert_pkg("cli")
   .assert_pkg("Matrix")
@@ -703,7 +703,7 @@ run_warplda_models <- function(dtm,
                                save_tmp_dir = NULL,
                                workers = 1L,
                                threads_per_model = NULL,
-                               sampler = c("text2vec_compat", "warp_mh", "gibbs_sync"),
+                               sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
                                metrics_file = NULL,
                                verbose = TRUE) {
   .assert_pkg("cli")
@@ -6157,7 +6157,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           iterations = 2000L,
                                           alpha_by_topic = TRUE,
                                           beta = NULL,
-                                          sampler = c("text2vec_compat", "warp_mh", "gibbs_sync"),
+                                          sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
                                           seed = 123,
                                           # topic definition
                                           binarize_method = c("gammafit", "topn"),
@@ -7687,10 +7687,10 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param count_input Count column passed to the topic backend.
 #' @param vae_variant VAE variant name.
 #' @param backend Topic model backend, either `"vae"` or `"warplda"`.
-#' @param warplda_sampler Native WarpLDA sampler. `"text2vec_compat"` is the
-#'   default text2vec-style alternating doc/word Metropolis-Hastings sampler,
-#'   `"warp_mh"` is the earlier CraftGRN approximation, and `"gibbs_sync"` is
-#'   the faster deterministic collapsed sampler.
+#' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
+#'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_mh"` is
+#'   the earlier CraftGRN approximation, and `"gibbs_sync"` is the faster
+#'   deterministic collapsed sampler.
 #' @param warplda_beta Topic-word prior for native WarpLDA. NULL uses `1/K`,
 #'   matching the text2vec default.
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
@@ -7732,7 +7732,7 @@ train_topic_models <- function(Kgrid,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
                                backend = c("vae", "warplda"),
-                               warplda_sampler = c("text2vec_compat", "warp_mh", "gibbs_sync"),
+                               warplda_sampler = c("warp_omp", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
                                reuse_if_exists = TRUE,
                                save_full_doc_term_csv = FALSE,

@@ -13,7 +13,6 @@ centric
 chr
 ChromHMM
 cond
-compat
 cpu
 CraftGRN's
 CraftGRN
@@ -72,6 +71,7 @@ Normalizations
 NxN
 omic
 omics
+omp
 OpenMP
 params
 perceptron
