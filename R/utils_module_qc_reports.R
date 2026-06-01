@@ -46,6 +46,36 @@
   paste0("<table>", header, paste(rows, collapse = ""), "</table>")
 }
 
+.qc_bullets_html <- function(items) {
+  items <- as.character(items)
+  items <- items[!is.na(items) & nzchar(items)]
+  if (!length(items)) return("")
+  paste0("<ul class=\"qc-bullets\">", paste0("<li>", .qc_html_escape(items), "</li>", collapse = ""), "</ul>")
+}
+
+.qc_callout_html <- function(title, items, class = "info") {
+  body <- .qc_bullets_html(items)
+  if (!nzchar(body)) return("")
+  paste0(
+    "<div class=\"callout callout-", .qc_html_escape(class), "\">",
+    "<h3>", .qc_html_escape(title), "</h3>",
+    body,
+    "</div>"
+  )
+}
+
+.qc_nice_percent <- function(num, den) {
+  pct <- .qc_percent(num, den)
+  if (identical(pct, "NA")) "not available" else pct
+}
+
+.qc_metric_sentence <- function(label, pass, tested) {
+  paste0(
+    label, ": ", .qc_format_number(pass), " of ", .qc_format_number(tested),
+    " passed (", .qc_nice_percent(pass, tested), ")."
+  )
+}
+
 .qc_cards_html <- function(x) {
   if (!is.data.frame(x) || !all(c("label", "value") %in% names(x))) return("")
   cards <- apply(as.data.frame(x, stringsAsFactors = FALSE), 1L, function(row) {
@@ -542,8 +572,10 @@
     "h1{font-size:30px;line-height:1.1;margin:0 0 6px 0;letter-spacing:0;color:#101827}",
     "h2{font-size:18px;line-height:1.2;margin:0 0 14px 0;color:#101827}",
     "section{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:18px 0;padding:18px 18px 20px 18px;box-shadow:0 8px 24px rgba(15,23,42,.04)}",
+    "h3{font-size:15px;line-height:1.25;margin:0 0 8px 0;color:#101827}",
     ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:4px}",
     ".card{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:7px;padding:12px 13px;background:linear-gradient(180deg,#fff,#f9fbfd)}.card-label{font-size:11px;color:#536173;font-weight:800;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:25px;font-weight:850;margin-top:4px;color:#0f766e;line-height:1.08;font-variant-numeric:tabular-nums}",
+    ".callout{border:1px solid #d7e6f2;border-left:4px solid var(--accent);border-radius:7px;background:#f9fbfd;padding:13px 15px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:5px 0}",
     ".plot-grid{display:grid;grid-template-columns:1fr;gap:18px;align-items:start;margin-top:10px}.plot-card{margin:0;background:#f9fbfd;border:0;border-radius:7px;padding:16px 18px;overflow:hidden}",
     "table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;margin-top:8px;border:1px solid #e7eef7;border-radius:7px;overflow:hidden}th,td{border-bottom:1px solid #e7eef7;padding:8px 10px;text-align:left;vertical-align:top}th{background:#edf3f9;color:#253246;font-weight:800;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfdff}tr:last-child td{border-bottom:0}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1.2}.axis-light{stroke:#c8d3e1;stroke-width:1.2}.axis-label,.value-label,.tick{font-size:16px;fill:#253246}.value-label{font-weight:750}.plot-title{font-size:20px;font-weight:850;fill:#101827}",
@@ -866,6 +898,54 @@
   )
 }
 
+.module1_qc_content_sections <- function(qc_summary,
+                                         predicted_rows,
+                                         pred_manifest,
+                                         support_check,
+                                         predicted_scan,
+                                         warning_checks) {
+  n_input <- .qc_metric_value(qc_summary, "n_fp_input")
+  n_bound <- .qc_metric_value(qc_summary, "n_fp_bound_accessible")
+  n_canonical_fp <- .qc_metric_value(qc_summary, "n_canonical_bound_fps")
+  n_prediction_pairs <- .qc_metric_value(qc_summary, "n_prediction_pairs")
+  n_canonical_pairs <- .qc_metric_value(qc_summary, "n_motif_supported_pairs")
+  n_canonical_pass <- .qc_metric_value(qc_summary, "n_canonical_pairs_pass")
+  canonical_missing <- .qc_metric_value(support_check, "predicted_fp_without_motif_supported_predicted_tf", default = NA_real_)
+  canonical_unique <- .qc_metric_value(support_check, "predicted_unique_fp", default = n_canonical_fp)
+  top_tf <- if (is.data.frame(predicted_scan$tf_summary) && nrow(predicted_scan$tf_summary)) {
+    paste0(
+      as.character(predicted_scan$tf_summary$tf[[1L]]), " has ",
+      .qc_format_number(predicted_scan$tf_summary$n_predicted_tfbs[[1L]]),
+      " predicted TFBS rows."
+    )
+  } else {
+    "Top predicted TF summary was not scanned."
+  }
+  n_check <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "CHECK", na.rm = TRUE) else NA_integer_
+  n_not_run <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "NOT RUN", na.rm = TRUE) else NA_integer_
+  key <- .qc_callout_html("What Happened", c(
+    paste0("Module 1 started from ", .qc_format_number(n_input), " aligned FPs and kept ", .qc_format_number(n_bound), " bound/accessibility-supported FPs."),
+    .qc_metric_sentence("Canonical support", n_canonical_pass, n_canonical_pairs),
+    paste0("After canonical support, ", .qc_format_number(n_canonical_fp), " FPs were eligible for all expressed TF prediction."),
+    paste0("The prediction stage evaluated ", .qc_format_number(n_prediction_pairs), " FP-TF pairs and wrote ", .qc_format_number(predicted_rows), " predicted TFBS rows across ", .qc_format_number(nrow(pred_manifest)), " chunks."),
+    top_tf
+  ))
+  interp <- .qc_callout_html("Module 1 Interpretation", c(
+    "Input Gates shows what the filter did at each stage: bound/accessibility support, motif-supported canonical evidence, canonical-bound FP selection, and final predicted TFBS selection.",
+    "Canonical support means a predicted FP has at least one motif-supported TF-FP pair that passed the configured correlation cutoffs before broader TF prediction.",
+    paste0("The canonical-supported FP check found ", .qc_format_number(canonical_missing), " predicted FPs without canonical support out of ", .qc_format_number(canonical_unique), " predicted FPs."),
+    "Prediction correlation diagnostics should be read as the broad TFBS prediction step after canonical-bound FPs have already been selected."
+  ))
+  review_class <- if (is.finite(n_check) && n_check > 0) "warn" else "info"
+  review <- .qc_callout_html("Review Before Downstream Use", c(
+    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows and ", .qc_format_number(n_not_run), " NOT RUN rows."),
+    "Review TFs with very high predicted counts to make sure they reflect biology rather than overly permissive cutoffs.",
+    "Review Condition Support to confirm that predicted TFBS are not dominated by a very small number of conditions.",
+    "Review Prediction Output Integrity before using predicted_tfbs as the Module 2 handoff."
+  ), class = review_class)
+  list(key = key, interpretation = interp, review = review)
+}
+
 #' Build a Module 1 QC HTML report
 #'
 #' Builds a comprehensive HTML report for Module 1 run parameters, input gates,
@@ -1048,16 +1128,27 @@ build_module1_qc_report <- function(module1,
     ),
     .qc_density_svg(motif_complexity$values, title = "Canonical TFs per aligned FP density")
   )
+  content <- .module1_qc_content_sections(
+    qc_summary = qc_summary,
+    predicted_rows = predicted_rows,
+    pred_manifest = pred_manifest,
+    support_check = support_check,
+    predicted_scan = predicted_scan,
+    warning_checks = warning_checks
+  )
   sections <- list(
     .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
+    .qc_section("Key Findings", content$key),
     .qc_section("Input Gates", paste0(
+      content$interpretation,
       .qc_table_html(gate_table, max_rows = 20L),
       .qc_plot_grid(
         .qc_funnel_svg(funnel, "step", "n", title = "Module 1 processing funnel"),
         .qc_lollipop_svg(gate_table, "gate", "pass", title = "Rows passing each Module 1 gate")
       )
     )),
+    .qc_section("Recommended Review", content$review),
     .qc_section("Motif-Supported Correlations", paste0(
       .qc_table_html(canonical_corr$summary, max_rows = 10L),
       .qc_plot_grid(
@@ -1442,6 +1533,53 @@ build_module1_qc_report <- function(module1,
   )
 }
 
+.module2_qc_content_sections <- function(qc_summary,
+                                         link_scan,
+                                         warning_checks) {
+  n_predicted <- .qc_metric_value(qc_summary, "n_predicted_tfbs")
+  n_tf_test <- .qc_metric_value(qc_summary, "n_tf_target_pairs_tested")
+  n_tf_pass <- .qc_metric_value(qc_summary, "n_tf_target_pairs_pass")
+  n_fp_candidates <- .qc_metric_value(qc_summary, "n_fp_target_candidates")
+  n_fp_test <- .qc_metric_value(qc_summary, "n_fp_target_pairs_tested")
+  n_fp_pass <- .qc_metric_value(qc_summary, "n_fp_target_pairs_pass")
+  n_links <- .qc_metric_value(qc_summary, "n_module2_links")
+  bad_tf <- .qc_metric_value(link_scan$validation, "n_links_with_missing_tf_target_pass", default = NA_real_)
+  bad_fp <- .qc_metric_value(link_scan$validation, "n_links_with_missing_fp_target_pass", default = NA_real_)
+  n_check <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "CHECK", na.rm = TRUE) else NA_integer_
+  n_not_run <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "NOT RUN", na.rm = TRUE) else NA_integer_
+  top_tf <- if (is.data.frame(link_scan$top_tf) && nrow(link_scan$top_tf)) {
+    paste0(
+      as.character(link_scan$top_tf$tf[[1L]]), " has ",
+      .qc_format_number(link_scan$top_tf$n_links[[1L]]),
+      " final links in the scanned output."
+    )
+  } else {
+    "Top final-link TF summary was not scanned."
+  }
+  key <- .qc_callout_html("What Happened", c(
+    paste0("Module 2 consumed ", .qc_format_number(n_predicted), " predicted TFBS rows from Module 1."),
+    .qc_metric_sentence("TF-target prefilter", n_tf_pass, n_tf_test),
+    paste0("FP-target candidate construction produced ", .qc_format_number(n_fp_candidates), " candidate rows and tested ", .qc_format_number(n_fp_test), " FP-target correlations."),
+    .qc_metric_sentence("FP-target evidence", n_fp_pass, n_fp_test),
+    paste0("Final assembly wrote ", .qc_format_number(n_links), " TF-FP-target links after requiring predicted TFBS, passing TF-target support, and passing FP-target support."),
+    top_tf
+  ))
+  interp <- .qc_callout_html("Module 2 Interpretation", c(
+    "Module 2 is intentionally ordered to reduce over-calculation: TF-target expression correlation is the first prefilter, then FP-target evidence is tested only for candidate FP-gene pairs.",
+    "FP-target evidence combines the configured TSS window or regulatory prior with FP score to target expression correlation.",
+    "Final links represent a relational join: a TF is predicted to bind an FP from Module 1, the TF-target expression pair passes, and the FP-target pair passes.",
+    paste0("Relational integrity check found ", .qc_format_number(bad_tf), " links without TF-target support and ", .qc_format_number(bad_fp), " links without FP-target support.")
+  ))
+  review_class <- if (is.finite(n_check) && n_check > 0) "warn" else "info"
+  review <- .qc_callout_html("Review Before Downstream Use", c(
+    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows and ", .qc_format_number(n_not_run), " NOT RUN rows."),
+    "Review Candidate Source QC to confirm whether links mainly come from the TSS window, regulatory prior input, or both.",
+    "Review Candidate Distance To TSS to make sure the selected window and regulatory prior match the expected biology.",
+    "Review Top TFs In Final Links and Condition Activity QC for overly broad regulators or condition imbalance before using Module 2 output in Module 3."
+  ), class = review_class)
+  list(key = key, interpretation = interp, review = review)
+}
+
 #' Build a Module 2 QC HTML report
 #'
 #' Builds a comprehensive HTML report for Module 2 run parameters, compact input
@@ -1563,6 +1701,11 @@ build_module2_qc_report <- function(module2,
     fp_corr_scan = fp_corr_scan,
     condition_scan = condition_scan
   )
+  content <- .module2_qc_content_sections(
+    qc_summary = qc_summary,
+    link_scan = link_scan,
+    warning_checks = warning_checks
+  )
   related <- .module2_qc_related_html(module2_dir, output_dir)
   tf_corr_plots <- .qc_plot_grid(
     .qc_density_svg(tf_corr_scan$best_r, title = "TF-target best r density"),
@@ -1628,8 +1771,12 @@ build_module2_qc_report <- function(module2,
   sections <- list(
     .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Summary", .qc_cards_html(cards)),
+    .qc_section("Key Findings", content$key),
     .qc_section("Input Handoff", .qc_cards_html(input_cards)),
-    .qc_section("Workflow Funnel", .qc_flow_svg(funnel, "step", "n", title = "Module 2 relational flow")),
+    .qc_section("Workflow Funnel", paste0(
+      content$interpretation,
+      .qc_flow_svg(funnel, "step", "n", title = "Module 2 relational flow")
+    )),
     .qc_section("TF-Target Correlation QC", paste0(
       .qc_table_html(tf_corr_scan$summary, max_rows = 10L),
       tf_corr_plots,
@@ -1669,6 +1816,7 @@ build_module2_qc_report <- function(module2,
       .qc_table_html(link_scan$top_target, max_rows = top_n),
       .qc_table_html(link_scan$top_fp, max_rows = top_n)
     )),
+    .qc_section("Recommended Review", content$review),
     .qc_section("Condition Activity QC", paste0(
       .qc_plot_grid(
         .qc_lollipop_svg(condition_scan$summary, "condition", "n_active", title = "Active Module 2 links by condition"),
