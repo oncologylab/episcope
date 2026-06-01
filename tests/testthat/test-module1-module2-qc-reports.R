@@ -46,6 +46,48 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
 })
 
+test_that("Module 1 QC reads chunked prediction statistics", {
+  out_dir <- tempfile("module1-qc-stats-")
+  chunk_dir <- file.path(out_dir, "module1_prediction_stats_chunks")
+  dir.create(chunk_dir, recursive = TRUE)
+  chunk_path <- file.path(chunk_dir, "module1_prediction_stats_chunk_0001.csv")
+  stats <- tibble::tibble(
+    fp_id = c("fp1", "fp2"),
+    tf = c("TF_A", "TF_B"),
+    best_r = c(0.9, 0.8)
+  )
+  readr::write_csv(stats, chunk_path)
+  readr::write_csv(
+    tibble::tibble(
+      chunk_id = 1L,
+      path = chunk_path,
+      format = "csv",
+      n_rows = nrow(stats)
+    ),
+    file.path(chunk_dir, "module1_prediction_stats_manifest.csv")
+  )
+
+  loaded <- .module1_qc_read_prediction_stats(list(), module1_dir = out_dir)
+
+  expect_equal(nrow(loaded), 2L)
+  expect_equal(loaded$tf, c("TF_A", "TF_B"))
+  expect_true(all(loaded$pass))
+})
+
+test_that("QC metric reader accepts one-row integrity tables", {
+  integrity <- tibble::tibble(
+    n_missing_candidate_source = 0,
+    n_missing_distance_to_tss = 0,
+    n_bad_coordinate = 0,
+    n_duplicate_fp_tf_keys = 0
+  )
+
+  expect_equal(.qc_metric_value(integrity, "n_missing_candidate_source"), 0)
+  expect_equal(.qc_metric_value(integrity, "n_missing_distance_to_tss"), 0)
+  expect_equal(.qc_metric_value(integrity, "n_bad_coordinate"), 0)
+  expect_equal(.qc_metric_value(integrity, "n_duplicate_fp_tf_keys"), 0)
+})
+
 test_that("Module 2 QC report writes an HTML summary", {
   omics <- list(
     fp_score_condition_qn = tibble::tibble(peak_ID = c("chr1:100-140", "chr1:500-540"), s1 = c(1, 9), s2 = c(2, 8), s3 = c(8, 2), s4 = c(9, 1)),
@@ -111,4 +153,34 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("qc-plot-scatter", page, fixed = TRUE))
   expect_true(grepl("qc-plot-heatmap", page, fixed = TRUE))
   expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
+})
+
+test_that("Module 2 streamed condition activity is reported as not run", {
+  qc_summary <- tibble::tibble(
+    metric = c(
+      "n_tf_target_pairs_pass",
+      "n_fp_target_pairs_pass",
+      "n_module2_links",
+      "n_active_link_conditions"
+    ),
+    value = c(2, 2, 2, NA_real_)
+  )
+  warning_checks <- .module2_qc_warning_checks(
+    qc_summary = qc_summary,
+    manifest_checks = tibble::tibble(table = "module2_links", file_exists = "yes"),
+    candidate_scan = list(integrity = tibble::tibble(
+      n_missing_candidate_source = 0,
+      n_missing_distance_to_tss = 0
+    )),
+    link_scan = list(validation = tibble::tibble(
+      metric = c("n_links_with_missing_tf_target_pass", "n_links_with_missing_fp_target_pass"),
+      value = c(0, 0)
+    )),
+    tf_corr_scan = list(summary = tibble::tibble()),
+    fp_corr_scan = list(summary = tibble::tibble()),
+    condition_scan = list(summary = tibble::tibble())
+  )
+
+  condition_row <- warning_checks[warning_checks$check == "Condition activity table is available", ]
+  expect_equal(condition_row$status, "NOT RUN")
 })

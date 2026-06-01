@@ -31,9 +31,15 @@
 }
 
 .qc_metric_value <- function(qc_summary, metric, default = NA_real_) {
-  if (!is.data.frame(qc_summary) || !all(c("metric", "value") %in% names(qc_summary))) return(default)
-  hit <- qc_summary$value[as.character(qc_summary$metric) == metric]
-  .qc_safe_value(hit, default = default)
+  if (!is.data.frame(qc_summary)) return(default)
+  if (all(c("metric", "value") %in% names(qc_summary))) {
+    hit <- qc_summary$value[as.character(qc_summary$metric) == metric]
+    return(.qc_safe_value(hit, default = default))
+  }
+  if (metric %in% names(qc_summary) && nrow(qc_summary)) {
+    return(.qc_safe_value(qc_summary[[metric]], default = default))
+  }
+  default
 }
 
 .qc_table_html <- function(x, max_rows = 30L) {
@@ -829,13 +835,61 @@
   tibble::tibble()
 }
 
+.module1_qc_normalize_prediction_stats <- function(x) {
+  x <- tibble::as_tibble(x)
+  if (nrow(x) && !"pass" %in% names(x)) x$pass <- TRUE
+  x
+}
+
 .module1_qc_read_prediction_stats <- function(module1, module1_dir = NULL) {
   if (is.list(module1) && is.data.frame(module1$prediction_stats) && nrow(module1$prediction_stats)) {
-    return(tibble::as_tibble(module1$prediction_stats))
+    return(.module1_qc_normalize_prediction_stats(module1$prediction_stats))
   }
   if (!is.null(module1_dir)) {
     path <- file.path(module1_dir, "module1_prediction_stats.csv.gz")
-    if (file.exists(path)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
+    if (file.exists(path)) return(.module1_qc_normalize_prediction_stats(readr::read_csv(path, show_col_types = FALSE)))
+    manifest_candidates <- c(
+      file.path(module1_dir, "module1_prediction_stats_manifest.csv"),
+      file.path(module1_dir, "module1_prediction_stats_chunks", "module1_prediction_stats_manifest.csv")
+    )
+    existing_manifest <- manifest_candidates[file.exists(manifest_candidates)]
+    manifest_path <- if (length(existing_manifest)) existing_manifest[[1L]] else manifest_candidates[[1L]]
+    manifest <- .qc_read_manifest_chunks(manifest_path)
+    if (nrow(manifest)) {
+      max_rows <- getOption("craftgrn.qc_prediction_stats_max_rows", 1000000L)
+      max_rows <- suppressWarnings(as.integer(max_rows[[1L]]))
+      if (!is.finite(max_rows) || max_rows < 1L) max_rows <- 1000000L
+      keep_cols <- c(
+        "fp_id", "tf", "pearson_r", "pearson_p", "pearson_fdr",
+        "spearman_r", "spearman_p", "spearman_fdr", "best_r",
+        "best_method", "best_p", "best_fdr", "pass"
+      )
+      rows <- vector("list", nrow(manifest))
+      n_loaded <- 0L
+      for (i in seq_len(nrow(manifest))) {
+        if (n_loaded >= max_rows) break
+        chunk <- tryCatch(
+          .qc_read_table_file(
+            as.character(manifest$path[[i]]),
+            as.character(manifest$format[[i]]),
+            columns = keep_cols
+          ),
+          error = function(e) .qc_read_table_file(
+            as.character(manifest$path[[i]]),
+            as.character(manifest$format[[i]]),
+            columns = NULL
+          )
+        )
+        if (nrow(chunk)) chunk <- chunk[, intersect(keep_cols, names(chunk)), drop = FALSE]
+        if (!nrow(chunk)) next
+        remaining <- max_rows - n_loaded
+        if (nrow(chunk) > remaining) chunk <- utils::head(chunk, remaining)
+        rows[[i]] <- chunk
+        n_loaded <- n_loaded + nrow(chunk)
+      }
+      out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+      if (nrow(out)) return(.module1_qc_normalize_prediction_stats(out))
+    }
   }
   tibble::tibble()
 }
@@ -1524,7 +1578,17 @@ build_module1_qc_report <- function(module1,
     list("TF-target correlation produced passing pairs", .qc_status(if (is.finite(tf_pass)) tf_pass > 0 else nrow(tf_corr_scan$summary) > 0, paste0("Passing pairs: ", .qc_format_number(tf_pass)))),
     list("FP-target correlation produced passing pairs", .qc_status(if (is.finite(fp_pass)) fp_pass > 0 else nrow(fp_corr_scan$summary) > 0, paste0("Passing pairs: ", .qc_format_number(fp_pass)))),
     list("Final Module 2 links are present", .qc_status(if (is.finite(n_links)) n_links > 0 else NA, paste0("Final links: ", .qc_format_number(n_links)))),
-    list("Condition activity table is available", .qc_status(nrow(condition_scan$summary) > 0, paste0("Condition rows: ", .qc_format_number(nrow(condition_scan$summary)))))
+    list(
+      "Condition activity table is available",
+      .qc_status(
+        if (is.finite(.qc_metric_value(qc_summary, "n_active_link_conditions", default = NA_real_))) {
+          nrow(condition_scan$summary) > 0
+        } else {
+          NA
+        },
+        paste0("Condition rows: ", .qc_format_number(nrow(condition_scan$summary)))
+      )
+    )
   )
   tibble::tibble(
     check = vapply(status_rows, `[[`, character(1L), 1L),
