@@ -85,6 +85,15 @@
   }
 }
 
+.qc_truncate_label <- function(x, max_chars = 34L) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  max_chars <- max(4L, as.integer(max_chars[[1L]]))
+  too_long <- nchar(x) > max_chars
+  x[too_long] <- paste0(substr(x[too_long], 1L, max_chars - 3L), "...")
+  x
+}
+
 .qc_manifest_checks <- function(manifest) {
   if (!is.data.frame(manifest) || !nrow(manifest) || !"path" %in% names(manifest)) {
     return(tibble::tibble(table = character(), path = character(), n_rows = character(), file_exists = character(), format = character()))
@@ -127,7 +136,7 @@
     y <- top + (i - 1L) * (bar_height + row_gap)
     val <- x[[value_col]][[i]]
     bw <- max(1, plot_w * val / max_val)
-    label <- substr(as.character(x[[label_col]][[i]]), 1L, 34L)
+    label <- .qc_truncate_label(x[[label_col]][[i]], 34L)
     paste0(
       "<text x=\"0\" y=\"", y + 17L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
       "<rect x=\"", left, "\" y=\"", y, "\" width=\"", bw, "\" height=\"", bar_height, "\" rx=\"3\" class=\"bar\"/>",
@@ -147,7 +156,7 @@
   plots <- list(...)
   plots <- plots[lengths(plots) > 0L]
   if (!length(plots)) return("")
-  cards <- vapply(plots, function(plot) paste0("<div class=\"plot-card\">", plot, "</div>"), character(1L))
+  cards <- vapply(plots, function(plot) paste0("<figure class=\"plot-card\">", plot, "</figure>"), character(1L))
   paste0("<div class=\"plot-grid\">", paste(cards, collapse = ""), "</div>")
 }
 
@@ -191,22 +200,23 @@
   if (!is.finite(max_val) || max_val <= 0) max_val <- 1
   top <- if (is.null(title)) 16L else 44L
   bottom <- 18L
-  left <- 16L
-  right <- 16L
+  left <- 20L
+  plot_left <- 350L
+  right <- 150L
   gap <- 10L
   stage_h <- max(24, (height - top - bottom - gap * (nrow(x) - 1L)) / nrow(x))
-  plot_w <- width - left - right
+  plot_w <- width - plot_left - right
   rows <- lapply(seq_len(nrow(x)), function(i) {
     val <- x[[value_col]][[i]]
     y <- top + (i - 1L) * (stage_h + gap)
     bw <- max(38, plot_w * sqrt(val / max_val))
-    bx <- left + (plot_w - bw) / 2
+    bx <- plot_left + (plot_w - bw) / 2
     fill <- .qc_color_gradient((i - 1L) / max(1L, nrow(x) - 1L))
-    label <- substr(as.character(x[[label_col]][[i]]), 1L, 42L)
+    label <- .qc_truncate_label(x[[label_col]][[i]], 42L)
     paste0(
       "<rect x=\"", bx, "\" y=\"", y, "\" width=\"", bw, "\" height=\"", stage_h, "\" rx=\"5\" fill=\"", fill, "\" class=\"funnel-bar\"/>",
-      "<text x=\"", left + 8L, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
-      "<text x=\"", width - right - 128L, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"value-label\">", .qc_html_escape(.qc_format_number(val)), "</text>"
+      "<text x=\"", left, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
+      "<text x=\"", width - right + 8L, "\" y=\"", y + stage_h / 2 + 4L, "\" class=\"value-label\">", .qc_html_escape(.qc_format_number(val)), "</text>"
     )
   })
   title_svg <- if (is.null(title)) "" else paste0("<text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>")
@@ -327,8 +337,8 @@
   if (is.null(height)) height <- max(180L, 48L + nrow(x) * 24L)
   max_val <- max(x[[value_col]], na.rm = TRUE)
   if (!is.finite(max_val) || max_val <= 0) max_val <- 1
-  left <- 230L
-  right <- 120L
+  left <- 350L
+  right <- 130L
   top <- if (is.null(title)) 14L else 44L
   plot_w <- width - left - right
   row_h <- max(18, (height - top - 22L) / nrow(x))
@@ -336,7 +346,7 @@
     y <- top + (i - 0.5) * row_h
     val <- x[[value_col]][[i]]
     px <- left + plot_w * val / max_val
-    label <- substr(as.character(x[[label_col]][[i]]), 1L, 34L)
+    label <- .qc_truncate_label(x[[label_col]][[i]], 34L)
     paste0(
       "<text x=\"0\" y=\"", y + 4L, "\" class=\"axis-label\">", .qc_html_escape(label), "</text>",
       "<line x1=\"", left, "\" y1=\"", y, "\" x2=\"", px, "\" y2=\"", y, "\" class=\"stem\"/>",
@@ -378,7 +388,7 @@
     label <- if (!is.null(label_col) && label_col %in% names(x)) as.character(x[[label_col]][[i]]) else ""
     paste0(
       "<circle cx=\"", round(px[[i]], 2), "\" cy=\"", round(py[[i]], 2), "\" r=\"", round(radius[[i]], 2), "\" class=\"point\"/>",
-      if (nzchar(label) && i <= 8L) paste0("<text x=\"", round(px[[i]] + 7, 2), "\" y=\"", round(py[[i]] + 4, 2), "\" class=\"point-label\">", .qc_html_escape(substr(label, 1L, 18L)), "</text>") else ""
+      if (nzchar(label) && i <= 8L) paste0("<text x=\"", round(px[[i]] + 7, 2), "\" y=\"", round(py[[i]] + 4, 2), "\" class=\"point-label\">", .qc_html_escape(.qc_truncate_label(label, 18L)), "</text>") else ""
     )
   }, character(1L))
   base_y <- top + plot_h
@@ -414,7 +424,7 @@
   k <- 1L
   for (i in seq_len(nrow(x))) {
     y <- top + (i - 1L) * cell_h
-    cells[[k]] <- paste0("<text x=\"0\" y=\"", y + 16L, "\" class=\"axis-label\">", .qc_html_escape(substr(as.character(x[[row_col]][[i]]), 1L, 28L)), "</text>")
+    cells[[k]] <- paste0("<text x=\"0\" y=\"", y + 16L, "\" class=\"axis-label\">", .qc_html_escape(.qc_truncate_label(x[[row_col]][[i]], 28L)), "</text>")
     k <- k + 1L
     for (j in seq_along(value_cols)) {
       val <- mat[[value_cols[[j]]]][[i]]
@@ -458,7 +468,7 @@
     nx <- 20L + (i - 1L) * (node_w + gap)
     ny <- center_y - node_h[[i]] / 2
     fill <- .qc_color_gradient((i - 1L) / max(1L, nrow(x) - 1L))
-    label <- substr(as.character(x[[label_col]][[i]]), 1L, 16L)
+    label <- .qc_truncate_label(x[[label_col]][[i]], 16L)
     paste0(
       "<rect x=\"", nx, "\" y=\"", ny, "\" width=\"", node_w, "\" height=\"", node_h[[i]], "\" rx=\"6\" fill=\"", fill, "\" class=\"flow-node\"/>",
       "<text x=\"", nx, "\" y=\"", height - 24L, "\" class=\"tick\">", .qc_html_escape(label), "</text>",
@@ -523,20 +533,23 @@
 .qc_write_html <- function(path, title, sections) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   css <- paste(
-    "body{margin:0;background:#f4f7fb;color:#172033;font-family:Arial,Helvetica,sans-serif}",
-    ".wrap{max-width:1180px;margin:0 auto;padding:28px}",
-    "header{background:#101827;color:white;border-bottom:5px solid #20b2aa}",
-    "header .wrap{padding-top:24px;padding-bottom:24px}",
-    "h1{font-size:28px;line-height:1.15;margin:0 0 8px 0}",
-    "h2{font-size:19px;margin:0 0 12px 0;color:#101827}",
-    "section{background:white;border:1px solid #d9e2ef;border-radius:8px;margin:18px 0;padding:18px;box-shadow:0 1px 2px rgba(17,24,39,.04)}",
-    ".subtitle{color:#cbd5e1;font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}",
-    ".card{border:1px solid #d9e2ef;border-radius:7px;padding:12px;background:#fbfdff}.card-label{font-size:12px;color:#536173;font-weight:700}.card-value{font-size:24px;font-weight:800;margin-top:5px;color:#0f766e}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;align-items:start}.plot-card{border:1px solid #e2eaf4;border-radius:7px;background:#fbfdff;padding:10px;overflow:hidden}",
-    "table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid #e5edf6;padding:7px 8px;text-align:left}th{background:#edf4fb;color:#253246}",
-    ".qc-plot{width:100%;height:auto;max-height:540px}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1}.axis-light{stroke:#c8d3e1;stroke-width:1}.axis-label,.value-label,.tick{font-size:12px;fill:#253246}.plot-title{font-size:15px;font-weight:700;fill:#101827}",
-    ".density-area{fill:#20b2aa;opacity:.2}.density-line,.line-strong{fill:none;stroke:#0f766e;stroke-width:2.5}.stem{stroke:#168b87;stroke-width:2}.point,.point-accent{fill:#168b87;stroke:white;stroke-width:1.2;opacity:.86}.point-label{font-size:11px;fill:#253246}.heat-label{font-size:10px;fill:#0f172a}.flow-band{fill:#20b2aa;opacity:.18}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.9}",
-    ".empty{color:#69788c;font-style:italic}.status-pass{color:#0f766e;font-weight:800}.status-warn{color:#b45309;font-weight:800}.links{columns:2;line-height:1.8}a{color:#0f5f8f;text-decoration:none}a:hover{text-decoration:underline}",
+    ":root{--ink:#172033;--muted:#64748b;--line:#dde7f2;--panel:#ffffff;--soft:#f7fafc;--accent:#0f8f88;--accent2:#2f6f9f;--navy:#18233a;--warn:#b45309}",
+    "*{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45}",
+    ".wrap{max-width:1220px;margin:0 auto;padding:26px 28px}",
+    "header{background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(17,24,39,.03)}",
+    "header:before{content:\"\";display:block;height:5px;background:linear-gradient(90deg,var(--accent),var(--accent2),#7c3aed)}",
+    "header .wrap{padding-top:22px;padding-bottom:20px}",
+    "h1{font-size:30px;line-height:1.1;margin:0 0 6px 0;letter-spacing:0;color:#101827}",
+    "h2{font-size:18px;line-height:1.2;margin:0 0 14px 0;color:#101827}",
+    "section{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:18px 0;padding:18px 18px 20px 18px;box-shadow:0 8px 24px rgba(15,23,42,.04)}",
+    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:4px}",
+    ".card{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:7px;padding:12px 13px;background:linear-gradient(180deg,#fff,#f9fbfd)}.card-label{font-size:11px;color:#536173;font-weight:800;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:25px;font-weight:850;margin-top:4px;color:#0f766e;line-height:1.08;font-variant-numeric:tabular-nums}",
+    ".plot-grid{display:grid;grid-template-columns:1fr;gap:18px;align-items:start;margin-top:10px}.plot-card{margin:0;background:#f9fbfd;border:0;border-radius:7px;padding:16px 18px;overflow:hidden}",
+    "table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;margin-top:8px;border:1px solid #e7eef7;border-radius:7px;overflow:hidden}th,td{border-bottom:1px solid #e7eef7;padding:8px 10px;text-align:left;vertical-align:top}th{background:#edf3f9;color:#253246;font-weight:800;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfdff}tr:last-child td{border-bottom:0}",
+    ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1.2}.axis-light{stroke:#c8d3e1;stroke-width:1.2}.axis-label,.value-label,.tick{font-size:16px;fill:#253246}.value-label{font-weight:750}.plot-title{font-size:20px;font-weight:850;fill:#101827}",
+    ".density-area{fill:#20b2aa;opacity:.2}.density-line,.line-strong{fill:none;stroke:#0f766e;stroke-width:3}.stem{stroke:#168b87;stroke-width:2.4}.point,.point-accent{fill:#168b87;stroke:white;stroke-width:1.4;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:13px;fill:#0f172a}.flow-band{fill:#20b2aa;opacity:.18}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.92}",
+    ".empty{color:#69788c;font-style:italic}.status-pass{color:#0f766e;font-weight:850}.status-warn{color:var(--warn);font-weight:850}.links{columns:2;line-height:1.8}a{color:#0f5f8f;text-decoration:none}a:hover{text-decoration:underline}",
+    "@media(max-width:760px){.wrap{padding:18px}.plot-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
