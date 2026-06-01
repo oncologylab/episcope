@@ -150,7 +150,7 @@ Module 1 creates:
 - Optional full TFBS correlation statistics for audit and debugging.
 - `module1_qc_report.html`: an HTML QC report summarizing run parameters, input gates, motif-supported canonical support, correlation diagnostics, chunked predicted TFBS integrity, top TFs/FPs, condition support, motif complexity, warning checks, and related artifacts. The report uses static processing funnels, density curves, scatter summaries, heatmaps, lollipop rank plots, and cumulative curves.
 - QC summaries reporting how many FPs, motif-supported pairs, canonical-bound
-  FPs, prediction pairs, and predicted TFBS links pass each step.
+  FPs, prediction pairs, and predicted TFBS rows pass each step.
 
 ## Module 2: Connect TFs to target genes
 

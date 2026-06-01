@@ -58,11 +58,17 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
     pass = TRUE
   )
 
-  data.table::fwrite(link_dt, file.path(tmp, "links.csv"))
+  data.table::fwrite(link_dt[1L], file.path(tmp, "links_1.csv"))
+  data.table::fwrite(link_dt[2L], file.path(tmp, "links_2.csv"))
   data.table::fwrite(cand_dt, file.path(tmp, "candidates.csv"))
   data.table::fwrite(fp_corr, file.path(tmp, "fp_corr.csv"))
   data.table::fwrite(tf_corr, file.path(tmp, "tf_corr.csv"))
-  data.table::fwrite(data.table::data.table(chunk_id = 1L, path = file.path(tmp, "links.csv"), format = "csv", n_rows = 2L), file.path(tmp, "module2_links_manifest.csv"))
+  data.table::fwrite(data.table::data.table(
+    chunk_id = 1:2,
+    path = file.path(tmp, c("links_1.csv", "links_2.csv")),
+    format = "csv",
+    n_rows = 1L
+  ), file.path(tmp, "module2_links_manifest.csv"))
   data.table::fwrite(data.table::data.table(chunk_id = 1L, path = file.path(tmp, "candidates.csv"), format = "csv", n_rows = 2L), file.path(tmp, "module2_fp_target_candidates_manifest.csv"))
   data.table::fwrite(data.table::data.table(chunk_id = 1L, path = file.path(tmp, "fp_corr.csv"), format = "csv", n_rows = 2L), file.path(tmp, "module2_fp_target_corr_manifest.csv"))
   manifest <- data.table::data.table(
@@ -91,6 +97,35 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   expect_equal(down$gene_key, "GENE_DOWN")
   expect_true(all(c("tf", "gene_key", "peak_id", "log2FC_fp_score", "log2FC_gene_expr", "r_gene", "r_rna_gene", "distance_to_tss") %in% names(up)))
   expect_true(standardize_delta_links_one(res$up_path[[1]], keep_original = FALSE)$comparison_id[[1]] == "Case_vs_Ctrl")
+
+  res_skip <- module3_prepare_differential_links(
+    module2 = tmp,
+    multiomic_data = multiomic,
+    compar = data.frame(cond1_label = "Case", cond2_label = "Ctrl"),
+    project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
+    output_dir = out_dir,
+    n_cores = 1,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_true(res_skip$skipped[[1]])
+  expect_equal(res_skip$n_up[[1]], res$n_up[[1]])
+  expect_equal(res_skip$n_down[[1]], res$n_down[[1]])
+
+  unlink(file.path(out_dir, "filtered_links_manifest.csv"))
+  res_skip_no_manifest <- module3_prepare_differential_links(
+    module2 = tmp,
+    multiomic_data = multiomic,
+    compar = data.frame(cond1_label = "Case", cond2_label = "Ctrl"),
+    project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
+    output_dir = out_dir,
+    n_cores = 1,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_true(res_skip_no_manifest$skipped[[1]])
+  expect_true(is.na(res_skip_no_manifest$n_up[[1]]))
+  expect_true(is.na(res_skip_no_manifest$n_down[[1]]))
 })
 
 test_that("Module 3 link_padded FP signal mode pads inactive condition scores", {

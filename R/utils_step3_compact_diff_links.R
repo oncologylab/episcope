@@ -41,14 +41,22 @@
   file.path(base_dir, "benchmark_diff_grn_and_regulatory_topics", run_tag, diff_dir, "diff_links_filtered")
 }
 
-.module3_read_table <- function(path, format = NULL, columns = NULL) {
+.module3_read_table <- function(path, format = NULL, columns = NULL, allow_missing_columns = FALSE) {
   if (identical(format, "parquet") || grepl("\\.parquet$", path, ignore.case = TRUE)) {
     if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet Module 2 outputs.")
     if (is.null(columns)) return(data.table::as.data.table(arrow::read_parquet(path)))
+    if (isTRUE(allow_missing_columns)) {
+      schema <- arrow::ParquetFileReader$create(path)$GetSchema()
+      columns <- intersect(columns, names(schema))
+    }
     return(data.table::as.data.table(arrow::read_parquet(path, col_select = columns)))
   }
   if (is.null(columns)) {
     return(data.table::fread(path, showProgress = FALSE))
+  }
+  if (isTRUE(allow_missing_columns)) {
+    available <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
+    columns <- intersect(columns, available)
   }
   data.table::fread(path, select = columns, showProgress = FALSE)
 }
@@ -69,6 +77,26 @@
   out <- data.table::fread(path, showProgress = FALSE)
   if (!all(c("path", "format") %in% names(out))) .log_abort("Manifest must include path and format columns: {path}")
   out
+}
+
+.module3_candidate_columns <- function() {
+  c(
+    "candidate_id", "fp_id", "target_gene", "distance_to_tss",
+    "candidate_source", "within_tss_window", "prior_supported", "prior_id",
+    "prior_source", "prior_score", "prior_status"
+  )
+}
+
+.module3_read_manifest_tables <- function(manifest, columns = NULL, allow_missing_columns = FALSE) {
+  if (!nrow(manifest)) return(data.table::data.table())
+  data.table::rbindlist(lapply(seq_len(nrow(manifest)), function(i) {
+    .module3_read_table(
+      as.character(manifest$path[[i]]),
+      as.character(manifest$format[[i]]),
+      columns = columns,
+      allow_missing_columns = allow_missing_columns
+    )
+  }), use.names = TRUE, fill = TRUE)
 }
 
 .module3_read_static_corr <- function(module2, table, keep_pass = TRUE) {
@@ -124,7 +152,7 @@
   if (!nrow(link_dt)) return(data.table::data.table())
 
   cand_dt <- data.table::as.data.table(cand_dt)
-  cand_keep <- c("candidate_id", "fp_id", "target_gene", "distance_to_tss", "candidate_source", "within_tss_window", "prior_supported", "prior_id", "prior_source", "prior_score", "prior_status")
+  cand_keep <- .module3_candidate_columns()
   cand_dt <- cand_dt[, intersect(cand_keep, names(cand_dt)), with = FALSE]
   data.table::setkey(cand_dt, candidate_id, fp_id, target_gene)
   link_dt <- cand_dt[link_dt, on = c("candidate_id", "fp_id", "target_gene")]
@@ -362,14 +390,26 @@ module3_prepare_differential_links <- function(module2,
 
   link_manifest <- .module3_read_manifest_file(.module3_manifest_table(module2, "module2_links"))
   cand_manifest <- .module3_read_manifest_file(.module3_manifest_table(module2, "module2_fp_target_candidates"))
-  if (nrow(link_manifest) != nrow(cand_manifest)) {
-    .log_abort("Module 2 link and candidate manifests must have the same number of chunks.")
+  aligned_candidate_chunks <- nrow(cand_manifest) == nrow(link_manifest)
+  if (aligned_candidate_chunks && all(c("chunk_id") %in% names(cand_manifest)) && all(c("chunk_id") %in% names(link_manifest))) {
+    aligned_candidate_chunks <- identical(as.character(cand_manifest$chunk_id), as.character(link_manifest$chunk_id))
   }
   if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: loading Module 2 correlation summaries.")
   fp_corr <- .module3_read_static_corr(module2, "module2_fp_target_corr", keep_pass = TRUE)
   tf_corr <- .module3_read_static_corr(module2, "module2_tf_target_corr", keep_pass = TRUE)
   data.table::setkey(fp_corr, fp_id, target_gene)
   data.table::setkey(tf_corr, tf, target_gene)
+  shared_candidates <- NULL
+  if (!aligned_candidate_chunks) {
+    if (isTRUE(verbose)) {
+      .log_inform("Module 3 compact bridge: loading {nrow(cand_manifest)} shared candidate chunk(s) for {nrow(link_manifest)} link chunk(s).")
+    }
+    shared_candidates <- .module3_read_manifest_tables(
+      cand_manifest,
+      columns = .module3_candidate_columns(),
+      allow_missing_columns = TRUE
+    )
+  }
   dt_threads <- .module2_default_cores(n_cores)
   old_dt_threads <- data.table::setDTthreads(dt_threads)
   on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
@@ -377,6 +417,12 @@ module3_prepare_differential_links <- function(module2,
   if (!is.finite(comparison_workers) || comparison_workers < 1L) comparison_workers <- 1L
   if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: {nrow(specs)} comparison(s), {nrow(link_manifest)} link chunk(s), {dt_threads} data.table thread(s), {comparison_workers} comparison worker(s), FP signal mode {fp_signal_mode}.")
 
+  manifest_path <- file.path(output_dir, "filtered_links_manifest.csv")
+  old_manifest <- if (file.exists(manifest_path)) {
+    tryCatch(data.table::fread(manifest_path, showProgress = FALSE), error = function(e) data.table::data.table())
+  } else {
+    data.table::data.table()
+  }
   comparison_info <- lapply(seq_len(nrow(specs)), function(i) {
     case_id <- specs$cond1_label[[i]]
     ctrl_id <- specs$cond2_label[[i]]
@@ -391,7 +437,10 @@ module3_prepare_differential_links <- function(module2,
   res <- vector("list", nrow(specs))
   for (i in setdiff(seq_len(nrow(specs)), active_idx)) {
     info <- comparison_info[[i]]
-    res[[i]] <- tibble::tibble(comparison_id = info$stem, case_id = info$case_id, ctrl_id = info$ctrl_id, up_path = info$up_path, down_path = info$down_path, n_up = NA_integer_, n_down = NA_integer_, fp_signal_mode = fp_signal_mode, skipped = TRUE)
+    old_row <- if ("comparison_id" %in% names(old_manifest)) old_manifest[comparison_id == info$stem] else data.table::data.table()
+    n_up <- if (nrow(old_row) && "n_up" %in% names(old_row)) old_row$n_up[[1L]] else NA_integer_
+    n_down <- if (nrow(old_row) && "n_down" %in% names(old_row)) old_row$n_down[[1L]] else NA_integer_
+    res[[i]] <- tibble::tibble(comparison_id = info$stem, case_id = info$case_id, ctrl_id = info$ctrl_id, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
   }
 
   if (length(active_idx)) {
@@ -401,7 +450,16 @@ module3_prepare_differential_links <- function(module2,
     for (j in seq_len(nrow(link_manifest))) {
       if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: preparing link chunk {j}/{nrow(link_manifest)} for {length(active_idx)} comparison(s).")
       link_dt <- .module3_read_table(as.character(link_manifest$path[[j]]), as.character(link_manifest$format[[j]]), columns = c("link_id", "tf", "fp_id", "target_gene", "candidate_id", "module2_link_pass"))
-      cand_dt <- .module3_read_table(as.character(cand_manifest$path[[j]]), as.character(cand_manifest$format[[j]]))
+      cand_dt <- if (aligned_candidate_chunks) {
+        .module3_read_table(
+          as.character(cand_manifest$path[[j]]),
+          as.character(cand_manifest$format[[j]]),
+          columns = .module3_candidate_columns(),
+          allow_missing_columns = TRUE
+        )
+      } else {
+        shared_candidates
+      }
       n_links <- nrow(link_dt)
       prepared <- .module3_prepare_chunk_links(link_dt, cand_dt, fp_corr, tf_corr)
       n_prepared <- nrow(prepared)
@@ -441,7 +499,6 @@ module3_prepare_differential_links <- function(module2,
     }
   }
   manifest <- dplyr::bind_rows(res)
-  manifest_path <- file.path(output_dir, "filtered_links_manifest.csv")
   readr::write_csv(manifest, manifest_path)
   if (isTRUE(verbose)) {
     .log_inform("Module 3 compact bridge wrote {sum(!manifest$skipped)} comparison(s) to {output_dir}.")
