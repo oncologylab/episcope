@@ -11,7 +11,8 @@ vignette: >
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
-  eval = FALSE
+  eval = FALSE,
+  purl = FALSE
 )
 ```
 
@@ -37,7 +38,7 @@ CraftGRN keeps demo datasets outside the source package so installation remains
 small and CRAN-friendly. The package helper reports any configured external
 demo bundles:
 
-```{r demo-data}
+```{r demo-data, purl=FALSE}
 craftgrn_demo_data_info()
 ```
 
@@ -45,7 +46,7 @@ No external demo bundle is currently configured. To run your own project, point
 CraftGRN at a project-level YAML file and use the normal Module 1 preparation
 function:
 
-```{r demo-data-load}
+```{r demo-data-load, purl=FALSE}
 config <- "project.yaml"
 
 omics <- load_prep_multiomic_data(
@@ -58,7 +59,7 @@ omics <- load_prep_multiomic_data(
 
 To run Module 1:
 
-```{r demo-data-module1}
+```{r demo-data-module1, purl=FALSE}
 module1 <- predict_tfbs(
   omics_data = omics,
   out_dir = "predict_tf_binding_sites",
@@ -90,7 +91,7 @@ motifs, applies configured correlation cutoffs, and labels footprints with at
 least one canonical-bound TF. By default, only these canonical-bound footprints
 are used for the all-expressed-TF prediction step.
 
-```{r module-1-figure, echo = FALSE, out.width = "100%", eval = TRUE, fig.alt = "Module 1 workflow for preparing multiomic data, processing footprint evidence, and predicting TF binding sites."}
+```{r module-1-figure, echo = FALSE, out.width = "100%", eval = TRUE, purl=FALSE, fig.alt = "Module 1 workflow for preparing multiomic data, processing footprint evidence, and predicting TF binding sites."}
 knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_1.svg")
 ```
 
@@ -117,7 +118,7 @@ canonical-bound FPs and the TF names predicted to bind each FP.
 
 ### Run Module 1
 
-```{r module-1}
+```{r module-1, purl=FALSE}
 data_object <- load_prep_multiomic_data(
   config = "craftgrn_grn.yaml",
   genome = "hg38",
@@ -161,7 +162,7 @@ regulatory-prior evidence. GeneHancer, HiC, promoter-capture, CRISPR enhancer
 screens, or user tables are all represented as regulatory priors rather than
 separate modes.
 
-```{r module-2-figure, echo = FALSE, out.width = "100%", eval = TRUE, fig.alt = "Module 2 workflow for linking predicted TF binding sites to target genes using expression, genomic distance, and optional regulatory prior evidence."}
+```{r module-2-figure, echo = FALSE, out.width = "100%", eval = TRUE, purl=FALSE, fig.alt = "Module 2 workflow for linking predicted TF binding sites to target genes using expression, genomic distance, and optional regulatory prior evidence."}
 knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg")
 ```
 
@@ -183,7 +184,7 @@ candidates from FPs bound by the surviving TFs. FP score to target expression
 correlations are computed only for those restricted FP-target candidates within
 the TSS window or supported by regulatory prior evidence.
 
-```{r module-2, eval = FALSE}
+```{r module-2, eval = FALSE, purl=FALSE}
 module2 <- link_tf_targets(
   multiomic_data = module1$omics_data,
   predicted_tfbs = module1$predicted_tfbs,
@@ -223,7 +224,7 @@ Module 3 compares regulatory links between conditions, builds joint RNA and
 footprint document-term matrices, trains topic models, assigns links to topics,
 and summarizes topic-specific pathway and master TF programs.
 
-```{r module-3-figure, echo = FALSE, out.width = "100%", eval = TRUE, fig.alt = "Module 3 workflow for comparing regulatory links, training topic models, and summarizing differential GRN programs."}
+```{r module-3-figure, echo = FALSE, out.width = "100%", eval = TRUE, purl=FALSE, fig.alt = "Module 3 workflow for comparing regulatory links, training topic models, and summarizing differential GRN programs."}
 knitr::include_graphics("https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg")
 ```
 
@@ -248,7 +249,7 @@ model fit. For fixed-seed validation runs, set
 `warplda_sampler = "warp_ref"`; this native sequential reference sampler is
 much slower than `warp_omp`.
 
-```{r module-3-topic-models}
+```{r module-3-topic-models, purl=FALSE}
 train_topic_models(
   Kgrid = c(2:10, 15, 20, 25, 30),
   input_dir = "differential_links",
@@ -266,7 +267,7 @@ extract_regulatory_topics(
 
 ### Summarize pathways and master TFs
 
-```{r module-3-summaries}
+```{r module-3-summaries, purl=FALSE}
 run_diff_grn_pathway_analysis(
   link_dir = "differential_links",
   output_dir = "pathway_analysis"
