@@ -59,14 +59,6 @@ reference:
   - build_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
-  - starts_with("read_")
-  - starts_with("parse_")
-  - starts_with("load_motif")
-  - starts_with("build_motif")
-  - starts_with("compute_motif")
-  - starts_with("best_pwm")
-  - starts_with("pwm_")
-  - utils_motif_clustering
 
 
 - title: TF-target linking
@@ -94,11 +86,8 @@ reference:
   - module3_prepare_differential_links
   - train_topic_models
   - extract_regulatory_topics
-  - starts_with("build_doc_term")
-  - starts_with("run_vae")
   - load_delta_links_many
   - build_tf_cluster_map_from_motif
-  - weight_to_count
 
 - title: Differential GRN pathway analysis
   desc: Run pathway enrichment and visualize differential regulatory programs.
@@ -117,14 +106,6 @@ reference:
   - run_diff_grn_master_tf_summary
   - summarize_diff_grn_master_tf_links
   - starts_with("plot_diff_grn_master_tf")
-
-- title: Internal documentation helpers
-  desc: Helper topics used by generated documentation.
-  contents:
-  - ends_with("_docs")
-  - cutree_to_k
-  - pairwise_comparisons
-  - "%>%"
 
 development:
   mode: auto

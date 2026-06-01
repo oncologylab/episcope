@@ -29,7 +29,9 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("Motif-Supported Correlations", page, fixed = TRUE))
   expect_true(grepl("Prediction Output Integrity", page, fixed = TRUE))
   expect_true(grepl("Correlation Diagnostics", page, fixed = TRUE))
-  expect_true(grepl("Top Predicted FPs", page, fixed = TRUE))
+  expect_true(grepl("Footprint Motif Complexity", page, fixed = TRUE))
+  expect_false(grepl("Top Predicted FPs", page, fixed = TRUE))
+  expect_false(grepl("Top FPs by predicted TFBS", page, fixed = TRUE))
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Correctness Checks", page, fixed = TRUE))
   expect_true(grepl("Workflow Funnel", page, fixed = TRUE))
@@ -142,6 +144,10 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Integrity Checks", page, fixed = TRUE))
   expect_true(grepl("Top TFs In Final Links", page, fixed = TRUE))
+  expect_true(grepl("Top Target Genes In Final Links", page, fixed = TRUE))
+  expect_false(grepl("Top Targets And FPs In Final Links", page, fixed = TRUE))
+  expect_false(grepl("Top FPs by final links", page, fixed = TRUE))
+  expect_false(grepl("Top FP-target correlation metrics", page, fixed = TRUE))
   expect_true(grepl("Key Findings", page, fixed = TRUE))
   expect_true(grepl("Module 2 Interpretation", page, fixed = TRUE))
   expect_true(grepl("Recommended Review", page, fixed = TRUE))
@@ -155,7 +161,7 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
 })
 
-test_that("Module 2 streamed condition activity is reported as not run", {
+test_that("Module 2 streamed condition activity is reported as skipped", {
   qc_summary <- tibble::tibble(
     metric = c(
       "n_tf_target_pairs_pass",
@@ -182,5 +188,6 @@ test_that("Module 2 streamed condition activity is reported as not run", {
   )
 
   condition_row <- warning_checks[warning_checks$check == "Condition activity table is available", ]
-  expect_equal(condition_row$status, "NOT RUN")
+  expect_equal(condition_row$status, "SKIPPED")
+  expect_match(condition_row$detail, "streamed output path")
 })

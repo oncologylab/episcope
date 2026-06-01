@@ -43,6 +43,7 @@
 #'
 #' @importFrom graphics abline barplot hist legend par plot.new points text title
 #' @name utils_motif_clustering
+#' @keywords internal
 NULL
 
 resolve_motif_db_path <- function(db, ref_genome = NULL) {

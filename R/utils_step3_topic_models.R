@@ -292,54 +292,16 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   dt[]
 }
 
-#' VAE topic modeling helpers
+#' Load filtered differential links for Module 3 topics
 #'
-#' Utilities for loading delta links, building TF cluster maps, running VAE
-#' topic models, and generating doc-topic heatmaps and subnet plots.
+#' Read one or more filtered differential-link CSV files and standardize the
+#' columns used by Module 3 topic-model input construction.
 #'
-#' @param motif_path Path to the motif database TSV file.
 #' @param files Vector of delta-link CSV paths.
 #' @param keep_original Keep original columns when loading delta links.
 #' @param n_max_files Optional maximum number of files to load.
-#' @param edges_all Delta-link table used for topic modeling.
-#' @param out_root Root output directory for topic runs.
-#' @param celllines Character vector of cell line prefixes.
-#' @param tf_cluster_map Named vector mapping TFs to clusters.
-#' @param tf_exclude Optional vector of TFs to exclude.
-#' @param k_grid_default Vector of K values for grid runs.
-#' @param k_single_map Named list of per-cellline K values.
-#' @param topic_root Root directory containing VAE outputs.
-#' @param step2_out_dir Directory with delta link CSV files.
-#' @param min_prob Minimum link-score probability for subnet plots.
-#' @param abs_log2fc_fp_min Minimum absolute footprint log2 fold-change.
-#' @param abs_delta_fp_min Minimum absolute footprint delta.
-#' @param abs_log2fc_gene_min Minimum absolute gene log2 fold-change.
-#' @param require_fp_bound_either Require footprint binding in either condition.
-#' @param require_tf_expr_either Require TF expression in either condition.
-#' @param require_gene_expr_either Require gene expression in either condition.
-#' @param direction_consistency Direction-consistency filter mode.
-#' @param top_terms_per_doc Maximum number of terms retained per document.
-#' @param min_df Minimum document frequency for retained terms.
-#' @param count_method Count conversion method.
-#' @param count_scale Count conversion scale factor.
-#' @param binarize_method Binarization method for topic inputs.
-#' @param thrP Probability threshold used by gamma-fit binarization.
-#' @param top_n_terms Number of top terms reported per topic.
-#' @param in_topic_min_terms Minimum number of topic terms required for a link.
-#' @param topic_report_args Additional arguments passed to topic report helpers.
-#' @param vae_variant VAE model variant.
-#' @param backend Topic-model backend.
-#' @param doc_mode Document construction mode.
-#' @param filter_same_direction Keep TF and target changes with the same
-#'   direction for raw delta links.
-#' @param methods Topic network plotting methods.
-#' @param top_n_per_topic Maximum pathway rows per topic.
-#' @param dot_top_n_per_topic Maximum pathway rows shown in dot plots.
-#' @param max_pathways Maximum pathways retained in pathway summaries.
-#' @param per_comparison Split pathway summaries by comparison.
-#' @param split_direction Split pathway summaries by direction.
-#' @return Most helpers return \code{invisible(TRUE)} and write outputs to disk.
-#' @rdname vae_topic_helpers
+#'
+#' @return A data.table of standardized differential links.
 #' @export
 load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf) {
   .assert_pkg("cli")
@@ -6741,7 +6703,15 @@ run_tfdocs_warplda_one_option <- function(edges_all,
 # 12) VAE helpers (nutrient pipeline)
 # =============================================================================
 
-#' @rdname vae_topic_helpers
+#' Build a TF cluster map from motif metadata
+#'
+#' Convert motif metadata with gene-symbol and sub-cluster columns into a named
+#' TF-to-cluster vector for Module 3 topic documents.
+#'
+#' @param motif_path Path to the motif database TSV file, a motif metadata
+#'   data.frame, or a list containing `motif_db`.
+#'
+#' @return A named character vector mapping TF symbols to cluster labels.
 #' @export
 build_tf_cluster_map_from_motif <- function(motif_path) {
   .assert_pkg("cli")
@@ -7062,8 +7032,6 @@ run_vae_topic_report_py <- function(doc_term,
   invisible(TRUE)
 }
 
-#' @rdname vae_topic_helpers
-#' @export
 run_vae_ctf_multivi <- function(edges_all,
                                 out_root,
                                 celllines = c("AsPC1", "HPAFII", "Panc1"),
@@ -7202,8 +7170,6 @@ run_vae_ctf_multivi <- function(edges_all,
   invisible(TRUE)
 }
 
-#' @rdname vae_topic_helpers
-#' @export
 run_vae_doc_topic_heatmaps <- function(topic_root,
                                        backend = c("vae", "warplda"),
                                        vae_variant = "multivi_encoder",
@@ -7592,8 +7558,6 @@ plot_topic_delta_networks_from_link_scores <- function(link_scores,
   invisible(TRUE)
 }
 
-#' @rdname vae_topic_helpers
-#' @export
 run_vae_topic_delta_network_plots <- function(topic_root,
                                               step2_out_dir,
                                               min_prob = 0.5,
@@ -7649,8 +7613,6 @@ run_vae_topic_delta_network_plots <- function(topic_root,
   invisible(TRUE)
 }
 
-#' @rdname vae_topic_helpers
-#' @export
 run_vae_topic_delta_network_pathway <- function(topic_root,
                                                 backend = c("vae", "warplda"),
                                                 vae_variant = "multivi_encoder",

@@ -210,9 +210,9 @@
 
 .qc_color_gradient <- function(x) {
   x <- pmin(1, pmax(0, suppressWarnings(as.numeric(x))))
-  low <- c(237, 244, 251)
-  mid <- c(32, 178, 170)
-  high <- c(22, 41, 73)
+  low <- c(244, 247, 250)
+  mid <- c(104, 138, 181)
+  high <- c(31, 47, 74)
   vapply(x, function(v) {
     if (!is.finite(v)) v <- 0
     if (v <= 0.5) {
@@ -569,24 +569,23 @@
 .qc_write_html <- function(path, title, sections) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   css <- paste(
-    ":root{--ink:#172033;--muted:#64748b;--line:#dde7f2;--panel:#ffffff;--soft:#f7fafc;--accent:#0f8f88;--accent2:#2f6f9f;--navy:#18233a;--warn:#b45309}",
-    "*{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45}",
-    ".wrap{max-width:1220px;margin:0 auto;padding:26px 28px}",
-    "header{background:#fff;border-bottom:1px solid var(--line);box-shadow:0 1px 0 rgba(17,24,39,.03)}",
-    "header:before{content:\"\";display:block;height:5px;background:linear-gradient(90deg,var(--accent),var(--accent2),#7c3aed)}",
-    "header .wrap{padding-top:22px;padding-bottom:20px}",
-    "h1{font-size:30px;line-height:1.1;margin:0 0 6px 0;letter-spacing:0;color:#101827}",
-    "h2{font-size:18px;line-height:1.2;margin:0 0 14px 0;color:#101827}",
-    "section{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin:18px 0;padding:18px 18px 20px 18px;box-shadow:0 8px 24px rgba(15,23,42,.04)}",
-    "h3{font-size:15px;line-height:1.25;margin:0 0 8px 0;color:#101827}",
-    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:4px}",
-    ".card{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:7px;padding:12px 13px;background:linear-gradient(180deg,#fff,#f9fbfd)}.card-label{font-size:11px;color:#536173;font-weight:800;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:25px;font-weight:850;margin-top:4px;color:#0f766e;line-height:1.08;font-variant-numeric:tabular-nums}",
-    ".callout{border:1px solid #d7e6f2;border-left:4px solid var(--accent);border-radius:7px;background:#f9fbfd;padding:13px 15px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:5px 0}",
-    ".plot-grid{display:grid;grid-template-columns:1fr;gap:18px;align-items:start;margin-top:10px}.plot-card{margin:0;background:#f9fbfd;border:0;border-radius:7px;padding:16px 18px;overflow:hidden}",
-    "table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px;margin-top:8px;border:1px solid #e7eef7;border-radius:7px;overflow:hidden}th,td{border-bottom:1px solid #e7eef7;padding:8px 10px;text-align:left;vertical-align:top}th{background:#edf3f9;color:#253246;font-weight:800;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfdff}tr:last-child td{border-bottom:0}",
-    ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:#168b87}.axis{stroke:#44546a;stroke-width:1.2}.axis-light{stroke:#c8d3e1;stroke-width:1.2}.axis-label,.value-label,.tick{font-size:16px;fill:#253246}.value-label{font-weight:750}.plot-title{font-size:20px;font-weight:850;fill:#101827}",
-    ".density-area{fill:#20b2aa;opacity:.2}.density-line,.line-strong{fill:none;stroke:#0f766e;stroke-width:3}.stem{stroke:#168b87;stroke-width:2.4}.point,.point-accent{fill:#168b87;stroke:white;stroke-width:1.4;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:13px;fill:#0f172a}.flow-band{fill:#20b2aa;opacity:.18}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.92}",
-    ".empty{color:#69788c;font-style:italic}.status-pass{color:#0f766e;font-weight:850}.status-warn{color:var(--warn);font-weight:850}.links{columns:2;line-height:1.8}a{color:#0f5f8f;text-decoration:none}a:hover{text-decoration:underline}",
+    ":root{--ink:#1b2430;--muted:#5f6b7a;--line:#d9dee7;--panel:#ffffff;--soft:#f7f8fa;--accent:#365f91;--accent2:#6b7f99;--navy:#1f2f4a;--warn:#9a5b00;--skip:#6b7280}",
+    "*{box-sizing:border-box}body{margin:0;background:#ffffff;color:var(--ink);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5}",
+    ".wrap{max-width:1160px;margin:0 auto;padding:24px 30px}",
+    "header{background:#fff;border-bottom:1px solid #cfd6df}",
+    "header .wrap{padding-top:24px;padding-bottom:18px}",
+    "h1{font-size:28px;line-height:1.12;margin:0 0 5px 0;letter-spacing:0;color:#111827;font-weight:750}",
+    "h2{font-size:17px;line-height:1.25;margin:0 0 12px 0;color:#111827;font-weight:750;border-bottom:1px solid var(--line);padding-bottom:7px}",
+    "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px}",
+    "h3{font-size:14px;line-height:1.25;margin:0 0 8px 0;color:#111827;font-weight:750}",
+    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
+    ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:#1f2f4a;line-height:1.1;font-variant-numeric:tabular-nums}",
+    ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
+    ".plot-grid{display:grid;grid-template-columns:1fr;gap:16px;align-items:start;margin-top:10px}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden}",
+    "table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
+    ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:#365f91}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:16px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:19px;font-weight:760;fill:#111827}",
+    ".density-area{fill:#648ab5;opacity:.18}.density-line,.line-strong{fill:none;stroke:#365f91;stroke-width:2.6}.stem{stroke:#365f91;stroke-width:2.1}.point,.point-accent{fill:#365f91;stroke:white;stroke-width:1.2;opacity:.84}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:13px;fill:#111827}.flow-band{fill:#648ab5;opacity:.16}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.9}",
+    ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
     "@media(max-width:760px){.wrap{padding:18px}.plot-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
@@ -977,6 +976,7 @@
   }
   n_check <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "CHECK", na.rm = TRUE) else NA_integer_
   n_not_run <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "NOT RUN", na.rm = TRUE) else NA_integer_
+  n_skipped <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "SKIPPED", na.rm = TRUE) else NA_integer_
   key <- .qc_callout_html("What Happened", c(
     paste0("Module 1 started from ", .qc_format_number(n_input), " aligned FPs and kept ", .qc_format_number(n_bound), " bound/accessibility-supported FPs."),
     .qc_metric_sentence("Canonical support", n_canonical_pass, n_canonical_pairs),
@@ -992,7 +992,7 @@
   ))
   review_class <- if (is.finite(n_check) && n_check > 0) "warn" else "info"
   review <- .qc_callout_html("Review Before Downstream Use", c(
-    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows and ", .qc_format_number(n_not_run), " NOT RUN rows."),
+    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows, ", .qc_format_number(n_not_run), " NOT RUN rows, and ", .qc_format_number(n_skipped), " SKIPPED optional rows."),
     "Review TFs with very high predicted counts to make sure they reflect biology rather than overly permissive cutoffs.",
     "Review Condition Support to confirm that predicted TFBS are not dominated by a very small number of conditions.",
     "Review Prediction Output Integrity before using predicted_tfbs as the Module 2 handoff."
@@ -1166,21 +1166,9 @@ build_module1_qc_report <- function(module1,
       title = "Canonical-bound TF summary"
     )
   )
-  fp_plots <- .qc_plot_grid(
-    .qc_scatter_svg(
-      predicted_scan$fp_summary,
-      x_col = "n_tf",
-      y_col = "n_predicted_tfbs",
-      label_col = "fp_id",
-      title = "Predicted TF multiplicity per FP"
-    ),
-    .qc_lollipop_svg(
-      predicted_scan$fp_summary,
-      label_col = "fp_id",
-      value_col = "n_predicted_tfbs",
-      title = "Top FPs by predicted TFBS"
-    ),
-    .qc_density_svg(motif_complexity$values, title = "Canonical TFs per aligned FP density")
+  footprint_distribution_plots <- .qc_plot_grid(
+    .qc_density_svg(motif_complexity$values, title = "Canonical TFs per aligned FP density"),
+    .qc_cumulative_svg(motif_complexity$values, title = "Cumulative TF multiplicity per aligned FP")
   )
   content <- .module1_qc_content_sections(
     qc_summary = qc_summary,
@@ -1228,10 +1216,6 @@ build_module1_qc_report <- function(module1,
       predicted_tf_plots,
       .qc_table_html(predicted_scan$tf_summary, max_rows = top_n)
     )),
-    .qc_section("Top Predicted FPs", paste0(
-      fp_plots,
-      .qc_table_html(predicted_scan$fp_summary, max_rows = top_n)
-    )),
     .qc_section("Correlation Diagnostics", paste0(
       correlation_plots,
       .qc_table_html(dplyr::bind_rows(canonical_corr$summary, prediction_corr$summary), max_rows = 20L)
@@ -1243,11 +1227,8 @@ build_module1_qc_report <- function(module1,
       ),
       .qc_table_html(predicted_scan$condition_support, max_rows = 20L)
     )),
-    .qc_section("Motif Complexity", paste0(
-      .qc_plot_grid(
-        .qc_density_svg(motif_complexity$values, title = "TFs per aligned FP from canonical motif support"),
-        .qc_cumulative_svg(motif_complexity$values, title = "Cumulative TF multiplicity per FP")
-      ),
+    .qc_section("Footprint Motif Complexity", paste0(
+      footprint_distribution_plots,
       .qc_table_html(motif_complexity$summary, max_rows = 10L)
     )),
     .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
@@ -1580,14 +1561,11 @@ build_module1_qc_report <- function(module1,
     list("Final Module 2 links are present", .qc_status(if (is.finite(n_links)) n_links > 0 else NA, paste0("Final links: ", .qc_format_number(n_links)))),
     list(
       "Condition activity table is available",
-      .qc_status(
-        if (is.finite(.qc_metric_value(qc_summary, "n_active_link_conditions", default = NA_real_))) {
-          nrow(condition_scan$summary) > 0
-        } else {
-          NA
-        },
-        paste0("Condition rows: ", .qc_format_number(nrow(condition_scan$summary)))
-      )
+      if (is.finite(.qc_metric_value(qc_summary, "n_active_link_conditions", default = NA_real_))) {
+        .qc_status(nrow(condition_scan$summary) > 0, paste0("Condition rows: ", .qc_format_number(nrow(condition_scan$summary))))
+      } else {
+        list(status = "SKIPPED", detail = "Optional condition activity table was not materialized by the streamed output path.")
+      }
     )
   )
   tibble::tibble(
@@ -1611,6 +1589,7 @@ build_module1_qc_report <- function(module1,
   bad_fp <- .qc_metric_value(link_scan$validation, "n_links_with_missing_fp_target_pass", default = NA_real_)
   n_check <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "CHECK", na.rm = TRUE) else NA_integer_
   n_not_run <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "NOT RUN", na.rm = TRUE) else NA_integer_
+  n_skipped <- if (is.data.frame(warning_checks) && nrow(warning_checks)) sum(warning_checks$status == "SKIPPED", na.rm = TRUE) else NA_integer_
   top_tf <- if (is.data.frame(link_scan$top_tf) && nrow(link_scan$top_tf)) {
     paste0(
       as.character(link_scan$top_tf$tf[[1L]]), " has ",
@@ -1636,7 +1615,7 @@ build_module1_qc_report <- function(module1,
   ))
   review_class <- if (is.finite(n_check) && n_check > 0) "warn" else "info"
   review <- .qc_callout_html("Review Before Downstream Use", c(
-    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows and ", .qc_format_number(n_not_run), " NOT RUN rows."),
+    paste0("Warning Checks contains ", .qc_format_number(n_check), " CHECK rows, ", .qc_format_number(n_not_run), " NOT RUN rows, and ", .qc_format_number(n_skipped), " SKIPPED optional rows."),
     "Review Candidate Source QC to confirm whether links mainly come from the TSS window, regulatory prior input, or both.",
     "Review Candidate Distance To TSS to make sure the selected window and regulatory prior match the expected biology.",
     "Review Top TFs In Final Links and Condition Activity QC for overly broad regulators or condition imbalance before using Module 2 output in Module 3."
@@ -1720,7 +1699,7 @@ build_module2_qc_report <- function(module2,
     module2,
     table_name = "module2_fp_target_corr",
     label = "FP score to target expression",
-    group_cols = c("fp_id", "target_gene"),
+    group_cols = c("target_gene", "fp_id"),
     top_n = top_n,
     scan = isTRUE(scan_large_tables)
   )
@@ -1794,15 +1773,15 @@ build_module2_qc_report <- function(module2,
       fp_corr_scan$top,
       x_col = "n_unique_partner",
       y_col = "n_pass",
-      label_col = "fp_id",
+      label_col = "target_gene",
       size_col = "median_best_r",
-      title = "FP-target passing breadth"
+      title = "Target genes with passing FP evidence"
     ),
     .qc_metric_heatmap_svg(
       fp_corr_scan$top,
-      row_col = "fp_id",
+      row_col = "target_gene",
       value_cols = c("n_pass", "n_unique_partner", "median_best_r"),
-      title = "Top FP-target correlation metrics"
+      title = "Top FP-target target-gene metrics"
     )
   )
   candidate_plots <- .qc_plot_grid(
@@ -1872,13 +1851,11 @@ build_module2_qc_report <- function(module2,
       final_link_plots,
       .qc_table_html(link_scan$top_tf, max_rows = top_n)
     )),
-    .qc_section("Top Targets And FPs In Final Links", paste0(
+    .qc_section("Top Target Genes In Final Links", paste0(
       .qc_plot_grid(
-        .qc_lollipop_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links"),
-        .qc_lollipop_svg(link_scan$top_fp, "fp_id", "n_links", title = "Top FPs by final links")
+        .qc_lollipop_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links")
       ),
-      .qc_table_html(link_scan$top_target, max_rows = top_n),
-      .qc_table_html(link_scan$top_fp, max_rows = top_n)
+      .qc_table_html(link_scan$top_target, max_rows = top_n)
     )),
     .qc_section("Recommended Review", content$review),
     .qc_section("Condition Activity QC", paste0(

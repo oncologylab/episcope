@@ -22,3 +22,4 @@ Normalizations:
   Ncor2 = cor * (w / w2)
   Ncor  = cor * (w / max(w1, w2))
 }
+\keyword{internal}
