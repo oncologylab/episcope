@@ -52,18 +52,19 @@ BiocManager::install(c("DESeq2", "GenomicRanges", "SummarizedExperiment"))
 
 ## Demo Data
 
-A small processed chr22 demo bundle is available from GitHub Releases:
-https://github.com/oncologylab/craftgrn/releases/tag/demo-data-v0.1.0
-
-The bundle contains matched ATAC/RNA inputs and compact aligned JASPAR2024
-footprint cache files, but not raw TOBIAS outputs or generated result folders.
-It is intended for testing the package workflow on a normal laptop or desktop.
+CraftGRN keeps demo datasets outside the source package so installation remains
+small and CRAN-friendly. The package helper reports any configured external
+demo bundles:
 
 ```r
 craftgrn::craftgrn_demo_data_info()
+```
 
-demo_dir <- craftgrn::download_craftgrn_demo_data(destdir = tempdir())
-config <- file.path(demo_dir, "project.yaml")
+No external demo bundle is currently configured. To run your own project, point
+CraftGRN at a project-level YAML file:
+
+```r
+config <- "project.yaml"
 
 omics <- craftgrn::load_prep_multiomic_data(
   config = config,
@@ -71,14 +72,10 @@ omics <- craftgrn::load_prep_multiomic_data(
   do_preprocess = FALSE,
   verbose = TRUE
 )
-```
 
-To run Module 1 on the demo:
-
-```r
 module1 <- craftgrn::predict_tfbs(
   omics_data = omics,
-  out_dir = file.path(demo_dir, "predict_tf_binding_sites"),
+  out_dir = "predict_tf_binding_sites",
   output_format = "auto",
   write_stats = FALSE,
   verbose = TRUE
@@ -87,13 +84,11 @@ module1 <- craftgrn::predict_tfbs(
 
 Troubleshooting:
 
-- If download fails, open the release URL above and download the `.tar.gz`
-  asset manually.
-- If checksum verification fails, rerun with `overwrite = TRUE`; this removes
-  stale or partial downloads.
-- If paths fail after moving the folder, keep `project.yaml` in the extracted
-  project directory and pass `config <- file.path(demo_dir, "project.yaml")`.
-  The demo config uses `base_dir: "."`.
+- If `craftgrn_demo_data_info()` returns zero rows, no public demo bundle is
+  currently advertised by this package version.
+- If paths fail after moving a project folder, keep `project.yaml` in the
+  project directory and pass that config path explicitly. A portable project
+  config should use `base_dir: "."`.
 - If memory is limited, start with `load_prep_multiomic_data()` and Module 1
   before running Module 2.
 

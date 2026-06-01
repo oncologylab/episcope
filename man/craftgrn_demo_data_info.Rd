@@ -2,17 +2,19 @@
 % Please edit documentation in R/utils_demo_data.R
 \name{craftgrn_demo_data_info}
 \alias{craftgrn_demo_data_info}
-\title{Return metadata for an external CraftGRN demo data bundle}
+\title{Return metadata for configured external CraftGRN demo data}
 \usage{
-craftgrn_demo_data_info(demo = c("nutrient_stress_chr22"))
+craftgrn_demo_data_info(demo = NULL)
 }
 \arguments{
-\item{demo}{Demo bundle name. Currently `"nutrient_stress_chr22"`.}
+\item{demo}{Optional demo bundle name. No external demo bundle is currently
+configured.}
 }
 \value{
 A data frame with the bundle URL, checksum, archive file name, and
-  extracted project directory name.
+  extracted project directory name. When no demo bundle is configured, the
+  returned data frame has zero rows.
 }
 \description{
-Return metadata for an external CraftGRN demo data bundle
+Return metadata for configured external CraftGRN demo data
 }

@@ -1,11 +1,20 @@
-test_that("demo data registry exposes reproducible download metadata", {
+test_that("demo data registry is empty when no public bundle is configured", {
   info <- craftgrn_demo_data_info()
 
   expect_s3_class(info, "data.frame")
-  expect_equal(info$name, "nutrient_stress_chr22")
-  expect_equal(info$release_tag, "demo-data-v0.1.0")
-  expect_equal(info$file, "nutrient_stress_strict_JASPAR2024_chr22_demo_inputs.tar.gz")
-  expect_equal(info$project_dir, "nutrient_stress_strict_JASPAR2024_chr22_demo")
-  expect_equal(info$md5, "fa754783186b0e5119387b0405652331")
-  expect_match(info$url, "https://github.com/oncologylab/craftgrn/releases/download/demo-data-v0.1.0/", fixed = TRUE)
+  expect_equal(nrow(info), 0L)
+  expect_named(
+    info,
+    c(
+      "name", "title", "version", "release_tag", "file", "project_dir",
+      "url", "md5", "size", "description"
+    )
+  )
+})
+
+test_that("download reports no configured demo data", {
+  expect_error(
+    download_craftgrn_demo_data(destdir = tempdir(), verbose = FALSE),
+    "No external CraftGRN demo data bundle is currently configured"
+  )
 })

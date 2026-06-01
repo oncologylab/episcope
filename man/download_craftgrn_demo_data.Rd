@@ -2,11 +2,11 @@
 % Please edit documentation in R/utils_demo_data.R
 \name{download_craftgrn_demo_data}
 \alias{download_craftgrn_demo_data}
-\title{Download and unpack an external CraftGRN demo data bundle}
+\title{Download and unpack configured external CraftGRN demo data}
 \usage{
 download_craftgrn_demo_data(
   destdir = ".",
-  demo = c("nutrient_stress_chr22"),
+  demo = NULL,
   overwrite = FALSE,
   checksum = TRUE,
   verbose = TRUE
@@ -15,7 +15,8 @@ download_craftgrn_demo_data(
 \arguments{
 \item{destdir}{Directory where the archive should be downloaded and unpacked.}
 
-\item{demo}{Demo bundle name. Currently `"nutrient_stress_chr22"`.}
+\item{demo}{Optional demo bundle name. No external demo bundle is currently
+configured.}
 
 \item{overwrite}{Logical; if `TRUE`, download the archive again and replace an
 existing extracted project directory.}
@@ -28,27 +29,19 @@ existing extracted project directory.}
 The normalized path to the extracted demo project directory.
 }
 \description{
-Downloads a processed demo data archive from the CraftGRN GitHub Releases
-page, verifies its MD5 checksum by default, extracts it, and returns the
-extracted project directory. The demo bundle is external to the R package so
-package installation remains small and CRAN-friendly.
+Downloads a processed demo data archive from a configured external source,
+verifies its MD5 checksum by default, extracts it, and returns the extracted
+project directory. Demo bundles are external to the R package so package
+installation remains small and CRAN-friendly. No external demo bundle is
+currently configured.
 }
 \details{
 If the download fails, inspect `craftgrn_demo_data_info()` and download the
-release asset manually. If checksum verification fails, rerun with
+configured asset manually. If checksum verification fails, rerun with
 `overwrite = TRUE` to replace a stale or partial archive. The extracted
 project uses `base_dir: "."`, so pass the returned directory or its
 project config path directly to package functions after moving the folder.
 }
 \examples{
-\dontrun{
-demo_dir <- download_craftgrn_demo_data(destdir = tempdir())
-config <- file.path(demo_dir, "project.yaml")
-omics <- load_prep_multiomic_data(
-  config = config,
-  label_col = "strict_match_rna",
-  do_preprocess = FALSE,
-  verbose = TRUE
-)
-}
+craftgrn_demo_data_info()
 }

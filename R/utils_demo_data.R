@@ -1,10 +1,10 @@
 # File: utils_demo_data.R
 # Author: Yaoxiang Li
 # Created: 2026-05-29
-# Updated: 2026-05-29
+# Updated: 2026-06-01
 #
 # Purpose:
-# Provide small helpers for downloading external CraftGRN demo data bundles.
+# Provide small helpers for listing and downloading external CraftGRN demo data.
 #
 # Notes:
 # - Demo data are intentionally kept out of the source package and git history.
@@ -16,40 +16,49 @@
 NULL
 
 .craftgrn_demo_data_registry <- function() {
-  list(
-    nutrient_stress_chr22 = list(
-      name = "nutrient_stress_chr22",
-      title = "Nutrient stress chr22 processed demo",
-      version = "0.1.0",
-      release_tag = "demo-data-v0.1.0",
-      file = "nutrient_stress_strict_JASPAR2024_chr22_demo_inputs.tar.gz",
-      project_dir = "nutrient_stress_strict_JASPAR2024_chr22_demo",
-      url = paste0(
-        "https://github.com/oncologylab/craftgrn/releases/download/",
-        "demo-data-v0.1.0/",
-        "nutrient_stress_strict_JASPAR2024_chr22_demo_inputs.tar.gz"
-      ),
-      md5 = "fa754783186b0e5119387b0405652331",
-      size = "5.2 MB",
-      description = paste(
-        "Input-only chr22 subset with matched ATAC/RNA tables and compact",
-        "aligned JASPAR2024 footprint cache. Raw TOBIAS files and generated",
-        "analysis outputs are not included."
-      )
-    )
+  list()
+}
+
+.craftgrn_demo_data_empty <- function() {
+  tibble::tibble(
+    name = character(),
+    title = character(),
+    version = character(),
+    release_tag = character(),
+    file = character(),
+    project_dir = character(),
+    url = character(),
+    md5 = character(),
+    size = character(),
+    description = character()
   )
 }
 
-#' Return metadata for an external CraftGRN demo data bundle
+#' Return metadata for configured external CraftGRN demo data
 #'
-#' @param demo Demo bundle name. Currently `"nutrient_stress_chr22"`.
+#' @param demo Optional demo bundle name. No external demo bundle is currently
+#'   configured.
 #'
 #' @return A data frame with the bundle URL, checksum, archive file name, and
-#'   extracted project directory name.
+#'   extracted project directory name. When no demo bundle is configured, the
+#'   returned data frame has zero rows.
 #' @export
-craftgrn_demo_data_info <- function(demo = c("nutrient_stress_chr22")) {
-  demo <- match.arg(demo)
-  x <- .craftgrn_demo_data_registry()[[demo]]
+craftgrn_demo_data_info <- function(demo = NULL) {
+  registry <- .craftgrn_demo_data_registry()
+  if (!length(registry)) {
+    return(.craftgrn_demo_data_empty())
+  }
+  choices <- names(registry)
+  if (is.null(demo)) {
+    demo <- choices[[1L]]
+  }
+  if (!is.character(demo) || length(demo) != 1L || is.na(demo) || !nzchar(demo)) {
+    .log_abort("`demo` must be a non-empty character scalar.")
+  }
+  if (!demo %in% choices) {
+    .log_abort("Unknown CraftGRN demo data bundle: {demo}.")
+  }
+  x <- registry[[demo]]
   tibble::tibble(
     name = x$name,
     title = x$title,
@@ -64,21 +73,23 @@ craftgrn_demo_data_info <- function(demo = c("nutrient_stress_chr22")) {
   )
 }
 
-#' Download and unpack an external CraftGRN demo data bundle
+#' Download and unpack configured external CraftGRN demo data
 #'
-#' Downloads a processed demo data archive from the CraftGRN GitHub Releases
-#' page, verifies its MD5 checksum by default, extracts it, and returns the
-#' extracted project directory. The demo bundle is external to the R package so
-#' package installation remains small and CRAN-friendly.
+#' Downloads a processed demo data archive from a configured external source,
+#' verifies its MD5 checksum by default, extracts it, and returns the extracted
+#' project directory. Demo bundles are external to the R package so package
+#' installation remains small and CRAN-friendly. No external demo bundle is
+#' currently configured.
 #'
 #' If the download fails, inspect `craftgrn_demo_data_info()` and download the
-#' release asset manually. If checksum verification fails, rerun with
+#' configured asset manually. If checksum verification fails, rerun with
 #' `overwrite = TRUE` to replace a stale or partial archive. The extracted
 #' project uses `base_dir: "."`, so pass the returned directory or its
 #' project config path directly to package functions after moving the folder.
 #'
 #' @param destdir Directory where the archive should be downloaded and unpacked.
-#' @param demo Demo bundle name. Currently `"nutrient_stress_chr22"`.
+#' @param demo Optional demo bundle name. No external demo bundle is currently
+#'   configured.
 #' @param overwrite Logical; if `TRUE`, download the archive again and replace an
 #'   existing extracted project directory.
 #' @param checksum Logical; if `TRUE`, verify the downloaded archive MD5.
@@ -86,24 +97,17 @@ craftgrn_demo_data_info <- function(demo = c("nutrient_stress_chr22")) {
 #'
 #' @return The normalized path to the extracted demo project directory.
 #' @examples
-#' \dontrun{
-#' demo_dir <- download_craftgrn_demo_data(destdir = tempdir())
-#' config <- file.path(demo_dir, "project.yaml")
-#' omics <- load_prep_multiomic_data(
-#'   config = config,
-#'   label_col = "strict_match_rna",
-#'   do_preprocess = FALSE,
-#'   verbose = TRUE
-#' )
-#' }
+#' craftgrn_demo_data_info()
 #' @export
 download_craftgrn_demo_data <- function(destdir = ".",
-                                        demo = c("nutrient_stress_chr22"),
+                                        demo = NULL,
                                         overwrite = FALSE,
                                         checksum = TRUE,
                                         verbose = TRUE) {
-  demo <- match.arg(demo)
   info <- craftgrn_demo_data_info(demo)
+  if (!nrow(info)) {
+    .log_abort("No external CraftGRN demo data bundle is currently configured.")
+  }
 
   stopifnot(is.logical(overwrite), length(overwrite) == 1L, !is.na(overwrite))
   stopifnot(is.logical(checksum), length(checksum) == 1L, !is.na(checksum))
