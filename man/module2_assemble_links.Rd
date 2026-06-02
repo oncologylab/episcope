@@ -30,7 +30,7 @@ module2_assemble_links(
 \item{verbose}{Emit concise progress messages.}
 }
 \value{
-A compact Module 2 result list.
+A Module 2 result list.
 }
 \description{
 Assemble final Module 2 TF-FP-target links

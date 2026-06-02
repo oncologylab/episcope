@@ -30,7 +30,7 @@ test_that("Module 2 computes TF-target first and restricts FP-target candidates"
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = c("TF_A", "TF_B")
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   pred <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_A", "TF_B"))
   gene_tss <- tibble::tibble(target_gene = c("GENE_UP", "GENE_DOWN"), target_chr = "chr1", target_tss = c(120L, 520L), target_strand = "+")
   res <- link_tf_targets(compact, pred, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), max_distance_bp = 1000, n_cores = 1, verbose = FALSE)
@@ -149,7 +149,7 @@ test_that("Module 2 streams predicted TFBS manifests", {
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = c("TF_A", "TF_B")
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   pred <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_A", "TF_B"))
   pred_dir <- tempfile("predicted-tfbs-")
   dir.create(pred_dir)
@@ -178,7 +178,7 @@ test_that("Module 2 streams one deduplicated FP-target candidate universe", {
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = c("TF_A", "TF_B")
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   pred_dir <- tempfile("predicted-tfbs-dedup-")
   dir.create(pred_dir)
   pred1 <- tibble::tibble(fp_id = "chr1:100-140", chr = "chr1", start = 100L, end = 140L, atac_peak = "chr1:90-160", tf = "TF_A")
@@ -215,7 +215,7 @@ test_that("Module 2 top TF target reports write self-contained HTML", {
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3"), HGNC = c("TF_A", "TF_B", "GENE_UP"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = c("TF_A", "TF_B")
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   pred <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_A", "TF_B"))
   gene_tss <- tibble::tibble(target_gene = "GENE_UP", target_chr = "chr1", target_tss = 120L, target_strand = "+")
   res <- link_tf_targets(compact, pred, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), max_distance_bp = 1000, n_cores = 1, verbose = FALSE)

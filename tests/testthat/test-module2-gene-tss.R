@@ -27,7 +27,7 @@ test_that("Module 2 can resolve gene TSS from project config", {
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2"), HGNC = c("TF_A", "GENE_UP"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = "TF_A"
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   pred <- tibble::tibble(fp_id = "chr1:100-140", chr = "chr1", start = 100L, end = 140L, atac_peak = "chr1:90-160", tf = "TF_A")
   tss_path <- tempfile(fileext = ".csv")
   readr::write_csv(tibble::tibble(target_gene = "GENE_UP", target_chr = "chr1", target_tss = 120L, target_strand = "+"), tss_path)

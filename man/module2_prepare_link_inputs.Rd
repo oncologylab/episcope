@@ -15,7 +15,7 @@ module2_prepare_link_inputs(
 )
 }
 \arguments{
-\item{multiomic_data}{Compact multiomic object.}
+\item{multiomic_data}{CraftGRN multiomic object.}
 
 \item{predicted_tfbs}{Predicted TFBS table or path from Module 1.}
 

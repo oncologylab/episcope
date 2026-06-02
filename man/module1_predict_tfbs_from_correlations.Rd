@@ -36,7 +36,7 @@ module1_predict_tfbs_from_correlations(
 
 \item{cores}{Number of worker cores; NULL uses all available cores.}
 
-\item{write_outputs}{Write compact predicted TFBS outputs.}
+\item{write_outputs}{Write predicted TFBS outputs.}
 
 \item{output_format}{One of csv, parquet, or auto.}
 
@@ -45,7 +45,7 @@ module1_predict_tfbs_from_correlations(
 \item{verbose}{Emit concise progress messages.}
 }
 \value{
-A list with prediction statistics or manifests and compact predicted_tfbs.
+A list with prediction statistics or manifests and predicted_tfbs.
 }
 \description{
 Predict TFBS from selected Module 1 footprints

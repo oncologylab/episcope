@@ -1,3 +1,8 @@
+test_that("public Module 3 topic-model defaults use native WarpLDA", {
+  expect_identical(eval(formals(train_topic_models)$backend)[[1L]], "warplda")
+  expect_identical(eval(formals(extract_regulatory_topics)$backend)[[1L]], "warplda")
+})
+
 test_that("condition doc_tf applies condition thresholds and TF self terms", {
   edges <- data.table::data.table(
     comparison_id = c("C1", "C1"),

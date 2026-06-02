@@ -29,7 +29,7 @@ predict_tfbs(
 )
 }
 \arguments{
-\item{omics_data}{Compact multiomic object created by `as_multiomic_object()` or `load_prep_multiomic_data()`.}
+\item{omics_data}{CraftGRN multiomic object returned by `load_prep_multiomic_data()`.}
 
 \item{out_dir}{Output directory.}
 
@@ -53,7 +53,7 @@ all-expressed-TF prediction stage.}
 
 \item{tf_subset}{Optional TF subset.}
 
-\item{write_outputs}{Write compact Module 1 output files.}
+\item{write_outputs}{Write Module 1 output files.}
 
 \item{write_stats}{Retain and write full FP-TF correlation statistics.}
 

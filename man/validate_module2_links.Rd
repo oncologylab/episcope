@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_link_tf_targets.R
 \name{validate_module2_links}
 \alias{validate_module2_links}
-\title{Validate compact Module 2 links}
+\title{Validate Module 2 links}
 \usage{
 validate_module2_links(module2)
 }
@@ -13,5 +13,5 @@ validate_module2_links(module2)
 TRUE invisibly when valid.
 }
 \description{
-Validate compact Module 2 links
+Validate Module 2 links
 }

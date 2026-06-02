@@ -19,7 +19,7 @@ build_module2_qc_report(
 \item{module2}{Module 2 result list, loaded Module 2 list, or output
 directory.}
 
-\item{multiomic_data}{Optional compact multiomic object used for context.}
+\item{multiomic_data}{Optional CraftGRN multiomic object used for context.}
 
 \item{output_dir}{Directory where the HTML report should be written. If
 `NULL`, the report is written under `reports` inside the Module 2 output
@@ -41,8 +41,9 @@ passing TF-target and FP-target keys while scanning link chunks.}
 Normalized path to the HTML report.
 }
 \description{
-Builds a comprehensive HTML report for Module 2 run parameters, compact input
+Builds a comprehensive HTML report for Module 2 run parameters, CraftGRN multiomic input
 handoff, TF-target and FP-target correlation filters, candidate source and
 distance-to-TSS evidence, final TF-FP-target links, condition activity,
-warning checks, integrity checks, and related browser reports.
+CraftGRN multiomic condition context, warning checks, integrity checks, and
+related browser reports.
 }

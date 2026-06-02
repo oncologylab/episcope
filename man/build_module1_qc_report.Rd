@@ -17,7 +17,7 @@ build_module1_qc_report(
 \arguments{
 \item{module1}{Module 1 result list or Module 1 output directory.}
 
-\item{omics_data}{Optional compact multiomic object. Used when `module1` is
+\item{omics_data}{Optional CraftGRN multiomic object. Used when `module1` is
 an output directory or does not contain `omics_data`.}
 
 \item{output_dir}{Directory where the HTML report should be written. If
@@ -40,7 +40,8 @@ Normalized path to the HTML report.
 \description{
 Builds a comprehensive HTML report for Module 1 run parameters, input gates,
 motif-supported canonical support, prediction output integrity, correlation
-diagnostics, condition support, top TFs/FPs, warning checks, and related QC
-artifacts. The report can consume a `predict_tfbs()` result, a step-by-step
-Module 1 result list, or a Module 1 output directory.
+diagnostics, condition-level CraftGRN multiomic input QC, footprint alignment summaries,
+warning checks, and related QC artifacts. The report can consume a
+`predict_tfbs()` result, a step-by-step Module 1 result list, or a Module 1
+output directory.
 }

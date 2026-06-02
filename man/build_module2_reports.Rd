@@ -19,7 +19,7 @@ build_module2_reports(
 \arguments{
 \item{module2}{Module 2 result list, loaded output list, or output directory.}
 
-\item{multiomic_data}{Optional compact multiomic object for condition-filtered reports.}
+\item{multiomic_data}{Optional CraftGRN multiomic object for condition-filtered reports.}
 
 \item{output_dir}{Report output directory.}
 

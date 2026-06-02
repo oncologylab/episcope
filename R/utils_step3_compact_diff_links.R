@@ -336,17 +336,17 @@
   unique(compar[, .(cond1_label = as.character(cond1_label), cond2_label = as.character(cond2_label))])
 }
 
-#' Prepare compact differential links for Module 3
+#' Prepare differential links for Module 3
 #'
-#' Converts compact Module 2 link manifests into the filtered differential-link
+#' Converts Module 2 link manifests into the filtered differential-link
 #' files consumed by CraftGRN topic-modeling utilities. This avoids writing full
 #' per-condition GRN matrices and keeps Module 3 compatible with the existing
 #' `*_filtered_links_up.csv` and `*_filtered_links_down.csv` contract.
 #'
 #' @param module2 Module 2 object returned by [link_tf_targets()] or a path to a
 #'   Module 2 output directory containing `module2_manifest.csv`.
-#' @param multiomic_data Compact multiomic object created by
-#'   [as_multiomic_object()].
+#' @param multiomic_data CraftGRN multiomic object returned by
+#'   [load_prep_multiomic_data()].
 #' @param compar Comparison table or CSV path with `cond1_label` and
 #'   `cond2_label`. If `NULL`, `data/episcope_comparisons.csv` under
 #'   `base_dir` is used.
@@ -377,7 +377,7 @@ module3_prepare_differential_links <- function(module2,
                                                verbose = TRUE) {
   cfg <- .module3_cfg(project_config)
   fp_signal_mode <- .module3_fp_signal_mode(fp_signal_mode, cfg)
-  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object.")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a CraftGRN multiomic object.")
   validate_multiomic_object(multiomic_data)
   if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
   if (!inherits(module2, "craftgrn_module2") && !is.list(module2)) .log_abort("`module2` must be a Module 2 object or output directory.")
@@ -394,7 +394,7 @@ module3_prepare_differential_links <- function(module2,
   if (aligned_candidate_chunks && all(c("chunk_id") %in% names(cand_manifest)) && all(c("chunk_id") %in% names(link_manifest))) {
     aligned_candidate_chunks <- identical(as.character(cand_manifest$chunk_id), as.character(link_manifest$chunk_id))
   }
-  if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: loading Module 2 correlation summaries.")
+  if (isTRUE(verbose)) .log_inform("Module 3 bridge: loading Module 2 correlation summaries.")
   fp_corr <- .module3_read_static_corr(module2, "module2_fp_target_corr", keep_pass = TRUE)
   tf_corr <- .module3_read_static_corr(module2, "module2_tf_target_corr", keep_pass = TRUE)
   data.table::setkey(fp_corr, fp_id, target_gene)
@@ -402,7 +402,7 @@ module3_prepare_differential_links <- function(module2,
   shared_candidates <- NULL
   if (!aligned_candidate_chunks) {
     if (isTRUE(verbose)) {
-      .log_inform("Module 3 compact bridge: loading {nrow(cand_manifest)} shared candidate chunk(s) for {nrow(link_manifest)} link chunk(s).")
+      .log_inform("Module 3 bridge: loading {nrow(cand_manifest)} shared candidate chunk(s) for {nrow(link_manifest)} link chunk(s).")
     }
     shared_candidates <- .module3_read_manifest_tables(
       cand_manifest,
@@ -415,7 +415,7 @@ module3_prepare_differential_links <- function(module2,
   on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
   comparison_workers <- min(as.integer(.module3_cfg_value(cfg, "module3_comparison_workers", 1))[[1L]], nrow(specs))
   if (!is.finite(comparison_workers) || comparison_workers < 1L) comparison_workers <- 1L
-  if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: {nrow(specs)} comparison(s), {nrow(link_manifest)} link chunk(s), {dt_threads} data.table thread(s), {comparison_workers} comparison worker(s), FP signal mode {fp_signal_mode}.")
+  if (isTRUE(verbose)) .log_inform("Module 3 bridge: {nrow(specs)} comparison(s), {nrow(link_manifest)} link chunk(s), {dt_threads} data.table thread(s), {comparison_workers} comparison worker(s), FP signal mode {fp_signal_mode}.")
 
   manifest_path <- file.path(output_dir, "filtered_links_manifest.csv")
   old_manifest <- if (file.exists(manifest_path)) {
@@ -448,7 +448,7 @@ module3_prepare_differential_links <- function(module2,
     down_parts <- lapply(active_idx, function(i) vector("list", nrow(link_manifest)))
     qc_parts <- lapply(active_idx, function(i) vector("list", nrow(link_manifest)))
     for (j in seq_len(nrow(link_manifest))) {
-      if (isTRUE(verbose)) .log_inform("Module 3 compact bridge: preparing link chunk {j}/{nrow(link_manifest)} for {length(active_idx)} comparison(s).")
+      if (isTRUE(verbose)) .log_inform("Module 3 bridge: preparing link chunk {j}/{nrow(link_manifest)} for {length(active_idx)} comparison(s).")
       link_dt <- .module3_read_table(as.character(link_manifest$path[[j]]), as.character(link_manifest$format[[j]]), columns = c("link_id", "tf", "fp_id", "target_gene", "candidate_id", "module2_link_pass"))
       cand_dt <- if (aligned_candidate_chunks) {
         .module3_read_table(
@@ -501,7 +501,7 @@ module3_prepare_differential_links <- function(module2,
   manifest <- dplyr::bind_rows(res)
   readr::write_csv(manifest, manifest_path)
   if (isTRUE(verbose)) {
-    .log_inform("Module 3 compact bridge wrote {sum(!manifest$skipped)} comparison(s) to {output_dir}.")
+    .log_inform("Module 3 bridge wrote {sum(!manifest$skipped)} comparison(s) to {output_dir}.")
     .log_inform("Module 3 filtered links manifest: {manifest_path}")
   }
   manifest

@@ -112,7 +112,7 @@ NULL
 #' @param verbose Logical; if `TRUE`, emit concise status messages.
 #'
 #' @return A list with `fp_score`, `fp_bound`, `fp_annotation`, and `id_map`.
-#' @keywords internal
+#' @noRd
 load_fp_aligned_from_cache <- function(
     cache_dir,
     cache_tag,

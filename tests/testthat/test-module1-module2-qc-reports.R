@@ -2,7 +2,7 @@ test_that("Module 1 QC report writes an HTML summary", {
   fixture <- module1_tiny_fixture()
   out_dir <- tempfile("module1-qc-")
   result <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     out_dir = out_dir,
     db = "JASPAR2024",
     r_cutoff = 0.8,
@@ -13,6 +13,9 @@ test_that("Module 1 QC report writes an HTML summary", {
     output_format = "csv",
     verbose = FALSE
   )
+
+  expect_true(file.exists(file.path(out_dir, "cache", "module1_canonical_bound_fps.csv.gz")))
+  expect_true(file.exists(file.path(out_dir, "cache", "module1_canonical_support_summary.csv")))
 
   html <- build_module1_qc_report(
     result,
@@ -26,12 +29,20 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("Module 1 QC Report", page, fixed = TRUE))
   expect_true(grepl("Run Parameters", page, fixed = TRUE))
   expect_true(grepl("Input Gates", page, fixed = TRUE))
+  expect_true(grepl("Condition QC", page, fixed = TRUE))
+  expect_true(grepl("Footprint Alignment And Input QC", page, fixed = TRUE))
+  expect_true(grepl("Legacy Summary Coverage", page, fixed = TRUE))
+  expect_true(grepl("02_fp_merge_summary.pdf", page, fixed = TRUE))
+  expect_true(grepl("Total bound footprints per condition", page, fixed = TRUE))
+  expect_true(grepl("Total expressed genes per condition", page, fixed = TRUE))
   expect_true(grepl("Motif-Supported Correlations", page, fixed = TRUE))
   expect_true(grepl("Prediction Output Integrity", page, fixed = TRUE))
   expect_true(grepl("Correlation Diagnostics", page, fixed = TRUE))
   expect_true(grepl("Footprint Motif Complexity", page, fixed = TRUE))
   expect_false(grepl("Top Predicted FPs", page, fixed = TRUE))
   expect_false(grepl("Top FPs by predicted TFBS", page, fixed = TRUE))
+  expect_false(grepl("Embedded QC Artifacts", page, fixed = TRUE))
+  expect_false(grepl("object class=\"embedded-file\"", page, fixed = TRUE))
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Correctness Checks", page, fixed = TRUE))
   expect_true(grepl("Workflow Funnel", page, fixed = TRUE))
@@ -99,7 +110,7 @@ test_that("Module 2 QC report writes an HTML summary", {
     rna_expressed = tibble::tibble(ensembl_gene_id = c("g1", "g2", "g3", "g4"), HGNC = c("TF_A", "TF_B", "GENE_UP", "GENE_DOWN"), s1 = 1L, s2 = 1L, s3 = 1L, s4 = 1L),
     tf_list = c("TF_A", "TF_B")
   )
-  compact <- as_multiomic_object(omics, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(omics, verbose = FALSE)
   predicted <- tibble::tibble(
     fp_id = c("chr1:100-140", "chr1:500-540"),
     chr = "chr1",
@@ -137,10 +148,14 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("Module 2 QC Report", page, fixed = TRUE))
   expect_true(grepl("Run Parameters", page, fixed = TRUE))
   expect_true(grepl("Input Handoff", page, fixed = TRUE))
+  expect_true(grepl("Condition Context", page, fixed = TRUE))
   expect_true(grepl("TF-Target Correlation QC", page, fixed = TRUE))
   expect_true(grepl("FP-Target Correlation QC", page, fixed = TRUE))
   expect_true(grepl("Candidate Source QC", page, fixed = TRUE))
   expect_true(grepl("Condition Activity QC", page, fixed = TRUE))
+  expect_true(grepl("Link Activity Summary", page, fixed = TRUE))
+  expect_true(grepl("Total active links per condition", page, fixed = TRUE))
+  expect_true(grepl("Active link counts per TF per condition", page, fixed = TRUE))
   expect_true(grepl("Warning Checks", page, fixed = TRUE))
   expect_true(grepl("Integrity Checks", page, fixed = TRUE))
   expect_true(grepl("Top TFs In Final Links", page, fixed = TRUE))

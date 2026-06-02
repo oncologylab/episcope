@@ -77,7 +77,7 @@
 
 .module1_prepare_predict_omics <- function(omics_data, label_col = NULL, verbose = TRUE) {
   if (!is_multiomic_object(omics_data)) {
-    .log_abort("`omics_data` must be a compact multiomic object created by as_multiomic_object().")
+    .log_abort("`omics_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   }
   omics_data <- .as_module1_analysis_data(omics_data, verbose = verbose)
   if (!is.data.frame(omics_data$fp_annotation)) {
@@ -498,6 +498,60 @@
   path
 }
 
+.module1_write_canonical_support_cache <- function(high_confidence_footprints, qc_summary, out_dir) {
+  cache_dir <- file.path(out_dir, "cache")
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  keep <- intersect(
+    c(
+      "fp_id", "chr", "start", "end", "atac_peak",
+      "n_canonical_bound_tfs", "canonical_bound_tfs",
+      "canonical_bound_motifs", "has_canonical_bound"
+    ),
+    names(high_confidence_footprints)
+  )
+  canonical_fps <- if (is.data.frame(high_confidence_footprints) && nrow(high_confidence_footprints) && length(keep)) {
+    high_confidence_footprints[, keep, drop = FALSE]
+  } else {
+    tibble::tibble(
+      fp_id = character(),
+      chr = character(),
+      start = integer(),
+      end = integer(),
+      atac_peak = character(),
+      n_canonical_bound_tfs = integer(),
+      canonical_bound_tfs = character(),
+      canonical_bound_motifs = character(),
+      has_canonical_bound = logical()
+    )
+  }
+  if (!"has_canonical_bound" %in% names(canonical_fps)) canonical_fps$has_canonical_bound <- TRUE
+  canonical_fps <- canonical_fps[!duplicated(as.character(canonical_fps$fp_id)), , drop = FALSE]
+  fps_path <- file.path(cache_dir, "module1_canonical_bound_fps.csv.gz")
+  summary_path <- file.path(cache_dir, "module1_canonical_support_summary.csv")
+  readr::write_csv(canonical_fps, fps_path)
+  summary_tbl <- tibble::tibble(
+    metric = c(
+      "n_canonical_bound_fps",
+      "n_canonical_pairs_pass",
+      "n_motif_supported_pairs",
+      "n_prediction_fps",
+      "cache_schema"
+    ),
+    value = c(
+      as.character(nrow(canonical_fps)),
+      as.character(qc_summary[["n_canonical_pairs_pass"]] %||% NA_real_),
+      as.character(qc_summary[["n_motif_supported_pairs"]] %||% NA_real_),
+      as.character(qc_summary[["n_prediction_fps"]] %||% NA_real_),
+      "module1_canonical_support_cache_v1"
+    )
+  )
+  readr::write_csv(summary_tbl, summary_path)
+  list(
+    canonical_bound_fps_cache = fps_path,
+    canonical_support_summary_cache = summary_path
+  )
+}
+
 
 .module1_write_bed_outputs <- function(high_confidence_footprints, prediction_stats, out_dir) {
   if (!is.data.frame(high_confidence_footprints)) .log_abort("high_confidence_footprints must be a data.frame.")
@@ -769,7 +823,7 @@
 #' first uses motif-supported FP-TF correlations to define high-confidence
 #' footprints, then predicts sparse FP-TF binding events for expressed TFs.
 #'
-#' @param omics_data Compact multiomic object created by `as_multiomic_object()` or `load_prep_multiomic_data()`.
+#' @param omics_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
 #' @param out_dir Output directory.
 #' @param db Motif database label used in output metadata.
 #' @param label_col Metadata column used to build condition-level matrices when
@@ -784,7 +838,7 @@
 #'   at least one motif-supported TF passing the cutoffs are used for the
 #'   all-expressed-TF prediction stage.
 #' @param tf_subset Optional TF subset.
-#' @param write_outputs Write compact Module 1 output files.
+#' @param write_outputs Write Module 1 output files.
 #' @param write_stats Retain and write full FP-TF correlation statistics.
 #' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.
 #' @param write_qc_report Write a Module 1 HTML QC report when outputs are written.
@@ -1002,7 +1056,7 @@ predict_tfbs <- function(omics_data,
 
   predicted_tfbs_paths <- NULL
   if (!is.null(prediction_stats_manifest_path) && !isTRUE(keep_prediction_stats)) {
-    if (isTRUE(verbose)) .log_inform("Module 1 predicted TFBS handoff: writing compact chunks.")
+    if (isTRUE(verbose)) .log_inform("Module 1 predicted TFBS handoff: writing chunks.")
     predicted_tfbs_paths <- .write_predicted_tfbs_from_prediction_stats_manifest(prediction_stats_manifest, out_dir = out_dir, output_format = output_format)
     predicted_tfbs <- tibble::tibble(
       tfbs_id = character(),
@@ -1044,6 +1098,11 @@ predict_tfbs <- function(omics_data,
     readr::write_csv(high_confidence_footprints, high_path)
     readr::write_csv(motif_supported_correlations, canonical_stats_path)
     readr::write_csv(tibble::tibble(metric = names(qc_summary), value = as.numeric(unlist(qc_summary, use.names = FALSE))), qc_summary_path)
+    cache_reports <- .module1_write_canonical_support_cache(
+      high_confidence_footprints = high_confidence_footprints,
+      qc_summary = qc_summary,
+      out_dir = out_dir
+    )
     if (!is.null(prediction_stats_manifest_path)) {
       reports <- c(reports, list(
         high_confidence_footprints = high_path,
@@ -1053,7 +1112,7 @@ predict_tfbs <- function(omics_data,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         prediction_stats_manifest = prediction_stats_manifest_path,
         prediction_stats_chunks = prediction_stats_chunk_dir
-      ))
+      ), cache_reports)
     } else {
       readr::write_csv(prediction_stats, links_path)
       reports <- c(reports, list(
@@ -1063,7 +1122,7 @@ predict_tfbs <- function(omics_data,
         predicted_tfbs = predicted_tfbs_paths$path,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         correlation_stats = links_path
-      ))
+      ), cache_reports)
     }
     if (isTRUE(write_stats)) {
       stats_path <- file.path(out_dir, "module1_prediction_stats.csv.gz")

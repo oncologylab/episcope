@@ -7,6 +7,8 @@ Authors@R: c(
   )
 Description: CraftGRN provides a reproducible framework for constructing and comparing gene regulatory networks by integrating bulk ATAC-seq footprinting with matched RNA-seq expression data. It implements context-specific enhancer-gene linking, TF-centric and differential GRN analysis, and benchmarking modules. CraftGRN enables systematic exploration of transcriptional regulation under diverse conditions.
 License: GPL (>= 3)
+Depends:
+    R (>= 4.1.0)
 Imports: 
     cli,
     cluster,
@@ -17,7 +19,6 @@ Imports:
     future.apply,
     ggplot2,
     jsonlite,
-    magrittr,
     methods,
     readr,
     Rcpp,

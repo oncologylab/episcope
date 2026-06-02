@@ -138,7 +138,7 @@ validate_config <- function(
 #' @param env Environment to update. Defaults to the internal CraftGRN config state.
 #'
 #' @return Invisibly returns the updated values (named character vector).
-#' @keywords internal
+#' @noRd
 normalize_config_paths <- function(
     keys = c(
       "base_dir",

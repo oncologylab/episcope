@@ -17,9 +17,6 @@ navbar:
 home:
   title: CraftGRN
   description: Integrative ATAC-RNA framework for condition-specific gene regulatory networks.
-  links:
-  - text: Report a bug
-    href: https://github.com/oncologylab/craftgrn/issues
 
 articles:
 - title: Get started
@@ -43,9 +40,6 @@ reference:
   - load_omics_data
   - save_omics_data
   - load_prep_multiomic_data
-  - as_multiomic_object
-  - validate_multiomic_object
-  - is_multiomic_object
 
 - title: TF binding site and motif utilities
   desc: Work with motif resources, footprints, and TF-footprint correlations.
@@ -62,7 +56,7 @@ reference:
 
 
 - title: TF-target linking
-  desc: Connect predicted TF binding sites to target genes and query compact Module 2 outputs.
+  desc: Connect predicted TF binding sites to target genes and query Module 2 outputs.
   contents:
   - link_tf_targets
   - build_module2_qc_report

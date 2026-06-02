@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_link_tf_targets.R
 \name{load_module2_links}
 \alias{load_module2_links}
-\title{Load compact Module 2 outputs}
+\title{Load Module 2 outputs}
 \usage{
 load_module2_links(path)
 }
@@ -13,5 +13,5 @@ load_module2_links(path)
 A named list of tables.
 }
 \description{
-Load compact Module 2 outputs
+Load Module 2 outputs
 }

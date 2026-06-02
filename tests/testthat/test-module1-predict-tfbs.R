@@ -4,7 +4,7 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
   result <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     out_dir = out_dir,
     db = "JASPAR2024",
     r_cutoff = 0.8,
@@ -46,14 +46,14 @@ test_that("predict_tfbs returns the public Module 1 contract", {
 test_that("predict_tfbs can retain all bound FPs after canonical-bound labeling", {
   fixture <- module1_tiny_fixture()
   strict <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     r_cutoff = 0.8,
     write_outputs = FALSE,
     write_stats = FALSE,
     verbose = FALSE
   )
   retained <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     r_cutoff = 0.8,
     filter_to_canonical_bound = FALSE,
     write_outputs = FALSE,
@@ -224,7 +224,7 @@ test_that("predict_tfbs streams large link outputs when return_prediction_stats 
   fixture <- module1_tiny_fixture()
   out_dir <- file.path(tempdir(), paste0("craftgrn-module1-stream-", as.integer(stats::runif(1L, 1, 1e9))))
   result <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     out_dir = out_dir,
     r_cutoff = 0.8,
     write_outputs = TRUE,
@@ -251,26 +251,26 @@ test_that("predict_tfbs streams large link outputs when return_prediction_stats 
   expect_equal(sum(pred_manifest$n_rows), result$parameters$qc_summary$n_predicted_tfbs)
 })
 
-test_that("compact multiomic object uses compact semantic names", {
+test_that("CraftGRN multiomic object uses semantic names", {
   fixture <- module1_tiny_fixture()
-  compact <- as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
 
-  expect_true(is_multiomic_object(compact))
+  expect_true(craftgrn:::is_multiomic_object(compact))
   expect_named(compact$matrices, c("fp_score", "fp_bound", "gene_expr", "gene_on", "atac_score", "atac_open"))
   expect_named(compact$features, c("fp", "fp_motif", "atac", "gene"))
   expect_false(any(c("fp_score_condition_qn", "fp_bound_condition", "rna_condition", "rna_expressed", "fp_annotation") %in% names(compact)))
   expect_true(is.logical(compact$matrices$gene_on))
   expect_true(is.logical(compact$matrices$fp_bound))
-  expect_silent(validate_multiomic_object(compact))
+  expect_silent(craftgrn:::validate_multiomic_object(compact))
 })
 
-test_that("predict_tfbs requires compact multiomic objects", {
+test_that("predict_tfbs requires CraftGRN multiomic objects", {
   fixture <- module1_tiny_fixture()
-  compact <- as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
 
   expect_error(
     predict_tfbs(fixture$omics_data, r_cutoff = 0.8, write_outputs = FALSE, verbose = FALSE),
-    "compact multiomic object"
+    "CraftGRN multiomic object"
   )
   compact_result <- predict_tfbs(compact, r_cutoff = 0.8, write_outputs = FALSE, verbose = FALSE)
   expect_s3_class(compact_result$prediction_stats, "data.frame")
@@ -281,7 +281,7 @@ test_that("predict_tfbs writes optional BED outputs", {
   fixture <- module1_tiny_fixture()
   out_dir <- file.path(tempdir(), paste0("craftgrn-module1-bed-", as.integer(stats::runif(1L, 1, 1e9))))
   result <- predict_tfbs(
-    omics_data = as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
     out_dir = out_dir,
     r_cutoff = 0.8,
     write_outputs = TRUE,

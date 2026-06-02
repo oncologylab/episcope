@@ -430,7 +430,7 @@
   stopifnot(is.logical(qc_report_validate), length(qc_report_validate) == 1L, !is.na(qc_report_validate))
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
-  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   validate_multiomic_object(multiomic_data)
   gene_tss <- .module2_resolve_gene_tss(gene_tss, cfg = cfg, multiomic_data = multiomic_data, verbose = verbose)
   mats <- multiomic_data$matrices
@@ -571,7 +571,7 @@
 
 #' Link predicted TF binding sites to target genes
 #'
-#' @param multiomic_data Compact multiomic object created by `as_multiomic_object()`.
+#' @param multiomic_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
 #' @param predicted_tfbs Compact Module 1 predicted TFBS table or path.
 #' @param gene_tss Optional gene TSS annotation table or path. If `NULL`, the
 #'   table is resolved from `project_config$gene_tss` or generated from the
@@ -593,7 +593,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   stopifnot(is.logical(qc_report_validate), length(qc_report_validate) == 1L, !is.na(qc_report_validate))
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
-  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   validate_multiomic_object(multiomic_data)
   predicted_manifest <- .module2_predicted_manifest(predicted_tfbs)
   if (!is.null(predicted_manifest)) {
@@ -705,7 +705,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   dplyr::bind_rows(rows)
 }
 
-#' Load compact Module 2 outputs
+#' Load Module 2 outputs
 #'
 #' @param path Module 2 output directory or module2_manifest.csv path.
 #' @return A named list of tables.
@@ -732,7 +732,7 @@ load_module2_links <- function(path) {
   out
 }
 
-#' Query compact Module 2 links
+#' Query Module 2 links
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @param tf Optional TF filter.
@@ -769,7 +769,7 @@ query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = 
   .log_abort("Module 2 links table not found.")
 }
 
-#' Validate compact Module 2 links
+#' Validate Module 2 links
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @return TRUE invisibly when valid.

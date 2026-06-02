@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step3_compact_diff_links.R
 \name{module3_prepare_differential_links}
 \alias{module3_prepare_differential_links}
-\title{Prepare compact differential links for Module 3}
+\title{Prepare differential links for Module 3}
 \usage{
 module3_prepare_differential_links(
   module2,
@@ -21,8 +21,8 @@ module3_prepare_differential_links(
 \item{module2}{Module 2 object returned by [link_tf_targets()] or a path to a
 Module 2 output directory containing `module2_manifest.csv`.}
 
-\item{multiomic_data}{Compact multiomic object created by
-[as_multiomic_object()].}
+\item{multiomic_data}{CraftGRN multiomic object returned by
+[load_prep_multiomic_data()].}
 
 \item{compar}{Comparison table or CSV path with `cond1_label` and
 `cond2_label`. If `NULL`, `data/episcope_comparisons.csv` under
@@ -51,7 +51,7 @@ active before calculating delta_fp_score and log2FC_fp_score.}
 A tibble manifest with one row per comparison.
 }
 \description{
-Converts compact Module 2 link manifests into the filtered differential-link
+Converts Module 2 link manifests into the filtered differential-link
 files consumed by CraftGRN topic-modeling utilities. This avoids writing full
 per-condition GRN matrices and keeps Module 3 compatible with the existing
 `*_filtered_links_up.csv` and `*_filtered_links_down.csv` contract.

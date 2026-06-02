@@ -32,7 +32,7 @@ train_topic_models(
   include_tf_terms = FALSE,
   count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
   vae_variant = "multivi_encoder",
-  backend = c("vae", "warplda"),
+  backend = c("warplda", "vae"),
   warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
   warplda_beta = NULL,
   reuse_if_exists = TRUE,
@@ -101,7 +101,8 @@ train_topic_models(
 
 \item{vae_variant}{VAE variant name.}
 
-\item{backend}{Topic model backend, either `"vae"` or `"warplda"`.}
+\item{backend}{Topic model backend. `"warplda"` is the default native
+WarpLDA backend; `"vae"` runs the optional VAE backend.}
 
 \item{warplda_sampler}{Native WarpLDA sampler. `"warp_omp"` is the default
 OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
@@ -132,7 +133,10 @@ values are present.}
 \item{topic_report_args}{Additional args for downstream extraction (saved in calc_params).}
 }
 \description{
-Builds documents from differential links and trains VAE topic models across
-a user-supplied K grid. Writes model outputs (vae_models, rds, model_metrics.csv,
-model_selection.pdf) without running downstream topic extraction.
+Builds documents from differential links and trains topic models across a
+user-supplied K grid. The default backend is the native WarpLDA sampler
+(`backend = "warplda"` with `warplda_sampler = "warp_omp"`). VAE backends
+remain available when explicitly requested. The function writes model
+outputs and model-selection summaries without running downstream topic
+extraction.
 }

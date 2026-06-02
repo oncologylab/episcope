@@ -43,7 +43,7 @@
 #'
 #' @importFrom graphics abline barplot hist legend par plot.new points text title
 #' @name utils_motif_clustering
-#' @keywords internal
+#' @noRd
 NULL
 
 resolve_motif_db_path <- function(db, ref_genome = NULL) {
@@ -127,7 +127,7 @@ init_motif_db <- function(db, ref_genome = NULL) {
 #'   malformed motifs with a warning.
 #' @return Named list. Each element is a 4 x L numeric matrix of probabilities
 #'   with rows A,C,G,T.
-#' @keywords internal
+#' @noRd
 parse_jaspar_pfm_text <- function(jaspar_text, strict = TRUE) {
   stopifnot(is.character(jaspar_text), length(jaspar_text) == 1L)
 
@@ -241,7 +241,7 @@ parse_jaspar_pfm_text <- function(jaspar_text, strict = TRUE) {
 #' @param file_path Path to a JASPAR PFM file.
 #' @param strict Logical; if `TRUE`, stop on malformed motifs.
 #' @return Named list of 4 x L probability matrices (PPMs).
-#' @keywords internal
+#' @noRd
 read_jaspar_pfm <- function(file_path, strict = TRUE) {
   if (!grepl("^https?://", file_path) && !file.exists(file_path)) {
     stop(sprintf("File not found: %s", file_path))
@@ -254,7 +254,7 @@ read_jaspar_pfm <- function(file_path, strict = TRUE) {
 #'
 #' @param db Character; supported values: "JASPAR2024", "HOCOMOCOv13".
 #' @return Named list of 4 x L probability matrices (PPMs).
-#' @keywords internal
+#' @noRd
 load_motif_pfms <- function(db) {
   db <- as.character(db)
   motif_path <- resolve_motif_db_path(db)
@@ -263,7 +263,7 @@ load_motif_pfms <- function(db) {
 }
 
 #' @rdname load_motif_pfms
-#' @keywords internal
+#' @noRd
 load_motif_pwms <- function(db) {
   cli::cli_warn("`load_motif_pwms()` is deprecated; use `load_motif_pfms()` (PFM -> PPM).")
   load_motif_pfms(db)
@@ -291,7 +291,7 @@ load_motif_pwms <- function(db) {
 #'
 #' @param pwm 4 x L numeric matrix (PPM)
 #' @return 4 x L numeric matrix reversed and complemented
-#' @keywords internal
+#' @noRd
 pwm_revcomp <- function(pwm) {
   stopifnot(is.matrix(pwm), nrow(pwm) == 4L)
   bases <- rownames(pwm)
@@ -337,7 +337,7 @@ pwm_revcomp <- function(pwm) {
 #' @param pwm2 4 x L2 probability matrix (PPM)
 #' @param min_overlap Integer >=1. Minimum overlap length for alignments.
 #' @return Named list with cor, Ncor, Ncor1, Ncor2, w1, w2, w, strand, offset.
-#' @keywords internal
+#' @noRd
 best_pwm_alignment <- function(pwm1, pwm2, min_overlap = 1L) {
   stopifnot(is.matrix(pwm1), is.matrix(pwm2), nrow(pwm1) == 4L, nrow(pwm2) == 4L)
   stopifnot(is.numeric(min_overlap), length(min_overlap) == 1L, min_overlap >= 1L)
@@ -419,7 +419,7 @@ best_pwm_alignment <- function(pwm1, pwm2, min_overlap = 1L) {
 #' @param cores Integer number of workers (default: all available cores).
 #' @param verbose Logical; emit concise progress messages (default TRUE).
 #' @return data.frame with pairwise metrics similar to JASPAR pairwise_comparisons.tab.
-#' @keywords internal
+#' @noRd
 pairwise_comparisons <- function(motifs, min_overlap = 1L, cores = 1L, verbose = TRUE) {
   stopifnot(is.list(motifs), length(motifs) >= 2L)
   cores <- as.integer(cores)
@@ -502,7 +502,7 @@ pairwise_comparisons <- function(motifs, min_overlap = 1L, cores = 1L, verbose =
 #' @param motifs Named list of motifs (defines ordering).
 #' @param pw data.frame from pairwise_comparisons().
 #' @return numeric matrix NxN with diag=1 and symmetric entries = Ncor.
-#' @keywords internal
+#' @noRd
 build_similarity_matrix <- function(motifs, pw) {
   ids <- names(motifs)
   n <- length(ids)
@@ -525,7 +525,7 @@ build_similarity_matrix <- function(motifs, pw) {
 #' @param hc hclust object.
 #' @param target_k Integer number of clusters desired.
 #' @return Integer vector of cluster labels aligned to hc$order labels.
-#' @keywords internal
+#' @noRd
 cutree_to_k <- function(hc, target_k) {
   stopifnot(inherits(hc, "hclust"))
   stopifnot(is.numeric(target_k), length(target_k) == 1L, target_k >= 2L)
@@ -561,7 +561,7 @@ cutree_to_k <- function(hc, target_k) {
 #' @param cores Number of workers for pairwise comparisons.
 #' @param verbose Logical; emit concise progress messages.
 #' @return List with motifs, pairwise, similarity, hclust, clusters, clusters_table.
-#' @keywords internal
+#' @noRd
 run_jaspar_like_clustering <- function(
   jaspar_text = NULL,
   db = NULL,
@@ -664,7 +664,7 @@ run_jaspar_like_clustering <- function(
 #' @param weight_by_group_size Logical; weight by id_map$group_size if present.
 #' @param verbose Logical; emit concise progress messages.
 #' @return List with motif_counts, pair_counts, motifs_keep, peaks_n, motifs_n.
-#' @keywords internal
+#' @noRd
 build_motif_peak_stats <- function(
   fp_annotation,
   id_map = NULL,
@@ -789,7 +789,7 @@ build_motif_peak_stats <- function(
 #' @param method Character; "jaccard" or "cosine".
 #' @param cores Integer number of workers (default 1L).
 #' @return Numeric similarity matrix with diag=1.
-#' @keywords internal
+#' @noRd
 compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"), cores = 1L) {
   method <- match.arg(method)
   cores <- as.integer(cores)
@@ -1449,7 +1449,7 @@ compute_motif_similarity <- function(motif_stats, method = c("jaccard", "cosine"
 #' @param weight_by_group_size Logical; weight by id_map$group_size if present.
 #' @param verbose Logical; emit concise progress messages.
 #' @return List with similarity matrices and cluster tables.
-#' @keywords internal
+#' @noRd
 run_fp_motif_clustering <- function(
   fp_aligned,
   out_dir = NULL,

@@ -1,5 +1,5 @@
 # File: utils_step2_reports.R
-# Purpose: Optional Module 2 HTML reports from compact relational outputs.
+# Purpose: Optional Module 2 HTML reports from relational outputs.
 
 
 .module2_report_table_row <- function(module2, table_name) {
@@ -184,7 +184,7 @@
     out[, condition_fp_score := NA_real_]
     return(out)
   }
-  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   validate_multiomic_object(multiomic_data)
   mats <- multiomic_data$matrices
   all_conditions <- colnames(mats$fp_score)
@@ -365,7 +365,7 @@
     dt[, `:=`(condition = "all", condition_fp_score = NA_real_)]
     return(.module2_report_build_direct_edges(dt, min_supporting_peaks = 1L))
   }
-  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a compact multiomic object created by as_multiomic_object().")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("`multiomic_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   validate_multiomic_object(multiomic_data)
   mats <- multiomic_data$matrices
   all_conditions <- colnames(mats$fp_score)
@@ -841,7 +841,7 @@
 #' Build optional Module 2 HTML reports
 #'
 #' @param module2 Module 2 result list, loaded output list, or output directory.
-#' @param multiomic_data Optional compact multiomic object for condition-filtered reports.
+#' @param multiomic_data Optional CraftGRN multiomic object for condition-filtered reports.
 #' @param output_dir Report output directory.
 #' @param reports Report families to build.
 #' @param tfs TFs for top target reports.

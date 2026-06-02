@@ -7665,9 +7665,12 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 
 #' Train joint RNA+footprint topic models (Module 3)
 #'
-#' Builds documents from differential links and trains VAE topic models across
-#' a user-supplied K grid. Writes model outputs (vae_models, rds, model_metrics.csv,
-#' model_selection.pdf) without running downstream topic extraction.
+#' Builds documents from differential links and trains topic models across a
+#' user-supplied K grid. The default backend is the native WarpLDA sampler
+#' (`backend = "warplda"` with `warplda_sampler = "warp_omp"`). VAE backends
+#' remain available when explicitly requested. The function writes model
+#' outputs and model-selection summaries without running downstream topic
+#' extraction.
 #'
 #' @param Kgrid Integer vector of K values for training.
 #' @param input_dir Directory containing differential links (filtered up/down).
@@ -7696,7 +7699,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param include_tf_terms Whether to include TF self-terms.
 #' @param count_input Count column passed to the topic backend.
 #' @param vae_variant VAE variant name.
-#' @param backend Topic model backend, either `"vae"` or `"warplda"`.
+#' @param backend Topic model backend. `"warplda"` is the default native
+#'   WarpLDA backend; `"vae"` runs the optional VAE backend.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
 #'   the slower sequential fixed-seed reference sampler,
@@ -7742,7 +7746,7 @@ train_topic_models <- function(Kgrid,
                                include_tf_terms = FALSE,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
-                               backend = c("vae", "warplda"),
+                               backend = c("warplda", "vae"),
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
                                reuse_if_exists = TRUE,
@@ -8045,13 +8049,15 @@ train_topic_models <- function(Kgrid,
 
 #' Extract regulatory topics from trained models (Module 3)
 #'
-#' Uses precomputed VAE models to compute link-topic scores, topic assignments,
-#' and downstream reports for a user-selected K.
+#' Uses precomputed topic models to compute link-topic scores, topic
+#' assignments, and downstream reports for a user-selected K. The default
+#' backend is native WarpLDA to match `train_topic_models()`.
 #'
 #' @param k Integer K selected by the user.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write final topic reports.
-#' @param backend Topic model backend, either `"vae"` or `"warplda"`.
+#' @param backend Topic model backend. `"warplda"` is the default native
+#'   WarpLDA backend; `"vae"` reads optional VAE outputs.
 #' @param vae_variant VAE variant name used in trained output directories.
 #' @param doc_mode Document mode used during training.
 #' @param weight_label Weight label used in trained output directories.
@@ -8062,7 +8068,7 @@ train_topic_models <- function(Kgrid,
 extract_regulatory_topics <- function(k,
                                       model_dir,
                                       output_dir,
-                                      backend = c("vae", "warplda"),
+                                      backend = c("warplda", "vae"),
                                       vae_variant = "multivi_encoder",
                                       doc_mode = c("tf_cluster", "tf"),
                                       weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr", "peak_score_gene_expr"),
@@ -8245,7 +8251,7 @@ extract_regulatory_topics <- function(k,
 #' Internal helpers used to construct document-term inputs for topic models.
 #'
 #' @name topic_model_helpers
-#' @keywords internal
+#' @noRd
 NULL
 
 .topic_safe_num <- function(x) {
@@ -8277,7 +8283,7 @@ NULL
 #' @param min_count Minimum positive count to emit.
 #'
 #' @return Integer vector of counts with zeros for non-positive weights.
-#' @keywords internal
+#' @noRd
 weight_to_count <- function(w,
                             method = c("bin", "log"),
                             scale = 50,
@@ -8344,7 +8350,7 @@ weight_to_count <- function(w,
 #'   `doc_mode = "tf_cluster"`.
 #'
 #' @return A data.table with `doc_id` and condition-aware score columns.
-#' @keywords internal
+#' @noRd
 add_tf_docs <- function(edges,
                         doc_mode = c("tf", "tf_cluster", "comparison"),
                         direction_by = c("gene", "fp", "none"),
@@ -8449,7 +8455,7 @@ add_tf_docs <- function(edges,
 #' @param doc_mode Document mode, either `"tf_cluster"` or `"tf"`.
 #'
 #' @return A data.table with condition-specific rows and `doc_id`.
-#' @keywords internal
+#' @noRd
 add_condition_tf_docs <- function(edges,
                                   tf_cluster_map = NULL,
                                   doc_mode = c("tf_cluster", "tf")) {
@@ -8499,7 +8505,7 @@ add_condition_tf_docs <- function(edges,
 #' @param tf_cluster_map Named vector mapping TF names to clusters.
 #'
 #' @return A data.table with condition-specific TF-cluster document IDs.
-#' @keywords internal
+#' @noRd
 add_condition_tf_cluster_docs <- function(edges, tf_cluster_map) {
   add_condition_tf_docs(edges, tf_cluster_map = tf_cluster_map, doc_mode = "tf_cluster")
 }
@@ -8531,7 +8537,7 @@ add_condition_tf_cluster_docs <- function(edges, tf_cluster_map) {
 #'   gene/peak thresholds when the relevant columns are present.
 #'
 #' @return A document-term data.table.
-#' @keywords internal
+#' @noRd
 build_doc_term_from_edges <- function(edges_docs,
                                       term_type = c("peak", "gene"),
                                       weight_type = c("delta_fp", "fc_mag_fp", "fc_mag_gene", "log2fc_fp", "log2fc_gene"),
@@ -8706,7 +8712,7 @@ build_doc_term_from_edges <- function(edges_docs,
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.
-#' @keywords internal
+#' @noRd
 build_doc_term_opt1_peak_delta_fp <- function(edges_docs, ...) {
   build_doc_term_from_edges(edges_docs, term_type = "peak", weight_type = "delta_fp", ...)
 }
@@ -8717,7 +8723,7 @@ build_doc_term_opt1_peak_delta_fp <- function(edges_docs, ...) {
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.
-#' @keywords internal
+#' @noRd
 build_doc_term_opt2_peak_fc_fp <- function(edges_docs, ...) {
   build_doc_term_from_edges(edges_docs, term_type = "peak", weight_type = "fc_mag_fp", ...)
 }
@@ -8728,7 +8734,7 @@ build_doc_term_opt2_peak_fc_fp <- function(edges_docs, ...) {
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @return A document-term data.table.
-#' @keywords internal
+#' @noRd
 build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   build_doc_term_from_edges(edges_docs, term_type = "gene", weight_type = "fc_mag_gene", ...)
 }
@@ -9026,7 +9032,7 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
 #'   inconsistent source values before deterministic collapse.
 #'
 #' @return A data.table with `doc_id`, `term_id`, `weight`, and count columns.
-#' @keywords internal
+#' @noRd
 build_doc_term_joint <- function(edges_docs,
                                  weight_type_peak = c("delta_fp", "fc_mag_fp", "log2fc_fp"),
                                  weight_type_gene = c("fc_mag_gene", "log2fc_gene"),
@@ -9113,7 +9119,7 @@ build_doc_term_joint <- function(edges_docs,
 #'   inconsistent source values before deterministic collapse.
 #'
 #' @return A data.table with `doc_id`, `term_id`, `weight`, and count columns.
-#' @keywords internal
+#' @noRd
 build_doc_term_condition_union <- function(edges_condition,
                                            count_method = c("bin", "log"),
                                            count_scale = 50,

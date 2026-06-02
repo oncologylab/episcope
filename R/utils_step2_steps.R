@@ -2,7 +2,7 @@
 # Step-by-step Module 2 public helpers.
 #' Prepare Module 2 linking inputs
 #'
-#' @param multiomic_data Compact multiomic object.
+#' @param multiomic_data CraftGRN multiomic object.
 #' @param predicted_tfbs Predicted TFBS table or path from Module 1.
 #' @param gene_tss Optional gene TSS table or path.
 #' @param regulatory_prior Optional generic FP-target prior.
@@ -14,7 +14,7 @@
 module2_prepare_link_inputs <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, max_distance_bp = NULL, verbose = TRUE) {
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
-  if (!is_multiomic_object(multiomic_data)) .log_abort("multiomic_data must be a compact multiomic object.")
+  if (!is_multiomic_object(multiomic_data)) .log_abort("multiomic_data must be a CraftGRN multiomic object.")
   validate_multiomic_object(multiomic_data)
   if (is.character(predicted_tfbs) && length(predicted_tfbs) == 1L && file.exists(predicted_tfbs)) predicted_tfbs <- load_predicted_tfbs(predicted_tfbs)
   predicted_tfbs <- build_predicted_tfbs(predicted_tfbs)
@@ -87,7 +87,7 @@ module2_correlate_fp_targets <- function(module2_inputs, candidates, n_cores = N
 #' @param output_dir Optional output directory.
 #' @param output_format One of auto, parquet, or csv.
 #' @param verbose Emit concise progress messages.
-#' @return A compact Module 2 result list.
+#' @return A Module 2 result list.
 #' @export
 module2_assemble_links <- function(module2_inputs, candidates, tf_target_corr, fp_target_corr, output_dir = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
   output_format <- match.arg(output_format)

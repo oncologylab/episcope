@@ -1,14 +1,9 @@
 # File: utils_multiomic_object.R
-# Purpose: Compact multiomic object helpers for Module 1.
+# Purpose: CraftGRN multiomic object helpers for Module 1.
 
 .multiomic_object_schema <- function() "craftgrn_multiomic_v1"
 
-#' Test whether an object uses the compact multiomic schema
-#'
-#' @param x Object to test.
-#'
-#' @return Logical scalar.
-#' @export
+#' @noRd
 is_multiomic_object <- function(x) {
   is.list(x) &&
     identical(x$schema, .multiomic_object_schema()) &&
@@ -23,7 +18,7 @@ is_multiomic_object <- function(x) {
 
 .compact_matrix_from_table <- function(x, id_col, storage = c("numeric", "logical")) {
   storage <- match.arg(storage)
-  if (!is.data.frame(x)) .log_abort("Expected a data.frame for compact matrix conversion.")
+  if (!is.data.frame(x)) .log_abort("Expected a data.frame for matrix conversion.")
   if (!id_col %in% names(x)) .log_abort("Missing required id column: {id_col}")
   ids <- as.character(x[[id_col]])
   keep <- !duplicated(ids)
@@ -72,7 +67,7 @@ is_multiomic_object <- function(x) {
 
 .compact_gene_df_from_matrix <- function(mat, genes, logical_out = FALSE) {
   mat <- as.matrix(mat)
-  if (!is.data.frame(genes)) .log_abort("Compact object is missing gene features.")
+  if (!is.data.frame(genes)) .log_abort("CraftGRN multiomic object is missing gene features.")
   gene_ids <- rownames(mat)
   if (is.null(gene_ids)) gene_ids <- as.character(seq_len(nrow(mat)))
   idx <- match(gene_ids, genes$gene_id)
@@ -190,16 +185,7 @@ is_multiomic_object <- function(x) {
   out
 }
 
-#' Convert a prepared Module 1 object to the compact multiomic schema
-#'
-#' @param omics_data Prepared Module 1 object.
-#' @param project Optional project metadata list.
-#' @param paths Optional path metadata list.
-#' @param label_col Metadata column used as the condition label.
-#' @param verbose Emit status messages.
-#'
-#' @return A compact multiomic object.
-#' @export
+#' @noRd
 as_multiomic_object <- function(omics_data,
                               project = list(),
                               paths = list(),
@@ -212,7 +198,7 @@ as_multiomic_object <- function(omics_data,
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a list.")
   required <- c("fp_score_condition_qn", "fp_bound_condition", "rna_condition", "rna_expressed")
   missing <- required[!vapply(required, function(nm) is.data.frame(omics_data[[nm]]), logical(1))]
-  if (length(missing)) .log_abort("Cannot build compact object; missing: {paste(missing, collapse = ', ')}.")
+  if (length(missing)) .log_abort("Cannot build CraftGRN multiomic object; missing: {paste(missing, collapse = ', ')}.")
 
   fp_score <- .compact_matrix_from_table(omics_data$fp_score_condition_qn, "peak_ID", "numeric")
   fp_bound <- .compact_matrix_from_table(omics_data$fp_bound_condition, "peak_ID", "logical")
@@ -246,18 +232,13 @@ as_multiomic_object <- function(omics_data,
   )
   class(object) <- c("craftgrn_multiomic", "list")
   validate_multiomic_object(object)
-  if (isTRUE(verbose)) .log_inform("Built compact multiomic object.")
+  if (isTRUE(verbose)) .log_inform("Built CraftGRN multiomic object.")
   object
 }
 
-#' Validate a compact multiomic object
-#'
-#' @param omics_data Object to validate.
-#'
-#' @return The input object, invisibly.
-#' @export
+#' @noRd
 validate_multiomic_object <- function(omics_data) {
-  if (!is_multiomic_object(omics_data)) .log_abort("Object is not a compact multiomic object.")
+  if (!is_multiomic_object(omics_data)) .log_abort("Object is not a CraftGRN multiomic object.")
   mats <- omics_data$matrices
   feats <- omics_data$features
   if (!is.matrix(mats$fp_score)) .log_abort("`matrices$fp_score` must be a matrix.")
@@ -291,7 +272,7 @@ validate_multiomic_object <- function(omics_data) {
 
 .as_module1_analysis_data <- function(omics_data, verbose = TRUE) {
   if (!is_multiomic_object(omics_data)) {
-    .log_abort("`omics_data` must be a compact multiomic object created by as_multiomic_object().")
+    .log_abort("`omics_data` must be a CraftGRN multiomic object returned by load_prep_multiomic_data().")
   }
   validate_multiomic_object(omics_data)
   fp <- data.table::as.data.table(omics_data$features$fp)
@@ -322,6 +303,6 @@ validate_multiomic_object <- function(omics_data) {
     sample_labels = colnames(omics_data$matrices$fp_score),
     status = list(module1_analysis_view = TRUE)
   )
-  if (isTRUE(verbose)) .log_inform("Prepared compact multiomic object for Module 1 analysis.")
+  if (isTRUE(verbose)) .log_inform("Prepared Module 1 analysis view from the CraftGRN multiomic object.")
   out
 }

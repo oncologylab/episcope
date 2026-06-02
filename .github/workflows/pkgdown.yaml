@@ -31,8 +31,26 @@ jobs:
         run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
         shell: Rscript {0}
 
+      - name: Fix generated favicon MIME type
+        run: |
+          files <- list.files("docs", pattern = "\\.html$", recursive = TRUE, full.names = TRUE)
+          curly <- intToUtf8(0x201d)
+          bad_values <- c(
+            paste0("type=\"", curly, "image/svg+xml", curly, "\""),
+            paste0("type=", curly, "image/svg+xml", curly)
+          )
+          for (file in files) {
+            html <- paste(readLines(file, warn = FALSE), collapse = "\n")
+            for (bad in bad_values) {
+              html <- gsub(bad, "type=\"image/svg+xml\"", html, fixed = TRUE)
+            }
+            writeLines(html, file, useBytes = TRUE)
+          }
+        shell: Rscript {0}
+
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
           folder: docs
+          clean: true

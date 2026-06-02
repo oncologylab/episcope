@@ -3,7 +3,7 @@
 
 #' Prepare Module 1 TFBS prediction inputs
 #'
-#' @param omics_data Compact multiomic object created by load_prep_multiomic_data.
+#' @param omics_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
 #' @param label_col Optional metadata column used to rebuild condition matrices.
 #' @param tf_subset Optional TF symbols to keep.
 #' @param verbose Emit concise progress messages.
@@ -90,11 +90,11 @@ module1_select_prediction_footprints <- function(module1_inputs, motif_supported
 #' @param fdr_cutoff Optional best-method FDR cutoff.
 #' @param min_non_na Minimum finite condition pairs required.
 #' @param cores Number of worker cores; NULL uses all available cores.
-#' @param write_outputs Write compact predicted TFBS outputs.
+#' @param write_outputs Write predicted TFBS outputs.
 #' @param output_format One of csv, parquet, or auto.
 #' @param return_prediction_stats Return full prediction statistics in memory.
 #' @param verbose Emit concise progress messages.
-#' @return A list with prediction statistics or manifests and compact predicted_tfbs.
+#' @return A list with prediction statistics or manifests and predicted_tfbs.
 #' @export
 module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_footprints, out_dir = "predict_tf_binding_sites", r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = TRUE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
   output_format <- .module1_output_format(output_format)

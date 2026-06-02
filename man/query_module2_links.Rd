@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_link_tf_targets.R
 \name{query_module2_links}
 \alias{query_module2_links}
-\title{Query compact Module 2 links}
+\title{Query Module 2 links}
 \usage{
 query_module2_links(
   module2,
@@ -27,5 +27,5 @@ query_module2_links(
 A tibble of matching final links.
 }
 \description{
-Query compact Module 2 links
+Query Module 2 links
 }

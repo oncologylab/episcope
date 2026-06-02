@@ -12,7 +12,7 @@ module1_prepare_tfbs_inputs(
 )
 }
 \arguments{
-\item{omics_data}{Compact multiomic object created by load_prep_multiomic_data.}
+\item{omics_data}{CraftGRN multiomic object returned by `load_prep_multiomic_data()`.}
 
 \item{label_col}{Optional metadata column used to rebuild condition matrices.}
 

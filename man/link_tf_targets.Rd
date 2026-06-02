@@ -20,7 +20,7 @@ link_tf_targets(
 )
 }
 \arguments{
-\item{multiomic_data}{Compact multiomic object created by `as_multiomic_object()`.}
+\item{multiomic_data}{CraftGRN multiomic object returned by `load_prep_multiomic_data()`.}
 
 \item{predicted_tfbs}{Compact Module 1 predicted TFBS table or path.}
 

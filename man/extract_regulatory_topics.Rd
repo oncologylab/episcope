@@ -8,7 +8,7 @@ extract_regulatory_topics(
   k,
   model_dir,
   output_dir,
-  backend = c("vae", "warplda"),
+  backend = c("warplda", "vae"),
   vae_variant = "multivi_encoder",
   doc_mode = c("tf_cluster", "tf"),
   weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr",
@@ -24,7 +24,8 @@ extract_regulatory_topics(
 
 \item{output_dir}{Directory to write final topic reports.}
 
-\item{backend}{Topic model backend, either `"vae"` or `"warplda"`.}
+\item{backend}{Topic model backend. `"warplda"` is the default native
+WarpLDA backend; `"vae"` reads optional VAE outputs.}
 
 \item{vae_variant}{VAE variant name used in trained output directories.}
 
@@ -38,6 +39,7 @@ is matched, write reports directly under `output_dir`.}
 \item{topic_report_args}{Optional list of overrides for report settings.}
 }
 \description{
-Uses precomputed VAE models to compute link-topic scores, topic assignments,
-and downstream reports for a user-selected K.
+Uses precomputed topic models to compute link-topic scores, topic
+assignments, and downstream reports for a user-selected K. The default
+backend is native WarpLDA to match `train_topic_models()`.
 }
