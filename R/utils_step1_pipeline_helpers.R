@@ -29,6 +29,20 @@
 #' @noRd
 NULL
 
+.write_fp_score_qn_csv <- function(grn_set, out_dir, db, verbose = TRUE) {
+  if (!is.list(grn_set) || !is.data.frame(grn_set$fp_score_condition_qn)) {
+    .log_abort("`grn_set$fp_score_condition_qn` is required to write normalized footprint scores.")
+  }
+  db_use <- if (is.character(db) && length(db) >= 1L && nzchar(db[[1L]])) db[[1L]] else "db"
+  out_path <- file.path(out_dir, sprintf("01_fp_scores_qn_%s.csv", db_use))
+  dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(data.table::as.data.table(grn_set$fp_score_condition_qn), out_path)
+  if (isTRUE(verbose)) {
+    .log_inform("Saved quantile-normalized footprint scores: {.path {out_path}}")
+  }
+  invisible(out_path)
+}
+
 #' Load and prepare the Module 1 multi-omic object
 #'
 #' Build the rebuilt Module 1 data object from cached aligned footprints or from
@@ -56,6 +70,9 @@ NULL
 #'   `"distinct"`.
 #' @param write_outputs Logical; if `TRUE`, save the prepared object as an RDS
 #'   cache under `predict_tf_binding_sites/`.
+#' @param write_fp_score_qn_csv Logical; if `TRUE` and `write_outputs = TRUE`,
+#'   also save quantile-normalized footprint scores as
+#'   `01_fp_scores_qn_<db>.csv` under the Module 1 output directory.
 #' @param atac_data,rna_tbl,metadata Optional in-memory input tables.
 #' @param atac_data_path,rna_path,metadata_path Optional explicit file paths for
 #'   the input tables.
@@ -100,6 +117,7 @@ load_prep_multiomic_data <- function(
     score_match_pct = 0.8,
     output_mode = c("full", "distinct"),
     write_outputs = FALSE,
+    write_fp_score_qn_csv = TRUE,
     atac_data = NULL,
     rna_tbl = NULL,
     metadata = NULL,
@@ -363,6 +381,14 @@ load_prep_multiomic_data <- function(
         out_dir = out_dir,
         db = get_cfg("db"),
         threshold_gene_expr = threshold_gene_expr,
+        verbose = verbose
+      )
+    }
+    if (isTRUE(write_fp_score_qn_csv)) {
+      .write_fp_score_qn_csv(
+        grn_set = grn_set,
+        out_dir = out_dir,
+        db = get_cfg("db"),
         verbose = verbose
       )
     }

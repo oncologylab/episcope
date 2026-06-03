@@ -144,6 +144,8 @@ Module 1 creates:
 
 - A CraftGRN multiomic object with normalized signal matrices, binary flags, and
   feature annotations.
+- `01_fp_scores_qn_<db>.csv`, the quantile-normalized footprint score matrix
+  written for direct inspection and downstream external tools.
 - Compact aligned footprint site, score, binding, and motif-support tables.
 - Canonical-bound footprint summaries, including all canonical motifs retained
   for each aligned footprint.

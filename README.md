@@ -104,7 +104,9 @@ then prepares a multiomic data object for downstream regulatory analysis.
 Primary package functions:
 
 - `load_prep_multiomic_data()` loads, filters, aligns, and prepares multiomic
-  inputs from a YAML configuration file.
+  inputs from a YAML configuration file. When outputs are enabled, it also
+  writes `01_fp_scores_qn_<db>.csv`, the quantile-normalized footprint score
+  matrix used downstream.
 - `predict_tfbs()` performs direct-bound footprint filtering and TF binding site
   prediction across matched conditions.
 - `build_module1_qc_report()` writes an HTML QC report for run parameters, input gates, canonical support, correlation diagnostics, predicted TFBS chunk integrity, top TFs/FPs, condition support, warning checks, and related Module 1 artifacts. The report uses multiple static plot types, including processing funnels, density curves, scatter summaries, heatmaps, lollipop rank plots, and cumulative curves.
