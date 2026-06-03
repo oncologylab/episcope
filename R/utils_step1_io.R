@@ -464,7 +464,12 @@ load_one_motif_wide <- function(
   paths <- c(score = score_path, bound = bound_path, annot = annot_path)
   exists <- file.exists(paths)
   if (!all(exists)) {
-    return(list(valid = FALSE, n_rows = NA_integer_, reason = paste0(names(paths)[!exists], collapse = ",")))
+    reason <- if (!any(exists)) {
+      "not_found"
+    } else {
+      paste0("partial_missing:", paste0(names(paths)[!exists], collapse = ","))
+    }
+    return(list(valid = FALSE, n_rows = NA_integer_, reason = reason))
   }
   n_score <- .count_rows_fast(score_path)
   n_bound <- .count_rows_fast(bound_path)
@@ -688,11 +693,15 @@ load_footprints <- function(
       cache_status <- .fp_cache_triplet_status(f_score, f_bound, f_annot)
       if (isTRUE(cache_status$valid)) {
         if (!is.null(log_file_use)) {
-          log_line(sprintf("Motif %s: complete cached outputs skipped (n_peaks=%s).", m, cache_status$n_rows))
+          log_line(sprintf("Motif %s: using cached outputs (n_peaks=%s).", m, cache_status$n_rows))
         }
         return(tibble::tibble(motif = base, n_peaks = cache_status$n_rows, score = f_score, bound = f_bound, annot = f_annot))
       } else if (!is.null(log_file_use)) {
-        log_line(sprintf("Motif %s: cached outputs incomplete; recomputing (%s).", m, cache_status$reason))
+        if (identical(cache_status$reason, "not_found")) {
+          log_line(sprintf("Motif %s: preparing cache outputs for this run.", m))
+        } else {
+          log_line(sprintf("Motif %s: refreshing partial cache (%s).", m, cache_status$reason))
+        }
       }
     }
 

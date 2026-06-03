@@ -274,9 +274,48 @@ test_that("raw footprint loader writes minimal per-motif cache tables", {
   expect_equal(annot$motifs, "M1")
 })
 
+test_that("raw footprint loader uses clear cache status wording", {
+  root_dir <- file.path(tempdir(), paste0("craftgrn-log-root-", as.integer(stats::runif(1L, 1, 1e9))))
+  out_dir <- file.path(tempdir(), paste0("craftgrn-log-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  log_file <- file.path(tempdir(), paste0("craftgrn-log-", as.integer(stats::runif(1L, 1, 1e9)), ".txt"))
+  dir.create(file.path(root_dir, "S1", "TEST", "M1"), recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      TFBS_chr = "chr1",
+      TFBS_start = 10L,
+      TFBS_end = 15L,
+      TFBS_name = "M1",
+      peak_chr = "chr1",
+      peak_start = 1L,
+      peak_end = 100L,
+      S1_ATAC_score = 2.5,
+      S1_ATAC_bound = 1L
+    ),
+    file.path(root_dir, "S1", "TEST", "M1", "M1_overview.txt"),
+    sep = "\t"
+  )
+
+  load_footprints(
+    root_dir = root_dir,
+    db_name = "TEST",
+    out_dir = out_dir,
+    sample_ids = "S1",
+    n_workers = 1L,
+    skip_existing = TRUE,
+    verbose = FALSE,
+    log_file = log_file
+  )
+
+  log_text <- paste(readLines(log_file), collapse = "\n")
+  expect_match(log_text, "preparing cache outputs for this run", fixed = TRUE)
+  expect_false(grepl("incomplete", log_text, fixed = TRUE))
+  expect_false(grepl("recomputing", log_text, fixed = TRUE))
+})
+
 test_that("raw footprint loader recomputes incomplete cached motif triplets", {
   root_dir <- file.path(tempdir(), paste0("craftgrn-resume-root-", as.integer(stats::runif(1L, 1, 1e9))))
   out_dir <- file.path(tempdir(), paste0("craftgrn-resume-cache-", as.integer(stats::runif(1L, 1, 1e9))), "fp_TEST")
+  log_file <- file.path(tempdir(), paste0("craftgrn-resume-log-", as.integer(stats::runif(1L, 1, 1e9)), ".txt"))
   dir.create(file.path(root_dir, "S1", "TEST", "M1"), recursive = TRUE, showWarnings = FALSE)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(
@@ -303,17 +342,22 @@ test_that("raw footprint loader recomputes incomplete cached motif triplets", {
     sample_ids = "S1",
     n_workers = 1L,
     skip_existing = TRUE,
-    verbose = FALSE
+    verbose = FALSE,
+    log_file = log_file
   )
   score <- data.table::fread(manifest$score[[1L]], showProgress = FALSE)
   bound <- data.table::fread(manifest$bound[[1L]], showProgress = FALSE)
   annot <- data.table::fread(manifest$annot[[1L]], showProgress = FALSE)
+  log_text <- paste(readLines(log_file), collapse = "\n")
 
   expect_equal(nrow(manifest), 1L)
   expect_equal(score$peak_ID, "chr1:10-15")
   expect_equal(score$S1, 2.5)
   expect_equal(bound$S1, 1L)
   expect_equal(annot$fp_peak, "chr1:10-15")
+  expect_match(log_text, "refreshing partial cache", fixed = TRUE)
+  expect_false(grepl("incomplete", log_text, fixed = TRUE))
+  expect_false(grepl("recomputing", log_text, fixed = TRUE))
 })
 
 test_that("raw footprint loader recomputes cached motif triplets with mismatched rows", {
