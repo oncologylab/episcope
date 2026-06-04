@@ -8,7 +8,8 @@ train_topic_models(
   Kgrid,
   input_dir,
   output_dir,
-  celllines = c("AsPC1", "HPAFII", "Panc1"),
+  sample_subset = NULL,
+  analysis_label = NULL,
   tf_cluster_map,
   doc_mode = c("tf_cluster", "tf"),
   doc_design = c("comparison", "condition"),
@@ -53,7 +54,13 @@ train_topic_models(
 
 \item{output_dir}{Directory to write topic model outputs.}
 
-\item{celllines}{Character vector of cell line prefixes.}
+\item{sample_subset}{Optional condition/sample labels to keep. When supplied,
+only comparisons whose case and control labels are both in this vector are
+used for topic training.}
+
+\item{analysis_label}{Label used to name this topic-model analysis. If
+`NULL`, the label is inferred from `sample_subset` or set to
+`"all_samples"`.}
 
 \item{tf_cluster_map}{Named vector mapping TFs to motif clusters.}
 

@@ -130,6 +130,15 @@ test_that("Module 3 topic benchmark uses a clean standard layout for one selecte
   expect_false(grepl("std_tf_", res$method_plan$topic_models_dir, fixed = TRUE))
 })
 
+test_that("Module 3 topic benchmark exposes project-agnostic sample subsetting", {
+  expect_false("celllines" %in% names(formals(run_module3_topic_benchmark)))
+  expect_true("sample_subset" %in% names(formals(run_module3_topic_benchmark)))
+  expect_true("analysis_label" %in% names(formals(run_module3_topic_benchmark)))
+  expect_false("celllines" %in% names(formals(train_topic_models)))
+  expect_true("sample_subset" %in% names(formals(train_topic_models)))
+  expect_true("analysis_label" %in% names(formals(train_topic_models)))
+})
+
 test_that("Module 3 topic benchmark uses shallow run folders for method grids", {
   root <- tempfile("module3-topic-shallow-benchmark-")
   dir.create(root, recursive = TRUE)

@@ -15,6 +15,8 @@ run_module3_topic_benchmark(
   replicate_documents = FALSE,
   reuse_if_exists = TRUE,
   local_threads = NULL,
+  sample_subset = NULL,
+  analysis_label = NULL,
   extraction_topic_report_args = list(),
   run_training = TRUE,
   run_extraction = TRUE,
@@ -55,6 +57,12 @@ grouped by the condition label after removing a trailing replicate suffix.}
 \item{reuse_if_exists}{Reuse existing model outputs where possible.}
 
 \item{local_threads}{Optional thread count for model training.}
+
+\item{sample_subset}{Optional condition/sample labels passed to
+[train_topic_models()]. When supplied, only comparisons whose case and
+control labels are both in this vector are used.}
+
+\item{analysis_label}{Label used to name the topic-model analysis.}
 
 \item{extraction_topic_report_args}{Optional named list of topic-extraction
 report argument overrides.}

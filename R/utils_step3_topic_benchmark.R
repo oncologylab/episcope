@@ -860,6 +860,10 @@
 #'   grouped by the condition label after removing a trailing replicate suffix.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
+#' @param sample_subset Optional condition/sample labels passed to
+#'   [train_topic_models()]. When supplied, only comparisons whose case and
+#'   control labels are both in this vector are used.
+#' @param analysis_label Label used to name the topic-model analysis.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides.
 #' @param run_training Train topic models before reporting.
@@ -880,6 +884,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         replicate_documents = FALSE,
                                         reuse_if_exists = TRUE,
                                         local_threads = NULL,
+                                        sample_subset = NULL,
+                                        analysis_label = NULL,
                                         extraction_topic_report_args = list(),
                                         run_training = TRUE,
                                         run_extraction = TRUE,
@@ -936,6 +942,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
         Kgrid = k_grid,
         input_dir = filtered_dir,
         output_dir = row$topic_models_dir[[1L]],
+        sample_subset = sample_subset,
+        analysis_label = analysis_label,
         doc_mode = "tf",
         doc_design = row$doc_design[[1L]],
         fp_term_mode = row$fp_mode[[1L]],

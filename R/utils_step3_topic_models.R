@@ -7675,7 +7675,12 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param Kgrid Integer vector of K values for training.
 #' @param input_dir Directory containing differential links (filtered up/down).
 #' @param output_dir Directory to write topic model outputs.
-#' @param celllines Character vector of cell line prefixes.
+#' @param sample_subset Optional condition/sample labels to keep. When supplied,
+#'   only comparisons whose case and control labels are both in this vector are
+#'   used for topic training.
+#' @param analysis_label Label used to name this topic-model analysis. If
+#'   `NULL`, the label is inferred from `sample_subset` or set to
+#'   `"all_samples"`.
 #' @param tf_cluster_map Named vector mapping TFs to motif clusters.
 #' @param doc_mode Document mode, either `"tf_cluster"` or `"tf"`.
 #' @param doc_design Document design, either `"comparison"` or `"condition"`.
@@ -7722,7 +7727,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 train_topic_models <- function(Kgrid,
                                input_dir,
                                output_dir,
-                               celllines = c("AsPC1", "HPAFII", "Panc1"),
+                               sample_subset = NULL,
+                               analysis_label = NULL,
                                tf_cluster_map,
                                doc_mode = c("tf_cluster", "tf"),
                                doc_design = c("comparison", "condition"),
@@ -7789,20 +7795,32 @@ train_topic_models <- function(Kgrid,
     delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
   }
   if (!length(delta_files)) .log_abort("No delta link files found in {input_dir}")
-  if (!is.null(celllines) && length(celllines)) {
-    cell_pat <- paste0("^(", paste(gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", celllines), collapse = "|"), ")_")
-    delta_files <- delta_files[grepl(cell_pat, basename(delta_files))]
-  }
-  if (!length(delta_files)) .log_abort("No delta link files found for requested cell lines in {input_dir}")
 
   .log_inform("Loading {length(delta_files)} delta-link file(s) from {input_dir}.")
   edges_all <- load_delta_links_many(delta_files, keep_original = FALSE)
   edges_dt <- data.table::as.data.table(edges_all)
   .log_inform("Loaded {nrow(edges_dt)} delta-link row(s).")
   if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
-  if (!("cellline" %in% names(edges_dt))) {
-    edges_dt[, cellline := sub("_.*$", "", comparison_id)]
+
+  sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
+  sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
+  if (length(sample_subset)) {
+    if (all(c("case_id", "ctrl_id") %in% names(edges_dt))) {
+      n_before_subset <- nrow(edges_dt)
+      edges_dt <- edges_dt[case_id %in% sample_subset & ctrl_id %in% sample_subset]
+      .log_inform("Sample subset retained {nrow(edges_dt)}/{n_before_subset} delta-link row(s).")
+    } else {
+      .log_abort("sample_subset requires delta links with case_id and ctrl_id columns.")
+    }
   }
+  if (!nrow(edges_dt)) {
+    .log_abort("No delta-link rows remain after applying sample_subset.")
+  }
+  if (is.null(analysis_label) || !nzchar(as.character(analysis_label[[1L]]))) {
+    analysis_label <- if (length(sample_subset)) "sample_subset" else "all_samples"
+  }
+  analysis_label <- gsub("[^A-Za-z0-9_.-]+", "_", as.character(analysis_label[[1L]]))
+  if (!nzchar(analysis_label)) analysis_label <- "analysis"
 
   vae_script <- Sys.getenv("VAE_SCRIPT", unset = "")
   if (!nzchar(vae_script)) {
@@ -7814,17 +7832,16 @@ train_topic_models <- function(Kgrid,
   }
   if (!file.exists(vae_script)) .log_abort("Missing VAE script: {vae_script}")
 
-  for (cell in celllines) {
+  for (analysis_id in analysis_label) {
     t_cell <- proc.time()[["elapsed"]]
-    .log_inform("Preparing topic input for {cell}: doc_design={doc_design}, doc_mode={doc_mode}, fp_term_mode={fp_term_mode}, backend={backend}.")
-    edges_sub <- edges_dt[cellline == cell]
-    if (!nrow(edges_sub)) next
+    .log_inform("Preparing topic input for {analysis_id}: doc_design={doc_design}, doc_mode={doc_mode}, fp_term_mode={fp_term_mode}, backend={backend}.")
+    edges_sub <- data.table::copy(edges_dt)
     if (!is.null(tf_exclude) && length(tf_exclude)) {
       edges_sub <- edges_sub[!toupper(tf) %in% tf_exclude]
     }
     if (!nrow(edges_sub)) next
 
-    .log_inform("{cell}: filtering {nrow(edges_sub)} edge row(s).")
+    .log_inform("{analysis_id}: filtering {nrow(edges_sub)} edge row(s).")
     t_filter <- proc.time()[["elapsed"]]
     edges_filt <- filter_edges_for_tf_topics(
       edges_sub,
@@ -7837,18 +7854,18 @@ train_topic_models <- function(Kgrid,
       direction_consistency = direction_consistency
     )
     if (!nrow(edges_filt)) next
-    .log_inform("{cell}: retained {nrow(edges_filt)} edge row(s) after topic filters in {round(proc.time()[['elapsed']] - t_filter, 1)} sec.")
+    .log_inform("{analysis_id}: retained {nrow(edges_filt)} edge row(s) after topic filters in {round(proc.time()[['elapsed']] - t_filter, 1)} sec.")
 
     if (identical(doc_design, "condition")) {
-      .log_inform("{cell}: building condition-level TF documents.")
+      .log_inform("{analysis_id}: building condition-level TF documents.")
       t_docs <- proc.time()[["elapsed"]]
       edges_docs <- add_condition_tf_docs(
         edges_filt,
         tf_cluster_map = tf_cluster_map,
         doc_mode = doc_mode
       )
-      .log_inform("{cell}: built {nrow(edges_docs)} condition-level document edge row(s) in {round(proc.time()[['elapsed']] - t_docs, 1)} sec.")
-      .log_inform("{cell}: building condition-level doc_term.")
+      .log_inform("{analysis_id}: built {nrow(edges_docs)} condition-level document edge row(s) in {round(proc.time()[['elapsed']] - t_docs, 1)} sec.")
+      .log_inform("{analysis_id}: building condition-level doc_term.")
       t_doc_term <- proc.time()[["elapsed"]]
       doc_term <- build_doc_term_condition_union(
         edges_docs,
@@ -7863,9 +7880,9 @@ train_topic_models <- function(Kgrid,
         fp_term_mode = fp_term_mode,
         check_repeated_values = check_repeated_values
       )
-      .log_inform("{cell}: condition-level doc_term build finished in {round(proc.time()[['elapsed']] - t_doc_term, 1)} sec.")
+      .log_inform("{analysis_id}: condition-level doc_term build finished in {round(proc.time()[['elapsed']] - t_doc_term, 1)} sec.")
     } else {
-      .log_inform("{cell}: building comparison-level TF documents.")
+      .log_inform("{analysis_id}: building comparison-level TF documents.")
       t_docs <- proc.time()[["elapsed"]]
       edges_docs <- add_tf_docs(
         edges_filt,
@@ -7873,8 +7890,8 @@ train_topic_models <- function(Kgrid,
         direction_by = "gene",
         tf_cluster_map = tf_cluster_map
       )
-      .log_inform("{cell}: built {nrow(edges_docs)} comparison-level document edge row(s) in {round(proc.time()[['elapsed']] - t_docs, 1)} sec.")
-      .log_inform("{cell}: building comparison-level doc_term.")
+      .log_inform("{analysis_id}: built {nrow(edges_docs)} comparison-level document edge row(s) in {round(proc.time()[['elapsed']] - t_docs, 1)} sec.")
+      .log_inform("{analysis_id}: building comparison-level doc_term.")
       t_doc_term <- proc.time()[["elapsed"]]
       doc_term <- build_doc_term_joint(
         edges_docs,
@@ -7897,13 +7914,13 @@ train_topic_models <- function(Kgrid,
         require_condition_thresholds = identical(doc_mode, "tf"),
         check_repeated_values = check_repeated_values
       )
-      .log_inform("{cell}: comparison-level doc_term build finished in {round(proc.time()[['elapsed']] - t_doc_term, 1)} sec.")
+      .log_inform("{analysis_id}: comparison-level doc_term build finished in {round(proc.time()[['elapsed']] - t_doc_term, 1)} sec.")
     }
     if (!nrow(doc_term)) {
-      .log_inform("Skipping topic training: no doc_term for {cell}")
+      .log_inform("Skipping topic training: no doc_term for {analysis_id}")
       next
     }
-    .log_inform("{cell}: doc_term has {nrow(doc_term)} row(s), {data.table::uniqueN(doc_term$doc_id)} document(s), and {data.table::uniqueN(doc_term$term_id)} term(s).")
+    .log_inform("{analysis_id}: doc_term has {nrow(doc_term)} row(s), {data.table::uniqueN(doc_term$doc_id)} document(s), and {data.table::uniqueN(doc_term$term_id)} term(s).")
 
     local_topic_args <- modifyList(list(
       binarize_method = binarize_method,
@@ -7915,7 +7932,7 @@ train_topic_models <- function(Kgrid,
     model_name <- if (backend == "vae") vae_variant else "warplda"
     out_dir <- file.path(
       output_dir,
-      paste0(cell, "_vae_joint_", doc_tag, "_docs_", weight_label, "_", model_name, "_Kgrid")
+      paste0(analysis_id, "_vae_joint_", doc_tag, "_docs_", weight_label, "_", model_name, "_Kgrid")
     )
     metrics_path <- file.path(out_dir, "model_metrics.csv")
     models_dir <- file.path(out_dir, "vae_models")
@@ -7953,7 +7970,7 @@ train_topic_models <- function(Kgrid,
     }
 
     if (backend == "vae") {
-      .log_inform("{cell}: starting VAE training in {out_dir}.")
+      .log_inform("{analysis_id}: starting VAE training in {out_dir}.")
       t_model <- proc.time()[["elapsed"]]
       run_vae_topic_report_py(
         doc_term = doc_term,
@@ -7969,9 +7986,9 @@ train_topic_models <- function(Kgrid,
         save_full_doc_term_csv = save_full_doc_term_csv,
         topic_report_args = local_topic_args
       )
-      .log_inform("{cell}: finished VAE training in {round(proc.time()[['elapsed']] - t_model, 1)} sec: {out_dir}.")
+      .log_inform("{analysis_id}: finished VAE training in {round(proc.time()[['elapsed']] - t_model, 1)} sec: {out_dir}.")
     } else {
-      .log_inform("{cell}: writing WarpLDA input caches in {out_dir}.")
+      .log_inform("{analysis_id}: writing WarpLDA input caches in {out_dir}.")
       t_cache <- proc.time()[["elapsed"]]
       dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
       if (exists("write_doc_term_cache", mode = "function")) {
@@ -7988,16 +8005,16 @@ train_topic_models <- function(Kgrid,
       }
       .save_all(out_dir, "doc_term", doc_term)
       .save_all(out_dir, "edges_docs", edges_docs)
-      .log_inform("{cell}: WarpLDA input cache writing finished in {round(proc.time()[['elapsed']] - t_cache, 1)} sec.")
-      .log_inform("{cell}: building sparse DTM for WarpLDA.")
+      .log_inform("{analysis_id}: WarpLDA input cache writing finished in {round(proc.time()[['elapsed']] - t_cache, 1)} sec.")
+      .log_inform("{analysis_id}: building sparse DTM for WarpLDA.")
       t_dtm <- proc.time()[["elapsed"]]
       dtm_obj <- build_sparse_dtm(doc_term, count_col = "pseudo_count")
       dtm <- dtm_obj$dtm
       .save_all(out_dir, "dtm", dtm)
       .save_all(out_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
-      .log_inform("{cell}: WarpLDA sparse DTM cache finished in {round(proc.time()[['elapsed']] - t_dtm, 1)} sec.")
+      .log_inform("{analysis_id}: WarpLDA sparse DTM cache finished in {round(proc.time()[['elapsed']] - t_dtm, 1)} sec.")
 
-      .log_inform("{cell}: starting WarpLDA model fits.")
+      .log_inform("{analysis_id}: starting WarpLDA model fits.")
       t_model <- proc.time()[["elapsed"]]
       fits_out <- run_warplda_models(
         dtm,
@@ -8013,7 +8030,7 @@ train_topic_models <- function(Kgrid,
         sampler = warplda_sampler,
         metrics_file = file.path(out_dir, "model_metrics.csv")
       )
-      .log_inform("{cell}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")
+      .log_inform("{analysis_id}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")
       metrics_tbl <- fits_out$metrics
       data.table::fwrite(metrics_tbl, file.path(out_dir, "model_metrics.csv"))
       .save_all(out_dir, "model_metrics", metrics_tbl)
@@ -8041,7 +8058,7 @@ train_topic_models <- function(Kgrid,
       sel <- plot_model_selection_cistopic(metrics_tbl, file.path(out_dir, "model_selection.pdf"), title_prefix = title_prefix)
       .save_all(out_dir, "model_selection", sel)
     }
-    .log_inform("{cell}: finished train_topic_models cell stage in {round(proc.time()[['elapsed']] - t_cell, 1)} sec.")
+    .log_inform("{analysis_id}: finished train_topic_models analysis stage in {round(proc.time()[['elapsed']] - t_cell, 1)} sec.")
   }
 
   invisible(TRUE)
