@@ -156,3 +156,88 @@ test_that("Module 3 topic benchmark accepts explicit context-aware design rows",
   expect_equal(out$context_type, c("condition", "comparison"))
   expect_equal(out$metric_group, c("CondA", "CondA_vs_CondB"))
 })
+
+test_that("Module 3 topic benchmark scores replicate-resolved condition and comparison documents", {
+  root <- tempfile("module3-topic-benchmark-replicates-")
+  dir.create(root, recursive = TRUE)
+
+  plan <- .module3_topic_method_plan(
+    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    k_grid = 2L
+  )
+  for (i in seq_len(nrow(plan))) {
+    vae_dir <- file.path(root, plan$model_dir[[i]], "vae_models")
+    dir.create(vae_dir, recursive = TRUE)
+    if (identical(plan$context_type[[i]], "condition")) {
+      theta <- data.table::data.table(
+        doc_id = c("CondA_1::TF1", "CondA_2::TF1", "CondB_1::TF1", "CondB_2::TF1"),
+        Topic1 = c(0.90, 0.86, 0.14, 0.10),
+        Topic2 = c(0.10, 0.14, 0.86, 0.90)
+      )
+    } else {
+      theta <- data.table::data.table(
+        doc_id = c(
+          "CondA_vs_CondB__CondA_1::TF1::Target-Up",
+          "CondA_vs_CondB__CondA_2::TF1::Target-Up",
+          "CondA_vs_CondB__CondB_1::TF1::Target-Down",
+          "CondA_vs_CondB__CondB_2::TF1::Target-Down"
+        ),
+        Topic1 = c(0.88, 0.82, 0.16, 0.12),
+        Topic2 = c(0.12, 0.18, 0.84, 0.88)
+      )
+    }
+    phi <- data.table::data.table(
+      term_id = c("GENE:G1", "GENE:G2"),
+      Topic1 = c(0.8, 0.2),
+      Topic2 = c(0.2, 0.8)
+    )
+    data.table::fwrite(theta, file.path(vae_dir, "theta_K2.csv"))
+    data.table::fwrite(phi, file.path(vae_dir, "phi_K2.csv"))
+  }
+
+  multiomic_data <- list(
+    matrices = list(
+      fp_score = matrix(
+        1,
+        nrow = 1,
+        ncol = 4,
+        dimnames = list("fp1", c("CondA_1", "CondA_2", "CondB_1", "CondB_2"))
+      )
+    )
+  )
+  comparisons <- data.table::data.table(
+    cond1_label = "CondA",
+    cond2_label = "CondB"
+  )
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    multiomic_data = multiomic_data,
+    comparisons = comparisons,
+    output_dir = root,
+    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    k_grid = 2L,
+    replicate_documents = TRUE,
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = TRUE,
+    verbose = FALSE
+  )
+
+  csv_dir <- file.path(root, "review_topic_experiments", "csv")
+  expect_true(file.exists(file.path(csv_dir, "theta_condition_replicate_separation_score_heatmap_values_matrix.csv")))
+  expect_false(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
+  expect_equal(res$score$score_prefix, "theta_condition_replicate_separation")
+
+  per_label <- data.table::fread(file.path(csv_dir, "theta_condition_replicate_separation_per_label.csv"))
+  expect_equal(unique(per_label[context_type == "condition", group_size]), 2L)
+  expect_equal(unique(per_label[context_type == "comparison", group_size]), 2L)
+  expect_setequal(
+    unique(per_label[context_type == "condition", metric_group]),
+    c("CondA", "CondB")
+  )
+  expect_setequal(
+    unique(per_label[context_type == "comparison", metric_group]),
+    c("CondA_vs_CondB::Target-Up", "CondA_vs_CondB::Target-Down")
+  )
+})

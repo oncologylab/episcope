@@ -25,8 +25,8 @@ run_module3_topic_benchmark(
 \item{filtered_dir}{Directory containing Module 3 filtered differential-link
 files.}
 
-\item{multiomic_data}{Optional CraftGRN multiomic object. Reserved for future
-package-level replicate document expansion.}
+\item{multiomic_data}{Optional CraftGRN multiomic object. Required when
+`replicate_documents = TRUE`.}
 
 \item{comparisons}{Comparison or condition grouping table, or a CSV path.
 For condition separation scoring, use columns `condition_label` and
@@ -39,7 +39,10 @@ For condition separation scoring, use columns `condition_label` and
 
 \item{k_grid}{Integer topic numbers.}
 
-\item{replicate_documents}{Whether documents are replicate resolved.}
+\item{replicate_documents}{Whether theta document labels are replicate
+resolved. When `TRUE`, score files use the
+`theta_condition_replicate_separation` prefix and condition replicates are
+grouped by the condition label after removing a trailing replicate suffix.}
 
 \item{reuse_if_exists}{Reuse existing model outputs where possible.}
 

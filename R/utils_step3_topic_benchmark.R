@@ -224,7 +224,83 @@
   trimws(x)
 }
 
-.m3tb_design_table <- function(comparisons) {
+.m3tb_condition_base <- function(x) {
+  sub("_[0-9]+$", "", as.character(x), perl = TRUE)
+}
+
+.m3tb_replicate_columns <- function(multiomic_data) {
+  cols <- colnames(multiomic_data$matrices$fp_score)
+  if (is.null(cols) || !length(cols)) {
+    .log_abort("replicate_documents requires multiomic_data$matrices$fp_score with condition columns.")
+  }
+  out <- data.table::data.table(
+    condition_label = as.character(cols),
+    condition_base = .m3tb_condition_base(cols)
+  )
+  out[out[["condition_label"]] != out[["condition_base"]]]
+}
+
+.m3tb_replicate_design_table <- function(comparisons, multiomic_data) {
+  dt <- data.table::as.data.table(comparisons)
+  if (!all(c("cond1_label", "cond2_label") %in% names(dt))) {
+    .log_abort("replicate_documents requires comparisons with cond1_label and cond2_label columns.")
+  }
+  comp <- data.table::copy(dt)
+  comp[, `:=`(
+    cond1_label = as.character(cond1_label),
+    cond2_label = as.character(cond2_label)
+  )]
+  if (!"comparison_id" %in% names(comp)) {
+    comp[, comparison_id := paste(cond1_label, cond2_label, sep = "_vs_")]
+  } else {
+    comp[, comparison_id := as.character(comparison_id)]
+  }
+  rep_map <- .m3tb_replicate_columns(multiomic_data)
+  rep_map <- rep_map[rep_map[["condition_base"]] %in% unique(c(comp$cond1_label, comp$cond2_label))]
+  if (!nrow(rep_map)) {
+    .log_abort("No replicate condition columns matched the requested comparisons.")
+  }
+  condition <- unique(data.table::data.table(
+    context_type = "condition",
+    comparison_label = rep_map$condition_label,
+    display_label = .m3tb_display_label(rep_map$condition_label),
+    metric_group = rep_map$condition_base
+  ))
+  case_rep <- merge(
+    comp,
+    data.table::data.table(
+      cond1_label = rep_map$condition_base,
+      direction_condition_label = rep_map$condition_label
+    ),
+    by = "cond1_label",
+    allow.cartesian = TRUE
+  )
+  case_rep[, direction := "Target-Up"]
+  ctrl_rep <- merge(
+    comp,
+    data.table::data.table(
+      cond2_label = rep_map$condition_base,
+      direction_condition_label = rep_map$condition_label
+    ),
+    by = "cond2_label",
+    allow.cartesian = TRUE
+  )
+  ctrl_rep[, direction := "Target-Down"]
+  comparison <- data.table::rbindlist(list(case_rep, ctrl_rep), use.names = TRUE, fill = TRUE)
+  comparison_label <- paste0(comparison$comparison_id, "__", comparison$direction_condition_label, "::", comparison$direction)
+  comparison[, `:=`(
+    context_type = "comparison",
+    comparison_label = comparison_label,
+    display_label = .m3tb_display_label(comparison_label),
+    metric_group = paste(comparison$comparison_id, comparison$direction, sep = "::")
+  )]
+  comparison <- unique(comparison[, .(context_type, comparison_label, display_label, metric_group)])
+  data.table::rbindlist(list(condition, comparison), use.names = TRUE)
+}
+
+.m3tb_design_table <- function(comparisons,
+                               replicate_documents = FALSE,
+                               multiomic_data = NULL) {
   if (is.null(comparisons)) {
     return(data.table::data.table())
   }
@@ -245,6 +321,12 @@
       metric_group = as.character(metric_group)
     )])
     return(out)
+  }
+  if (isTRUE(replicate_documents)) {
+    if (is.null(multiomic_data)) {
+      .log_abort("replicate_documents = TRUE requires multiomic_data.")
+    }
+    return(.m3tb_replicate_design_table(dt, multiomic_data))
   }
   if (all(c("condition_label", "condition_group") %in% names(dt))) {
     return(unique(dt[, .(
@@ -388,11 +470,20 @@
   out[]
 }
 
-.m3tb_score_theta_outputs <- function(output_dir, model_rows, comparisons) {
+.m3tb_score_theta_outputs <- function(output_dir,
+                                      model_rows,
+                                      comparisons,
+                                      score_prefix = "theta_condition_separation",
+                                      replicate_documents = FALSE,
+                                      multiomic_data = NULL) {
   csv_dir <- file.path(output_dir, "review_topic_experiments", "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
-  design <- .m3tb_design_table(comparisons)
-  data.table::fwrite(design, file.path(csv_dir, "theta_condition_separation_design.csv"))
+  design <- .m3tb_design_table(
+    comparisons,
+    replicate_documents = replicate_documents,
+    multiomic_data = multiomic_data
+  )
+  data.table::fwrite(design, file.path(csv_dir, paste0(score_prefix, "_design.csv")))
   payload <- lapply(seq_len(nrow(model_rows)), function(i) {
     row <- model_rows[i]
     theta_path <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", as.integer(row$selected_k[[1L]])))
@@ -403,9 +494,9 @@
   per_label <- data.table::rbindlist(lapply(payload, `[[`, "per_label"), use.names = TRUE, fill = TRUE)
   data.table::setorder(scores, method_order, k)
   data.table::setorder(per_label, method_order, k, comparison_label)
-  data.table::fwrite(scores, file.path(csv_dir, "theta_condition_separation_scores.csv"))
-  data.table::fwrite(per_label, file.path(csv_dir, "theta_condition_separation_per_label.csv"))
-  data.table::fwrite(per_label, file.path(csv_dir, "theta_condition_separation_score_long.csv"))
+  data.table::fwrite(scores, file.path(csv_dir, paste0(score_prefix, "_scores.csv")))
+  data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_per_label.csv")))
+  data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_score_long.csv")))
   heatmap_values <- scores[, .(
     method_order,
     context_type,
@@ -416,7 +507,7 @@
     k,
     theta_condition_separation_score
   )]
-  data.table::fwrite(heatmap_values, file.path(csv_dir, "theta_condition_separation_score_heatmap_values.csv"))
+  data.table::fwrite(heatmap_values, file.path(csv_dir, paste0(score_prefix, "_score_heatmap_values.csv")))
   wide <- data.table::dcast(
     scores[, .(method_order, context_type, method_setup, k = as.integer(k), theta_condition_separation_score)],
     method_order + context_type + method_setup ~ k,
@@ -425,8 +516,8 @@
   k_cols <- as.character(sort(unique(scores$k)))
   data.table::setnames(wide, intersect(k_cols, names(wide)), paste0("K", intersect(k_cols, names(wide))))
   data.table::setorder(wide, method_order)
-  data.table::fwrite(wide, file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
-  list(scores = scores, per_label = per_label, matrix = wide, design = design)
+  data.table::fwrite(wide, file.path(csv_dir, paste0(score_prefix, "_score_heatmap_values_matrix.csv")))
+  list(scores = scores, per_label = per_label, matrix = wide, design = design, score_prefix = score_prefix)
 }
 
 .m3tb_find_topic_links <- function(output_dir, row) {
@@ -631,8 +722,8 @@
 #'
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files.
-#' @param multiomic_data Optional CraftGRN multiomic object. Reserved for future
-#'   package-level replicate document expansion.
+#' @param multiomic_data Optional CraftGRN multiomic object. Required when
+#'   `replicate_documents = TRUE`.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #'   For condition separation scoring, use columns `condition_label` and
 #'   `condition_group`.
@@ -640,7 +731,10 @@
 #' @param methods Character vector of benchmark method IDs, `"default"`, or
 #'   `"all"`.
 #' @param k_grid Integer topic numbers.
-#' @param replicate_documents Whether documents are replicate resolved.
+#' @param replicate_documents Whether theta document labels are replicate
+#'   resolved. When `TRUE`, score files use the
+#'   `theta_condition_replicate_separation` prefix and condition replicates are
+#'   grouped by the condition label after removing a trailing replicate suffix.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
@@ -741,7 +835,19 @@ run_module3_topic_benchmark <- function(filtered_dir,
   html <- character()
   if (isTRUE(run_reports)) {
     if (isTRUE(verbose)) .log_inform("Scoring Module 3 theta separation and writing review reports.")
-    score_result <- .m3tb_score_theta_outputs(output_dir, model_rows, comparisons)
+    score_prefix <- if (isTRUE(replicate_documents)) {
+      "theta_condition_replicate_separation"
+    } else {
+      "theta_condition_separation"
+    }
+    score_result <- .m3tb_score_theta_outputs(
+      output_dir,
+      model_rows,
+      comparisons,
+      score_prefix = score_prefix,
+      replicate_documents = replicate_documents,
+      multiomic_data = multiomic_data
+    )
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary)
   }
