@@ -303,7 +303,7 @@ build_predicted_tfbs <- function(prediction_stats, include_support = TRUE) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
     path <- file.path(out_dir, if (is.null(filename)) "module1_predicted_tfbs.parquet" else filename)
-    arrow::write_parquet(predicted_tfbs, path, compression = "zstd")
+    .write_parquet_table(predicted_tfbs, path)
   } else {
     output_format <- "csv"
     path <- file.path(out_dir, if (is.null(filename)) "module1_predicted_tfbs.csv.gz" else filename)
@@ -340,7 +340,7 @@ build_predicted_tfbs <- function(prediction_stats, include_support = TRUE) {
     offset <- offset + nrow(pred_i)
     if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
       out_path <- file.path(chunk_dir, sprintf("module1_predicted_tfbs_chunk_%04d.parquet", i))
-      arrow::write_parquet(pred_i, out_path, compression = "zstd")
+      .write_parquet_table(pred_i, out_path)
       fmt <- "parquet"
     } else {
       fmt <- "csv"

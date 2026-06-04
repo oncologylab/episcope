@@ -31,6 +31,19 @@ NULL
   max(1L, cores)
 }
 
+.arrow_codec_available <- function(codec) {
+  if (!requireNamespace("arrow", quietly = TRUE)) {
+    return(FALSE)
+  }
+  isTRUE(tryCatch(arrow::codec_is_available(codec), error = function(...) FALSE))
+}
+
+.write_parquet_table <- function(x, path, compression = "zstd") {
+  codec <- if (.arrow_codec_available(compression)) compression else "uncompressed"
+  arrow::write_parquet(x, path, compression = codec)
+  invisible(codec)
+}
+
 .aligned_fp_cache_paths <- function(cache_dir, cache_tag, format = c("csv", "parquet")) {
   format <- match.arg(format)
   ext <- if (identical(format, "parquet")) "parquet" else "csv"
@@ -91,7 +104,7 @@ NULL
       .log_warn("Package {.pkg arrow} is not installed; skipping Parquet cache {.path {path}}.")
       return(invisible(FALSE))
     }
-    arrow::write_parquet(x, path, compression = "zstd")
+    .write_parquet_table(x, path)
     return(invisible(TRUE))
   }
   data.table::fwrite(data.table::as.data.table(x), path)

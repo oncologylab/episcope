@@ -5,7 +5,7 @@
 [![Documentation](https://img.shields.io/badge/docs-pkgdown-4DBBD5.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
 [![pkgdown](https://img.shields.io/github/actions/workflow/status/oncologylab/craftgrn/pkgdown.yaml?branch=main&label=pkgdown&style=flat-square&color=27AE60)](https://github.com/oncologylab/craftgrn/actions/workflows/pkgdown.yaml)
 [![Last commit](https://img.shields.io/github/last-commit/oncologylab/craftgrn.svg?style=flat-square&color=9B59B6)](https://github.com/oncologylab/craftgrn/commits/main)
-[![Publication](https://img.shields.io/badge/publication-in%20prep-E67E22.svg?style=flat-square)]()
+![Publication](https://img.shields.io/badge/publication-in%20prep-E67E22.svg?style=flat-square)
 
 ## Introduction
 

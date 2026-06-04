@@ -108,7 +108,7 @@
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (identical(fmt, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
     path <- file.path(out_dir, paste0(name, ".parquet"))
-    arrow::write_parquet(x, path, compression = "zstd")
+    .write_parquet_table(x, path)
   } else {
     fmt <- "csv"
     path <- file.path(out_dir, paste0(name, ".csv.gz"))
@@ -415,7 +415,7 @@
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (identical(fmt, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
     path <- file.path(out_dir, sprintf("%s_%04d.parquet", prefix, as.integer(chunk_id)))
-    arrow::write_parquet(x, path, compression = "zstd")
+    .write_parquet_table(x, path)
   } else {
     fmt <- "csv"
     path <- file.path(out_dir, sprintf("%s_%04d.csv.gz", prefix, as.integer(chunk_id)))

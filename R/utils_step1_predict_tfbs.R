@@ -478,7 +478,7 @@
   stem <- sprintf("module1_prediction_stats_chunk_%04d", as.integer(chunk_id))
   if (identical(output_format, "parquet") && requireNamespace("arrow", quietly = TRUE)) {
     path <- file.path(out_dir, paste0(stem, ".parquet"))
-    arrow::write_parquet(x, path, compression = "zstd")
+    .write_parquet_table(x, path)
   } else {
     output_format <- "csv"
     path <- file.path(out_dir, paste0(stem, ".csv.gz"))
