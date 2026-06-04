@@ -25,6 +25,16 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   )
   data.table::fwrite(theta, file.path(vae_dir, "theta_K2.csv"))
   data.table::fwrite(phi, file.path(vae_dir, "phi_K2.csv"))
+  theta3 <- data.table::copy(theta)
+  theta3[, Topic3 := c(0.02, 0.03, 0.04, 0.05)]
+  theta3[, `:=`(
+    Topic1 = Topic1 - Topic3 / 2,
+    Topic2 = Topic2 - Topic3 / 2
+  )]
+  phi3 <- data.table::copy(phi)
+  phi3[, Topic3 := c(0.2, 0.2, 0.6)]
+  data.table::fwrite(theta3, file.path(vae_dir, "theta_K3.csv"))
+  data.table::fwrite(phi3, file.path(vae_dir, "phi_K3.csv"))
 
   extraction_dir <- file.path(
     root,
@@ -58,7 +68,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     output_dir = root,
     comparisons = comparisons,
     methods = "condition_aggr_weight_lda",
-    k_grid = 2L,
+    k_grid = c(2L, 3L),
     run_training = FALSE,
     run_extraction = FALSE,
     run_reports = TRUE,
@@ -83,5 +93,66 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   score_mat <- data.table::fread(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
   expect_equal(score_mat$method_setup, "cond fp aggr weight | LDA")
   expect_true("K2" %in% names(score_mat))
+  expect_true("K3" %in% names(score_mat))
   expect_true(is.finite(score_mat$K2[[1L]]))
+  expect_true(is.finite(score_mat$K3[[1L]]))
+
+  pass_counts <- data.table::fread(file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
+  expect_equal(unique(pass_counts$selected_k), 2L)
+})
+
+test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
+  root <- tempfile("module3-topic-benchmark-empty-links-")
+  dir.create(root, recursive = TRUE)
+
+  plan <- .module3_topic_method_plan(
+    methods = "condition_aggr_weight_lda",
+    k_grid = 2L
+  )
+  vae_dir <- file.path(root, plan$model_dir[[1L]], "vae_models")
+  dir.create(vae_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(doc_id = c("CondA::TF1", "CondB::TF1"), Topic1 = c(0.9, 0.1), Topic2 = c(0.1, 0.9)),
+    file.path(vae_dir, "theta_K2.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(term_id = c("GENE:G1", "PEAK:P1"), Topic1 = c(0.8, 0.2), Topic2 = c(0.2, 0.8)),
+    file.path(vae_dir, "phi_K2.csv")
+  )
+
+  comparisons <- data.table::data.table(
+    condition_label = c("CondA", "CondB"),
+    condition_group = c("CondA", "CondB")
+  )
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = comparisons,
+    methods = "condition_aggr_weight_lda",
+    k_grid = 2L,
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = TRUE,
+    verbose = FALSE
+  )
+
+  expect_named(
+    res$topic_link_summary$pass,
+    c("method_order", "method_setup", "setup", "model_label", "selected_k", "status", "count")
+  )
+  expect_equal(nrow(res$topic_link_summary$pass), 0L)
+  expect_equal(nrow(res$topic_link_summary$shared), 0L)
+})
+
+test_that("Module 3 topic benchmark accepts explicit context-aware design rows", {
+  design <- data.table::data.table(
+    context_type = c("condition", "comparison"),
+    comparison_label = c("CondA_rep1", "CondA_vs_CondB::Target-Up"),
+    display_label = c("CondA rep1", "CondA vs CondB Up"),
+    metric_group = c("CondA", "CondA_vs_CondB")
+  )
+  out <- .m3tb_design_table(design)
+  expect_equal(out$context_type, c("condition", "comparison"))
+  expect_equal(out$metric_group, c("CondA", "CondA_vs_CondB"))
 })

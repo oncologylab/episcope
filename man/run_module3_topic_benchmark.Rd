@@ -14,6 +14,7 @@ run_module3_topic_benchmark(
   replicate_documents = FALSE,
   reuse_if_exists = TRUE,
   local_threads = NULL,
+  extraction_topic_report_args = list(),
   run_training = TRUE,
   run_extraction = TRUE,
   run_reports = TRUE,
@@ -43,6 +44,9 @@ For condition separation scoring, use columns `condition_label` and
 \item{reuse_if_exists}{Reuse existing model outputs where possible.}
 
 \item{local_threads}{Optional thread count for model training.}
+
+\item{extraction_topic_report_args}{Optional named list of topic-extraction
+report argument overrides.}
 
 \item{run_training}{Train topic models before reporting.}
 

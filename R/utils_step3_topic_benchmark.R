@@ -233,6 +233,19 @@
     comparisons <- data.table::fread(comparisons, showProgress = FALSE)
   }
   dt <- data.table::as.data.table(comparisons)
+  if (all(c("context_type", "comparison_label", "metric_group") %in% names(dt))) {
+    out <- unique(dt[, .(
+      context_type = as.character(context_type),
+      comparison_label = as.character(comparison_label),
+      display_label = if ("display_label" %in% names(dt)) {
+        as.character(display_label)
+      } else {
+        .m3tb_display_label(comparison_label)
+      },
+      metric_group = as.character(metric_group)
+    )])
+    return(out)
+  }
   if (all(c("condition_label", "condition_group") %in% names(dt))) {
     return(unique(dt[, .(
       context_type = "condition",
@@ -335,20 +348,39 @@
   list(score = score, per_label = per_label, profiles = profiles)
 }
 
+.m3tb_candidate_model_dirs <- function(output_dir, row) {
+  combo_root <- file.path(output_dir, row$setup[[1L]], "01_topic_models", row$combo_id[[1L]])
+  expected <- file.path(output_dir, row$model_dir[[1L]])
+  candidates <- character()
+  if (dir.exists(file.path(expected, "vae_models"))) {
+    candidates <- c(candidates, expected)
+  }
+  if (dir.exists(combo_root)) {
+    found <- list.dirs(combo_root, recursive = TRUE, full.names = TRUE)
+    found <- dirname(found[basename(found) == "vae_models"])
+    candidates <- c(candidates, found)
+  }
+  unique(candidates[file.exists(file.path(candidates, "vae_models"))])
+}
+
 .m3tb_existing_model_rows <- function(output_dir, method_plan, k_grid) {
   rows <- lapply(seq_len(nrow(method_plan)), function(i) {
     row <- method_plan[i]
-    model_dir_abs <- file.path(output_dir, row$model_dir[[1L]])
-    models_dir <- file.path(model_dir_abs, "vae_models")
-    present <- as.integer(k_grid[
-      file.exists(file.path(models_dir, sprintf("theta_K%d.csv", as.integer(k_grid)))) &
-        file.exists(file.path(models_dir, sprintf("phi_K%d.csv", as.integer(k_grid))))
-    ])
-    if (!length(present)) return(NULL)
-    out <- data.table::copy(row)
-    out <- out[rep(1L, length(present))]
-    out[, `:=`(selected_k = present, model_dir = model_dir_abs)]
-    out
+    candidates <- .m3tb_candidate_model_dirs(output_dir, row)
+    if (!length(candidates)) return(NULL)
+    found <- lapply(candidates, function(model_dir_abs) {
+      models_dir <- file.path(model_dir_abs, "vae_models")
+      present <- as.integer(k_grid[
+        file.exists(file.path(models_dir, sprintf("theta_K%d.csv", as.integer(k_grid)))) &
+          file.exists(file.path(models_dir, sprintf("phi_K%d.csv", as.integer(k_grid))))
+      ])
+      if (!length(present)) return(NULL)
+      out <- data.table::copy(row)
+      out <- out[rep(1L, length(present))]
+      out[, `:=`(selected_k = present, model_dir = model_dir_abs)]
+      out
+    })
+    data.table::rbindlist(found, use.names = TRUE, fill = TRUE)
   })
   out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   if (!nrow(out)) .log_abort("No existing theta/phi files were found under {output_dir}.")
@@ -400,7 +432,37 @@
 .m3tb_find_topic_links <- function(output_dir, row) {
   root <- file.path(output_dir, row$setup[[1L]], "02_topic_extraction")
   if (!dir.exists(root)) return(character())
-  list.files(root, "topic_links[.]csv$", recursive = TRUE, full.names = TRUE)
+  files <- list.files(root, "topic_links[.]csv$", recursive = TRUE, full.names = TRUE)
+  if (!length(files) || !"selected_k" %in% names(row)) return(files)
+  k <- as.integer(row$selected_k[[1L]])
+  k_pattern <- paste0("(^|[^0-9])K", k, "([^0-9]|$)")
+  keep <- grepl(k_pattern, files, perl = TRUE)
+  if (any(keep)) files[keep] else character()
+}
+
+.m3tb_empty_pass_counts <- function() {
+  data.table::data.table(
+    method_order = integer(),
+    method_setup = character(),
+    setup = character(),
+    model_label = character(),
+    selected_k = integer(),
+    status = character(),
+    count = integer()
+  )
+}
+
+.m3tb_empty_shared_counts <- function() {
+  data.table::data.table(
+    n_topics = integer(),
+    n_items = integer(),
+    method_order = integer(),
+    method_setup = character(),
+    setup = character(),
+    model_label = character(),
+    selected_k = integer(),
+    unit = character()
+  )
 }
 
 .m3tb_as_flag <- function(x) {
@@ -421,13 +483,23 @@
 .m3tb_summarize_topic_links <- function(output_dir, model_rows) {
   pass_rows <- list()
   shared_rows <- list()
+  seen <- new.env(parent = emptyenv())
   for (i in seq_len(nrow(model_rows))) {
     row <- model_rows[i]
     files <- .m3tb_find_topic_links(output_dir, row)
     if (!length(files)) next
     for (path in files) {
-      dt <- data.table::fread(path, showProgress = FALSE)
+      key <- paste(row$method[[1L]], row$selected_k[[1L]], normalizePath(path, winslash = "/", mustWork = FALSE), sep = "\r")
+      if (exists(key, envir = seen, inherits = FALSE)) next
+      assign(key, TRUE, envir = seen)
+      header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
+      cols <- intersect(
+        c("doc_id", "topic_num", "topic", "tf", "peak_id", "gene_key", "link_pass", "peak_pass", "gene_pass"),
+        header
+      )
+      dt <- data.table::fread(path, select = cols, showProgress = FALSE)
       if (!"topic_num" %in% names(dt) && "topic" %in% names(dt)) data.table::setnames(dt, "topic", "topic_num")
+      if (!all(c("tf", "peak_id", "gene_key") %in% names(dt))) next
       if (!"link_pass" %in% names(dt)) dt[, link_pass := TRUE]
       dt[, link_pass := .m3tb_as_flag(link_pass)]
       if (!"peak_pass" %in% names(dt)) dt[, peak_pass := link_pass]
@@ -464,8 +536,16 @@
       }
     }
   }
-  pass <- data.table::rbindlist(pass_rows, use.names = TRUE, fill = TRUE)
-  shared <- data.table::rbindlist(shared_rows, use.names = TRUE, fill = TRUE)
+  pass <- if (length(pass_rows)) {
+    data.table::rbindlist(pass_rows, use.names = TRUE, fill = TRUE)
+  } else {
+    .m3tb_empty_pass_counts()
+  }
+  shared <- if (length(shared_rows)) {
+    data.table::rbindlist(shared_rows, use.names = TRUE, fill = TRUE)
+  } else {
+    .m3tb_empty_shared_counts()
+  }
   csv_dir <- file.path(output_dir, "review_topic_experiments", "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(pass, file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
@@ -563,6 +643,8 @@
 #' @param replicate_documents Whether documents are replicate resolved.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
+#' @param extraction_topic_report_args Optional named list of topic-extraction
+#'   report argument overrides.
 #' @param run_training Train topic models before reporting.
 #' @param run_extraction Run topic extraction before reporting.
 #' @param run_reports Build score tables and review reports.
@@ -580,6 +662,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         replicate_documents = FALSE,
                                         reuse_if_exists = TRUE,
                                         local_threads = NULL,
+                                        extraction_topic_report_args = list(),
                                         run_training = TRUE,
                                         run_extraction = TRUE,
                                         run_reports = TRUE,
@@ -619,22 +702,37 @@ run_module3_topic_benchmark <- function(filtered_dir,
     }
   }
   if (isTRUE(run_extraction)) {
+    link_topic_n_cores <- if (is.null(local_threads)) {
+      .available_cores(logical = TRUE)
+    } else {
+      max(1L, as.integer(local_threads[[1L]]))
+    }
     for (i in seq_len(nrow(method_plan))) {
       row <- method_plan[i]
       model_root <- file.path(output_dir, row$setup[[1L]], "01_topic_models", row$combo_id[[1L]])
-      extract_root <- file.path(output_dir, row$setup[[1L]], "02_topic_extraction", paste0(row$method[[1L]], "_K", k_grid[[1L]]))
-      if (isTRUE(verbose)) .log_inform("Extracting Module 3 topics for method: {row$method_setup}.")
-      extract_regulatory_topics(
-        k = k_grid[[1L]],
-        model_dir = model_root,
-        output_dir = extract_root,
-        backend = row$backend[[1L]],
-        vae_variant = row$vae_variant[[1L]],
-        doc_mode = "tf",
-        weight_label = row$weight_label[[1L]],
-        flatten_single_output = FALSE,
-        topic_report_args = list()
-      )
+      for (k in k_grid) {
+        extract_root <- file.path(output_dir, row$setup[[1L]], "02_topic_extraction", paste0(row$method[[1L]], "_K", k))
+        if (isTRUE(verbose)) {
+          .log_inform("Extracting Module 3 topics for method: {row$method_setup}; K={k}.")
+        }
+        extract_regulatory_topics(
+          k = k,
+          model_dir = model_root,
+          output_dir = extract_root,
+          backend = row$backend[[1L]],
+          vae_variant = row$vae_variant[[1L]],
+          doc_mode = "tf",
+          weight_label = row$weight_label[[1L]],
+          flatten_single_output = FALSE,
+          topic_report_args = modifyList(
+            list(
+              fp_term_mode = row$fp_mode[[1L]],
+              link_topic_n_cores = link_topic_n_cores
+            ),
+            extraction_topic_report_args
+          )
+        )
+      }
     }
   }
   model_rows <- .m3tb_existing_model_rows(output_dir, method_plan, k_grid)
