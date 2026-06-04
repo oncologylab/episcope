@@ -78,6 +78,7 @@ reference:
   desc: Build topic model inputs, train models, and extract regulatory topics.
   contents:
   - module3_prepare_differential_links
+  - run_module3_topic_benchmark
   - train_topic_models
   - extract_regulatory_topics
   - load_delta_links_many

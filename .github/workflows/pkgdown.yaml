@@ -48,6 +48,11 @@ jobs:
           }
         shell: Rscript {0}
 
+      - name: Remove local agent instruction pages
+        run: |
+          unlink(file.path("docs", c("AGENTS.html", "AGENTS.md")), force = TRUE)
+        shell: Rscript {0}
+
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:

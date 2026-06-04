@@ -60,6 +60,7 @@ kb
 Lifecycle
 magrittr
 methylation
+MDS
 mh
 MLP
 multilayer
@@ -82,6 +83,7 @@ PPMs
 pre
 Pseudocount
 pseudocounts
+qn
 rds
 README
 reclustering

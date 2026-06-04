@@ -24,6 +24,8 @@ test_that("pkgdown workflow fixes generated favicon markup and cleans stale page
   testthat::skip_if_not(file.exists(path))
   workflow <- paste(readLines(path, warn = FALSE), collapse = "\n")
   expect_match(workflow, "Fix generated favicon MIME type", fixed = TRUE)
+  expect_match(workflow, "Remove local agent instruction pages", fixed = TRUE)
+  expect_match(workflow, "AGENTS.html", fixed = TRUE)
   expect_match(workflow, "image/svg+xml", fixed = TRUE)
   expect_match(workflow, "clean: true", fixed = TRUE)
 })

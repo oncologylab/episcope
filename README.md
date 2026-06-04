@@ -135,6 +135,10 @@ to topics, and summarizes pathway and master TF programs.
 
 Primary package functions:
 
+- `run_module3_topic_benchmark()` runs or reviews a Module 3 topic benchmark
+  and writes condition-separation tables, method/K review reports, and
+  old-style compatibility summary plots when existing theta/phi and
+  topic-link outputs are available.
 - `train_topic_models()` trains regulatory topic models across a user-defined
   topic-number grid using the native `warp_omp` WarpLDA sampler by default.
   Use `warplda_sampler = "warp_ref"` only when you need a slower sequential
