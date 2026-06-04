@@ -117,6 +117,18 @@
   tibble::tibble(table = name, path = path, format = fmt, n_rows = nrow(x))
 }
 
+.module2_manifest_table <- function(x, table_name) {
+  x$table <- table_name
+  x
+}
+
+.module2_write_run_summary <- function(x, out_dir) {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  path <- file.path(out_dir, "module2_run_summary.csv")
+  readr::write_csv(x, path)
+  tibble::tibble(table = "module2_qc_summary", path = path, format = "csv", n_rows = nrow(x))
+}
+
 .module2_normalize_gene_tss <- function(gene_tss) {
   if (!is.data.frame(gene_tss)) .log_abort("gene_tss must be a data.frame.")
   nms <- names(gene_tss)
@@ -473,13 +485,13 @@
   if (isTRUE(verbose)) .log_inform("Module 2 TF-target correlation: {nrow(tf_target_pass)} pair(s) passed.")
 
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-  cand_dir <- file.path(output_dir, "module2_fp_target_candidates_chunks")
-  corr_dir <- file.path(output_dir, "module2_fp_target_corr_chunks")
-  link_dir <- file.path(output_dir, "module2_links_chunks")
+  data_dir <- file.path(output_dir, "data")
+  cand_dir <- file.path(data_dir, "candidates")
+  corr_dir <- file.path(data_dir, "correlations")
+  link_dir <- file.path(data_dir, "links")
+  dir.create(file.path(output_dir, "reports"), recursive = TRUE, showWarnings = FALSE)
   candidates <- .module2_build_candidates_from_fp_meta(fp_meta, tf_target_pass, gene_tss, regulatory_prior = regulatory_prior, max_distance_bp = max_distance_bp)
-  cand_manifest <- .module2_write_chunk(candidates, cand_dir, "module2_fp_target_candidates_chunk", 1L, output_format)
-  cand_manifest_path <- file.path(output_dir, "module2_fp_target_candidates_manifest.csv")
-  readr::write_csv(cand_manifest, cand_manifest_path)
+  cand_table <- .module2_manifest_table(.module2_write_table(candidates, cand_dir, "fp_target_candidates", output_format), "module2_fp_target_candidates")
   fp_pair_dt <- if (nrow(candidates)) {
     unique(data.table::as.data.table(candidates[, c("fp_id", "target_gene"), drop = FALSE]))
   } else {
@@ -494,19 +506,13 @@
   fp_target_corr <- .module2_pair_correlations(fp_score, gene_expr, fp_pairs, "fp_id", "target_gene", fp_cutoffs, n_cores = n_cores)
   fp_target_pass <- fp_target_corr[fp_target_corr$pass %in% TRUE, , drop = FALSE]
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target correlation: {nrow(fp_target_pass)} pair(s) passed.")
-  corr_manifest <- .module2_write_chunk(fp_target_corr, corr_dir, "module2_fp_target_corr_chunk", 1L, output_format)
-  corr_manifest_path <- file.path(output_dir, "module2_fp_target_corr_manifest.csv")
-  readr::write_csv(corr_manifest, corr_manifest_path)
+  corr_table <- .module2_manifest_table(.module2_write_table(fp_target_corr, corr_dir, "fp_target_corr", output_format), "module2_fp_target_corr")
 
   fp_pass_dt <- data.table::as.data.table(fp_target_pass[, c("fp_id", "target_gene"), drop = FALSE])
   data.table::setkey(fp_pass_dt, fp_id, target_gene)
   tf_pass_dt <- unique(data.table::as.data.table(tf_target_pass[, c("tf", "target_gene"), drop = FALSE]))
   data.table::setkey(tf_pass_dt, tf, target_gene)
-  cand_all <- if (nrow(cand_manifest)) {
-    .module2_read_predicted_chunk(as.character(cand_manifest$path[[1L]]), as.character(cand_manifest$format[[1L]]), columns = c("candidate_id", "fp_id", "target_gene"))
-  } else {
-    tibble::tibble(candidate_id = character(), fp_id = character(), target_gene = character())
-  }
+  cand_all <- candidates[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]
   cand_all_dt <- unique(data.table::as.data.table(cand_all[, c("candidate_id", "fp_id", "target_gene"), drop = FALSE]))
   data.table::setkey(cand_all_dt, fp_id)
   link_manifest <- list()
@@ -532,35 +538,35 @@
       link_i <- data.table::data.table(link_id = character(), tf = character(), fp_id = character(), target_gene = character(), candidate_id = character(), tf_target_pass = logical(), fp_target_pass = logical(), module2_link_pass = logical())
     }
     n_links <- n_links + nrow(link_i)
-    link_manifest[[i]] <- .module2_write_chunk(tibble::as_tibble(link_i), link_dir, "module2_links_chunk", i, output_format)
+    link_manifest[[i]] <- .module2_write_chunk(tibble::as_tibble(link_i), link_dir, "module2_links", i, output_format)
     if (isTRUE(verbose)) .log_inform("Module 2 link chunks: {i}/{nrow(predicted_manifest)} done, {nrow(link_i)} link row(s) in this chunk.")
     rm(pred_i, link_i)
   }
   link_manifest <- dplyr::bind_rows(link_manifest)
-  link_manifest_path <- file.path(output_dir, "module2_links_manifest.csv")
+  link_manifest_path <- file.path(link_dir, "module2_links_manifest.csv")
   readr::write_csv(link_manifest, link_manifest_path)
-  tf_target_manifest <- .module2_write_table(tf_target_corr, output_dir, "module2_tf_target_corr", output_format)
-  qc_summary <- tibble::tibble(metric = c("n_predicted_tfbs", "n_tfs", "n_target_genes", "n_tf_target_pairs_tested", "n_tf_target_pairs_pass", "n_fp_target_candidates", "n_fp_target_pairs_tested", "n_fp_target_pairs_pass", "n_module2_links", "n_active_link_conditions"), value = c(n_predicted_tfbs, length(tfs), length(target_genes), nrow(tf_pairs), nrow(tf_target_pass), sum(cand_manifest$n_rows), nrow(fp_pairs), nrow(fp_target_pass), n_links, NA_real_))
-  qc_manifest <- .module2_write_table(qc_summary, output_dir, "module2_qc_summary", "csv")
+  tf_target_manifest <- .module2_manifest_table(.module2_write_table(tf_target_corr, corr_dir, "tf_target_corr", output_format), "module2_tf_target_corr")
+  qc_summary <- tibble::tibble(metric = c("n_predicted_tfbs", "n_tfs", "n_target_genes", "n_tf_target_pairs_tested", "n_tf_target_pairs_pass", "n_fp_target_candidates", "n_fp_target_pairs_tested", "n_fp_target_pairs_pass", "n_module2_links", "n_active_link_conditions"), value = c(n_predicted_tfbs, length(tfs), length(target_genes), nrow(tf_pairs), nrow(tf_target_pass), nrow(candidates), nrow(fp_pairs), nrow(fp_target_pass), n_links, NA_real_))
+  qc_manifest <- .module2_write_run_summary(qc_summary, output_dir)
   predicted_manifest_path <- attr(predicted_manifest, "manifest_path")
   if (is.null(predicted_manifest_path) || !nzchar(predicted_manifest_path)) predicted_manifest_path <- file.path(output_dir, "module1_predicted_tfbs_manifest.csv")
   manifest <- dplyr::bind_rows(
     tibble::tibble(table = "module1_predicted_tfbs", path = predicted_manifest_path, format = "manifest", n_rows = n_predicted_tfbs),
-    tibble::tibble(table = "module2_fp_target_candidates", path = cand_manifest_path, format = "manifest", n_rows = sum(cand_manifest$n_rows)),
+    cand_table,
     tf_target_manifest,
-    tibble::tibble(table = "module2_fp_target_corr", path = corr_manifest_path, format = "manifest", n_rows = nrow(fp_target_corr)),
+    corr_table,
     tibble::tibble(table = "module2_links", path = link_manifest_path, format = "manifest", n_rows = n_links),
     qc_manifest
   )
   manifest_path <- file.path(output_dir, "module2_manifest.csv")
   readr::write_csv(manifest, manifest_path)
-  out <- list(predicted_tfbs = tibble::tibble(), candidates = tibble::tibble(), tf_target_corr = tf_target_corr, fp_target_corr = tibble::tibble(), links = tibble::tibble(), module2_fp_target_candidates_manifest = cand_manifest, module2_fp_target_corr_manifest = corr_manifest, module2_links_manifest = link_manifest, condition_activity = tibble::tibble(), qc_summary = qc_summary, manifest = manifest, reports = list(manifest = manifest_path, candidates_manifest = cand_manifest_path, fp_target_corr_manifest = corr_manifest_path, links_manifest = link_manifest_path), parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format, streamed = TRUE, write_qc_report = isTRUE(write_qc_report), qc_report_validate = isTRUE(qc_report_validate)))
+  out <- list(predicted_tfbs = tibble::tibble(), candidates = tibble::tibble(), tf_target_corr = tf_target_corr, fp_target_corr = tibble::tibble(), links = tibble::tibble(), module2_links_manifest = link_manifest, condition_activity = tibble::tibble(), qc_summary = qc_summary, manifest = manifest, reports = list(manifest = manifest_path, links_manifest = link_manifest_path), parameters = list(max_distance_bp = max_distance_bp, n_cores = .module2_default_cores(n_cores), output_format = output_format, streamed = TRUE, write_qc_report = isTRUE(write_qc_report), qc_report_validate = isTRUE(qc_report_validate)))
   class(out) <- c("craftgrn_module2", "list")
   if (isTRUE(write_qc_report)) {
     out$reports$qc_html <- build_module2_qc_report(
       module2 = out,
       multiomic_data = multiomic_data,
-      output_dir = file.path(output_dir, "reports"),
+      output_dir = output_dir,
       scan_large_tables = FALSE,
       validate_integrity = isTRUE(qc_report_validate),
       verbose = verbose
@@ -663,7 +669,17 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   reports <- list()
   manifest <- tibble::tibble()
   if (!is.null(output_dir) && nzchar(output_dir)) {
-    manifest <- dplyr::bind_rows(.module2_write_table(predicted_tfbs, output_dir, "module1_predicted_tfbs", output_format), .module2_write_table(candidates, output_dir, "module2_fp_target_candidates", output_format), .module2_write_table(tf_target_corr, output_dir, "module2_tf_target_corr", output_format), .module2_write_table(fp_target_corr, output_dir, "module2_fp_target_corr", output_format), .module2_write_table(links, output_dir, "module2_links", output_format), .module2_write_table(activity, output_dir, "module2_condition_activity", output_format), .module2_write_table(qc_summary, output_dir, "module2_qc_summary", "csv"))
+    data_dir <- file.path(output_dir, "data")
+    dir.create(file.path(output_dir, "reports"), recursive = TRUE, showWarnings = FALSE)
+    manifest <- dplyr::bind_rows(
+      .module2_manifest_table(.module2_write_table(predicted_tfbs, file.path(data_dir, "predicted_tfbs"), "predicted_tfbs", output_format), "module1_predicted_tfbs"),
+      .module2_manifest_table(.module2_write_table(candidates, file.path(data_dir, "candidates"), "fp_target_candidates", output_format), "module2_fp_target_candidates"),
+      .module2_manifest_table(.module2_write_table(tf_target_corr, file.path(data_dir, "correlations"), "tf_target_corr", output_format), "module2_tf_target_corr"),
+      .module2_manifest_table(.module2_write_table(fp_target_corr, file.path(data_dir, "correlations"), "fp_target_corr", output_format), "module2_fp_target_corr"),
+      .module2_manifest_table(.module2_write_table(links, file.path(data_dir, "links"), "module2_links", output_format), "module2_links"),
+      .module2_manifest_table(.module2_write_table(activity, file.path(data_dir, "condition_activity"), "condition_activity", output_format), "module2_condition_activity"),
+      .module2_write_run_summary(qc_summary, output_dir)
+    )
     manifest_path <- file.path(output_dir, "module2_manifest.csv")
     readr::write_csv(manifest, manifest_path)
     reports$manifest <- manifest_path
@@ -674,7 +690,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
     out$reports$qc_html <- build_module2_qc_report(
       module2 = out,
       multiomic_data = multiomic_data,
-      output_dir = file.path(output_dir, "reports"),
+      output_dir = output_dir,
       scan_large_tables = FALSE,
       validate_integrity = isTRUE(qc_report_validate),
       verbose = verbose

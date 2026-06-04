@@ -61,7 +61,7 @@
   data.table::fread(path, select = columns, showProgress = FALSE)
 }
 
-.module3_manifest_table <- function(module2, table) {
+.module3_manifest_row <- function(module2, table) {
   if (is.character(module2) && length(module2) == 1L) {
     module2 <- load_module2_links(module2)
   }
@@ -69,7 +69,7 @@
   if (!is.data.frame(man) || !nrow(man)) .log_abort("Module 2 manifest is missing or empty.")
   row <- man[as.character(man$table) == table, , drop = FALSE]
   if (!nrow(row)) .log_abort("Module 2 manifest is missing table `{table}`.")
-  as.character(row$path[[1L]])
+  data.table::as.data.table(row[1L, , drop = FALSE])
 }
 
 .module3_read_manifest_file <- function(path) {
@@ -77,6 +77,17 @@
   out <- data.table::fread(path, showProgress = FALSE)
   if (!all(c("path", "format") %in% names(out))) .log_abort("Manifest must include path and format columns: {path}")
   out
+}
+
+.module3_table_rows <- function(module2, table) {
+  row <- .module3_manifest_row(module2, table)
+  fmt <- as.character(row$format[[1L]])
+  path <- as.character(row$path[[1L]])
+  if (identical(fmt, "manifest")) {
+    return(.module3_read_manifest_file(path))
+  }
+  row$chunk_id <- 1L
+  row[, c("chunk_id", "path", "format", "n_rows"), with = FALSE]
 }
 
 .module3_candidate_columns <- function() {
@@ -100,21 +111,15 @@
 }
 
 .module3_read_static_corr <- function(module2, table, keep_pass = TRUE) {
-  path <- .module3_manifest_table(module2, table)
-  man <- if (grepl("_manifest\\.csv$", path)) .module3_read_manifest_file(path) else NULL
   cols <- if (identical(table, "module2_tf_target_corr")) {
     c("tf", "target_gene", "best_r", "best_p", "best_fdr", "pass")
   } else {
     c("fp_id", "target_gene", "best_r", "best_p", "best_fdr", "pass")
   }
-  if (is.null(man)) {
-    fmt <- if (grepl("\\.parquet$", path, ignore.case = TRUE)) "parquet" else "csv"
-    dt <- .module3_read_table(path, fmt, columns = cols)
-  } else {
-    dt <- data.table::rbindlist(lapply(seq_len(nrow(man)), function(i) {
-      .module3_read_table(as.character(man$path[[i]]), as.character(man$format[[i]]), columns = cols)
-    }), use.names = TRUE, fill = TRUE)
-  }
+  man <- .module3_table_rows(module2, table)
+  dt <- data.table::rbindlist(lapply(seq_len(nrow(man)), function(i) {
+    .module3_read_table(as.character(man$path[[i]]), as.character(man$format[[i]]), columns = cols)
+  }), use.names = TRUE, fill = TRUE)
   if (isTRUE(keep_pass) && "pass" %in% names(dt)) dt <- dt[pass %in% TRUE]
   dt
 }
@@ -388,8 +393,8 @@ module3_prepare_differential_links <- function(module2,
   specs <- .module3_comparison_specs(compar, cfg)
   if (!nrow(specs)) .log_abort("No Module 3 comparisons to process.")
 
-  link_manifest <- .module3_read_manifest_file(.module3_manifest_table(module2, "module2_links"))
-  cand_manifest <- .module3_read_manifest_file(.module3_manifest_table(module2, "module2_fp_target_candidates"))
+  link_manifest <- .module3_table_rows(module2, "module2_links")
+  cand_manifest <- .module3_table_rows(module2, "module2_fp_target_candidates")
   aligned_candidate_chunks <- nrow(cand_manifest) == nrow(link_manifest)
   if (aligned_candidate_chunks && all(c("chunk_id") %in% names(cand_manifest)) && all(c("chunk_id") %in% names(link_manifest))) {
     aligned_candidate_chunks <- identical(as.character(cand_manifest$chunk_id), as.character(link_manifest$chunk_id))

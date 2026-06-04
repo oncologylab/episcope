@@ -105,14 +105,15 @@ module2_assemble_links <- function(module2_inputs, candidates, tf_target_corr, f
   out <- list(predicted_tfbs = module2_inputs$predicted_tfbs, candidates = candidates, tf_target_corr = tf_target_corr, fp_target_corr = fp_target_corr, links = links, condition_activity = activity, qc_summary = qc_summary, manifest = tibble::tibble(), reports = list(), parameters = list(max_distance_bp = module2_inputs$max_distance_bp, n_cores = .module2_default_cores(NULL), output_format = output_format))
   if (!is.null(output_dir) && nzchar(output_dir)) {
     if (isTRUE(verbose)) .log_inform("Module 2 writing step-by-step outputs to {output_dir}.")
+    data_dir <- file.path(output_dir, "data")
     manifest <- dplyr::bind_rows(
-      .module2_write_table(module2_inputs$predicted_tfbs, output_dir, "module1_predicted_tfbs", output_format),
-      .module2_write_table(candidates, output_dir, "module2_fp_target_candidates", output_format),
-      .module2_write_table(tf_target_corr, output_dir, "module2_tf_target_corr", output_format),
-      .module2_write_table(fp_target_corr, output_dir, "module2_fp_target_corr", output_format),
-      .module2_write_table(links, output_dir, "module2_links", output_format),
-      .module2_write_table(activity, output_dir, "module2_condition_activity", output_format),
-      .module2_write_table(qc_summary, output_dir, "module2_qc_summary", "csv")
+      .module2_manifest_table(.module2_write_table(module2_inputs$predicted_tfbs, file.path(data_dir, "predicted_tfbs"), "predicted_tfbs", output_format), "module1_predicted_tfbs"),
+      .module2_manifest_table(.module2_write_table(candidates, file.path(data_dir, "candidates"), "fp_target_candidates", output_format), "module2_fp_target_candidates"),
+      .module2_manifest_table(.module2_write_table(tf_target_corr, file.path(data_dir, "correlations"), "tf_target_corr", output_format), "module2_tf_target_corr"),
+      .module2_manifest_table(.module2_write_table(fp_target_corr, file.path(data_dir, "correlations"), "fp_target_corr", output_format), "module2_fp_target_corr"),
+      .module2_manifest_table(.module2_write_table(links, file.path(data_dir, "links"), "module2_links", output_format), "module2_links"),
+      .module2_manifest_table(.module2_write_table(activity, file.path(data_dir, "condition_activity"), "condition_activity", output_format), "module2_condition_activity"),
+      .module2_write_run_summary(qc_summary, output_dir)
     )
     manifest_path <- file.path(output_dir, "module2_manifest.csv")
     readr::write_csv(manifest, manifest_path)

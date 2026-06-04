@@ -126,6 +126,43 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   expect_true(res_skip_no_manifest$skipped[[1]])
   expect_true(is.na(res_skip_no_manifest$n_up[[1]]))
   expect_true(is.na(res_skip_no_manifest$n_down[[1]]))
+
+  tmp_new <- file.path(tmp, "module2_new_layout")
+  dir.create(file.path(tmp_new, "data", "links"), recursive = TRUE)
+  data.table::fwrite(link_dt[1L], file.path(tmp_new, "data", "links", "module2_links_0001.csv"))
+  data.table::fwrite(link_dt[2L], file.path(tmp_new, "data", "links", "module2_links_0002.csv"))
+  data.table::fwrite(cand_dt, file.path(tmp_new, "data", "candidates.csv"))
+  data.table::fwrite(fp_corr, file.path(tmp_new, "data", "fp_corr.csv"))
+  data.table::fwrite(tf_corr, file.path(tmp_new, "data", "tf_corr.csv"))
+  data.table::fwrite(data.table::data.table(
+    chunk_id = 1:2,
+    path = file.path(tmp_new, "data", "links", c("module2_links_0001.csv", "module2_links_0002.csv")),
+    format = "csv",
+    n_rows = 1L
+  ), file.path(tmp_new, "data", "links", "module2_links_manifest.csv"))
+  data.table::fwrite(data.table::data.table(
+    table = c("module2_links", "module2_fp_target_candidates", "module2_fp_target_corr", "module2_tf_target_corr"),
+    path = c(
+      file.path(tmp_new, "data", "links", "module2_links_manifest.csv"),
+      file.path(tmp_new, "data", "candidates.csv"),
+      file.path(tmp_new, "data", "fp_corr.csv"),
+      file.path(tmp_new, "data", "tf_corr.csv")
+    ),
+    format = c("manifest", "csv", "csv", "csv"),
+    n_rows = c(2L, 2L, 2L, 2L)
+  ), file.path(tmp_new, "module2_manifest.csv"))
+  res_new <- module3_prepare_differential_links(
+    module2 = tmp_new,
+    multiomic_data = multiomic,
+    compar = data.frame(cond1_label = "Case", cond2_label = "Ctrl"),
+    project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
+    output_dir = file.path(tmp_new, "diff_links_filtered"),
+    n_cores = 1,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+  expect_equal(res_new$n_up[[1]], res$n_up[[1]])
+  expect_equal(res_new$n_down[[1]], res$n_down[[1]])
 })
 
 test_that("Module 3 link_padded FP signal mode pads inactive condition scores", {
