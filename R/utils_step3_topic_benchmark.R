@@ -79,6 +79,31 @@
   )
 }
 
+.m3tb_backend_slug <- function(backend, vae_variant) {
+  if (identical(as.character(backend), "warplda")) return("lda")
+  switch(
+    as.character(vae_variant),
+    multivi_encoder = "multivi",
+    vae_mlp = "vae_mlp",
+    .m3tb_safe_label(vae_variant)
+  )
+}
+
+.m3tb_method_slug <- function(row) {
+  paste(
+    as.character(row$context_type[[1L]]),
+    switch(
+      as.character(row$fp_mode[[1L]]),
+      unique = "uniq",
+      aggregate = "aggr",
+      aggregate_weight = "aggr_weight",
+      .m3tb_safe_label(row$fp_mode[[1L]])
+    ),
+    .m3tb_backend_slug(row$backend[[1L]], row$vae_variant[[1L]]),
+    sep = "_"
+  )
+}
+
 .m3tb_setup_info <- function(context_type, fp_mode, backend, vae_variant) {
   mode_tag <- switch(
     as.character(fp_mode),
@@ -162,6 +187,82 @@
   out[, k_grid := paste(as.integer(k_grid), collapse = ",")]
   data.table::setorder(out, method_order)
   out[]
+}
+
+.m3tb_legacy_model_exists <- function(output_dir, method_plan, k_grid) {
+  for (i in seq_len(nrow(method_plan))) {
+    row <- method_plan[i]
+    models_dir <- file.path(output_dir, row$model_dir[[1L]], "vae_models")
+    if (!dir.exists(models_dir)) next
+    if (any(file.exists(file.path(models_dir, sprintf("theta_K%d.csv", as.integer(k_grid)))))) {
+      return(TRUE)
+    }
+  }
+  FALSE
+}
+
+.m3tb_resolve_output_layout <- function(output_layout,
+                                        output_dir,
+                                        method_plan,
+                                        k_grid,
+                                        run_training,
+                                        run_extraction) {
+  output_layout <- match.arg(output_layout, c("auto", "standard", "benchmark", "legacy"))
+  if (!identical(output_layout, "auto")) return(output_layout)
+  if (!isTRUE(run_training) && !isTRUE(run_extraction) &&
+      .m3tb_legacy_model_exists(output_dir, method_plan, k_grid)) {
+    return("legacy")
+  }
+  if (nrow(method_plan) == 1L) "standard" else "benchmark"
+}
+
+.m3tb_apply_output_layout <- function(method_plan, output_dir, output_layout) {
+  out <- data.table::copy(method_plan)
+  if (identical(output_layout, "legacy")) {
+    run_id <- sprintf("legacy_%03d", seq_len(nrow(out)))
+    run_slug <- vapply(seq_len(nrow(out)), function(i) .m3tb_method_slug(out[i]), character(1L))
+    out[, `:=`(
+      run_id = run_id,
+      run_slug = run_slug,
+      run_dir = file.path(output_dir, out[["setup"]]),
+      topic_documents_dir = file.path(output_dir, out[["setup"]], "topic_documents"),
+      topic_models_dir = file.path(output_dir, out[["setup"]], "01_topic_models", out[["combo_id"]]),
+      topic_extraction_dir = file.path(output_dir, out[["setup"]], "02_topic_extraction")
+    )]
+    return(out)
+  }
+  if (identical(output_layout, "standard")) {
+    slug <- .m3tb_backend_slug(out$backend[[1L]], out$vae_variant[[1L]])
+    out[, `:=`(
+      run_id = "selected",
+      run_slug = .m3tb_method_slug(out[1]),
+      run_dir = output_dir,
+      topic_documents_dir = file.path(output_dir, "topic_documents"),
+      topic_models_dir = file.path(output_dir, "topic_models", slug),
+      topic_extraction_dir = file.path(output_dir, "topic_extraction")
+    )]
+    return(out)
+  }
+  run_slug <- vapply(seq_len(nrow(out)), function(i) .m3tb_method_slug(out[i]), character(1L))
+  run_id <- sprintf("run_%03d", seq_len(nrow(out)))
+  run_dir <- file.path(output_dir, paste(run_id, run_slug, sep = "_"))
+  out[, `:=`(
+    run_id = run_id,
+    run_slug = run_slug,
+    run_dir = run_dir,
+    topic_documents_dir = file.path(run_dir, "topic_documents"),
+    topic_models_dir = file.path(run_dir, "topic_models"),
+    topic_extraction_dir = file.path(run_dir, "topic_extraction")
+  )]
+  out[]
+}
+
+.m3tb_review_dir <- function(output_dir, output_layout) {
+  if (identical(output_layout, "legacy")) {
+    file.path(output_dir, "review_topic_experiments")
+  } else {
+    file.path(output_dir, "review")
+  }
 }
 
 .m3tb_read_theta <- function(path) {
@@ -434,6 +535,11 @@
   combo_root <- file.path(output_dir, row$setup[[1L]], "01_topic_models", row$combo_id[[1L]])
   expected <- file.path(output_dir, row$model_dir[[1L]])
   candidates <- character()
+  if ("topic_models_dir" %in% names(row) && dir.exists(row$topic_models_dir[[1L]])) {
+    found <- list.dirs(row$topic_models_dir[[1L]], recursive = TRUE, full.names = TRUE)
+    found <- dirname(found[basename(found) == "vae_models"])
+    candidates <- c(candidates, found)
+  }
   if (dir.exists(file.path(expected, "vae_models"))) {
     candidates <- c(candidates, expected)
   }
@@ -475,8 +581,10 @@
                                       comparisons,
                                       score_prefix = "theta_condition_separation",
                                       replicate_documents = FALSE,
-                                      multiomic_data = NULL) {
-  csv_dir <- file.path(output_dir, "review_topic_experiments", "csv")
+                                      multiomic_data = NULL,
+                                      review_dir = NULL) {
+  if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
+  csv_dir <- file.path(review_dir, "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   design <- .m3tb_design_table(
     comparisons,
@@ -521,9 +629,16 @@
 }
 
 .m3tb_find_topic_links <- function(output_dir, row) {
-  root <- file.path(output_dir, row$setup[[1L]], "02_topic_extraction")
-  if (!dir.exists(root)) return(character())
-  files <- list.files(root, "topic_links[.]csv$", recursive = TRUE, full.names = TRUE)
+  roots <- character()
+  if ("topic_extraction_dir" %in% names(row)) {
+    roots <- c(roots, row$topic_extraction_dir[[1L]])
+  }
+  roots <- c(roots, file.path(output_dir, row$setup[[1L]], "02_topic_extraction"))
+  roots <- unique(roots[dir.exists(roots)])
+  if (!length(roots)) return(character())
+  files <- unlist(lapply(roots, function(root) {
+    list.files(root, "topic_links[.]csv$", recursive = TRUE, full.names = TRUE)
+  }), use.names = FALSE)
   if (!length(files) || !"selected_k" %in% names(row)) return(files)
   k <- as.integer(row$selected_k[[1L]])
   k_pattern <- paste0("(^|[^0-9])K", k, "([^0-9]|$)")
@@ -571,7 +686,7 @@
   tmp[, .(n_topics = data.table::uniqueN(topic_num)), by = item][, .(n_items = .N), by = n_topics]
 }
 
-.m3tb_summarize_topic_links <- function(output_dir, model_rows) {
+.m3tb_summarize_topic_links <- function(output_dir, model_rows, review_dir = NULL) {
   pass_rows <- list()
   shared_rows <- list()
   seen <- new.env(parent = emptyenv())
@@ -637,7 +752,8 @@
   } else {
     .m3tb_empty_shared_counts()
   }
-  csv_dir <- file.path(output_dir, "review_topic_experiments", "csv")
+  if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
+  csv_dir <- file.path(review_dir, "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(pass, file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
   data.table::fwrite(shared, file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
@@ -665,8 +781,9 @@
   invisible(out_file)
 }
 
-.m3tb_write_review_html <- function(output_dir, score_result, link_summary) {
-  html_dir <- file.path(output_dir, "review_topic_experiments", "html")
+.m3tb_write_review_html <- function(output_dir, score_result, link_summary, review_dir = NULL) {
+  if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
+  html_dir <- file.path(review_dir, "html")
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
   matrix_html <- paste(utils::capture.output(print(score_result$matrix)), collapse = "\n")
   pass_html <- paste(utils::capture.output(print(utils::head(link_summary$pass, 20L))), collapse = "\n")
@@ -704,12 +821,12 @@
   files
 }
 
-.m3tb_write_review_outputs <- function(output_dir, score_result, link_summary) {
-  review_dir <- file.path(output_dir, "review_topic_experiments")
+.m3tb_write_review_outputs <- function(output_dir, score_result, link_summary, review_dir = NULL) {
+  if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
   dir.create(review_dir, recursive = TRUE, showWarnings = FALSE)
   .m3tb_plot_count_pdf(link_summary$pass, file.path(review_dir, "tf_std_six_setups_pass_state_counts.pdf"), "Topic-link pass-state counts")
   .m3tb_plot_count_pdf(link_summary$shared, file.path(review_dir, "tf_std_six_setups_shared_topic_counts.pdf"), "Shared topic counts", x_col = "method_setup")
-  html <- .m3tb_write_review_html(output_dir, score_result, link_summary)
+  html <- .m3tb_write_review_html(output_dir, score_result, link_summary, review_dir = review_dir)
   invisible(html)
 }
 
@@ -731,6 +848,12 @@
 #' @param methods Character vector of benchmark method IDs, `"default"`, or
 #'   `"all"`.
 #' @param k_grid Integer topic numbers.
+#' @param output_layout Output folder layout. `"standard"` is the clean
+#'   single-method layout for regular use, `"benchmark"` writes shallow
+#'   `run_001_*` method folders plus a top-level review folder, `"legacy"` uses
+#'   the historical nested benchmark layout, and `"auto"` picks legacy when
+#'   existing legacy outputs are being reviewed, otherwise standard for one
+#'   method and benchmark for method grids.
 #' @param replicate_documents Whether theta document labels are replicate
 #'   resolved. When `TRUE`, score files use the
 #'   `theta_condition_replicate_separation` prefix and condition replicates are
@@ -753,6 +876,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         output_dir,
                                         methods = "condition_aggr_weight_lda",
                                         k_grid = 10L,
+                                        output_layout = c("auto", "standard", "benchmark", "legacy"),
                                         replicate_documents = FALSE,
                                         reuse_if_exists = TRUE,
                                         local_threads = NULL,
@@ -766,11 +890,43 @@ run_module3_topic_benchmark <- function(filtered_dir,
   k_grid <- k_grid[is.finite(k_grid) & k_grid > 1L]
   if (!length(k_grid)) .log_abort("k_grid must include at least one integer greater than 1.")
   method_plan <- .module3_topic_method_plan(methods = methods, k_grid = k_grid)
-  csv_dir <- file.path(output_dir, "review_topic_experiments", "csv")
+  output_layout <- .m3tb_resolve_output_layout(
+    output_layout = output_layout,
+    output_dir = output_dir,
+    method_plan = method_plan,
+    k_grid = k_grid,
+    run_training = run_training,
+    run_extraction = run_extraction
+  )
+  method_plan <- .m3tb_apply_output_layout(method_plan, output_dir, output_layout)
+  review_dir <- .m3tb_review_dir(output_dir, output_layout)
+  csv_dir <- file.path(review_dir, "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(method_plan, file.path(csv_dir, "module3_topic_method_plan.csv"))
+  if (identical(output_layout, "benchmark")) {
+    run_cols <- c(
+      "run_id",
+      "run_slug",
+      "method",
+      "method_order",
+      "context_type",
+      "fp_mode",
+      "backend",
+      "vae_variant",
+      "method_setup",
+      "run_dir",
+      "topic_documents_dir",
+      "topic_models_dir",
+      "topic_extraction_dir"
+    )
+    data.table::fwrite(
+      method_plan[, run_cols, with = FALSE],
+      file.path(output_dir, "runs.csv")
+    )
+  }
   if (isTRUE(verbose)) {
     .log_inform("Module 3 topic benchmark methods: {nrow(method_plan)}.")
+    .log_inform("Module 3 output layout: {output_layout}.")
   }
   if (isTRUE(run_training)) {
     for (i in seq_len(nrow(method_plan))) {
@@ -779,7 +935,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
       train_topic_models(
         Kgrid = k_grid,
         input_dir = filtered_dir,
-        output_dir = file.path(output_dir, row$setup[[1L]], "01_topic_models", row$combo_id[[1L]]),
+        output_dir = row$topic_models_dir[[1L]],
         doc_mode = "tf",
         doc_design = row$doc_design[[1L]],
         fp_term_mode = row$fp_mode[[1L]],
@@ -803,9 +959,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
     }
     for (i in seq_len(nrow(method_plan))) {
       row <- method_plan[i]
-      model_root <- file.path(output_dir, row$setup[[1L]], "01_topic_models", row$combo_id[[1L]])
+      model_root <- row$topic_models_dir[[1L]]
       for (k in k_grid) {
-        extract_root <- file.path(output_dir, row$setup[[1L]], "02_topic_extraction", paste0(row$method[[1L]], "_K", k))
+        extract_root <- file.path(row$topic_extraction_dir[[1L]], paste0("K", k))
         if (isTRUE(verbose)) {
           .log_inform("Extracting Module 3 topics for method: {row$method_setup}; K={k}.")
         }
@@ -829,7 +985,15 @@ run_module3_topic_benchmark <- function(filtered_dir,
       }
     }
   }
-  model_rows <- .m3tb_existing_model_rows(output_dir, method_plan, k_grid)
+  model_rows <- data.table::data.table()
+  if (isTRUE(run_reports)) {
+    model_rows <- .m3tb_existing_model_rows(output_dir, method_plan, k_grid)
+  } else if (isTRUE(run_training) || isTRUE(run_extraction)) {
+    model_rows <- tryCatch(
+      .m3tb_existing_model_rows(output_dir, method_plan, k_grid),
+      error = function(e) data.table::data.table()
+    )
+  }
   score_result <- NULL
   link_summary <- NULL
   html <- character()
@@ -846,10 +1010,11 @@ run_module3_topic_benchmark <- function(filtered_dir,
       comparisons,
       score_prefix = score_prefix,
       replicate_documents = replicate_documents,
-      multiomic_data = multiomic_data
+      multiomic_data = multiomic_data,
+      review_dir = review_dir
     )
-    link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows)
-    html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary)
+    link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
+    html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
   }
   invisible(list(
     method_plan = method_plan,
@@ -857,6 +1022,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
     score = score_result,
     topic_link_summary = link_summary,
     html = html,
+    output_layout = output_layout,
+    review_dir = review_dir,
     replicate_documents = isTRUE(replicate_documents),
     multiomic_data_provided = !is.null(multiomic_data)
   ))

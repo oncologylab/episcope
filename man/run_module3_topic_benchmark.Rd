@@ -11,6 +11,7 @@ run_module3_topic_benchmark(
   output_dir,
   methods = "condition_aggr_weight_lda",
   k_grid = 10L,
+  output_layout = c("auto", "standard", "benchmark", "legacy"),
   replicate_documents = FALSE,
   reuse_if_exists = TRUE,
   local_threads = NULL,
@@ -38,6 +39,13 @@ For condition separation scoring, use columns `condition_label` and
 `"all"`.}
 
 \item{k_grid}{Integer topic numbers.}
+
+\item{output_layout}{Output folder layout. `"standard"` is the clean
+single-method layout for regular use, `"benchmark"` writes shallow
+`run_001_*` method folders plus a top-level review folder, `"legacy"` uses
+the historical nested benchmark layout, and `"auto"` picks legacy when
+existing legacy outputs are being reviewed, otherwise standard for one
+method and benchmark for method grids.}
 
 \item{replicate_documents}{Whether theta document labels are replicate
 resolved. When `TRUE`, score files use the

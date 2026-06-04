@@ -101,6 +101,65 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_equal(unique(pass_counts$selected_k), 2L)
 })
 
+test_that("Module 3 topic benchmark uses a clean standard layout for one selected method", {
+  root <- tempfile("module3-topic-standard-layout-")
+  dir.create(root, recursive = TRUE)
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = "condition_aggr_weight_lda",
+    k_grid = 2L,
+    output_layout = "standard",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    verbose = FALSE
+  )
+
+  expect_equal(res$output_layout, "standard")
+  expect_equal(res$method_plan$run_id, "selected")
+  expect_equal(res$method_plan$topic_documents_dir, file.path(root, "topic_documents"))
+  expect_equal(res$method_plan$topic_models_dir, file.path(root, "topic_models", "lda"))
+  expect_equal(res$method_plan$topic_extraction_dir, file.path(root, "topic_extraction"))
+  expect_equal(res$review_dir, file.path(root, "review"))
+  expect_false(grepl("std_tf_", res$method_plan$topic_models_dir, fixed = TRUE))
+})
+
+test_that("Module 3 topic benchmark uses shallow run folders for method grids", {
+  root <- tempfile("module3-topic-shallow-benchmark-")
+  dir.create(root, recursive = TRUE)
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    k_grid = 2L,
+    output_layout = "benchmark",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    verbose = FALSE
+  )
+
+  expect_equal(res$output_layout, "benchmark")
+  expect_equal(res$review_dir, file.path(root, "review"))
+  expect_equal(res$method_plan$run_id, c("run_001", "run_002"))
+  expect_true(all(grepl("^run_[0-9]{3}_", basename(res$method_plan$run_dir))))
+  expect_equal(res$method_plan$topic_documents_dir, file.path(res$method_plan$run_dir, "topic_documents"))
+  expect_equal(res$method_plan$topic_models_dir, file.path(res$method_plan$run_dir, "topic_models"))
+  expect_equal(res$method_plan$topic_extraction_dir, file.path(res$method_plan$run_dir, "topic_extraction"))
+  expect_true(file.exists(file.path(root, "runs.csv")))
+})
+
 test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
   root <- tempfile("module3-topic-benchmark-empty-links-")
   dir.create(root, recursive = TRUE)
