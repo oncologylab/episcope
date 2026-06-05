@@ -30,8 +30,8 @@ Module 2 output directory containing `module2_manifest.csv`.}
 
 \item{project_config}{Project config list or YAML path.}
 
-\item{output_dir}{Directory for filtered differential links. If `NULL`, a
-Module 3 benchmark directory is derived from the project config.}
+\item{output_dir}{Directory for filtered differential links. If `NULL`,
+`regulatory_topics/differential_links` under `base_dir` is used.}
 
 \item{n_cores}{Number of data.table threads to use while reading and joining chunks. Defaults to all available cores.
 Comparison-level parallelism is controlled by `module3_comparison_workers` in the project config and defaults to 1 for RAM safety.}

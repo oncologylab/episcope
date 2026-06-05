@@ -26,19 +26,7 @@
 .module3_default_output_dir <- function(cfg, project_dir = NULL) {
   base_dir <- .module3_cfg_value(cfg, "base_dir", project_dir)
   if (is.null(base_dir) || !nzchar(base_dir)) base_dir <- "."
-  run_tag <- .module3_cfg_value(cfg, "module2_run_label", .module3_cfg_value(cfg, "run_tag", "module3"))
-  diff_dir <- .module3_cfg_value(cfg, "diff_dir_name", NULL)
-  if (is.null(diff_dir) || !nzchar(diff_dir)) {
-    mode <- .module3_cfg_value(cfg, "fp_filter_mode", "log2fc")
-    fp_cut <- if (identical(mode, "delta")) {
-      .module3_cfg_value(cfg, "fp_delta_cutoff", 0.5)
-    } else {
-      .module3_cfg_value(cfg, "fp_log2fc_cutoff", 1)
-    }
-    gene_cut <- .module3_cfg_value(cfg, "gene_log2fc_cutoff", 1)
-    diff_dir <- paste0("diff_grn_fp_", mode, "_", .module3_fmt_cut(fp_cut), "_gene_log2fc_", .module3_fmt_cut(gene_cut))
-  }
-  file.path(base_dir, "benchmark_diff_grn_and_regulatory_topics", run_tag, diff_dir, "diff_links_filtered")
+  file.path(base_dir, "regulatory_topics", "differential_links")
 }
 
 .module3_read_table <- function(path, format = NULL, columns = NULL, allow_missing_columns = FALSE) {
@@ -338,7 +326,50 @@
   if (!all(c("cond1_label", "cond2_label") %in% names(compar))) {
     .log_abort("`compar` must include cond1_label and cond2_label columns.")
   }
-  unique(compar[, .(cond1_label = as.character(cond1_label), cond2_label = as.character(cond2_label))])
+  compar[, `:=`(
+    cond1_label = as.character(cond1_label),
+    cond2_label = as.character(cond2_label)
+  )]
+  if ("comparison_id" %in% names(compar)) {
+    compar[, comparison_id := as.character(compar[["comparison_id"]])]
+  } else if ("contrast_id" %in% names(compar)) {
+    compar[, comparison_id := as.character(compar[["contrast_id"]])]
+  } else if (all(c("cond1_base", "cond2_base") %in% names(compar))) {
+    compar[, comparison_id := paste(compar[["cond1_base"]], compar[["cond2_base"]], sep = "_vs_")]
+  } else {
+    compar[, comparison_id := paste(compar[["cond1_label"]], compar[["cond2_label"]], sep = "_vs_")]
+  }
+  if (all(c("cond1_base", "cond2_base") %in% names(compar))) {
+    fallback_id <- paste(as.character(compar$cond1_base), as.character(compar$cond2_base), sep = "_vs_")
+  } else {
+    fallback_id <- paste(compar$cond1_label, compar$cond2_label, sep = "_vs_")
+  }
+  bad_id <- is.na(compar$comparison_id) | !nzchar(trimws(compar$comparison_id))
+  compar[bad_id, comparison_id := fallback_id[bad_id]]
+  compar[, comparison_id := .module3_safe_label(compar[["comparison_id"]])]
+  if ("cond1_base" %in% names(compar)) {
+    data.table::set(compar, j = "case_label", value = as.character(compar[["cond1_base"]]))
+  } else if ("case_label" %in% names(compar)) {
+    data.table::set(compar, j = "case_label", value = as.character(compar[["case_label"]]))
+  } else {
+    data.table::set(compar, j = "case_label", value = compar[["cond1_label"]])
+  }
+  if ("cond2_base" %in% names(compar)) {
+    data.table::set(compar, j = "ctrl_label", value = as.character(compar[["cond2_base"]]))
+  } else if ("ctrl_label" %in% names(compar)) {
+    data.table::set(compar, j = "ctrl_label", value = as.character(compar[["ctrl_label"]]))
+  } else {
+    data.table::set(compar, j = "ctrl_label", value = compar[["cond2_label"]])
+  }
+  if (!"comparison_group" %in% names(compar)) data.table::set(compar, j = "comparison_group", value = NA_character_)
+  unique(data.table::data.table(
+    comparison_id = compar[["comparison_id"]],
+    comparison_group = as.character(compar[["comparison_group"]]),
+    cond1_label = compar[["cond1_label"]],
+    cond2_label = compar[["cond2_label"]],
+    case_label = compar[["case_label"]],
+    ctrl_label = compar[["ctrl_label"]]
+  ))
 }
 
 #' Prepare differential links for Module 3
@@ -356,8 +387,8 @@
 #'   `cond2_label`. If `NULL`, `data/episcope_comparisons.csv` under
 #'   `base_dir` is used.
 #' @param project_config Project config list or YAML path.
-#' @param output_dir Directory for filtered differential links. If `NULL`, a
-#'   Module 3 benchmark directory is derived from the project config.
+#' @param output_dir Directory for filtered differential links. If `NULL`,
+#'   `regulatory_topics/differential_links` under `base_dir` is used.
 #' @param n_cores Number of data.table threads to use while reading and joining chunks. Defaults to all available cores.
 #'   Comparison-level parallelism is controlled by `module3_comparison_workers` in the project config and defaults to 1 for RAM safety.
 #' @param pseudocount Pseudocount for log2 fold-change calculations.
@@ -388,8 +419,8 @@ module3_prepare_differential_links <- function(module2,
   if (!inherits(module2, "craftgrn_module2") && !is.list(module2)) .log_abort("`module2` must be a Module 2 object or output directory.")
   output_dir <- output_dir %||% .module3_default_output_dir(cfg)
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-  cache_dir <- file.path(output_dir, "cache")
-  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  qc_dir <- file.path(output_dir, "qc")
+  dir.create(qc_dir, recursive = TRUE, showWarnings = FALSE)
   specs <- .module3_comparison_specs(compar, cfg)
   if (!nrow(specs)) .log_abort("No Module 3 comparisons to process.")
 
@@ -431,12 +462,21 @@ module3_prepare_differential_links <- function(module2,
   comparison_info <- lapply(seq_len(nrow(specs)), function(i) {
     case_id <- specs$cond1_label[[i]]
     ctrl_id <- specs$cond2_label[[i]]
-    stem <- paste0(.module3_safe_label(case_id), "_vs_", .module3_safe_label(ctrl_id))
+    stem <- specs$comparison_id[[i]]
     up_path <- file.path(output_dir, paste0(stem, "_filtered_links_up.csv"))
     down_path <- file.path(output_dir, paste0(stem, "_filtered_links_down.csv"))
-    qc_path <- file.path(cache_dir, paste0(stem, "_qc.csv"))
     skipped <- !isTRUE(overwrite) && file.exists(up_path) && file.exists(down_path)
-    list(case_id = case_id, ctrl_id = ctrl_id, stem = stem, up_path = up_path, down_path = down_path, qc_path = qc_path, skipped = skipped)
+    list(
+      case_id = case_id,
+      ctrl_id = ctrl_id,
+      stem = stem,
+      comparison_group = specs$comparison_group[[i]],
+      case_label = specs$case_label[[i]],
+      ctrl_label = specs$ctrl_label[[i]],
+      up_path = up_path,
+      down_path = down_path,
+      skipped = skipped
+    )
   })
   active_idx <- which(!vapply(comparison_info, function(x) isTRUE(x$skipped), logical(1)))
   res <- vector("list", nrow(specs))
@@ -445,9 +485,10 @@ module3_prepare_differential_links <- function(module2,
     old_row <- if ("comparison_id" %in% names(old_manifest)) old_manifest[comparison_id == info$stem] else data.table::data.table()
     n_up <- if (nrow(old_row) && "n_up" %in% names(old_row)) old_row$n_up[[1L]] else NA_integer_
     n_down <- if (nrow(old_row) && "n_down" %in% names(old_row)) old_row$n_down[[1L]] else NA_integer_
-    res[[i]] <- tibble::tibble(comparison_id = info$stem, case_id = info$case_id, ctrl_id = info$ctrl_id, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
+    res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
   }
 
+  qc_rows <- list()
   if (length(active_idx)) {
     up_parts <- lapply(active_idx, function(i) vector("list", nrow(link_manifest)))
     down_parts <- lapply(active_idx, function(i) vector("list", nrow(link_manifest)))
@@ -484,7 +525,7 @@ module3_prepare_differential_links <- function(module2,
         down_dt <- .module3_filter_direction(delta_dt, cfg, "down")
         up_parts[[k]][[j]] <- up_dt
         down_parts[[k]][[j]] <- down_dt
-        qc_parts[[k]][[j]] <- data.table::data.table(chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
+        qc_parts[[k]][[j]] <- data.table::data.table(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
         rm(delta_dt, up_dt, down_dt)
       }
       rm(prepared)
@@ -497,13 +538,62 @@ module3_prepare_differential_links <- function(module2,
       down <- data.table::rbindlist(down_parts[[k]], use.names = TRUE, fill = TRUE)
       if (nrow(up)) up <- unique(up, by = c("tf", "gene_key", "peak_id"))
       if (nrow(down)) down <- unique(down, by = c("tf", "gene_key", "peak_id"))
+      up[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label)]
+      down[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label)]
       data.table::fwrite(up, info$up_path)
       data.table::fwrite(down, info$down_path)
-      data.table::fwrite(data.table::rbindlist(qc_parts[[k]], use.names = TRUE), info$qc_path)
-      res[[i]] <- tibble::tibble(comparison_id = info$stem, case_id = info$case_id, ctrl_id = info$ctrl_id, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
+      qc_rows[[length(qc_rows) + 1L]] <- data.table::rbindlist(qc_parts[[k]], use.names = TRUE, fill = TRUE)
+      res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
     }
   }
   manifest <- dplyr::bind_rows(res)
+  qc_chunks <- if (length(qc_rows)) {
+    data.table::rbindlist(qc_rows, use.names = TRUE, fill = TRUE)
+  } else {
+    data.table::data.table(
+      comparison_id = character(),
+      comparison_group = character(),
+      case_id = character(),
+      ctrl_id = character(),
+      case_label = character(),
+      ctrl_label = character(),
+      chunk_id = integer(),
+      n_links = integer(),
+      n_prepared = integer(),
+      n_delta = integer(),
+      n_up = integer(),
+      n_down = integer()
+    )
+  }
+  qc_summary <- if (nrow(qc_chunks)) {
+    by_cols <- c("comparison_id", "comparison_group", "case_id", "ctrl_id", "case_label", "ctrl_label")
+    qc_chunks[, .(
+      n_chunks = .N,
+      n_links = sum(get("n_links")),
+      n_prepared = sum(get("n_prepared")),
+      n_delta = sum(get("n_delta")),
+      n_up = sum(get("n_up")),
+      n_down = sum(get("n_down"))
+    ), by = by_cols]
+  } else {
+    manifest_dt <- data.table::as.data.table(manifest)
+    data.table::data.table(
+      comparison_id = manifest_dt[["comparison_id"]],
+      comparison_group = manifest_dt[["comparison_group"]],
+      case_id = manifest_dt[["case_id"]],
+      ctrl_id = manifest_dt[["ctrl_id"]],
+      case_label = manifest_dt[["case_label"]],
+      ctrl_label = manifest_dt[["ctrl_label"]],
+      n_chunks = 0L,
+      n_links = 0,
+      n_prepared = 0,
+      n_delta = 0,
+      n_up = manifest_dt[["n_up"]],
+      n_down = manifest_dt[["n_down"]]
+    )
+  }
+  data.table::fwrite(qc_chunks, file.path(qc_dir, "differential_link_chunks.csv"))
+  data.table::fwrite(qc_summary, file.path(qc_dir, "differential_link_summary.csv"))
   readr::write_csv(manifest, manifest_path)
   if (isTRUE(verbose)) {
     .log_inform("Module 3 bridge wrote {sum(!manifest$skipped)} comparison(s) to {output_dir}.")

@@ -156,11 +156,7 @@ parse_delta_links_filename <- function(file) {
   b <- sub("_delta_links\\.csv$", "", b, ignore.case = TRUE)
   parts <- strsplit(b, "_vs_", fixed = TRUE)[[1]]
   if (length(parts) != 2) {
-    .log_abort(c(
-      "Cannot parse case/control from filename.",
-      i = "Expected: <CASE>_vs_<CTRL>_delta_links*.csv",
-      i = paste0("Got: ", basename(file))
-    ))
+    return(list(comparison_id = b, case_id = NA_character_, ctrl_id = NA_character_, direction = direction))
   }
   list(comparison_id = b, case_id = parts[[1]], ctrl_id = parts[[2]], direction = direction)
 }
@@ -175,6 +171,45 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   dt <- data.table::as.data.table(dt)
 
   .assert_has_cols(dt, c("tf", "gene_key", "peak_id"), context = "standardize_delta_links_one")
+  if ("comparison_id" %in% names(dt) && any(nzchar(as.character(dt$comparison_id)))) {
+    ids$comparison_id <- as.character(dt$comparison_id[which(nzchar(as.character(dt$comparison_id)))[[1L]]])
+  }
+  if ("case_id" %in% names(dt) && any(nzchar(as.character(dt$case_id)))) {
+    ids$case_id <- as.character(dt$case_id[which(nzchar(as.character(dt$case_id)))[[1L]]])
+  }
+  if ("ctrl_id" %in% names(dt) && any(nzchar(as.character(dt$ctrl_id)))) {
+    ids$ctrl_id <- as.character(dt$ctrl_id[which(nzchar(as.character(dt$ctrl_id)))[[1L]]])
+  }
+  if (is.na(ids$case_id) || is.na(ids$ctrl_id) || !nzchar(ids$case_id) || !nzchar(ids$ctrl_id)) {
+    if (!nrow(dt)) {
+      if (!"comparison_id" %in% names(dt)) dt[, comparison_id := ids$comparison_id]
+      if (!"case_id" %in% names(dt)) dt[, case_id := ids$case_id]
+      if (!"ctrl_id" %in% names(dt)) dt[, ctrl_id := ids$ctrl_id]
+      if (!is.null(ids$direction) && !"direction_group" %in% names(dt)) dt[, direction_group := ids$direction]
+      if (!isTRUE(keep_original)) {
+        keep <- c(
+          "comparison_id", "case_id", "ctrl_id", "direction_group",
+          "tf", "gene_key", "peak_id",
+          "fp_bound_case", "fp_bound_ctrl",
+          "tf_expr_flag_case", "tf_expr_flag_ctrl",
+          "gene_expr_flag_case", "gene_expr_flag_ctrl",
+          "tf_expr_case", "tf_expr_ctrl", "gene_expr_case", "gene_expr_ctrl",
+          "fp_score_case", "fp_score_ctrl",
+          "delta_fp", "delta_gene", "log2fc_fp", "log2fc_gene", "fc_mag_fp", "fc_mag_gene",
+          "log2fc_tf", "fc_mag_tf"
+        )
+        missing <- setdiff(keep, names(dt))
+        for (nm_missing in missing) dt[[nm_missing]] <- if (nm_missing %in% c("comparison_id", "case_id", "ctrl_id", "direction_group", "tf", "gene_key", "peak_id")) character() else numeric()
+        return(dt[, keep, with = FALSE])
+      }
+      return(dt)
+    }
+    .log_abort(c(
+      "Cannot determine case/control labels for Module 3 differential links.",
+      i = "Use <CASE>_vs_<CTRL> filenames or include case_id and ctrl_id columns.",
+      i = paste0("Got: ", basename(file))
+    ))
+  }
 
   nm <- function(prefix, cond) paste0(prefix, "_", cond)
 
@@ -275,7 +310,7 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
 
   if (!isTRUE(keep_original)) {
     keep <- c(
-      "comparison_id","case_id","ctrl_id",
+      "comparison_id","case_id","ctrl_id","direction_group",
       "tf","gene_key","peak_id",
       "fp_bound_case","fp_bound_ctrl",
       "tf_expr_flag_case","tf_expr_flag_ctrl",
