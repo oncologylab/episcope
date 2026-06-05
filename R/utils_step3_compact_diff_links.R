@@ -348,7 +348,7 @@
 #' per-condition GRN matrices and keeps Module 3 compatible with the existing
 #' `*_filtered_links_up.csv` and `*_filtered_links_down.csv` contract.
 #'
-#' @param module2 Module 2 object returned by [link_tf_targets()] or a path to a
+#' @param module2 Module 2 object returned by [predict_tf_targets()] or a path to a
 #'   Module 2 output directory containing `module2_manifest.csv`.
 #' @param multiomic_data CraftGRN multiomic object returned by
 #'   [load_prep_multiomic_data()].

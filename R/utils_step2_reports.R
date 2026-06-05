@@ -850,7 +850,7 @@
 #' @param top_n Number of top targets per TF.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble report manifest.
-#' @export
+#' @noRd
 build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = NULL, reports = c("top_tf_targets", "direct_tf_tf", "tf_tf_connectivity"), tfs = NULL, conditions = NULL, k_values = c(5L, 7L, 10L), top_n = 100L, verbose = TRUE) {
   if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
   reports <- match.arg(reports, several.ok = TRUE)
@@ -927,7 +927,7 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
 #' @param top_n Number of top targets per TF.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble report manifest.
-#' @export
+#' @noRd
 export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbose = TRUE) {
   if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
   dir.create(file.path(output_dir, "csv"), recursive = TRUE, showWarnings = FALSE)
@@ -955,6 +955,19 @@ export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbos
   tibble::as_tibble(out)
 }
 
+#' Export an interactive HTML browser of individual TF target networks
+#'
+#' @param module2 Module 2 result list, loaded output list, or output directory.
+#' @param output_dir Output directory.
+#' @param tfs TFs to report.
+#' @param top_n Number of top targets per TF.
+#' @param verbose Emit concise progress messages.
+#' @return A tibble report manifest.
+#' @export
+report_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbose = TRUE) {
+  export_top_tf_targets(module2 = module2, output_dir = output_dir, tfs = tfs, top_n = top_n, verbose = verbose)
+}
+
 #' Export direct TF-TF browser reports
 #'
 #' @param cache Internal condition-filtered cache from build_module2_reports.
@@ -964,7 +977,7 @@ export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbos
 #' @param k_values Cluster counts.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble report manifest.
-#' @export
+#' @noRd
 export_direct_tf_tf_browser <- function(cache, output_dir, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
   html_dir <- output_dir
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
@@ -987,6 +1000,26 @@ export_direct_tf_tf_browser <- function(cache, output_dir, tag = "module2", resu
   tibble::as_tibble(out)
 }
 
+#' Export an interactive HTML browser of direct TF-TF regulations
+#'
+#' @param module2 Module 2 result list, loaded output list, or output directory.
+#' @param output_dir Output directory.
+#' @param multiomic_data Optional CraftGRN multiomic object for condition-filtered reports.
+#' @param k_values Cluster counts.
+#' @param verbose Emit concise progress messages.
+#' @return A tibble report manifest.
+#' @export
+report_direct_tf_tf_regulations <- function(module2, output_dir, multiomic_data = NULL, k_values = c(5L, 7L, 10L), verbose = TRUE) {
+  build_module2_reports(
+    module2 = module2,
+    multiomic_data = multiomic_data,
+    output_dir = output_dir,
+    reports = "direct_tf_tf",
+    k_values = k_values,
+    verbose = verbose
+  )
+}
+
 #' Export TF-TF connectivity browser reports
 #'
 #' @param cache Internal condition-filtered cache from build_module2_reports.
@@ -996,7 +1029,7 @@ export_direct_tf_tf_browser <- function(cache, output_dir, tag = "module2", resu
 #' @param k_values Cluster counts.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble report manifest.
-#' @export
+#' @noRd
 export_tf_tf_connectivity_browser <- function(cache, output_dir, tag = "module2", result_label = "top100", k_values = c(5L, 7L, 10L), verbose = TRUE) {
   html_dir <- output_dir
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1017,4 +1050,24 @@ export_tf_tf_connectivity_browser <- function(cache, output_dir, tag = "module2"
   out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   if (isTRUE(verbose)) .log_inform("Module 2 reports: wrote {nrow(out)} TF-TF connectivity HTML file(s).")
   tibble::as_tibble(out)
+}
+
+#' Export an interactive HTML browser of TF-TF co-regulatory activities
+#'
+#' @param module2 Module 2 result list, loaded output list, or output directory.
+#' @param output_dir Output directory.
+#' @param multiomic_data Optional CraftGRN multiomic object for condition-filtered reports.
+#' @param k_values Cluster counts.
+#' @param verbose Emit concise progress messages.
+#' @return A tibble report manifest.
+#' @export
+report_tf_tf_coregulations <- function(module2, output_dir, multiomic_data = NULL, k_values = c(5L, 7L, 10L), verbose = TRUE) {
+  build_module2_reports(
+    module2 = module2,
+    multiomic_data = multiomic_data,
+    output_dir = output_dir,
+    reports = "tf_tf_connectivity",
+    k_values = k_values,
+    verbose = verbose
+  )
 }

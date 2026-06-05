@@ -93,6 +93,7 @@
 #' @param verbose Emit concise progress messages.
 #' @return A tibble with `target_gene`, `target_chr`, `target_tss`, and
 #'   `target_strand`.
+#' @keywords internal
 #' @export
 load_gene_tss <- function(gene_tss = NULL, ref_genome = NULL, genes = NULL, verbose = TRUE) {
   ref <- .gene_tss_normalize_ref_genome(ref_genome)

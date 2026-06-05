@@ -10,7 +10,7 @@
 #' @param max_distance_bp Maximum signed distance to TSS.
 #' @param verbose Emit concise progress messages.
 #' @return A list of normalized Module 2 inputs.
-#' @export
+#' @noRd
 module2_prepare_link_inputs <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, max_distance_bp = NULL, verbose = TRUE) {
   cfg <- .module2_cfg(project_config)
   if (is.null(max_distance_bp)) max_distance_bp <- as.numeric(.module2_cfg_value(cfg, "max_distance_bp", .module2_cfg_value(cfg, "link_window_bp", 100000)))[[1L]]
@@ -30,7 +30,7 @@ module2_prepare_link_inputs <- function(multiomic_data, predicted_tfbs, gene_tss
 }
 #' Correlate TF expression with target gene expression
 #'
-#' @param module2_inputs Output from module2_prepare_link_inputs.
+#' @param module2_inputs Output from module2_identify_candidate_links.
 #' @param n_cores Number of worker cores; NULL uses all available cores.
 #' @param verbose Emit concise progress messages.
 #' @return A TF-target correlation table with pass flags.
@@ -48,21 +48,55 @@ module2_correlate_tf_targets <- function(module2_inputs, n_cores = NULL, verbose
 }
 #' Build restricted FP-target candidates
 #'
-#' @param module2_inputs Output from module2_prepare_link_inputs.
+#' @param module2_inputs Output from module2_identify_candidate_links.
 #' @param tf_target_corr Output from module2_correlate_tf_targets.
 #' @param verbose Emit concise progress messages.
 #' @return A candidate table restricted by TF-target pass calls and genomic priors.
-#' @export
+#' @noRd
 module2_build_fp_target_candidates <- function(module2_inputs, tf_target_corr, verbose = TRUE) {
   tf_pass <- tf_target_corr[tf_target_corr$pass %in% TRUE, , drop = FALSE]
   cand <- .module2_build_candidates(module2_inputs$predicted_tfbs, tf_pass, module2_inputs$gene_tss, regulatory_prior = module2_inputs$regulatory_prior, max_distance_bp = module2_inputs$max_distance_bp)
   if (isTRUE(verbose)) .log_inform("Module 2 FP-target candidates: {nrow(cand)} row(s).")
   cand
 }
+
+#' Identify Module 2 candidate-link inputs
+#'
+#' @param multiomic_data CraftGRN multiomic object.
+#' @param predicted_tfbs Predicted TFBS table or path from Module 1.
+#' @param gene_tss Optional gene TSS table or path.
+#' @param regulatory_prior Optional generic FP-target prior.
+#' @param project_config Optional project config path or list.
+#' @param max_distance_bp Maximum signed distance to TSS.
+#' @param verbose Emit concise progress messages.
+#' @return A list of normalized Module 2 inputs used by downstream step functions.
+#' @export
+module2_identify_candidate_links <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, max_distance_bp = NULL, verbose = TRUE) {
+  module2_prepare_link_inputs(
+    multiomic_data = multiomic_data,
+    predicted_tfbs = predicted_tfbs,
+    gene_tss = gene_tss,
+    regulatory_prior = regulatory_prior,
+    project_config = project_config,
+    max_distance_bp = max_distance_bp,
+    verbose = verbose
+  )
+}
+
+#' Build restricted candidate FP-target links
+#'
+#' @param module2_inputs Output from internal Module 2 input preparation.
+#' @param tf_target_corr Output from module2_correlate_tf_targets.
+#' @param verbose Emit concise progress messages.
+#' @return A candidate table restricted by TF-target pass calls and genomic priors.
+#' @export
+module2_link_fp_targets <- function(module2_inputs, tf_target_corr, verbose = TRUE) {
+  module2_build_fp_target_candidates(module2_inputs, tf_target_corr, verbose = verbose)
+}
 #' Correlate FP score with target gene expression
 #'
-#' @param module2_inputs Output from module2_prepare_link_inputs.
-#' @param candidates Output from module2_build_fp_target_candidates.
+#' @param module2_inputs Output from module2_identify_candidate_links.
+#' @param candidates Output from module2_link_fp_targets.
 #' @param n_cores Number of worker cores; NULL uses all available cores.
 #' @param verbose Emit concise progress messages.
 #' @return An FP-target correlation table with pass flags.
@@ -80,7 +114,7 @@ module2_correlate_fp_targets <- function(module2_inputs, candidates, n_cores = N
 }
 #' Assemble final Module 2 TF-FP-target links
 #'
-#' @param module2_inputs Output from module2_prepare_link_inputs.
+#' @param module2_inputs Output from module2_identify_candidate_links.
 #' @param candidates Candidate table.
 #' @param tf_target_corr TF-target correlation table.
 #' @param fp_target_corr FP-target correlation table.
@@ -88,7 +122,7 @@ module2_correlate_fp_targets <- function(module2_inputs, candidates, n_cores = N
 #' @param output_format One of auto, parquet, or csv.
 #' @param verbose Emit concise progress messages.
 #' @return A Module 2 result list.
-#' @export
+#' @noRd
 module2_assemble_links <- function(module2_inputs, candidates, tf_target_corr, fp_target_corr, output_dir = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
   output_format <- match.arg(output_format)
   pred_dt <- unique(data.table::as.data.table(module2_inputs$predicted_tfbs[, c("fp_id", "tf"), drop = FALSE]))
@@ -121,4 +155,27 @@ module2_assemble_links <- function(module2_inputs, candidates, tf_target_corr, f
     out$reports$manifest <- manifest_path
   }
   class(out) <- c("craftgrn_module2", "list"); out
+}
+
+#' Assemble, filter, and output final predicted TF-FP-target links
+#'
+#' @param module2_inputs Output from internal Module 2 input preparation.
+#' @param candidates Candidate table.
+#' @param tf_target_corr TF-target correlation table.
+#' @param fp_target_corr FP-target correlation table.
+#' @param output_dir Optional output directory.
+#' @param output_format One of auto, parquet, or csv.
+#' @param verbose Emit concise progress messages.
+#' @return A Module 2 result list.
+#' @export
+output_predicted_links <- function(module2_inputs, candidates, tf_target_corr, fp_target_corr, output_dir = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
+  module2_assemble_links(
+    module2_inputs = module2_inputs,
+    candidates = candidates,
+    tf_target_corr = tf_target_corr,
+    fp_target_corr = fp_target_corr,
+    output_dir = output_dir,
+    output_format = output_format,
+    verbose = verbose
+  )
 }

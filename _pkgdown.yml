@@ -41,39 +41,37 @@ reference:
   - save_omics_data
   - load_prep_multiomic_data
 
-- title: TF binding site and motif utilities
-  desc: Work with motif resources, footprints, and TF-footprint correlations.
+- title: TF binding site prediction
+  desc: Predict transcription factor binding sites from motif-supported footprints and TF expression.
   contents:
   - predict_tfbs
   - build_module1_qc_report
   - module1_prepare_tfbs_inputs
-  - module1_correlate_motif_supported_tfbs
-  - module1_select_prediction_footprints
-  - module1_predict_tfbs_from_correlations
-  - build_predicted_tfbs
+  - module1_correlate_TF_to_canonical_tfbs
+  - module1_filter_canonical_bound_tfbs
+  - module1_predict_full_tfbs
+  - output_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
 
 
-- title: TF-target linking
-  desc: Connect predicted TF binding sites to target genes and query Module 2 outputs.
+- title: Predict TF targets
+  desc: Predict TF targets through TFBS-target and TF-target correlations.
   contents:
-  - link_tf_targets
+  - predict_tf_targets
   - build_module2_qc_report
-  - module2_prepare_link_inputs
+  - module2_identify_candidate_links
   - module2_correlate_tf_targets
-  - module2_build_fp_target_candidates
+  - module2_link_fp_targets
   - module2_correlate_fp_targets
-  - module2_assemble_links
-  - load_gene_tss
-  - load_module2_links
-  - query_module2_links
-  - validate_module2_links
+  - output_predicted_links
+  - load_predicted_links
+  - query_predicted_links
+  - check_module2_links
   - export_tf_target_bedpe
-  - build_module2_reports
-  - export_top_tf_targets
-  - export_direct_tf_tf_browser
-  - export_tf_tf_connectivity_browser
+  - report_top_tf_targets
+  - report_direct_tf_tf_regulations
+  - report_tf_tf_coregulations
 - title: Regulatory topic modeling
   desc: Build topic model inputs, train models, and extract regulatory topics.
   contents:

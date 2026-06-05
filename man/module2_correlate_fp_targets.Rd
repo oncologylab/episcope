@@ -12,9 +12,9 @@ module2_correlate_fp_targets(
 )
 }
 \arguments{
-\item{module2_inputs}{Output from module2_prepare_link_inputs.}
+\item{module2_inputs}{Output from module2_identify_candidate_links.}
 
-\item{candidates}{Output from module2_build_fp_target_candidates.}
+\item{candidates}{Output from module2_link_fp_targets.}
 
 \item{n_cores}{Number of worker cores; NULL uses all available cores.}
 

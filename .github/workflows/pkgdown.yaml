@@ -51,6 +51,21 @@ jobs:
       - name: Remove local agent instruction pages
         run: |
           unlink(file.path("docs", c("AGENTS.html", "AGENTS.md")), force = TRUE)
+          sitemap <- file.path("docs", "sitemap.xml")
+          if (file.exists(sitemap)) {
+            lines <- readLines(sitemap, warn = FALSE)
+            writeLines(lines[!grepl("AGENTS", lines, fixed = TRUE)], sitemap, useBytes = TRUE)
+          }
+          search <- file.path("docs", "search.json")
+          if (file.exists(search) && requireNamespace("jsonlite", quietly = TRUE)) {
+            index <- jsonlite::fromJSON(search, simplifyVector = FALSE)
+            keep <- vapply(index, function(entry) {
+              path <- entry$path
+              if (is.null(path) || !length(path)) return(TRUE)
+              !grepl("AGENTS", as.character(path), fixed = TRUE)
+            }, logical(1))
+            jsonlite::write_json(index[keep], search, auto_unbox = TRUE)
+          }
         shell: Rscript {0}
 
       - name: Deploy to GitHub Pages

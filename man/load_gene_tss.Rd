@@ -26,3 +26,4 @@ Loads a normalized gene TSS table for Module 2. If `gene_tss` is supplied,
 it is read and normalized. Otherwise the table is built from an installed
 EnsDb annotation matching `ref_genome`.
 }
+\keyword{internal}

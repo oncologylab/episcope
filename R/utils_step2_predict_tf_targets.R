@@ -592,7 +592,7 @@
 #' @param write_qc_report Write a Module 2 HTML QC report when `output_dir` is supplied.
 #' @param qc_report_validate Run relational integrity checks in the automatic QC report.
 #' @return Compact Module 2 relational result list.
-#' @export
+#' @noRd
 link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE, write_qc_report = TRUE, qc_report_validate = FALSE) {
   output_format <- match.arg(output_format)
   stopifnot(is.logical(write_qc_report), length(write_qc_report) == 1L, !is.na(write_qc_report))
@@ -699,6 +699,41 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   out
 }
 
+#' Predict TF targets from predicted TFBS and multiomic data
+#'
+#' @param multiomic_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
+#' @param predicted_tfbs Compact Module 1 predicted TFBS table or manifest path.
+#' @param gene_tss Optional gene TSS annotation table or path. If `NULL`, the
+#'   table is resolved from `project_config$gene_tss` or generated from the
+#'   configured `ref_genome`.
+#' @param regulatory_prior Optional generic FP-target regulatory prior.
+#' @param project_config Optional project YAML path or list.
+#' @param output_dir Optional output directory.
+#' @param max_distance_bp Maximum signed distance to TSS for window candidates.
+#' @param n_cores Number of CPU cores.
+#' @param output_format Output format: auto, parquet, or csv.
+#' @param verbose Emit concise progress messages.
+#' @param write_qc_report Write a Module 2 HTML QC report when `output_dir` is supplied.
+#' @param qc_report_validate Run relational integrity checks in the automatic QC report.
+#' @return Compact Module 2 relational result list.
+#' @export
+predict_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, regulatory_prior = NULL, project_config = NULL, output_dir = NULL, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE, write_qc_report = TRUE, qc_report_validate = FALSE) {
+  link_tf_targets(
+    multiomic_data = multiomic_data,
+    predicted_tfbs = predicted_tfbs,
+    gene_tss = gene_tss,
+    regulatory_prior = regulatory_prior,
+    project_config = project_config,
+    output_dir = output_dir,
+    max_distance_bp = max_distance_bp,
+    n_cores = n_cores,
+    output_format = output_format,
+    verbose = verbose,
+    write_qc_report = write_qc_report,
+    qc_report_validate = qc_report_validate
+  )
+}
+
 .module2_condition_activity <- function(links, predicted_tfbs, multiomic_data) {
   if (!nrow(links)) return(tibble::tibble(link_id = character(), condition = character(), tf_expr = numeric(), target_expr = numeric(), fp_score = numeric(), fp_bound = logical(), atac_score = numeric(), active = logical()))
   mats <- multiomic_data$matrices
@@ -725,7 +760,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
 #'
 #' @param path Module 2 output directory or module2_manifest.csv path.
 #' @return A named list of tables.
-#' @export
+#' @noRd
 load_module2_links <- function(path) {
   if (dir.exists(path)) path <- file.path(path, "module2_manifest.csv")
   if (!file.exists(path)) .log_abort("Module 2 manifest not found: {path}")
@@ -748,6 +783,15 @@ load_module2_links <- function(path) {
   out
 }
 
+#' Load predicted TF-target links from Module 2
+#'
+#' @param path Module 2 output directory or module2_manifest.csv path.
+#' @return A named list of Module 2 tables.
+#' @export
+load_predicted_links <- function(path) {
+  load_module2_links(path)
+}
+
 #' Query Module 2 links
 #'
 #' @param module2 Module 2 result list or loaded output list.
@@ -756,7 +800,7 @@ load_module2_links <- function(path) {
 #' @param target_gene Optional target-gene filter.
 #' @param pass_only Keep only passing links.
 #' @return A tibble of matching final links.
-#' @export
+#' @noRd
 query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = NULL, pass_only = TRUE) {
   links <- if (is.data.frame(module2$links) && ncol(module2$links)) module2$links else module2$module2_links
   link_manifest <- module2$module2_links_manifest
@@ -785,11 +829,39 @@ query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = 
   .log_abort("Module 2 links table not found.")
 }
 
+#' Query predicted TF-target links
+#'
+#' @param module2 Module 2 result list or loaded output list.
+#' @param tf Optional TF filter.
+#' @param fp_id Optional FP filter.
+#' @param target_gene Optional target-gene filter.
+#' @param max_distance_to_tss Optional maximum absolute distance to TSS.
+#' @param pass_only Keep only passing links.
+#' @return A tibble of matching final links.
+#' @export
+query_predicted_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = NULL, max_distance_to_tss = NULL, pass_only = TRUE) {
+  links <- query_module2_links(module2, tf = tf, fp_id = fp_id, target_gene = target_gene, pass_only = pass_only)
+  if (!is.null(max_distance_to_tss)) {
+    candidates <- if (is.data.frame(module2$candidates) && nrow(module2$candidates)) {
+      module2$candidates
+    } else if (is.data.frame(module2$module2_fp_target_candidates) && nrow(module2$module2_fp_target_candidates)) {
+      module2$module2_fp_target_candidates
+    } else {
+      .module2_report_read_table(module2, "module2_fp_target_candidates", columns = c("candidate_id", "distance_to_tss"))
+    }
+    if (!"distance_to_tss" %in% names(candidates)) .log_abort("Module 2 candidate table does not contain distance_to_tss.")
+    cand <- candidates[, intersect(c("candidate_id", "distance_to_tss"), names(candidates)), drop = FALSE]
+    links <- dplyr::left_join(links, cand, by = "candidate_id")
+    links <- links[is.finite(links$distance_to_tss) & abs(links$distance_to_tss) <= as.numeric(max_distance_to_tss)[[1L]], , drop = FALSE]
+  }
+  tibble::as_tibble(links)
+}
+
 #' Validate Module 2 links
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @return TRUE invisibly when valid.
-#' @export
+#' @noRd
 validate_module2_links <- function(module2) {
   links <- if (is.data.frame(module2$links) && ncol(module2$links)) module2$links else module2$module2_links
   if (!is.data.frame(links) && is.data.frame(module2$module2_links_manifest)) links <- module2$module2_links_manifest
@@ -800,8 +872,20 @@ validate_module2_links <- function(module2) {
   }
   need <- c("link_id", "tf", "fp_id", "target_gene", "candidate_id", "module2_link_pass")
   missing <- setdiff(need, names(links))
-  if (length(missing)) .log_abort("Module 2 links missing required columns: {paste(missing, collapse = ", ")}.")
+  if (length(missing)) {
+    missing_label <- paste(missing, collapse = ", ")
+    .log_abort("Module 2 links missing required columns: {missing_label}.")
+  }
   invisible(TRUE)
+}
+
+#' Perform sanity checks for predicted Module 2 links
+#'
+#' @param module2 Module 2 result list or loaded output list.
+#' @return TRUE invisibly when valid.
+#' @export
+check_module2_links <- function(module2) {
+  validate_module2_links(module2)
 }
 
 #' Export Module 2 links as BEDPE
@@ -812,7 +896,7 @@ validate_module2_links <- function(module2) {
 #' @return Output path invisibly.
 #' @export
 export_tf_target_bedpe <- function(module2, output_file, tf = NULL) {
-  links <- query_module2_links(module2, tf = tf, pass_only = TRUE)
+  links <- query_predicted_links(module2, tf = tf, pass_only = TRUE)
   candidates <- if (is.data.frame(module2$candidates)) module2$candidates else module2$module2_fp_target_candidates
   if (!is.data.frame(candidates)) .log_abort("Module 2 candidate table not found.")
   need <- c("candidate_id", "chr", "start", "end", "target_chr", "target_tss")

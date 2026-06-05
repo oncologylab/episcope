@@ -284,9 +284,27 @@
 #' @param prediction_stats Module 1 TFBS prediction statistic table.
 #' @param include_support Include compact condition support when available.
 #' @return A tibble with one row per predicted FP-TF binding event.
-#' @export
+#' @noRd
 build_predicted_tfbs <- function(prediction_stats, include_support = TRUE) {
   .build_predicted_tfbs_table(prediction_stats, include_support = include_support)
+}
+
+#' Output predicted TFBS from Module 1
+#'
+#' @param prediction_stats Module 1 TFBS prediction statistic table.
+#' @param out_dir Optional output directory. If supplied, a predicted TFBS table
+#'   and manifest are written for Module 2.
+#' @param output_format Output format: auto, parquet, or csv.
+#' @param include_support Include compact condition support when available.
+#' @return A predicted TFBS tibble when `out_dir` is NULL; otherwise a list with
+#'   output paths and row counts.
+#' @export
+output_predicted_tfbs <- function(prediction_stats, out_dir = NULL, output_format = c("auto", "parquet", "csv"), include_support = TRUE) {
+  predicted_tfbs <- build_predicted_tfbs(prediction_stats, include_support = include_support)
+  if (is.null(out_dir) || !nzchar(out_dir)) {
+    return(predicted_tfbs)
+  }
+  .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
 }
 
 .predicted_tfbs_output_format <- function(output_format = c("auto", "parquet", "csv")) {

@@ -187,7 +187,7 @@ correlations are computed only for those restricted FP-target candidates within
 the TSS window or supported by regulatory prior evidence.
 
 ```{r module-2, eval = FALSE, purl=FALSE}
-module2 <- link_tf_targets(
+module2 <- predict_tf_targets(
   multiomic_data = module1$omics_data,
   predicted_tfbs = module1$predicted_tfbs,
   gene_tss = gene_tss,
@@ -196,7 +196,7 @@ module2 <- link_tf_targets(
   output_dir = "connect_tf_target_genes"
 )
 
-hnf4a_links <- query_module2_links(module2, tf = "HNF4A")
+hnf4a_links <- query_predicted_links(module2, tf = "HNF4A")
 
 module2_qc <- build_module2_qc_report(
   module2,

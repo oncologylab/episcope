@@ -121,7 +121,7 @@ test_that("Module 2 QC report writes an HTML summary", {
   )
   gene_tss <- tibble::tibble(target_gene = c("GENE_UP", "GENE_DOWN"), target_chr = "chr1", target_tss = c(120L, 520L), target_strand = "+")
   out_dir <- tempfile("module2-qc-")
-  result <- link_tf_targets(
+  result <- predict_tf_targets(
     compact,
     predicted,
     gene_tss,

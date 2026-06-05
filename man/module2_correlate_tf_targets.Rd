@@ -7,7 +7,7 @@
 module2_correlate_tf_targets(module2_inputs, n_cores = NULL, verbose = TRUE)
 }
 \arguments{
-\item{module2_inputs}{Output from module2_prepare_link_inputs.}
+\item{module2_inputs}{Output from module2_identify_candidate_links.}
 
 \item{n_cores}{Number of worker cores; NULL uses all available cores.}
 

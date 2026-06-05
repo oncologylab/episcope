@@ -39,7 +39,7 @@ module1_prepare_tfbs_inputs <- function(omics_data, label_col = NULL, tf_subset 
 #' @param cores Number of worker cores; NULL uses all available cores.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble with Pearson, Spearman, best-method statistics, and pass flags.
-#' @export
+#' @noRd
 module1_correlate_motif_supported_tfbs <- function(module1_inputs, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, verbose = TRUE) {
   omics_data <- module1_inputs$omics_data
   pairs <- .module1_motif_supported_pairs(omics_data, tf_subset = module1_inputs$expressed_tfs)
@@ -49,17 +49,40 @@ module1_correlate_motif_supported_tfbs <- function(module1_inputs, r_cutoff = 0.
   .module1_merge_correlation_stats(raw[, c("fp_id", "atac_peak", "tf", "motifs", "pearson_r", "pearson_p", "pearson_p_adj"), drop = FALSE], raw[, c("fp_id", "atac_peak", "tf", "motifs", "spearman_r", "spearman_p", "spearman_p_adj"), drop = FALSE], r_cutoff = r_cutoff, p_cutoff = p_cutoff, fdr_cutoff = fdr_cutoff)
 }
 
+#' Correlate TFs to their canonical TFBS
+#'
+#' @param module1_inputs Output from module1_prepare_tfbs_inputs.
+#' @param r_cutoff Minimum positive best correlation.
+#' @param p_cutoff Optional best-method p-value cutoff.
+#' @param fdr_cutoff Optional best-method FDR cutoff.
+#' @param min_non_na Minimum finite condition pairs required.
+#' @param cores Number of worker cores; NULL uses all available cores.
+#' @param verbose Emit concise progress messages.
+#' @return A tibble with Pearson, Spearman, best-method statistics, and pass flags.
+#' @export
+module1_correlate_TF_to_canonical_tfbs <- function(module1_inputs, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, verbose = TRUE) {
+  module1_correlate_motif_supported_tfbs(
+    module1_inputs = module1_inputs,
+    r_cutoff = r_cutoff,
+    p_cutoff = p_cutoff,
+    fdr_cutoff = fdr_cutoff,
+    min_non_na = min_non_na,
+    cores = cores,
+    verbose = verbose
+  )
+}
+
 #' Select footprints for Module 1 TFBS prediction
 #'
 #' @param module1_inputs Output from module1_prepare_tfbs_inputs.
-#' @param motif_supported_correlations Output from module1_correlate_motif_supported_tfbs.
+#' @param motif_supported_correlations Output from module1_correlate_TF_to_canonical_tfbs.
 #' @param r_cutoff Minimum positive best correlation.
 #' @param p_cutoff Optional p-value cutoff.
 #' @param fdr_cutoff Optional FDR cutoff.
 #' @param filter_to_canonical_bound Keep only footprints with a passing motif-supported TF.
 #' @param verbose Emit concise progress messages.
 #' @return A list with high-confidence and prediction footprint tables.
-#' @export
+#' @noRd
 module1_select_prediction_footprints <- function(module1_inputs, motif_supported_correlations, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, filter_to_canonical_bound = TRUE, verbose = TRUE) {
   high <- .module1_select_high_confidence_footprints(motif_supported_correlations, r_cutoff = r_cutoff, p_cutoff = p_cutoff, fdr_cutoff = fdr_cutoff)
   canonical_fp_ids <- unique(high$fp_id)
@@ -80,10 +103,33 @@ module1_select_prediction_footprints <- function(module1_inputs, motif_supported
   list(high_confidence_footprints = high, prediction_footprints = pred, canonical_fp_ids = canonical_fp_ids, n_removed = length(setdiff(module1_inputs$fp_universe, canonical_fp_ids)))
 }
 
+#' Filter footprints with canonical binding for full TFBS prediction
+#'
+#' @param module1_inputs Output from module1_prepare_tfbs_inputs.
+#' @param motif_supported_correlations Output from module1_correlate_TF_to_canonical_tfbs.
+#' @param r_cutoff Minimum positive best correlation.
+#' @param p_cutoff Optional p-value cutoff.
+#' @param fdr_cutoff Optional FDR cutoff.
+#' @param filter_to_canonical_bound Keep only footprints with a passing motif-supported TF.
+#' @param verbose Emit concise progress messages.
+#' @return A list with canonical-bound and prediction footprint tables.
+#' @export
+module1_filter_canonical_bound_tfbs <- function(module1_inputs, motif_supported_correlations, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, filter_to_canonical_bound = TRUE, verbose = TRUE) {
+  module1_select_prediction_footprints(
+    module1_inputs = module1_inputs,
+    motif_supported_correlations = motif_supported_correlations,
+    r_cutoff = r_cutoff,
+    p_cutoff = p_cutoff,
+    fdr_cutoff = fdr_cutoff,
+    filter_to_canonical_bound = filter_to_canonical_bound,
+    verbose = verbose
+  )
+}
+
 #' Predict TFBS from selected Module 1 footprints
 #'
 #' @param module1_inputs Output from module1_prepare_tfbs_inputs.
-#' @param prediction_footprints Footprint table from module1_select_prediction_footprints.
+#' @param prediction_footprints Footprint table from module1_filter_canonical_bound_tfbs.
 #' @param out_dir Output directory.
 #' @param r_cutoff Minimum positive best correlation.
 #' @param p_cutoff Optional best-method p-value cutoff.
@@ -95,7 +141,7 @@ module1_select_prediction_footprints <- function(module1_inputs, motif_supported
 #' @param return_prediction_stats Return full prediction statistics in memory.
 #' @param verbose Emit concise progress messages.
 #' @return A list with prediction statistics or manifests and predicted_tfbs.
-#' @export
+#' @noRd
 module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_footprints, out_dir = "predict_tf_binding_sites", r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = TRUE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
   output_format <- .module1_output_format(output_format)
   pair_count <- as.double(nrow(prediction_footprints)) * as.double(length(module1_inputs$expressed_tfs))
@@ -110,4 +156,37 @@ module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_fo
     pred_paths <- if (isTRUE(write_outputs)) .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format) else NULL
   }
   list(prediction_stats = streamed$prediction_stats, prediction_stats_manifest = streamed$prediction_stats_manifest, prediction_stats_manifest_path = streamed$prediction_stats_manifest_path, predicted_tfbs = predicted_tfbs, predicted_tfbs_paths = pred_paths, prediction_pair_count = streamed$prediction_pair_count, n_prediction_stats = streamed$n_prediction_stats)
+}
+
+#' Predict full TFBS for all expressed TFs
+#'
+#' @param module1_inputs Output from module1_prepare_tfbs_inputs.
+#' @param prediction_footprints Footprint table from module1_filter_canonical_bound_tfbs.
+#' @param out_dir Output directory.
+#' @param r_cutoff Minimum positive best correlation.
+#' @param p_cutoff Optional best-method p-value cutoff.
+#' @param fdr_cutoff Optional best-method FDR cutoff.
+#' @param min_non_na Minimum finite condition pairs required.
+#' @param cores Number of worker cores; NULL uses all available cores.
+#' @param write_outputs Write predicted TFBS outputs.
+#' @param output_format One of csv, parquet, or auto.
+#' @param return_prediction_stats Return full prediction statistics in memory.
+#' @param verbose Emit concise progress messages.
+#' @return A list with prediction statistics or manifests and predicted TFBS outputs.
+#' @export
+module1_predict_full_tfbs <- function(module1_inputs, prediction_footprints, out_dir = "predict_tf_binding_sites", r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = TRUE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
+  module1_predict_tfbs_from_correlations(
+    module1_inputs = module1_inputs,
+    prediction_footprints = prediction_footprints,
+    out_dir = out_dir,
+    r_cutoff = r_cutoff,
+    p_cutoff = p_cutoff,
+    fdr_cutoff = fdr_cutoff,
+    min_non_na = min_non_na,
+    cores = cores,
+    write_outputs = write_outputs,
+    output_format = output_format,
+    return_prediction_stats = return_prediction_stats,
+    verbose = verbose
+  )
 }

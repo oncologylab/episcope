@@ -18,7 +18,7 @@ module3_prepare_differential_links(
 )
 }
 \arguments{
-\item{module2}{Module 2 object returned by [link_tf_targets()] or a path to a
+\item{module2}{Module 2 object returned by [predict_tf_targets()] or a path to a
 Module 2 output directory containing `module2_manifest.csv`.}
 
 \item{multiomic_data}{CraftGRN multiomic object returned by
