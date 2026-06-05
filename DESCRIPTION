@@ -1,11 +1,11 @@
 Package: craftgrn
-Title: Integrative ATAC-RNA Framework for Condition-Specific Gene Regulatory Networks
-Version: 0.1.2
+Title: Integrative Chromatin Accessibility and RNA Framework for Gene Regulatory Networks
+Version: 0.1.3
 Authors@R: c(
     person("Yaoxiang", "Li", , "liyaoxiang@outlook.com", role = c("aut", "cre")),
     person("Chunling", "Yi", role = "aut")
   )
-Description: Provides a reproducible framework for constructing and comparing gene regulatory networks by integrating bulk ATAC-seq footprinting with matched RNA-seq expression data. It implements context-specific enhancer-gene linking, TF-centric and differential GRN analysis, and benchmarking modules for systematic exploration of transcriptional regulation under diverse conditions.
+Description: Provides a reproducible framework for constructing and comparing gene regulatory networks by integrating chromatin accessibility footprint scores with matched RNA expression data. It implements context-specific enhancer-gene linking, transcription factor focused network analysis, differential network analysis, and regulatory topic modeling workflows for systematic exploration of gene regulation across conditions.
 License: GPL (>= 3)
 Depends:
     R (>= 4.1.0)

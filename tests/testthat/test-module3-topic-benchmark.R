@@ -178,7 +178,8 @@ test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
     k_grid = 2L
   )
   vae_dir <- file.path(root, plan$model_dir[[1L]], "vae_models")
-  dir.create(vae_dir, recursive = TRUE)
+  dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
+  expect_true(dir.exists(vae_dir))
   data.table::fwrite(
     data.table::data.table(doc_id = c("CondA::TF1", "CondB::TF1"), Topic1 = c(0.9, 0.1), Topic2 = c(0.1, 0.9)),
     file.path(vae_dir, "theta_K2.csv")
@@ -235,7 +236,8 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
   )
   for (i in seq_len(nrow(plan))) {
     vae_dir <- file.path(root, plan$model_dir[[i]], "vae_models")
-    dir.create(vae_dir, recursive = TRUE)
+    dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
+    expect_true(dir.exists(vae_dir))
     if (identical(plan$context_type[[i]], "condition")) {
       theta <- data.table::data.table(
         doc_id = c("CondA_1::TF1", "CondA_2::TF1", "CondB_1::TF1", "CondB_2::TF1"),

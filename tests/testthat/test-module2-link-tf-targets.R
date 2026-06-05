@@ -235,7 +235,10 @@ test_that("Module 2 top TF target reports write self-contained HTML", {
   man <- report_top_tf_targets(res, output_dir = out_dir, tfs = "TF_A", top_n = 1L, verbose = FALSE)
   expect_equal(nrow(man), 1L)
   expect_true(file.exists(man$path[[1L]]))
-  expect_equal(dirname(man$path[[1L]]), out_dir)
+  expect_equal(
+    normalizePath(dirname(man$path[[1L]]), winslash = "/", mustWork = FALSE),
+    normalizePath(out_dir, winslash = "/", mustWork = FALSE)
+  )
   html <- readLines(man$path[[1L]], warn = FALSE)
   expect_true(any(grepl("Export SVG", html, fixed = TRUE)))
   expect_true(any(grepl("const FULL_NODES", html, fixed = TRUE)))
@@ -276,7 +279,10 @@ test_that("Module 2 report builder writes distinct direct and connectivity HTML"
   )
   expect_equal(nrow(man), 2L)
   expect_true(all(file.exists(man$path)))
-  expect_true(all(dirname(man$path) == out_dir))
+  expect_true(all(
+    normalizePath(dirname(man$path), winslash = "/", mustWork = FALSE) ==
+      normalizePath(out_dir, winslash = "/", mustWork = FALSE)
+  ))
   direct_html <- paste(readLines(man$path[man$report == "direct_tf_tf"][[1L]], warn = FALSE), collapse = "\n")
   conn_html <- paste(readLines(man$path[man$report == "tf_tf_connectivity"][[1L]], warn = FALSE), collapse = "\n")
   expect_true(grepl("Direct TF heatmap", direct_html, fixed = TRUE))
