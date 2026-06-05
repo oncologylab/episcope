@@ -60,7 +60,7 @@ module2_build_fp_target_candidates <- function(module2_inputs, tf_target_corr, v
   cand
 }
 
-#' Identify Module 2 candidate-link inputs
+#' Link TFs to potential target genes based on TFBS-TSS proximity or 3D interaction data
 #'
 #' @param multiomic_data CraftGRN multiomic object.
 #' @param predicted_tfbs Predicted TFBS table or path from Module 1.

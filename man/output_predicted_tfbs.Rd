@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step1_predicted_tfbs.R
 \name{output_predicted_tfbs}
 \alias{output_predicted_tfbs}
-\title{Output predicted TFBS from Module 1}
+\title{Output predicted TFBS}
 \usage{
 output_predicted_tfbs(
   prediction_stats,
@@ -26,5 +26,5 @@ A predicted TFBS tibble when `out_dir` is NULL; otherwise a list with
   output paths and row counts.
 }
 \description{
-Output predicted TFBS from Module 1
+Output predicted TFBS
 }

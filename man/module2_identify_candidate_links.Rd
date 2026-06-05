@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_steps.R
 \name{module2_identify_candidate_links}
 \alias{module2_identify_candidate_links}
-\title{Identify Module 2 candidate-link inputs}
+\title{Link TFs to potential target genes based on TFBS-TSS proximity or 3D interaction data}
 \usage{
 module2_identify_candidate_links(
   multiomic_data,
@@ -33,5 +33,5 @@ module2_identify_candidate_links(
 A list of normalized Module 2 inputs used by downstream step functions.
 }
 \description{
-Identify Module 2 candidate-link inputs
+Link TFs to potential target genes based on TFBS-TSS proximity or 3D interaction data
 }

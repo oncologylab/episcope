@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_predict_tf_targets.R
 \name{predict_tf_targets}
 \alias{predict_tf_targets}
-\title{Predict TF targets from predicted TFBS and multiomic data}
+\title{Predict TF targets through TFBS-target and TF-target correlations}
 \usage{
 predict_tf_targets(
   multiomic_data,
@@ -50,5 +50,5 @@ configured `ref_genome`.}
 Compact Module 2 relational result list.
 }
 \description{
-Predict TF targets from predicted TFBS and multiomic data
+Predict TF targets through TFBS-target and TF-target correlations
 }

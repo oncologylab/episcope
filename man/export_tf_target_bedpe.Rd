@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_predict_tf_targets.R
 \name{export_tf_target_bedpe}
 \alias{export_tf_target_bedpe}
-\title{Export Module 2 links as BEDPE}
+\title{Export predicted TF-target links as BEDPE}
 \usage{
 export_tf_target_bedpe(module2, output_file, tf = NULL)
 }
@@ -17,5 +17,5 @@ export_tf_target_bedpe(module2, output_file, tf = NULL)
 Output path invisibly.
 }
 \description{
-Export Module 2 links as BEDPE
+Export predicted TF-target links as BEDPE
 }

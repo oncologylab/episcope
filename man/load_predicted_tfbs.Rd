@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step1_predicted_tfbs.R
 \name{load_predicted_tfbs}
 \alias{load_predicted_tfbs}
-\title{Load compact predicted TFBS output}
+\title{Load TFBS predicted from Module 1}
 \usage{
 load_predicted_tfbs(path)
 }
@@ -13,5 +13,5 @@ load_predicted_tfbs(path)
 A tibble.
 }
 \description{
-Load compact predicted TFBS output
+Load TFBS predicted from Module 1
 }

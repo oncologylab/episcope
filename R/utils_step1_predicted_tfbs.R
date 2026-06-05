@@ -289,7 +289,7 @@ build_predicted_tfbs <- function(prediction_stats, include_support = TRUE) {
   .build_predicted_tfbs_table(prediction_stats, include_support = include_support)
 }
 
-#' Output predicted TFBS from Module 1
+#' Output predicted TFBS
 #'
 #' @param prediction_stats Module 1 TFBS prediction statistic table.
 #' @param out_dir Optional output directory. If supplied, a predicted TFBS table
@@ -374,7 +374,7 @@ output_predicted_tfbs <- function(prediction_stats, out_dir = NULL, output_forma
   list(path = manifest_path, manifest = manifest_path, chunks = chunk_dir, format = output_format, n_rows = sum(manifest$n_rows))
 }
 
-#' Load compact predicted TFBS output
+#' Load TFBS predicted from Module 1
 #'
 #' @param path Path to a predicted TFBS manifest, Parquet file, or CSV file.
 #' @return A tibble.

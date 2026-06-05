@@ -955,7 +955,7 @@ export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbos
   tibble::as_tibble(out)
 }
 
-#' Export an interactive HTML browser of individual TF target networks
+#' Export an interactive HTML browser of individual TF regulons
 #'
 #' @param module2 Module 2 result list, loaded output list, or output directory.
 #' @param output_dir Output directory.

@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_predict_tf_targets.R
 \name{load_predicted_links}
 \alias{load_predicted_links}
-\title{Load predicted TF-target links from Module 2}
+\title{Load Module 2 outputs}
 \usage{
 load_predicted_links(path)
 }
@@ -13,5 +13,5 @@ load_predicted_links(path)
 A named list of Module 2 tables.
 }
 \description{
-Load predicted TF-target links from Module 2
+Load Module 2 outputs
 }

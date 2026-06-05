@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_reports.R
 \name{report_top_tf_targets}
 \alias{report_top_tf_targets}
-\title{Export an interactive HTML browser of individual TF target networks}
+\title{Export an interactive HTML browser of individual TF regulons}
 \usage{
 report_top_tf_targets(module2, output_dir, tfs, top_n = 100L, verbose = TRUE)
 }
@@ -21,5 +21,5 @@ report_top_tf_targets(module2, output_dir, tfs, top_n = 100L, verbose = TRUE)
 A tibble report manifest.
 }
 \description{
-Export an interactive HTML browser of individual TF target networks
+Export an interactive HTML browser of individual TF regulons
 }

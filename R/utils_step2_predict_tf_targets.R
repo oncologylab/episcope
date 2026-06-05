@@ -699,7 +699,7 @@ link_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, reg
   out
 }
 
-#' Predict TF targets from predicted TFBS and multiomic data
+#' Predict TF targets through TFBS-target and TF-target correlations
 #'
 #' @param multiomic_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
 #' @param predicted_tfbs Compact Module 1 predicted TFBS table or manifest path.
@@ -783,7 +783,7 @@ load_module2_links <- function(path) {
   out
 }
 
-#' Load predicted TF-target links from Module 2
+#' Load Module 2 outputs
 #'
 #' @param path Module 2 output directory or module2_manifest.csv path.
 #' @return A named list of Module 2 tables.
@@ -829,7 +829,7 @@ query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = 
   .log_abort("Module 2 links table not found.")
 }
 
-#' Query predicted TF-target links
+#' Query specific Module 2 links by TFs or distance to TSS
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @param tf Optional TF filter.
@@ -888,7 +888,7 @@ check_module2_links <- function(module2) {
   validate_module2_links(module2)
 }
 
-#' Export Module 2 links as BEDPE
+#' Export predicted TF-target links as BEDPE
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @param output_file BEDPE output file.
