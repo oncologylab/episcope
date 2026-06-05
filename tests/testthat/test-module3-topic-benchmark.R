@@ -8,8 +8,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   )
   expect_equal(plan$method_setup, "cond fp aggr weight | LDA")
 
-  model_dir <- plan$model_dir[[1L]]
-  model_dir <- file.path(root, model_dir)
+  model_dir <- file.path(root, "topic_models", "lda", "fixture_model")
   vae_dir <- file.path(model_dir, "vae_models")
   dir.create(vae_dir, recursive = TRUE)
 
@@ -38,10 +37,9 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
 
   extraction_dir <- file.path(
     root,
-    plan$setup[[1L]],
-    "02_topic_extraction",
-    "condition_aggr_weight_lda_K2",
-    plan$combo_id[[1L]]
+    "topic_extraction",
+    "K2",
+    "condition_aggr_weight_lda"
   )
   dir.create(extraction_dir, recursive = TRUE)
   topic_links <- data.table::data.table(
@@ -69,6 +67,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     comparisons = comparisons,
     methods = "condition_aggr_weight_lda",
     k_grid = c(2L, 3L),
+    output_layout = "standard",
     run_training = FALSE,
     run_extraction = FALSE,
     run_reports = TRUE,
@@ -76,16 +75,16 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     verbose = FALSE
   )
 
-  csv_dir <- file.path(root, "review_topic_experiments", "csv")
-  html_dir <- file.path(root, "review_topic_experiments", "html")
+  csv_dir <- file.path(root, "review", "csv")
+  html_dir <- file.path(root, "review", "html")
 
   expect_s3_class(res$method_plan, "data.table")
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_long.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_pass_state_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_shared_topic_counts.csv")))
-  expect_true(file.exists(file.path(root, "review_topic_experiments", "tf_std_six_setups_pass_state_counts.pdf")))
-  expect_true(file.exists(file.path(root, "review_topic_experiments", "tf_std_six_setups_shared_topic_counts.pdf")))
+  expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_pass_state_counts.pdf")))
+  expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_shared_topic_counts.pdf")))
   expect_true(file.exists(file.path(html_dir, "theta_phi_and_group_mds.html")))
   expect_true(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report.html")))
   expect_true(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html")))
@@ -177,7 +176,7 @@ test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
     methods = "condition_aggr_weight_lda",
     k_grid = 2L
   )
-  vae_dir <- file.path(root, plan$model_dir[[1L]], "vae_models")
+  vae_dir <- file.path(root, "topic_models", "lda", "fixture_model", "vae_models")
   dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
   expect_true(dir.exists(vae_dir))
   data.table::fwrite(
@@ -200,6 +199,7 @@ test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
     comparisons = comparisons,
     methods = "condition_aggr_weight_lda",
     k_grid = 2L,
+    output_layout = "standard",
     run_training = FALSE,
     run_extraction = FALSE,
     run_reports = TRUE,
@@ -230,12 +230,16 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
   root <- tempfile("module3-topic-benchmark-replicates-")
   dir.create(root, recursive = TRUE)
 
-  plan <- .module3_topic_method_plan(
-    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
-    k_grid = 2L
+  plan <- .m3tb_apply_output_layout(
+    .module3_topic_method_plan(
+      methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+      k_grid = 2L
+    ),
+    root,
+    "benchmark"
   )
   for (i in seq_len(nrow(plan))) {
-    vae_dir <- file.path(root, plan$model_dir[[i]], "vae_models")
+    vae_dir <- file.path(plan$topic_models_dir[[i]], "fixture_model", "vae_models")
     dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
     expect_true(dir.exists(vae_dir))
     if (identical(plan$context_type[[i]], "condition")) {
@@ -287,6 +291,7 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
     output_dir = root,
     methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
     k_grid = 2L,
+    output_layout = "benchmark",
     replicate_documents = TRUE,
     run_training = FALSE,
     run_extraction = FALSE,
@@ -294,7 +299,7 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
     verbose = FALSE
   )
 
-  csv_dir <- file.path(root, "review_topic_experiments", "csv")
+  csv_dir <- file.path(root, "review", "csv")
   expect_true(file.exists(file.path(csv_dir, "theta_condition_replicate_separation_score_heatmap_values_matrix.csv")))
   expect_false(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
   expect_equal(res$score$score_prefix, "theta_condition_replicate_separation")
