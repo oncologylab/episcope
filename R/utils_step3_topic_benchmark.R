@@ -637,7 +637,7 @@
   roots <- unique(roots[dir.exists(roots)])
   if (!length(roots)) return(character())
   files <- unlist(lapply(roots, function(root) {
-    list.files(root, "topic_links[.]csv$", recursive = TRUE, full.names = TRUE)
+    list.files(root, "topic_links(_pass)?[.]csv([.]gz)?$", recursive = TRUE, full.names = TRUE)
   }), use.names = FALSE)
   if (!length(files) || !"selected_k" %in% names(row)) return(files)
   k <- as.integer(row$selected_k[[1L]])
@@ -1035,4 +1035,346 @@ run_module3_topic_benchmark <- function(filtered_dir,
     replicate_documents = isTRUE(replicate_documents),
     multiomic_data_provided = !is.null(multiomic_data)
   ))
+}
+
+#' Prepare Module 3 topic-model inputs
+#'
+#' Builds and caches the document-level link table, document-term table, sparse
+#' document-term matrix, and summary metadata used by Module 3 topic modeling.
+#' This step is useful when you want to inspect topic inputs before training or
+#' reuse the same input cache for extraction.
+#'
+#' @param filtered_dir Directory containing Module 3 filtered differential-link
+#'   CSV files.
+#' @param output_dir Directory where topic input caches are written.
+#' @param tf_cluster_map Named vector mapping TF names to motif clusters.
+#' @param doc_mode Document mode, either `"tf"` or `"tf_cluster"`.
+#' @param doc_design Document design, either `"condition"` or `"comparison"`.
+#' @param fp_term_mode Footprint term mode: `"aggregate_weight"`,
+#'   `"aggregate"`, or `"unique"`.
+#' @param gene_term_mode Gene term mode passed to comparison document-term
+#'   construction.
+#' @param sample_subset Optional condition/sample labels to retain.
+#' @param analysis_label Label written to the input summary.
+#' @param count_method Count conversion method.
+#' @param count_scale Count scaling factor.
+#' @param threshold_gene_expr Minimum condition-level target-gene expression.
+#' @param threshold_fp_score Minimum condition-level footprint score.
+#' @param threshold_tf_expr Minimum condition-level TF expression.
+#' @param include_tf_terms Whether to include TF self-terms.
+#' @param top_terms_per_doc Optional maximum terms per document.
+#' @param min_df Minimum document frequency for terms.
+#' @param abs_log2fc_fp_min Minimum absolute footprint fold-change filter.
+#' @param abs_delta_fp_min Minimum absolute footprint delta filter.
+#' @param abs_log2fc_gene_min Minimum absolute target-gene fold-change filter.
+#' @param require_fp_bound_either Require footprint binding in either condition.
+#' @param require_tf_expr_either Require TF expression in either condition.
+#' @param require_gene_expr_either Require target-gene expression in either
+#'   condition.
+#' @param direction_consistency Direction consistency filter mode.
+#' @param save_full_doc_term_csv Whether to write the full document-term CSV.
+#' @param overwrite If FALSE, reuse an existing complete cache.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return A list with cache paths and input summary counts.
+#' @export
+module3_prepare_topic_inputs <- function(filtered_dir,
+                                         output_dir,
+                                         tf_cluster_map,
+                                         doc_mode = c("tf", "tf_cluster"),
+                                         doc_design = c("condition", "comparison"),
+                                         fp_term_mode = c("aggregate_weight", "aggregate", "unique"),
+                                         gene_term_mode = c("unique", "aggregate"),
+                                         sample_subset = NULL,
+                                         analysis_label = NULL,
+                                         count_method = c("bin", "log"),
+                                         count_scale = 50,
+                                         threshold_gene_expr = 0,
+                                         threshold_fp_score = 0,
+                                         threshold_tf_expr = -Inf,
+                                         include_tf_terms = TRUE,
+                                         top_terms_per_doc = Inf,
+                                         min_df = 2,
+                                         abs_log2fc_fp_min = 0,
+                                         abs_delta_fp_min = 1,
+                                         abs_log2fc_gene_min = 1,
+                                         require_fp_bound_either = TRUE,
+                                         require_tf_expr_either = TRUE,
+                                         require_gene_expr_either = TRUE,
+                                         direction_consistency = "aligned",
+                                         save_full_doc_term_csv = FALSE,
+                                         overwrite = FALSE,
+                                         verbose = TRUE) {
+  .assert_pkg("data.table")
+  .assert_pkg("Matrix")
+  doc_mode <- match.arg(doc_mode)
+  doc_design <- match.arg(doc_design)
+  fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
+  gene_term_mode <- match.arg(gene_term_mode)
+  count_method <- match.arg(count_method)
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  rds_dir <- file.path(output_dir, "rds")
+  required_cache <- file.path(rds_dir, c("edges_docs.rds", "doc_term.rds", "dtm.rds", "dtm_index.rds"))
+  summary_path <- file.path(output_dir, "topic_input_summary.csv")
+  if (!isTRUE(overwrite) && all(file.exists(required_cache)) && file.exists(summary_path)) {
+    if (isTRUE(verbose)) .log_inform("Reusing existing Module 3 topic input cache: {output_dir}")
+    summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
+    return(invisible(list(output_dir = output_dir, summary = summary_dt, reused = TRUE)))
+  }
+  delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+  if (!length(delta_files)) {
+    delta_files <- list.files(filtered_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
+  }
+  if (!length(delta_files)) {
+    delta_files <- list.files(filtered_dir, "_delta_links\\.csv$", full.names = TRUE)
+  }
+  if (!length(delta_files)) .log_abort("No Module 3 filtered link files found in {filtered_dir}.")
+  if (isTRUE(verbose)) .log_inform("Loading {length(delta_files)} Module 3 filtered-link file(s).")
+  edges_dt <- data.table::as.data.table(load_delta_links_many(delta_files, keep_original = FALSE))
+  n_loaded <- nrow(edges_dt)
+  if (!("comparison_id" %in% names(edges_dt))) .log_abort("Module 3 links are missing comparison_id.")
+  sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
+  sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
+  if (length(sample_subset)) {
+    if (!all(c("case_id", "ctrl_id") %in% names(edges_dt))) {
+      .log_abort("sample_subset requires case_id and ctrl_id columns in Module 3 links.")
+    }
+    edges_dt <- edges_dt[case_id %in% sample_subset & ctrl_id %in% sample_subset]
+  }
+  if (!nrow(edges_dt)) .log_abort("No Module 3 links remain after sample subsetting.")
+  edges_filt <- filter_edges_for_tf_topics(
+    edges_dt,
+    abs_log2fc_fp_min = abs_log2fc_fp_min,
+    abs_delta_fp_min = abs_delta_fp_min,
+    abs_log2fc_gene_min = abs_log2fc_gene_min,
+    require_fp_bound_either = require_fp_bound_either,
+    require_tf_expr_either = require_tf_expr_either,
+    require_gene_expr_either = require_gene_expr_either,
+    direction_consistency = direction_consistency
+  )
+  if (!nrow(edges_filt)) .log_abort("No Module 3 links passed topic-input filters.")
+  if (identical(doc_design, "condition")) {
+    edges_docs <- add_condition_tf_docs(edges_filt, tf_cluster_map = tf_cluster_map, doc_mode = doc_mode)
+    doc_term <- build_doc_term_condition_union(
+      edges_docs,
+      count_method = count_method,
+      count_scale = count_scale,
+      prefix_terms = TRUE,
+      threshold_gene_expr = threshold_gene_expr,
+      threshold_fp_score = threshold_fp_score,
+      threshold_tf_expr = threshold_tf_expr,
+      include_tf_terms = isTRUE(include_tf_terms),
+      require_tf_expr = identical(doc_mode, "tf"),
+      fp_term_mode = fp_term_mode
+    )
+  } else {
+    edges_docs <- add_tf_docs(edges_filt, doc_mode = doc_mode, direction_by = "gene", tf_cluster_map = tf_cluster_map)
+    doc_term <- build_doc_term_joint(
+      edges_docs,
+      weight_type_peak = "log2fc_fp",
+      weight_type_gene = "log2fc_gene",
+      top_terms_per_doc = top_terms_per_doc,
+      min_df = min_df,
+      count_method = count_method,
+      count_scale = count_scale,
+      distinct_terms = TRUE,
+      gene_term_mode = gene_term_mode,
+      fp_term_mode = fp_term_mode,
+      include_tf_terms = isTRUE(include_tf_terms),
+      tf_weight_type = "log2fc_tf",
+      balance_mode = "min",
+      prefix_terms = TRUE,
+      threshold_gene_expr = threshold_gene_expr,
+      threshold_fp_score = threshold_fp_score,
+      threshold_tf_expr = threshold_tf_expr,
+      require_condition_thresholds = identical(doc_mode, "tf")
+    )
+  }
+  if (!nrow(doc_term)) .log_abort("Module 3 document-term table is empty.")
+  write_doc_term_cache(doc_term, out_dir = output_dir, save_full_doc_term_csv = isTRUE(save_full_doc_term_csv))
+  .save_all(output_dir, "edges_filtered", edges_filt)
+  .save_all(output_dir, "edges_docs", edges_docs)
+  .save_all(output_dir, "doc_term", doc_term)
+  dtm_obj <- build_sparse_dtm(doc_term, count_col = "pseudo_count")
+  .save_all(output_dir, "dtm", dtm_obj$dtm)
+  .save_all(output_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
+  summary_dt <- data.table::data.table(
+    analysis_label = if (is.null(analysis_label)) NA_character_ else as.character(analysis_label[[1L]]),
+    doc_design = doc_design,
+    doc_mode = doc_mode,
+    fp_term_mode = fp_term_mode,
+    n_link_rows_loaded = as.double(n_loaded),
+    n_link_rows_after_subset = as.double(nrow(edges_dt)),
+    n_link_rows_after_filter = as.double(nrow(edges_filt)),
+    n_document_edge_rows = as.double(nrow(edges_docs)),
+    n_doc_term_rows = as.double(nrow(doc_term)),
+    n_documents = as.double(data.table::uniqueN(doc_term$doc_id)),
+    n_terms = as.double(data.table::uniqueN(doc_term$term_id)),
+    n_nonzero = as.double(Matrix::nnzero(dtm_obj$dtm))
+  )
+  data.table::fwrite(summary_dt, summary_path)
+  if (isTRUE(verbose)) {
+    .log_inform("Prepared Module 3 topic inputs: {summary_dt$n_documents} document(s), {summary_dt$n_terms} term(s), {summary_dt$n_doc_term_rows} doc-term row(s).")
+  }
+  invisible(list(output_dir = output_dir, summary = summary_dt, reused = FALSE))
+}
+
+#' Build a Module 3 QC HTML report
+#'
+#' Writes a lightweight self-contained HTML report for Module 3 topic-model
+#' outputs. The report summarizes topic-input caches, model rows, theta
+#' separation scores, and compact topic-link pass counts when available.
+#'
+#' @param topic_dir Module 3 topic output directory.
+#' @param output_dir Directory where the report is written. Defaults to
+#'   `topic_dir/reports`.
+#' @param title Report title.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return Path to the HTML report.
+#' @export
+build_module3_qc_report <- function(topic_dir,
+                                    output_dir = file.path(topic_dir, "reports"),
+                                    title = "Module 3 QC report",
+                                    verbose = TRUE) {
+  .assert_pkg("data.table")
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  report_path <- file.path(output_dir, "module3_qc_report.html")
+  review_csv <- file.path(topic_dir, "review", "csv")
+  if (!dir.exists(review_csv)) review_csv <- file.path(topic_dir, "review_topic_experiments", "csv")
+  read_optional <- function(path) {
+    if (file.exists(path)) data.table::fread(path, showProgress = FALSE) else data.table::data.table()
+  }
+  input_summary <- read_optional(file.path(topic_dir, "topic_documents", "topic_input_summary.csv"))
+  if (!nrow(input_summary)) {
+    candidates <- list.files(topic_dir, "topic_input_summary[.]csv$", recursive = TRUE, full.names = TRUE)
+    if (length(candidates)) input_summary <- read_optional(candidates[[1L]])
+  }
+  method_plan <- read_optional(file.path(review_csv, "module3_topic_method_plan.csv"))
+  theta_scores <- read_optional(file.path(review_csv, "theta_condition_separation_scores.csv"))
+  if (!nrow(theta_scores)) theta_scores <- read_optional(file.path(review_csv, "theta_condition_replicate_separation_scores.csv"))
+  pass_counts <- read_optional(file.path(review_csv, "topic_setup_pass_state_counts.csv"))
+  link_summaries <- list.files(topic_dir, "topic_link_summary[.]csv$", recursive = TRUE, full.names = TRUE)
+  link_summary <- if (length(link_summaries)) {
+    data.table::rbindlist(lapply(link_summaries, data.table::fread, showProgress = FALSE), use.names = TRUE, fill = TRUE)
+  } else {
+    data.table::data.table()
+  }
+  table_html <- function(dt, empty_label = "No rows available") {
+    if (!nrow(dt)) return(paste0("<p class=\"muted\">", .m3tb_html_escape(empty_label), "</p>"))
+    dt <- utils::head(dt, 20L)
+    cols <- names(dt)
+    rows <- apply(as.data.frame(dt), 1, function(x) {
+      paste0("<tr>", paste0("<td>", .m3tb_html_escape(x), "</td>", collapse = ""), "</tr>")
+    })
+    paste0(
+      "<table><thead><tr>",
+      paste0("<th>", .m3tb_html_escape(cols), "</th>", collapse = ""),
+      "</tr></thead><tbody>",
+      paste(rows, collapse = ""),
+      "</tbody></table>"
+    )
+  }
+  metric_card <- function(label, value) {
+    paste0("<div class=\"card\"><div class=\"label\">", .m3tb_html_escape(label), "</div><div class=\"value\">", .m3tb_html_escape(value), "</div></div>")
+  }
+  n_models <- if (nrow(method_plan)) nrow(method_plan) else length(list.files(topic_dir, "theta_K[0-9]+[.]csv$", recursive = TRUE))
+  n_pass <- if (nrow(pass_counts) && "status" %in% names(pass_counts)) sum(pass_counts$status == "Pass" & is.finite(pass_counts$count), na.rm = TRUE) else NA_real_
+  css <- paste0(
+    "body{font-family:Arial,sans-serif;margin:30px;color:#17212b;background:#fbfbf8}",
+    "h1{font-size:26px;margin-bottom:4px}h2{font-size:18px;margin-top:28px}",
+    ".muted{color:#667085}.cards{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px;margin:20px 0}",
+    ".card{border:1px solid #d7d1c3;background:#fff;padding:12px;border-radius:4px}",
+    ".label{font-size:12px;color:#667085}.value{font-size:22px;font-weight:700;color:#194b5f}",
+    "table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #d7d1c3;padding:6px 8px;font-size:12px}th{background:#eef3f1;text-align:left}"
+  )
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    paste0("<title>", .m3tb_html_escape(title), "</title><style>", css, "</style></head><body>"),
+    paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
+    paste0("<p class=\"muted\">Topic directory: ", .m3tb_html_escape(normalizePath(topic_dir, winslash = "/", mustWork = FALSE)), "</p>"),
+    "<div class=\"cards\">",
+    metric_card("Model rows", n_models),
+    metric_card("Input docs", if (nrow(input_summary)) input_summary$n_documents[[1L]] else "NA"),
+    metric_card("Input terms", if (nrow(input_summary)) input_summary$n_terms[[1L]] else "NA"),
+    metric_card("Passing links", if (is.finite(n_pass)) n_pass else "NA"),
+    "</div>",
+    "<h2>Topic Input Summary</h2>", table_html(input_summary),
+    "<h2>Method Plan</h2>", table_html(method_plan),
+    "<h2>Theta Separation Scores</h2>", table_html(theta_scores),
+    "<h2>Topic-Link Pass Counts</h2>", table_html(pass_counts),
+    "<h2>Topic-Link Output Summary</h2>", table_html(link_summary),
+    "</body></html>"
+  )
+  writeLines(html, report_path, useBytes = TRUE)
+  if (isTRUE(verbose)) .log_inform("Wrote Module 3 QC report: {report_path}")
+  invisible(report_path)
+}
+
+#' Run regulatory topic modeling
+#'
+#' Production-oriented Module 3 wrapper for one selected topic-document method.
+#' It uses the clean standard output layout, compact topic-link output by
+#' default, and writes a Module 3 QC report.
+#'
+#' @inheritParams run_module3_topic_benchmark
+#' @param method Single Module 3 method ID.
+#' @param topic_link_output Topic-link output mode. `"pass"` writes compact
+#'   passing links and summaries only; `"full"` writes exhaustive all-topic
+#'   links; `"both"` writes both; `"none"` disables topic-link export.
+#' @param build_qc_report Whether to build the Module 3 QC report.
+#'
+#' @return The result list from `run_module3_topic_benchmark()`, with
+#'   `qc_report` added when requested.
+#' @export
+run_regulatory_topics <- function(filtered_dir,
+                                  multiomic_data = NULL,
+                                  comparisons,
+                                  output_dir,
+                                  method = "condition_aggr_weight_lda",
+                                  k_grid = 10L,
+                                  replicate_documents = FALSE,
+                                  reuse_if_exists = TRUE,
+                                  local_threads = NULL,
+                                  sample_subset = NULL,
+                                  analysis_label = NULL,
+                                  topic_link_output = c("pass", "full", "both", "none"),
+                                  extraction_topic_report_args = list(),
+                                  run_training = TRUE,
+                                  run_extraction = TRUE,
+                                  run_reports = TRUE,
+                                  build_qc_report = TRUE,
+                                  verbose = TRUE) {
+  topic_link_output <- match.arg(topic_link_output)
+  if (length(method) != 1L) .log_abort("run_regulatory_topics() expects one selected method.")
+  extraction_args <- modifyList(
+    list(
+      link_topic_output = topic_link_output,
+      pathway_link_scores_file = if (topic_link_output %in% c("pass", "both")) "topic_links_pass.csv" else "topic_links.csv"
+    ),
+    extraction_topic_report_args
+  )
+  res <- run_module3_topic_benchmark(
+    filtered_dir = filtered_dir,
+    multiomic_data = multiomic_data,
+    comparisons = comparisons,
+    output_dir = output_dir,
+    methods = method,
+    k_grid = k_grid,
+    output_layout = "standard",
+    replicate_documents = replicate_documents,
+    reuse_if_exists = reuse_if_exists,
+    local_threads = local_threads,
+    sample_subset = sample_subset,
+    analysis_label = analysis_label,
+    extraction_topic_report_args = extraction_args,
+    run_training = run_training,
+    run_extraction = run_extraction,
+    run_reports = run_reports,
+    verbose = verbose
+  )
+  if (isTRUE(build_qc_report)) {
+    res$qc_report <- build_module3_qc_report(output_dir, verbose = verbose)
+  }
+  invisible(res)
 }

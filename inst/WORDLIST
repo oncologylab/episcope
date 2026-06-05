@@ -22,6 +22,7 @@ ctrl
 cutree
 diag
 dotplot
+dtm
 enrichments
 Enrichr
 EnsDb
@@ -84,6 +85,7 @@ pre
 Pseudocount
 pseudocounts
 qn
+qc
 rds
 README
 reclustering

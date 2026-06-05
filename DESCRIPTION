@@ -1,6 +1,6 @@
 Package: craftgrn
 Title: Integrative Chromatin Accessibility and RNA Framework for Gene Regulatory Networks
-Version: 0.1.3
+Version: 0.1.4
 Authors@R: c(
     person("Yaoxiang", "Li", , "liyaoxiang@outlook.com", role = c("aut", "cre")),
     person("Chunling", "Yi", role = "aut")

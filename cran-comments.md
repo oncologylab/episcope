@@ -4,13 +4,7 @@
 
 ## R CMD check results
 
-0 errors | 0 warnings | 2 notes
-
-* checking for future file timestamps ... NOTE
-  unable to verify current time
-
-  This appears to be due to the local check environment clock/network
-  verification and is not package-specific.
+0 errors | 0 warnings | 1 note
 
 * checking compilation flags used ... NOTE
   Compilation used the following non-portable flag(s):
@@ -20,7 +14,7 @@
 
 ## Resubmission
 
-This is a resubmission with the version bumped to 0.1.3.
+This is a resubmission with the version bumped to 0.1.4.
 
 The previous incoming pretest for 0.1.2 failed on Windows because two tests
 compared temporary paths with platform-specific separators, and temporary topic
@@ -28,8 +22,10 @@ model fixture directories were not robustly created before CSV writes. This
 resubmission normalizes path comparisons and explicitly creates the fixture
 directories before writing test files.
 
-The package metadata wording was also revised to reduce incoming spell-check
-notes for abbreviated scientific terms.
+This version also completes the package-native Module 3 regulatory topic
+workflow, including reusable topic input caches, pass-only compact topic-link
+outputs, and a Module 3 QC report. The package metadata wording was also revised
+to reduce incoming spell-check notes for abbreviated scientific terms.
 
 ## Package data
 

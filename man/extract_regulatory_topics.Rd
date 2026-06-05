@@ -8,6 +8,7 @@ extract_regulatory_topics(
   k,
   model_dir,
   output_dir,
+  topic_input_dir = NULL,
   backend = c("warplda", "vae"),
   vae_variant = "multivi_encoder",
   doc_mode = c("tf_cluster", "tf"),
@@ -23,6 +24,10 @@ extract_regulatory_topics(
 \item{model_dir}{Directory containing trained topic model outputs.}
 
 \item{output_dir}{Directory to write final topic reports.}
+
+\item{topic_input_dir}{Optional directory containing shared topic input
+caches. When supplied, `dtm.rds` and `edges_docs.rds` can be loaded from
+this directory if they are not present in the model directory.}
 
 \item{backend}{Topic model backend. `"warplda"` is the default native
 WarpLDA backend; `"vae"` reads optional VAE outputs.}

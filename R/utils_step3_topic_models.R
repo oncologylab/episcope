@@ -3611,6 +3611,19 @@ compute_link_topic_scores <- function(edges_docs,
   dt[, ..keep]
 }
 
+.topic_links_path <- function(out_dir, prefer = c("pass", "full")) {
+  prefer <- match.arg(prefer)
+  pass_path <- file.path(out_dir, "topic_links_pass.csv")
+  pass_gz_path <- file.path(out_dir, "topic_links_pass.csv.gz")
+  full_path <- file.path(out_dir, "topic_links.csv")
+  if (identical(prefer, "pass") && file.exists(pass_path)) return(pass_path)
+  if (identical(prefer, "pass") && file.exists(pass_gz_path)) return(pass_gz_path)
+  if (file.exists(full_path)) return(full_path)
+  if (file.exists(pass_path)) return(pass_path)
+  if (file.exists(pass_gz_path)) return(pass_gz_path)
+  full_path
+}
+
 .empirical_link_fdr <- function(peak_score,
                                 gene_score,
                                 B = 100L,
@@ -3681,6 +3694,8 @@ compute_topic_links <- function(edges_docs,
                                 efdr_B = 100L,
                                 efdr_seed = 1L,
                                 out_file = NULL,
+                                output_mode = c("pass", "full", "both", "none"),
+                                pass_file = NULL,
                                 chunk_size = 5000L,
                                 n_cores = 1L,
                                 overwrite = FALSE) {
@@ -3690,6 +3705,7 @@ compute_topic_links <- function(edges_docs,
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   link_method <- match.arg(link_method)
+  output_mode <- match.arg(output_mode)
   efdr_scope <- match.arg(efdr_scope)
   chunk_size <- as.integer(chunk_size)
   n_cores <- as.integer(n_cores)
@@ -3716,8 +3732,12 @@ compute_topic_links <- function(edges_docs,
     }
   }
 
-  if (!is.null(out_file) && file.exists(out_file) && !isTRUE(overwrite)) {
+  if (!is.null(out_file) && output_mode %in% c("full", "both") && file.exists(out_file) && !isTRUE(overwrite)) {
     .log_inform("Skipping topic_links; file exists: {out_file}")
+    return(invisible(FALSE))
+  }
+  if (!is.null(pass_file) && output_mode %in% c("pass", "both") && file.exists(pass_file) && !isTRUE(overwrite)) {
+    .log_inform("Skipping compact topic_links; file exists: {pass_file}")
     return(invisible(FALSE))
   }
 
@@ -4033,13 +4053,34 @@ compute_topic_links <- function(edges_docs,
     }
   }
 
-  if (!is.null(out_file)) {
-    out_write <- if (identical(link_method, "gammafit")) {
-      out[.as_logical_flag(link_pass)]
-    } else {
-      out
-    }
-    data.table::fwrite(out_write, out_file)
+  pass_dt <- if (identical(link_method, "gammafit")) {
+    out[.as_logical_flag(link_pass)]
+  } else if (identical(link_method, "gene_prob")) {
+    out[.as_logical_flag(peak_pass) & .as_logical_flag(gene_prob_pass)]
+  } else {
+    out[.as_logical_flag(link_pass)]
+  }
+  if (is.null(pass_file) && !is.null(out_file) && output_mode %in% c("pass", "both")) {
+    root <- sub("[.]csv([.]gz)?$", "", out_file)
+    pass_file <- paste0(root, "_pass.csv")
+  }
+  if (!is.null(out_file) && output_mode %in% c("full", "both")) {
+    data.table::fwrite(out, out_file)
+  }
+  if (!is.null(pass_file) && output_mode %in% c("pass", "both")) {
+    data.table::fwrite(pass_dt, pass_file)
+  }
+  if (!is.null(out_file) || !is.null(pass_file)) {
+    summary_file <- file.path(dirname(if (!is.null(pass_file)) pass_file else out_file), "topic_link_summary.csv")
+    summary_dt <- data.table::data.table(
+      link_method = link_method,
+      output_mode = output_mode,
+      n_scored_rows = as.double(nrow(out)),
+      n_pass_rows = as.double(nrow(pass_dt)),
+      full_file = if (output_mode %in% c("full", "both") && !is.null(out_file)) basename(out_file) else NA_character_,
+      pass_file = if (output_mode %in% c("pass", "both") && !is.null(pass_file)) basename(pass_file) else NA_character_
+    )
+    data.table::fwrite(summary_dt, summary_file)
   }
   if (identical(link_method, "gammafit")) {
     out[.as_logical_flag(link_pass)]
@@ -5434,7 +5475,7 @@ rerun_pathway_from_topic_links <- function(out_dir,
   }
   method <- match.arg(method)
   if (is.null(topic_links_file)) {
-    cand <- file.path(out_dir, "topic_links.csv")
+    cand <- .topic_links_path(out_dir, prefer = "pass")
     if (file.exists(cand)) topic_links_file <- cand
   }
   topic_links_file <- resolve_rel(topic_links_file, out_dir)
@@ -5818,6 +5859,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               link_topic_efdr_B = 100L,
                                               link_topic_efdr_seed = 1L,
                                               link_topic_report_methods = NULL,
+                                              link_topic_output = c("pass", "full", "both", "none"),
                                               run_gammafit_summary = TRUE,
                                               run_link_efdr_summary = TRUE,
                                               run_pathway_enrichment = TRUE,
@@ -5843,6 +5885,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
   link_topic_method <- match.arg(link_topic_method)
+  link_topic_output <- match.arg(link_topic_output)
   link_topic_efdr_scope <- match.arg(link_topic_efdr_scope)
   extraction_steps <- .normalize_topic_extraction_steps(extraction_steps)
   if (!is.null(extraction_steps)) {
@@ -5924,18 +5967,20 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       efdr_B = link_topic_efdr_B,
       efdr_seed = link_topic_efdr_seed,
       out_file = file.path(out_dir, "topic_links.csv"),
+      output_mode = link_topic_output,
+      pass_file = file.path(out_dir, "topic_links_pass.csv"),
       chunk_size = link_topic_chunk_size,
       n_cores = link_topic_n_cores,
       overwrite = link_topic_overwrite
     )
     if (!is.data.frame(topic_links_tbl)) {
-      topic_links_path <- file.path(out_dir, "topic_links.csv")
+      topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
       if (file.exists(topic_links_path)) {
         topic_links_tbl <- data.table::fread(topic_links_path)
       }
     }
   } else {
-    topic_links_path <- file.path(out_dir, "topic_links.csv")
+    topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
     if (file.exists(topic_links_path)) {
       topic_links_tbl <- data.table::fread(topic_links_path)
     }
@@ -6519,6 +6564,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       efdr_B = link_topic_efdr_B,
       efdr_seed = link_topic_efdr_seed,
       out_file = file.path(out_dir, "topic_links.csv"),
+      output_mode = "full",
       chunk_size = link_topic_chunk_size,
       n_cores = link_topic_n_cores,
       overwrite = link_topic_overwrite
@@ -7934,6 +7980,20 @@ train_topic_models <- function(Kgrid,
       output_dir,
       paste0(analysis_id, "_vae_joint_", doc_tag, "_docs_", weight_label, "_", model_name, "_Kgrid")
     )
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    topic_input_summary <- data.table::data.table(
+      analysis_label = analysis_id,
+      doc_design = doc_design,
+      doc_mode = doc_mode,
+      fp_term_mode = fp_term_mode,
+      n_link_rows_after_filter = as.double(nrow(edges_filt)),
+      n_document_edge_rows = as.double(nrow(edges_docs)),
+      n_doc_term_rows = as.double(nrow(doc_term)),
+      n_documents = as.double(data.table::uniqueN(doc_term$doc_id)),
+      n_terms = as.double(data.table::uniqueN(doc_term$term_id)),
+      n_nonzero = as.double(sum(.safe_num(doc_term$pseudo_count) > 0, na.rm = TRUE))
+    )
+    data.table::fwrite(topic_input_summary, file.path(out_dir, "topic_input_summary.csv"))
     metrics_path <- file.path(out_dir, "model_metrics.csv")
     models_dir <- file.path(out_dir, "vae_models")
     required_k <- sort(unique(as.integer(Kgrid)))
@@ -7990,7 +8050,6 @@ train_topic_models <- function(Kgrid,
     } else {
       .log_inform("{analysis_id}: writing WarpLDA input caches in {out_dir}.")
       t_cache <- proc.time()[["elapsed"]]
-      dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
       if (exists("write_doc_term_cache", mode = "function")) {
         write_doc_term_cache(
           doc_term,
@@ -8073,6 +8132,9 @@ train_topic_models <- function(Kgrid,
 #' @param k Integer K selected by the user.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write final topic reports.
+#' @param topic_input_dir Optional directory containing shared topic input
+#'   caches. When supplied, `dtm.rds` and `edges_docs.rds` can be loaded from
+#'   this directory if they are not present in the model directory.
 #' @param backend Topic model backend. `"warplda"` is the default native
 #'   WarpLDA backend; `"vae"` reads optional VAE outputs.
 #' @param vae_variant VAE variant name used in trained output directories.
@@ -8085,6 +8147,7 @@ train_topic_models <- function(Kgrid,
 extract_regulatory_topics <- function(k,
                                       model_dir,
                                       output_dir,
+                                      topic_input_dir = NULL,
                                       backend = c("warplda", "vae"),
                                       vae_variant = "multivi_encoder",
                                       doc_mode = c("tf_cluster", "tf"),
@@ -8117,6 +8180,13 @@ extract_regulatory_topics <- function(k,
     rds_dir <- file.path(d, "rds")
     dtm_path <- file.path(rds_dir, "dtm.rds")
     edges_docs_path <- file.path(rds_dir, "edges_docs.rds")
+    if ((!file.exists(dtm_path) || !file.exists(edges_docs_path)) && !is.null(topic_input_dir)) {
+      shared_rds_dir <- file.path(topic_input_dir, "rds")
+      shared_dtm_path <- file.path(shared_rds_dir, "dtm.rds")
+      shared_edges_docs_path <- file.path(shared_rds_dir, "edges_docs.rds")
+      if (!file.exists(dtm_path) && file.exists(shared_dtm_path)) dtm_path <- shared_dtm_path
+      if (!file.exists(edges_docs_path) && file.exists(shared_edges_docs_path)) edges_docs_path <- shared_edges_docs_path
+    }
     metrics_path <- file.path(d, "model_metrics.csv")
     theta_path <- file.path(d, "vae_models", sprintf("theta_K%d.csv", k))
     phi_path <- file.path(d, "vae_models", sprintf("phi_K%d.csv", k))
@@ -8202,6 +8272,7 @@ extract_regulatory_topics <- function(k,
       link_topic_efdr_scope = "per_topic",
       link_topic_efdr_B = 100L,
       link_topic_efdr_seed = 1L,
+      link_topic_output = "pass",
       run_gammafit_summary = TRUE,
       run_link_efdr_summary = TRUE,
       run_pathway_enrichment = TRUE,

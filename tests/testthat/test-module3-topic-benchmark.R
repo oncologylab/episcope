@@ -311,3 +311,116 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
     c("CondA_vs_CondB::Target-Up", "CondA_vs_CondB::Target-Down")
   )
 })
+
+test_that("Module 3 topic links default to compact pass-only output", {
+  edges <- data.table::data.table(
+    doc_id = c("D1", "D1"),
+    tf = c("TF1", "TF1"),
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2")
+  )
+  score_mat <- matrix(
+    c(0.9, 0.1, 0.8, 0.2, 0.2, 0.7, 0.1, 0.9),
+    nrow = 2,
+    byrow = TRUE
+  )
+  rownames(score_mat) <- c("Topic1", "Topic2")
+  colnames(score_mat) <- c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2")
+  out_dir <- tempfile("module3-topic-links-")
+  dir.create(out_dir, recursive = TRUE)
+  res <- compute_topic_links(
+    edges,
+    score_mat,
+    link_method = "gene_prob",
+    link_prob_cutoff = "max",
+    out_file = file.path(out_dir, "topic_links.csv"),
+    overwrite = TRUE
+  )
+  expect_s3_class(res, "data.table")
+  expect_false(file.exists(file.path(out_dir, "topic_links.csv")))
+  expect_true(file.exists(file.path(out_dir, "topic_links_pass.csv")))
+  expect_true(file.exists(file.path(out_dir, "topic_link_summary.csv")))
+  pass <- data.table::fread(file.path(out_dir, "topic_links_pass.csv"))
+  expect_true(nrow(pass) <= nrow(res))
+  expect_true(all(pass$gene_prob_pass))
+})
+
+test_that("Module 3 prepares reusable topic input caches", {
+  root <- tempfile("module3-topic-inputs-")
+  filtered_dir <- file.path(root, "filtered")
+  out_dir <- file.path(root, "topic_documents")
+  dir.create(filtered_dir, recursive = TRUE)
+  links <- data.table::data.table(
+    comparison_id = "Case_vs_Ctrl",
+    case_id = "Case",
+    ctrl_id = "Ctrl",
+    tf = c("TF1", "TF1"),
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P2"),
+    log2FC_fp_score = c(2, -2),
+    delta_fp_score = c(2, -2),
+    log2FC_gene_expr = c(2, -2),
+    log2FC_tf_expr = c(1, 1),
+    fp_bound_Case = TRUE,
+    fp_bound_Ctrl = TRUE,
+    tf_expr_Case = 10,
+    tf_expr_Ctrl = 10,
+    gene_expr_Case = 10,
+    gene_expr_Ctrl = 10,
+    fp_score_Case = 10,
+    fp_score_Ctrl = 10
+  )
+  data.table::fwrite(links, file.path(filtered_dir, "Case_vs_Ctrl_delta_links_filtered_up.csv"))
+  res <- module3_prepare_topic_inputs(
+    filtered_dir = filtered_dir,
+    output_dir = out_dir,
+    tf_cluster_map = c(TF1 = "K01"),
+    doc_mode = "tf",
+    doc_design = "comparison",
+    fp_term_mode = "aggregate_weight",
+    min_df = 1,
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    threshold_tf_expr = 0,
+    direction_consistency = "none",
+    require_tf_expr_either = FALSE,
+    require_gene_expr_either = FALSE,
+    require_fp_bound_either = FALSE,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+  expect_true(file.exists(file.path(out_dir, "rds", "edges_docs.rds")))
+  expect_true(file.exists(file.path(out_dir, "rds", "doc_term.rds")))
+  expect_true(file.exists(file.path(out_dir, "rds", "dtm.rds")))
+  expect_true(file.exists(file.path(out_dir, "topic_input_summary.csv")))
+  expect_gt(res$summary$n_documents[[1L]], 0)
+  reused <- module3_prepare_topic_inputs(
+    filtered_dir = filtered_dir,
+    output_dir = out_dir,
+    tf_cluster_map = c(TF1 = "K01"),
+    doc_mode = "tf",
+    doc_design = "comparison",
+    fp_term_mode = "aggregate_weight",
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_true(reused$reused)
+})
+
+test_that("Module 3 production wrapper exposes compact defaults and QC report", {
+  expect_true("run_regulatory_topics" %in% getNamespaceExports("craftgrn"))
+  expect_true("module3_prepare_topic_inputs" %in% getNamespaceExports("craftgrn"))
+  expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
+  expect_identical(eval(formals(run_regulatory_topics)$topic_link_output)[[1L]], "pass")
+  root <- tempfile("module3-qc-")
+  dir.create(file.path(root, "review", "csv"), recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(method = "condition_aggr_weight_lda", method_setup = "cond fp aggr weight | LDA"),
+    file.path(root, "review", "csv", "module3_topic_method_plan.csv")
+  )
+  report <- build_module3_qc_report(root, verbose = FALSE)
+  expect_true(file.exists(report))
+  html <- paste(readLines(report, warn = FALSE), collapse = "\n")
+  expect_true(grepl("Module 3 QC report", html, fixed = TRUE))
+  expect_true(grepl("Method Plan", html, fixed = TRUE))
+})

@@ -238,7 +238,7 @@ Module 3 expects:
 - A comparison metadata table defining pairwise contrasts.
 - TF motif cluster assignments from Module 1.
 
-### Train topic models
+### Run regulatory topics
 
 The topic modeling workflow builds documents such as
 `comparison x TF-cluster x direction`. Terms are genes and TFBS features, and
@@ -250,6 +250,48 @@ doc/word Metropolis-Hastings semantics while using OpenMP threads inside each
 model fit. For fixed-seed validation runs, set
 `warplda_sampler = "warp_ref"`; this native sequential reference sampler is
 much slower than `warp_omp`.
+
+For regular analysis, use `run_regulatory_topics()` with one selected document
+construction method. It writes a clean single-method layout with reusable topic
+input caches, model outputs, compact passing topic-link output, review tables,
+and `module3_qc_report.html`.
+
+```{r module-3-regulatory-topics, purl=FALSE}
+run_regulatory_topics(
+  filtered_dir = "differential_links",
+  comparisons = "module3_comparisons.csv",
+  output_dir = "regulatory_topics",
+  method = "condition_aggr_weight_lda",
+  k_grid = c(10, 15, 20),
+  topic_link_output = "pass"
+)
+```
+
+The lower-level calls remain available when you want to inspect inputs, separate
+model training from topic extraction, or rerun only one stage.
+
+```{r module-3-topic-models, purl=FALSE}
+module3_prepare_topic_inputs(
+  filtered_dir = "differential_links",
+  output_dir = "topic_documents",
+  tf_cluster_map = tf_cluster_map,
+  doc_design = "condition",
+  fp_term_mode = "aggregate_weight"
+)
+
+train_topic_models(
+  Kgrid = c(2:10, 15, 20, 25, 30),
+  input_dir = "differential_links",
+  output_dir = "topic_models"
+)
+
+extract_regulatory_topics(
+  k = 10,
+  model_dir = "topic_models",
+  output_dir = "final_topics",
+  topic_report_args = list()
+)
+```
 
 For benchmark-style analyses, use `run_module3_topic_benchmark()`. It can run a
 single method or a method grid, and it writes the review files used to compare
@@ -263,24 +305,6 @@ run_module3_topic_benchmark(
   output_dir = "topic_model_benchmark",
   methods = "condition_aggr_weight_lda",
   k_grid = 10
-)
-```
-
-The lower-level calls remain available when you want to separate model training
-from topic extraction.
-
-```{r module-3-topic-models, purl=FALSE}
-train_topic_models(
-  Kgrid = c(2:10, 15, 20, 25, 30),
-  input_dir = "differential_links",
-  output_dir = "topic_models"
-)
-
-extract_regulatory_topics(
-  k = 10,
-  model_dir = "topic_models",
-  output_dir = "final_topics",
-  topic_report_args = list()
 )
 ```
 
@@ -307,6 +331,8 @@ Module 3 creates:
 - Topic-term and topic-link probability tables.
 - Topic assignments for regulatory links.
 - Benchmark review tables and HTML reports under `review_topic_experiments/`.
+- `module3_qc_report.html`: a QC report summarizing topic inputs, method plan,
+  theta separation scores, compact topic-link pass counts, and output files.
 - Pathway enrichment summaries and plots.
 - Master TF connectivity summaries and plots.
 - Topic-stratified differential GRN visualizations.
