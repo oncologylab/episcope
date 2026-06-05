@@ -70,3 +70,39 @@ test_that("pkgdown reference uses publication-facing Module 1 and Module 2 names
     "report_tf_tf_coregulations"
   ))
 })
+
+test_that("pkgdown reference uses clean Module 3 public API names", {
+  path <- source_file("_pkgdown.yml")
+  testthat::skip_if_not(file.exists(path))
+  cfg <- yaml::read_yaml(path)
+  sections <- cfg$reference
+  titles <- vapply(sections, function(x) as.character(x$title), character(1L))
+
+  module3 <- sections[[which(titles == "Regulatory topic modeling")]]
+  reports <- sections[[which(titles == "Module 3 reports")]]
+  utils <- sections[[which(titles == "Module 3 utilities")]]
+
+  expect_equal(module3$contents, c(
+    "run_regulatory_topics",
+    "module3_prepare_differential_links",
+    "module3_prepare_topic_inputs",
+    "module3_train_topic_models",
+    "module3_extract_topics"
+  ))
+  expect_equal(reports$contents, c(
+    "build_module3_qc_report",
+    "run_diff_grn_pathway_analysis",
+    "run_diff_grn_master_tf_summary"
+  ))
+  expect_equal(utils$contents, c(
+    "load_differential_links",
+    "query_differential_links"
+  ))
+
+  all_contents <- unlist(lapply(sections, function(x) x$contents), use.names = FALSE)
+  expect_false("run_module3_topic_benchmark" %in% all_contents)
+  expect_false("train_topic_models" %in% all_contents)
+  expect_false("extract_regulatory_topics" %in% all_contents)
+  expect_false("load_delta_links_many" %in% all_contents)
+  expect_false("build_tf_cluster_map_from_motif" %in% all_contents)
+})

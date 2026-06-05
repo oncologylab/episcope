@@ -351,7 +351,7 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
 #' @param n_max_files Optional maximum number of files to load.
 #'
 #' @return A data.table of standardized differential links.
-#' @export
+#' @noRd
 load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf) {
   .assert_pkg("cli")
   .assert_pkg("data.table")
@@ -363,6 +363,105 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
 
   lst <- lapply(files, function(f) standardize_delta_links_one(f, keep_original = keep_original))
   data.table::rbindlist(lst, use.names = TRUE, fill = TRUE)
+}
+
+#' Load Module 3 differential links
+#'
+#' Load filtered differential-link files produced by
+#' [module3_prepare_differential_links()]. The input can be a Module 3
+#' differential-link directory, a manifest path, or one or more filtered-link
+#' CSV files.
+#'
+#' @param path Module 3 differential-link directory, manifest CSV, or filtered
+#'   link CSV path(s).
+#' @param keep_original Keep original columns in addition to standardized
+#'   Module 3 columns.
+#' @param n_max_files Optional maximum number of files to load.
+#'
+#' @return A data.table of standardized differential links.
+#' @export
+load_differential_links <- function(path, keep_original = FALSE, n_max_files = Inf) {
+  .assert_pkg("data.table")
+  path <- as.character(path)
+  if (!length(path)) .log_abort("`path` must contain at least one file or directory.")
+  if (length(path) == 1L && dir.exists(path)) {
+    manifest <- file.path(path, "filtered_links_manifest.csv")
+    if (file.exists(manifest)) {
+      man <- data.table::fread(manifest, showProgress = FALSE)
+      files <- unique(c(as.character(man$up_path), as.character(man$down_path)))
+      files <- ifelse(file.exists(files), files, file.path(path, basename(files)))
+    } else {
+      files <- list.files(path, "_filtered_links_(up|down)[.]csv$", full.names = TRUE)
+    }
+  } else if (length(path) == 1L && file.exists(path) && grepl("manifest[.]csv$", basename(path))) {
+    man <- data.table::fread(path, showProgress = FALSE)
+    files <- unique(c(as.character(man$up_path), as.character(man$down_path)))
+    manifest_dir <- dirname(path)
+    files <- ifelse(file.exists(files), files, file.path(manifest_dir, basename(files)))
+  } else {
+    files <- path
+  }
+  files <- files[file.exists(files)]
+  if (!length(files)) .log_abort("No Module 3 filtered-link CSV files were found.")
+  load_delta_links_many(files, keep_original = keep_original, n_max_files = n_max_files)
+}
+
+#' Query Module 3 differential links
+#'
+#' Filter Module 3 differential links by comparison, direction, TF, target gene,
+#' footprint, or distance to TSS.
+#'
+#' @param links Differential-link data, a Module 3 differential-link directory,
+#'   a manifest path, or filtered-link CSV path(s).
+#' @param comparison_id Optional comparison IDs to keep.
+#' @param direction Optional direction labels, usually `"up"` and/or `"down"`.
+#' @param tf Optional TF names to keep.
+#' @param gene Optional target-gene names to keep.
+#' @param fp_id Optional footprint IDs to keep.
+#' @param max_distance_to_tss Optional maximum absolute distance to TSS.
+#' @param keep_original Keep original columns when `links` is a path.
+#'
+#' @return A data.table of matching Module 3 differential links.
+#' @export
+query_differential_links <- function(links,
+                                     comparison_id = NULL,
+                                     direction = NULL,
+                                     tf = NULL,
+                                     gene = NULL,
+                                     fp_id = NULL,
+                                     max_distance_to_tss = NULL,
+                                     keep_original = FALSE) {
+  .assert_pkg("data.table")
+  dt <- if (is.data.frame(links)) {
+    data.table::as.data.table(links)
+  } else {
+    load_differential_links(links, keep_original = keep_original)
+  }
+  if (!is.null(comparison_id) && "comparison_id" %in% names(dt)) {
+    keep <- as.character(comparison_id)
+    dt <- dt[dt[["comparison_id"]] %in% keep]
+  }
+  if (!is.null(direction) && "direction_group" %in% names(dt)) {
+    keep <- as.character(direction)
+    dt <- dt[dt[["direction_group"]] %in% keep]
+  }
+  if (!is.null(tf) && "tf" %in% names(dt)) {
+    keep <- as.character(tf)
+    dt <- dt[dt[["tf"]] %in% keep]
+  }
+  if (!is.null(gene) && "gene_key" %in% names(dt)) {
+    keep <- as.character(gene)
+    dt <- dt[dt[["gene_key"]] %in% keep]
+  }
+  if (!is.null(fp_id) && "peak_id" %in% names(dt)) {
+    keep <- as.character(fp_id)
+    dt <- dt[dt[["peak_id"]] %in% keep]
+  }
+  if (!is.null(max_distance_to_tss) && "distance_to_tss" %in% names(dt)) {
+    max_dist <- as.numeric(max_distance_to_tss)[[1L]]
+    dt <- dt[is.finite(dt[["distance_to_tss"]]) & abs(dt[["distance_to_tss"]]) <= max_dist]
+  }
+  dt[]
 }
 
 # =============================================================================
@@ -6813,7 +6912,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
 #'   data.frame, or a list containing `motif_db`.
 #'
 #' @return A named character vector mapping TF symbols to cluster labels.
-#' @export
+#' @noRd
 build_tf_cluster_map_from_motif <- function(motif_path) {
   .assert_pkg("cli")
   .assert_pkg("readr")
@@ -7824,7 +7923,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param top_n_terms Number of terms per topic.
 #' @param in_topic_min_terms Minimum terms per topic set.
 #' @param topic_report_args Additional args for downstream extraction (saved in calc_params).
-#' @export
+#' @noRd
 train_topic_models <- function(Kgrid,
                                input_dir,
                                output_dir,
@@ -8178,6 +8277,34 @@ train_topic_models <- function(Kgrid,
   invisible(TRUE)
 }
 
+#' Train Module 3 topic models
+#'
+#' Public step function for training one Module 3 topic-model setup after
+#' [module3_prepare_differential_links()] has produced filtered differential
+#' links. This is a thin Module 3-named wrapper around the internal training
+#' engine.
+#'
+#' @param k_grid Integer vector of K values for training.
+#' @param filtered_dir Directory containing Module 3 filtered differential-link
+#'   files.
+#' @param output_dir Directory to write topic model outputs.
+#' @param ... Additional arguments passed to the internal training engine, such
+#'   as `doc_design`, `fp_term_mode`, `backend`, and `local_threads`.
+#'
+#' @return Invisibly returns TRUE when training completes.
+#' @export
+module3_train_topic_models <- function(k_grid,
+                                       filtered_dir,
+                                       output_dir,
+                                       ...) {
+  train_topic_models(
+    Kgrid = k_grid,
+    input_dir = filtered_dir,
+    output_dir = output_dir,
+    ...
+  )
+}
+
 #' Extract regulatory topics from trained models (Module 3)
 #'
 #' Uses precomputed topic models to compute link-topic scores, topic
@@ -8198,7 +8325,7 @@ train_topic_models <- function(Kgrid,
 #' @param flatten_single_output If `TRUE` and only one trained output directory
 #'   is matched, write reports directly under `output_dir`.
 #' @param topic_report_args Optional list of overrides for report settings.
-#' @export
+#' @noRd
 extract_regulatory_topics <- function(k,
                                       model_dir,
                                       output_dir,
@@ -8363,6 +8490,31 @@ extract_regulatory_topics <- function(k,
   }
 
   invisible(TRUE)
+}
+
+#' Extract Module 3 regulatory topics
+#'
+#' Public step function for extracting regulatory topics, pathway summaries,
+#' topic-link tables, and review outputs from trained Module 3 topic models.
+#'
+#' @param k Integer K selected for extraction.
+#' @param model_dir Directory containing trained topic model outputs.
+#' @param output_dir Directory to write extracted topic outputs.
+#' @param ... Additional arguments passed to the internal extraction engine,
+#'   such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.
+#'
+#' @return Invisibly returns TRUE when extraction completes.
+#' @export
+module3_extract_topics <- function(k,
+                                   model_dir,
+                                   output_dir,
+                                   ...) {
+  extract_regulatory_topics(
+    k = k,
+    model_dir = model_dir,
+    output_dir = output_dir,
+    ...
+  )
 }
 
 

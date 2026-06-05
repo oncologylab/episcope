@@ -860,9 +860,9 @@
 #'   grouped by the condition label after removing a trailing replicate suffix.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
-#' @param sample_subset Optional condition/sample labels passed to
-#'   [train_topic_models()]. When supplied, only comparisons whose case and
-#'   control labels are both in this vector are used.
+#' @param sample_subset Optional condition/sample labels passed to the Module 3
+#'   training engine. When supplied, only comparisons whose condition labels are
+#'   both in this vector are used.
 #' @param analysis_label Label used to name the topic-model analysis.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides.
@@ -873,7 +873,7 @@
 #'
 #' @return A list with method plan, discovered model rows, score results, and
 #'   review report paths.
-#' @export
+#' @noRd
 run_module3_topic_benchmark <- function(filtered_dir,
                                         multiomic_data = NULL,
                                         comparisons,
@@ -1317,15 +1317,34 @@ build_module3_qc_report <- function(topic_dir,
 #' It uses the clean standard output layout, compact topic-link output by
 #' default, and writes a Module 3 QC report.
 #'
-#' @inheritParams run_module3_topic_benchmark
+#' @param filtered_dir Directory containing Module 3 filtered differential-link
+#'   files.
+#' @param multiomic_data Optional CraftGRN multiomic object. Required when
+#'   `replicate_documents = TRUE`.
+#' @param comparisons Comparison or condition grouping table, or a CSV path.
+#' @param output_dir Topic output directory.
 #' @param method Single Module 3 method ID.
+#' @param k_grid Integer topic numbers. Multiple K values are allowed for
+#'   standard K review within the selected method.
+#' @param replicate_documents Whether theta document labels are replicate
+#'   resolved for condition-separation scoring.
+#' @param reuse_if_exists Reuse existing model outputs where possible.
+#' @param local_threads Optional thread count for model training.
+#' @param sample_subset Optional condition/sample labels to keep.
+#' @param analysis_label Label used to name the topic-model analysis.
 #' @param topic_link_output Topic-link output mode. `"pass"` writes compact
 #'   passing links and summaries only; `"full"` writes exhaustive all-topic
 #'   links; `"both"` writes both; `"none"` disables topic-link export.
+#' @param extraction_topic_report_args Optional named list of topic-extraction
+#'   report argument overrides.
+#' @param run_training Train topic models before reporting.
+#' @param run_extraction Run topic extraction before reporting.
+#' @param run_reports Build score tables and review reports.
 #' @param build_qc_report Whether to build the Module 3 QC report.
+#' @param verbose Emit concise progress messages.
 #'
-#' @return The result list from `run_module3_topic_benchmark()`, with
-#'   `qc_report` added when requested.
+#' @return An invisible list with topic input/model/extraction paths, review
+#'   outputs, and `qc_report` when requested.
 #' @export
 run_regulatory_topics <- function(filtered_dir,
                                   multiomic_data = NULL,

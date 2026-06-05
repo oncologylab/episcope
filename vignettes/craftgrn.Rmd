@@ -279,13 +279,13 @@ module3_prepare_topic_inputs(
   fp_term_mode = "aggregate_weight"
 )
 
-train_topic_models(
-  Kgrid = c(2:10, 15, 20, 25, 30),
-  input_dir = "differential_links",
+module3_train_topic_models(
+  k_grid = c(2:10, 15, 20, 25, 30),
+  filtered_dir = "differential_links",
   output_dir = "topic_models"
 )
 
-extract_regulatory_topics(
+module3_extract_topics(
   k = 10,
   model_dir = "topic_models",
   output_dir = "final_topics",
@@ -293,20 +293,10 @@ extract_regulatory_topics(
 )
 ```
 
-For benchmark-style analyses, use `run_module3_topic_benchmark()`. It can run a
-single method or a method grid, and it writes the review files used to compare
-topic models, including condition-separation score tables, topic-method count
-summaries, and HTML MDS review reports.
-
-```{r module-3-topic-benchmark, purl=FALSE}
-run_module3_topic_benchmark(
-  filtered_dir = "differential_links",
-  comparisons = "module3_comparisons.csv",
-  output_dir = "topic_model_benchmark",
-  methods = "condition_aggr_weight_lda",
-  k_grid = 10
-)
-```
+When `k_grid` contains more than one value, the standard Module 3 output keeps
+the K-review tables and topic-model diagnostics for the selected method. Broad
+multi-method benchmarks are developer workflows and are not part of the normal
+package tutorial.
 
 ### Summarize pathways and master TFs
 

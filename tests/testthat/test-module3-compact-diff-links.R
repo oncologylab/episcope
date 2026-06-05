@@ -106,6 +106,19 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   expect_equal(up$log2FC_gene_expr[[1]], 2)
   expect_equal(up$de_source_gene[[1]], "external")
   expect_true(standardize_delta_links_one(res$up_path[[1]], keep_original = FALSE)$comparison_id[[1]] == "Test_Contrast")
+  loaded <- load_differential_links(out_dir)
+  expect_equal(nrow(loaded), 2L)
+  expect_true(all(c("up", "down") %in% loaded$direction_group))
+  queried <- query_differential_links(
+    out_dir,
+    comparison_id = "Test_Contrast",
+    direction = "up",
+    tf = "TF1",
+    gene = "GENE_UP",
+    max_distance_to_tss = 1000
+  )
+  expect_equal(nrow(queried), 1L)
+  expect_equal(queried$gene_key[[1]], "GENE_UP")
   expect_true(file.exists(file.path(out_dir, "qc", "differential_link_chunks.csv")))
   expect_true(file.exists(file.path(out_dir, "qc", "differential_link_summary.csv")))
   expect_false(dir.exists(file.path(out_dir, "cache")))

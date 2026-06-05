@@ -32,28 +32,23 @@ files.}
 \item{multiomic_data}{Optional CraftGRN multiomic object. Required when
 `replicate_documents = TRUE`.}
 
-\item{comparisons}{Comparison or condition grouping table, or a CSV path.
-For condition separation scoring, use columns `condition_label` and
-`condition_group`.}
+\item{comparisons}{Comparison or condition grouping table, or a CSV path.}
 
-\item{output_dir}{Topic benchmark output directory.}
+\item{output_dir}{Topic output directory.}
 
 \item{method}{Single Module 3 method ID.}
 
-\item{k_grid}{Integer topic numbers.}
+\item{k_grid}{Integer topic numbers. Multiple K values are allowed for
+standard K review within the selected method.}
 
 \item{replicate_documents}{Whether theta document labels are replicate
-resolved. When `TRUE`, score files use the
-`theta_condition_replicate_separation` prefix and condition replicates are
-grouped by the condition label after removing a trailing replicate suffix.}
+resolved for condition-separation scoring.}
 
 \item{reuse_if_exists}{Reuse existing model outputs where possible.}
 
 \item{local_threads}{Optional thread count for model training.}
 
-\item{sample_subset}{Optional condition/sample labels passed to
-[train_topic_models()]. When supplied, only comparisons whose case and
-control labels are both in this vector are used.}
+\item{sample_subset}{Optional condition/sample labels to keep.}
 
 \item{analysis_label}{Label used to name the topic-model analysis.}
 
@@ -75,8 +70,8 @@ report argument overrides.}
 \item{verbose}{Emit concise progress messages.}
 }
 \value{
-The result list from `run_module3_topic_benchmark()`, with
-  `qc_report` added when requested.
+An invisible list with topic input/model/extraction paths, review
+  outputs, and `qc_report` when requested.
 }
 \description{
 Production-oriented Module 3 wrapper for one selected topic-document method.
