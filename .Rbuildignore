@@ -24,8 +24,12 @@ $run_dev.*
 ^R_bak$
 ^tmp$
 ^output/doc$
+^output$
+^inst/extdata/GeneHancer_v5[.]24_full[.]csv$
 ^\.agents$
 ^\.codex$
 ^\.superpowers$
 ^.*\.Rcheck$
 ^.*\.tar\.gz$
+^cran-comments\.md$
+^CRAN-SUBMISSION$
