@@ -2,7 +2,7 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   skip_if_not_installed("data.table")
 
   tmp <- withr::local_tempdir()
-  cond <- c("Case", "Ctrl")
+  cond <- c("Cond1", "Cond2")
   fp_score <- matrix(c(5, 1, 1, 5), nrow = 2, byrow = TRUE, dimnames = list(c("fp_up", "fp_down"), cond))
   fp_bound <- fp_score > 0
   gene_expr <- matrix(c(20, 20, 40, 5, 5, 40), nrow = 3, byrow = TRUE, dimnames = list(c("TF1", "GENE_UP", "GENE_DOWN"), cond))
@@ -83,7 +83,8 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   res <- module3_prepare_differential_links(
     module2 = tmp,
     multiomic_data = multiomic,
-    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Case", cond2_label = "Ctrl", cond1_base = "Case label", cond2_base = "Ctrl label"),
+    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Cond1", cond2_label = "Cond2", cond1_id = "Cond1 short", cond2_id = "Cond2 short"),
+    rna_de_results = data.frame(gene_key = c("GENE_UP", "GENE_DOWN", "TF1"), log2fc_rna = c(2, -2, 0.5), padj = c(0.01, 0.01, 0.5)),
     project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
     output_dir = out_dir,
     n_cores = 1,
@@ -98,7 +99,12 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   down <- data.table::fread(res$down_path[[1]])
   expect_equal(up$gene_key, "GENE_UP")
   expect_equal(down$gene_key, "GENE_DOWN")
-  expect_true(all(c("comparison_id", "case_id", "ctrl_id", "tf", "gene_key", "peak_id", "log2FC_fp_score", "log2FC_gene_expr", "r_gene", "r_rna_gene", "distance_to_tss") %in% names(up)))
+  expect_true(all(c("comparison_id", "cond1_id", "cond2_id", "cond1_matrix_id", "cond2_matrix_id", "tf", "gene_key", "peak_id", "log2FC_fp_score", "log2FC_gene_expr", "r_gene", "r_rna_gene", "distance_to_tss") %in% names(up)))
+  expect_false(any(c("case_id", "ctrl_id", "case_label", "ctrl_label") %in% names(up)))
+  expect_equal(up$cond1_id[[1]], "Cond1 short")
+  expect_equal(up$cond1_matrix_id[[1]], "Cond1")
+  expect_equal(up$log2FC_gene_expr[[1]], 2)
+  expect_equal(up$de_source_gene[[1]], "external")
   expect_true(standardize_delta_links_one(res$up_path[[1]], keep_original = FALSE)$comparison_id[[1]] == "Test_Contrast")
   expect_true(file.exists(file.path(out_dir, "qc", "differential_link_chunks.csv")))
   expect_true(file.exists(file.path(out_dir, "qc", "differential_link_summary.csv")))
@@ -107,7 +113,8 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   res_skip <- module3_prepare_differential_links(
     module2 = tmp,
     multiomic_data = multiomic,
-    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Case", cond2_label = "Ctrl", cond1_base = "Case label", cond2_base = "Ctrl label"),
+    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Cond1", cond2_label = "Cond2", cond1_id = "Cond1 short", cond2_id = "Cond2 short"),
+    rna_de_results = data.frame(gene_key = c("GENE_UP", "GENE_DOWN", "TF1"), log2fc_rna = c(2, -2, 0.5), padj = c(0.01, 0.01, 0.5)),
     project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
     output_dir = out_dir,
     n_cores = 1,
@@ -122,7 +129,8 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   res_skip_no_manifest <- module3_prepare_differential_links(
     module2 = tmp,
     multiomic_data = multiomic,
-    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Case", cond2_label = "Ctrl", cond1_base = "Case label", cond2_base = "Ctrl label"),
+    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Cond1", cond2_label = "Cond2", cond1_id = "Cond1 short", cond2_id = "Cond2 short"),
+    rna_de_results = data.frame(gene_key = c("GENE_UP", "GENE_DOWN", "TF1"), log2fc_rna = c(2, -2, 0.5), padj = c(0.01, 0.01, 0.5)),
     project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
     output_dir = out_dir,
     n_cores = 1,
@@ -160,7 +168,8 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   res_new <- module3_prepare_differential_links(
     module2 = tmp_new,
     multiomic_data = multiomic,
-    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Case", cond2_label = "Ctrl", cond1_base = "Case label", cond2_base = "Ctrl label"),
+    compar = data.frame(contrast_id = "Test_Contrast", comparison_group = "Test_Group", cond1_label = "Cond1", cond2_label = "Cond2", cond1_id = "Cond1 short", cond2_id = "Cond2 short"),
+    rna_de_results = data.frame(gene_key = c("GENE_UP", "GENE_DOWN", "TF1"), log2fc_rna = c(2, -2, 0.5), padj = c(0.01, 0.01, 0.5)),
     project_config = list(fp_filter_mode = "log2fc", fp_log2fc_cutoff = 1, gene_log2fc_cutoff = 1, threshold_expr = 0, threshold_fp_score = 0),
     output_dir = file.path(tmp_new, "diff_links_filtered"),
     n_cores = 1,
@@ -179,7 +188,7 @@ test_that("Module 3 default differential-link output is shallow standard layout"
 test_that("Module 3 link_padded FP signal mode pads inactive condition scores", {
   skip_if_not_installed("data.table")
 
-  cond <- c("Case", "Ctrl")
+  cond <- c("Cond1", "Cond2")
   fp_score <- matrix(c(5, 10), nrow = 1, dimnames = list("fp1", cond))
   fp_bound <- matrix(c(0, 1), nrow = 1, dimnames = list("fp1", cond))
   gene_expr <- matrix(c(20, 20, 5, 40), nrow = 2, byrow = TRUE, dimnames = list(c("TF1", "GENE1"), cond))
@@ -207,25 +216,25 @@ test_that("Module 3 link_padded FP signal mode pads inactive condition scores", 
   actual <- .module3_build_chunk_delta_prepared(
     link_dt,
     multiomic,
-    "Case",
-    "Ctrl",
+    "Cond1",
+    "Cond2",
     pseudocount = 1,
     fp_signal_mode = "actual"
   )
   padded <- .module3_build_chunk_delta_prepared(
     link_dt,
     multiomic,
-    "Case",
-    "Ctrl",
+    "Cond1",
+    "Cond2",
     pseudocount = 1,
     fp_signal_mode = "link_padded"
   )
 
-  expect_equal(actual$fp_score_Case, 5)
-  expect_equal(padded$fp_score_Case, 0)
-  expect_equal(padded$fp_score_Ctrl, 10)
+  expect_equal(actual$fp_score_cond1, 5)
+  expect_equal(padded$fp_score_cond1, 0)
+  expect_equal(padded$fp_score_cond2, 10)
   expect_equal(padded$delta_fp_score, -10)
   expect_equal(padded$fp_signal_mode, "link_padded")
-  expect_true(padded$active_Ctrl)
-  expect_false(padded$active_Case)
+  expect_true(padded$active_cond2)
+  expect_false(padded$active_cond1)
 })

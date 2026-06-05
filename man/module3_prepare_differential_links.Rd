@@ -12,6 +12,7 @@ module3_prepare_differential_links(
   output_dir = NULL,
   n_cores = NULL,
   pseudocount = 1,
+  rna_de_results = NULL,
   fp_signal_mode = NULL,
   overwrite = FALSE,
   verbose = TRUE
@@ -37,6 +38,11 @@ Module 2 output directory containing `module2_manifest.csv`.}
 Comparison-level parallelism is controlled by `module3_comparison_workers` in the project config and defaults to 1 for RAM safety.}
 
 \item{pseudocount}{Pseudocount for log2 fold-change calculations.}
+
+\item{rna_de_results}{Optional standardized RNA differential expression
+table or CSV. When provided, target-gene and TF log2 fold changes are read
+from this table and direct condition fold changes are used only for missing
+genes.}
 
 \item{fp_signal_mode}{FP signal used for differential FP fold changes.
 actual uses the measured FP score in both conditions. link_padded

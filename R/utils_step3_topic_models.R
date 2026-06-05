@@ -156,9 +156,9 @@ parse_delta_links_filename <- function(file) {
   b <- sub("_delta_links\\.csv$", "", b, ignore.case = TRUE)
   parts <- strsplit(b, "_vs_", fixed = TRUE)[[1]]
   if (length(parts) != 2) {
-    return(list(comparison_id = b, case_id = NA_character_, ctrl_id = NA_character_, direction = direction))
+    return(list(comparison_id = b, cond1_id = NA_character_, cond2_id = NA_character_, direction = direction))
   }
-  list(comparison_id = b, case_id = parts[[1]], ctrl_id = parts[[2]], direction = direction)
+  list(comparison_id = b, cond1_id = parts[[1]], cond2_id = parts[[2]], direction = direction)
 }
 
 standardize_delta_links_one <- function(file, keep_original = TRUE) {
@@ -174,84 +174,98 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   if ("comparison_id" %in% names(dt) && any(nzchar(as.character(dt$comparison_id)))) {
     ids$comparison_id <- as.character(dt$comparison_id[which(nzchar(as.character(dt$comparison_id)))[[1L]]])
   }
-  if ("case_id" %in% names(dt) && any(nzchar(as.character(dt$case_id)))) {
-    ids$case_id <- as.character(dt$case_id[which(nzchar(as.character(dt$case_id)))[[1L]]])
+  if ("cond1_matrix_id" %in% names(dt) && any(nzchar(as.character(dt$cond1_matrix_id)))) {
+    ids$cond1_id <- as.character(dt$cond1_matrix_id[which(nzchar(as.character(dt$cond1_matrix_id)))[[1L]]])
+  } else if ("cond1_id" %in% names(dt) && any(nzchar(as.character(dt$cond1_id)))) {
+    ids$cond1_id <- as.character(dt$cond1_id[which(nzchar(as.character(dt$cond1_id)))[[1L]]])
+  } else if ("case_id" %in% names(dt) && any(nzchar(as.character(dt$case_id)))) {
+    ids$cond1_id <- as.character(dt$case_id[which(nzchar(as.character(dt$case_id)))[[1L]]])
   }
-  if ("ctrl_id" %in% names(dt) && any(nzchar(as.character(dt$ctrl_id)))) {
-    ids$ctrl_id <- as.character(dt$ctrl_id[which(nzchar(as.character(dt$ctrl_id)))[[1L]]])
+  if ("cond2_matrix_id" %in% names(dt) && any(nzchar(as.character(dt$cond2_matrix_id)))) {
+    ids$cond2_id <- as.character(dt$cond2_matrix_id[which(nzchar(as.character(dt$cond2_matrix_id)))[[1L]]])
+  } else if ("cond2_id" %in% names(dt) && any(nzchar(as.character(dt$cond2_id)))) {
+    ids$cond2_id <- as.character(dt$cond2_id[which(nzchar(as.character(dt$cond2_id)))[[1L]]])
+  } else if ("ctrl_id" %in% names(dt) && any(nzchar(as.character(dt$ctrl_id)))) {
+    ids$cond2_id <- as.character(dt$ctrl_id[which(nzchar(as.character(dt$ctrl_id)))[[1L]]])
   }
-  if (is.na(ids$case_id) || is.na(ids$ctrl_id) || !nzchar(ids$case_id) || !nzchar(ids$ctrl_id)) {
+  if (is.na(ids$cond1_id) || is.na(ids$cond2_id) || !nzchar(ids$cond1_id) || !nzchar(ids$cond2_id)) {
     if (!nrow(dt)) {
       if (!"comparison_id" %in% names(dt)) dt[, comparison_id := ids$comparison_id]
-      if (!"case_id" %in% names(dt)) dt[, case_id := ids$case_id]
-      if (!"ctrl_id" %in% names(dt)) dt[, ctrl_id := ids$ctrl_id]
+      if (!"cond1_id" %in% names(dt)) dt[, cond1_id := ids$cond1_id]
+      if (!"cond2_id" %in% names(dt)) dt[, cond2_id := ids$cond2_id]
       if (!is.null(ids$direction) && !"direction_group" %in% names(dt)) dt[, direction_group := ids$direction]
       if (!isTRUE(keep_original)) {
         keep <- c(
-          "comparison_id", "case_id", "ctrl_id", "direction_group",
+          "comparison_id", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group",
           "tf", "gene_key", "peak_id",
-          "fp_bound_case", "fp_bound_ctrl",
-          "tf_expr_flag_case", "tf_expr_flag_ctrl",
-          "gene_expr_flag_case", "gene_expr_flag_ctrl",
-          "tf_expr_case", "tf_expr_ctrl", "gene_expr_case", "gene_expr_ctrl",
-          "fp_score_case", "fp_score_ctrl",
+          "fp_bound_cond1", "fp_bound_cond2",
+          "tf_expr_flag_cond1", "tf_expr_flag_cond2",
+          "gene_expr_flag_cond1", "gene_expr_flag_cond2",
+          "tf_expr_cond1", "tf_expr_cond2", "gene_expr_cond1", "gene_expr_cond2",
+          "fp_score_cond1", "fp_score_cond2",
           "delta_fp", "delta_gene", "log2fc_fp", "log2fc_gene", "fc_mag_fp", "fc_mag_gene",
           "log2fc_tf", "fc_mag_tf"
         )
         missing <- setdiff(keep, names(dt))
-        for (nm_missing in missing) dt[[nm_missing]] <- if (nm_missing %in% c("comparison_id", "case_id", "ctrl_id", "direction_group", "tf", "gene_key", "peak_id")) character() else numeric()
+        for (nm_missing in missing) dt[[nm_missing]] <- if (nm_missing %in% c("comparison_id", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group", "tf", "gene_key", "peak_id")) character() else numeric()
         return(dt[, keep, with = FALSE])
       }
       return(dt)
     }
     .log_abort(c(
-      "Cannot determine case/control labels for Module 3 differential links.",
-      i = "Use <CASE>_vs_<CTRL> filenames or include case_id and ctrl_id columns.",
+      "Cannot determine condition labels for Module 3 differential links.",
+      i = "Use <COND1>_vs_<COND2> filenames or include cond1_id and cond2_id columns.",
       i = paste0("Got: ", basename(file))
     ))
   }
 
   nm <- function(prefix, cond) paste0(prefix, "_", cond)
+  col_first <- function(choices) {
+    hit <- intersect(choices, names(dt))
+    if (length(hit)) hit[[1L]] else NULL
+  }
 
   # expected wide names
-  fp_bound_case_nm <- nm("fp_bound", ids$case_id)
-  fp_bound_ctrl_nm <- nm("fp_bound", ids$ctrl_id)
-  tf_expr_flag_case_nm <- nm("tf_expr_flag", ids$case_id)
-  tf_expr_flag_ctrl_nm <- nm("tf_expr_flag", ids$ctrl_id)
-  gene_expr_flag_case_nm <- nm("gene_expr_flag", ids$case_id)
-  gene_expr_flag_ctrl_nm <- nm("gene_expr_flag", ids$ctrl_id)
+  fp_bound_cond1_nm <- col_first(c("fp_bound_cond1", "fp_bound_case", nm("fp_bound", ids$cond1_id)))
+  fp_bound_cond2_nm <- col_first(c("fp_bound_cond2", "fp_bound_ctrl", nm("fp_bound", ids$cond2_id)))
+  tf_expr_flag_cond1_nm <- col_first(c("tf_expr_flag_cond1", "tf_expr_flag_case", nm("tf_expr_flag", ids$cond1_id)))
+  tf_expr_flag_cond2_nm <- col_first(c("tf_expr_flag_cond2", "tf_expr_flag_ctrl", nm("tf_expr_flag", ids$cond2_id)))
+  gene_expr_flag_cond1_nm <- col_first(c("gene_expr_flag_cond1", "gene_expr_flag_case", nm("gene_expr_flag", ids$cond1_id)))
+  gene_expr_flag_cond2_nm <- col_first(c("gene_expr_flag_cond2", "gene_expr_flag_ctrl", nm("gene_expr_flag", ids$cond2_id)))
 
-  tf_expr_case_nm <- nm("tf_expr", ids$case_id)
-  tf_expr_ctrl_nm <- nm("tf_expr", ids$ctrl_id)
-  gene_expr_case_nm <- nm("gene_expr", ids$case_id)
-  gene_expr_ctrl_nm <- nm("gene_expr", ids$ctrl_id)
-  fp_score_case_nm <- nm("fp_score", ids$case_id)
-  fp_score_ctrl_nm <- nm("fp_score", ids$ctrl_id)
+  tf_expr_cond1_nm <- col_first(c("tf_expr_cond1", "tf_expr_case", nm("tf_expr", ids$cond1_id)))
+  tf_expr_cond2_nm <- col_first(c("tf_expr_cond2", "tf_expr_ctrl", nm("tf_expr", ids$cond2_id)))
+  gene_expr_cond1_nm <- col_first(c("gene_expr_cond1", "gene_expr_case", nm("gene_expr", ids$cond1_id)))
+  gene_expr_cond2_nm <- col_first(c("gene_expr_cond2", "gene_expr_ctrl", nm("gene_expr", ids$cond2_id)))
+  fp_score_cond1_nm <- col_first(c("fp_score_cond1", "fp_score_case", nm("fp_score", ids$cond1_id), nm("fp_bed_score", ids$cond1_id)))
+  fp_score_cond2_nm <- col_first(c("fp_score_cond2", "fp_score_ctrl", nm("fp_score", ids$cond2_id), nm("fp_bed_score", ids$cond2_id)))
 
-  has <- function(x) x %in% names(dt)
+  has <- function(x) length(x) == 1L && !is.na(x) && x %in% names(dt)
 
   dt[, comparison_id := ids$comparison_id]
-  dt[, case_id := ids$case_id]
-  dt[, ctrl_id := ids$ctrl_id]
+  dt[, cond1_id := if ("cond1_id" %in% names(dt)) as.character(cond1_id) else ids$cond1_id]
+  dt[, cond2_id := if ("cond2_id" %in% names(dt)) as.character(cond2_id) else ids$cond2_id]
+  if (!"cond1_label" %in% names(dt)) dt[, cond1_label := cond1_id]
+  if (!"cond2_label" %in% names(dt)) dt[, cond2_label := cond2_id]
   if (!is.null(ids$direction)) {
     dt[, direction_group := ids$direction]
   }
 
   # flags/bound (missing -> 0)
-  dt[, fp_bound_case := if (has(fp_bound_case_nm)) as.integer(get(fp_bound_case_nm)) else 0L]
-  dt[, fp_bound_ctrl := if (has(fp_bound_ctrl_nm)) as.integer(get(fp_bound_ctrl_nm)) else 0L]
-  dt[, tf_expr_flag_case := if (has(tf_expr_flag_case_nm)) as.integer(get(tf_expr_flag_case_nm)) else 0L]
-  dt[, tf_expr_flag_ctrl := if (has(tf_expr_flag_ctrl_nm)) as.integer(get(tf_expr_flag_ctrl_nm)) else 0L]
-  dt[, gene_expr_flag_case := if (has(gene_expr_flag_case_nm)) as.integer(get(gene_expr_flag_case_nm)) else 0L]
-  dt[, gene_expr_flag_ctrl := if (has(gene_expr_flag_ctrl_nm)) as.integer(get(gene_expr_flag_ctrl_nm)) else 0L]
+  dt[, fp_bound_cond1 := if (has(fp_bound_cond1_nm)) as.integer(get(fp_bound_cond1_nm)) else 0L]
+  dt[, fp_bound_cond2 := if (has(fp_bound_cond2_nm)) as.integer(get(fp_bound_cond2_nm)) else 0L]
+  dt[, tf_expr_flag_cond1 := if (has(tf_expr_flag_cond1_nm)) as.integer(get(tf_expr_flag_cond1_nm)) else 0L]
+  dt[, tf_expr_flag_cond2 := if (has(tf_expr_flag_cond2_nm)) as.integer(get(tf_expr_flag_cond2_nm)) else 0L]
+  dt[, gene_expr_flag_cond1 := if (has(gene_expr_flag_cond1_nm)) as.integer(get(gene_expr_flag_cond1_nm)) else 0L]
+  dt[, gene_expr_flag_cond2 := if (has(gene_expr_flag_cond2_nm)) as.integer(get(gene_expr_flag_cond2_nm)) else 0L]
 
   # raw expr + raw fp (optional)
-  dt[, tf_expr_case := if (has(tf_expr_case_nm)) .safe_num(get(tf_expr_case_nm)) else NA_real_]
-  dt[, tf_expr_ctrl := if (has(tf_expr_ctrl_nm)) .safe_num(get(tf_expr_ctrl_nm)) else NA_real_]
-  dt[, gene_expr_case := if (has(gene_expr_case_nm)) .safe_num(get(gene_expr_case_nm)) else NA_real_]
-  dt[, gene_expr_ctrl := if (has(gene_expr_ctrl_nm)) .safe_num(get(gene_expr_ctrl_nm)) else NA_real_]
-  dt[, fp_score_case := if (has(fp_score_case_nm)) .safe_num(get(fp_score_case_nm)) else if (has(nm("fp_bed_score", ids$case_id))) .safe_num(get(nm("fp_bed_score", ids$case_id))) else NA_real_]
-  dt[, fp_score_ctrl := if (has(fp_score_ctrl_nm)) .safe_num(get(fp_score_ctrl_nm)) else if (has(nm("fp_bed_score", ids$ctrl_id))) .safe_num(get(nm("fp_bed_score", ids$ctrl_id))) else NA_real_]
+  dt[, tf_expr_cond1 := if (has(tf_expr_cond1_nm)) .safe_num(get(tf_expr_cond1_nm)) else NA_real_]
+  dt[, tf_expr_cond2 := if (has(tf_expr_cond2_nm)) .safe_num(get(tf_expr_cond2_nm)) else NA_real_]
+  dt[, gene_expr_cond1 := if (has(gene_expr_cond1_nm)) .safe_num(get(gene_expr_cond1_nm)) else NA_real_]
+  dt[, gene_expr_cond2 := if (has(gene_expr_cond2_nm)) .safe_num(get(gene_expr_cond2_nm)) else NA_real_]
+  dt[, fp_score_cond1 := if (has(fp_score_cond1_nm)) .safe_num(get(fp_score_cond1_nm)) else NA_real_]
+  dt[, fp_score_cond2 := if (has(fp_score_cond2_nm)) .safe_num(get(fp_score_cond2_nm)) else NA_real_]
 
   # standardized deltas/log2FC and FC-magnitude (gene/fp)
   dt[, delta_fp := if (has("delta_fp_score")) .safe_num(delta_fp_score) else if (has("delta_fp_bed_score")) .safe_num(delta_fp_bed_score) else NA_real_]
@@ -300,8 +314,8 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   }]
 
   dt[, log2fc_tf := if (has("log2FC_tf_expr")) .safe_num(log2FC_tf_expr) else {
-    if (has("tf_expr_case") && has("tf_expr_ctrl")) {
-      .safe_log2fc(tf_expr_case, tf_expr_ctrl)
+    if (has("tf_expr_cond1") && has("tf_expr_cond2")) {
+      .safe_log2fc(tf_expr_cond1, tf_expr_cond2)
     } else {
       NA_real_
     }
@@ -310,13 +324,13 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
 
   if (!isTRUE(keep_original)) {
     keep <- c(
-      "comparison_id","case_id","ctrl_id","direction_group",
+      "comparison_id","cond1_id","cond2_id","cond1_label","cond2_label","direction_group",
       "tf","gene_key","peak_id",
-      "fp_bound_case","fp_bound_ctrl",
-      "tf_expr_flag_case","tf_expr_flag_ctrl",
-      "gene_expr_flag_case","gene_expr_flag_ctrl",
-      "tf_expr_case","tf_expr_ctrl","gene_expr_case","gene_expr_ctrl",
-      "fp_score_case","fp_score_ctrl",
+      "fp_bound_cond1","fp_bound_cond2",
+      "tf_expr_flag_cond1","tf_expr_flag_cond2",
+      "gene_expr_flag_cond1","gene_expr_flag_cond2",
+      "tf_expr_cond1","tf_expr_cond2","gene_expr_cond1","gene_expr_cond2",
+      "fp_score_cond1","fp_score_cond2",
       "delta_fp","delta_gene","log2fc_fp","log2fc_gene","fc_mag_fp","fc_mag_gene",
       "log2fc_tf","fc_mag_tf"
     )
@@ -367,6 +381,12 @@ filter_edges_for_tf_topics <- function(edges,
   .assert_pkg("data.table")
 
   dt <- data.table::as.data.table(edges)
+  if (!"fp_bound_cond1" %in% names(dt) && "fp_bound_case" %in% names(dt)) dt[, fp_bound_cond1 := fp_bound_case]
+  if (!"fp_bound_cond2" %in% names(dt) && "fp_bound_ctrl" %in% names(dt)) dt[, fp_bound_cond2 := fp_bound_ctrl]
+  if (!"tf_expr_flag_cond1" %in% names(dt) && "tf_expr_flag_case" %in% names(dt)) dt[, tf_expr_flag_cond1 := tf_expr_flag_case]
+  if (!"tf_expr_flag_cond2" %in% names(dt) && "tf_expr_flag_ctrl" %in% names(dt)) dt[, tf_expr_flag_cond2 := tf_expr_flag_ctrl]
+  if (!"gene_expr_flag_cond1" %in% names(dt) && "gene_expr_flag_case" %in% names(dt)) dt[, gene_expr_flag_cond1 := gene_expr_flag_case]
+  if (!"gene_expr_flag_cond2" %in% names(dt) && "gene_expr_flag_ctrl" %in% names(dt)) dt[, gene_expr_flag_cond2 := gene_expr_flag_ctrl]
   .assert_has_cols(
     dt,
     c("comparison_id","tf","gene_key","peak_id","log2fc_fp","log2fc_gene"),
@@ -384,9 +404,9 @@ filter_edges_for_tf_topics <- function(edges,
     }
   }
 
-  tf_either <- (get_flag("tf_expr_flag_case") >= 1L) | (get_flag("tf_expr_flag_ctrl") >= 1L)
-  gene_either <- (get_flag("gene_expr_flag_case") >= 1L) | (get_flag("gene_expr_flag_ctrl") >= 1L)
-  fp_either <- (get_flag("fp_bound_case") >= 1L) | (get_flag("fp_bound_ctrl") >= 1L)
+  tf_either <- (get_flag("tf_expr_flag_cond1") >= 1L) | (get_flag("tf_expr_flag_cond2") >= 1L)
+  gene_either <- (get_flag("gene_expr_flag_cond1") >= 1L) | (get_flag("gene_expr_flag_cond2") >= 1L)
+  fp_either <- (get_flag("fp_bound_cond1") >= 1L) | (get_flag("fp_bound_cond2") >= 1L)
 
   keep <- rep(TRUE, nrow(dt))
   if (isTRUE(require_tf_expr_either)) keep <- keep & tf_either
@@ -7886,12 +7906,12 @@ train_topic_models <- function(Kgrid,
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
   sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
   if (length(sample_subset)) {
-    if (all(c("case_id", "ctrl_id") %in% names(edges_dt))) {
+    if (all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
       n_before_subset <- nrow(edges_dt)
-      edges_dt <- edges_dt[case_id %in% sample_subset & ctrl_id %in% sample_subset]
+      edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
       .log_inform("Sample subset retained {nrow(edges_dt)}/{n_before_subset} delta-link row(s).")
     } else {
-      .log_abort("sample_subset requires delta links with case_id and ctrl_id columns.")
+      .log_abort("sample_subset requires delta links with cond1_id and cond2_id columns.")
     }
   }
   if (!nrow(edges_dt)) {
@@ -8459,8 +8479,8 @@ weight_to_count <- function(w,
 #' `comparison_id::tf::Target-Down`). For `doc_mode = "tf_cluster"`, documents
 #' are TF-cluster documents using the same direction suffix.
 #'
-#' When `direction_by = "gene"`, `Target-Up` means the case condition is the
-#' direction-relevant condition and `Target-Down` means the control condition is
+#' When `direction_by = "gene"`, `Target-Up` means condition 1 is the
+#' direction-relevant condition and `Target-Down` means condition 2 is
 #' the direction-relevant condition. The returned table includes
 #' `tf_expr_condition`, `gene_expr_condition`, and `fp_score_condition` columns
 #' for threshold-aware term construction.
@@ -8483,6 +8503,12 @@ add_tf_docs <- function(edges,
   direction_by <- match.arg(direction_by)
 
   dt <- data.table::as.data.table(edges)
+  if (!"tf_expr_cond1" %in% names(dt) && "tf_expr_case" %in% names(dt)) dt[, tf_expr_cond1 := tf_expr_case]
+  if (!"tf_expr_cond2" %in% names(dt) && "tf_expr_ctrl" %in% names(dt)) dt[, tf_expr_cond2 := tf_expr_ctrl]
+  if (!"gene_expr_cond1" %in% names(dt) && "gene_expr_case" %in% names(dt)) dt[, gene_expr_cond1 := gene_expr_case]
+  if (!"gene_expr_cond2" %in% names(dt) && "gene_expr_ctrl" %in% names(dt)) dt[, gene_expr_cond2 := gene_expr_ctrl]
+  if (!"fp_score_cond1" %in% names(dt) && "fp_score_case" %in% names(dt)) dt[, fp_score_cond1 := fp_score_case]
+  if (!"fp_score_cond2" %in% names(dt) && "fp_score_ctrl" %in% names(dt)) dt[, fp_score_cond2 := fp_score_ctrl]
   req <- c("comparison_id", "tf")
   if (identical(direction_by, "gene")) {
     req <- c(req, "log2fc_gene")
@@ -8534,20 +8560,20 @@ add_tf_docs <- function(edges,
     dt <- dt[!is.na(direction) & nzchar(direction)]
   }
 
-  case_is_relevant <- dt$direction_sign > 0L
-  ctrl_is_relevant <- dt$direction_sign < 0L
-  pick_direction_value <- function(case_col, ctrl_col) {
-    case_val <- if (case_col %in% names(dt)) .topic_safe_num(dt[[case_col]]) else rep(NA_real_, nrow(dt))
-    ctrl_val <- if (ctrl_col %in% names(dt)) .topic_safe_num(dt[[ctrl_col]]) else rep(NA_real_, nrow(dt))
+  cond1_is_relevant <- dt$direction_sign > 0L
+  cond2_is_relevant <- dt$direction_sign < 0L
+  pick_direction_value <- function(cond1_col, cond2_col) {
+    cond1_val <- if (cond1_col %in% names(dt)) .topic_safe_num(dt[[cond1_col]]) else rep(NA_real_, nrow(dt))
+    cond2_val <- if (cond2_col %in% names(dt)) .topic_safe_num(dt[[cond2_col]]) else rep(NA_real_, nrow(dt))
     out <- rep(NA_real_, nrow(dt))
-    out[case_is_relevant] <- case_val[case_is_relevant]
-    out[ctrl_is_relevant] <- ctrl_val[ctrl_is_relevant]
+    out[cond1_is_relevant] <- cond1_val[cond1_is_relevant]
+    out[cond2_is_relevant] <- cond2_val[cond2_is_relevant]
     out
   }
   dt[, `:=`(
-    tf_expr_condition = pick_direction_value("tf_expr_case", "tf_expr_ctrl"),
-    gene_expr_condition = pick_direction_value("gene_expr_case", "gene_expr_ctrl"),
-    fp_score_condition = pick_direction_value("fp_score_case", "fp_score_ctrl")
+    tf_expr_condition = pick_direction_value("tf_expr_cond1", "tf_expr_cond2"),
+    gene_expr_condition = pick_direction_value("gene_expr_cond1", "gene_expr_cond2"),
+    fp_score_condition = pick_direction_value("fp_score_cond1", "fp_score_cond2")
   )]
   dt[, direction_sign := NULL]
 
@@ -8556,8 +8582,8 @@ add_tf_docs <- function(edges,
 
 #' Add condition-level topic-model document IDs to links
 #'
-#' Expands per-comparison links into condition-specific rows for both case and
-#' control conditions. For `doc_mode = "tf_cluster"`, the document key is
+#' Expands per-comparison links into condition-specific rows for condition 1 and
+#' condition 2. For `doc_mode = "tf_cluster"`, the document key is
 #' `condition_label::tf_cluster`. For `doc_mode = "tf"`, the document key is
 #' `condition_label::tf`.
 #'
@@ -8566,10 +8592,10 @@ add_tf_docs <- function(edges,
 #' expression, and footprint score so `build_doc_term_condition_union()` can
 #' apply threshold rules consistently during term construction.
 #'
-#' Required input columns are `comparison_id`, `case_id`, `ctrl_id`, `tf`,
-#' `gene_key`, `peak_id`, `fp_score_case`, `fp_score_ctrl`,
-#' `gene_expr_case`, and `gene_expr_ctrl`. TF expression columns
-#' `tf_expr_case` and `tf_expr_ctrl` are optional for cluster-level
+#' Required input columns are `comparison_id`, `cond1_id`, `cond2_id`, `tf`,
+#' `gene_key`, `peak_id`, `fp_score_cond1`, `fp_score_cond2`,
+#' `gene_expr_cond1`, and `gene_expr_cond2`. TF expression columns
+#' `tf_expr_cond1` and `tf_expr_cond2` are optional for cluster-level
 #' workflows but required when condition-level TF thresholds are applied.
 #'
 #' @param edges Link table.
@@ -8586,34 +8612,42 @@ add_condition_tf_docs <- function(edges,
   doc_mode <- match.arg(doc_mode)
 
   dt <- data.table::as.data.table(edges)
+  if (!"cond1_id" %in% names(dt) && "case_id" %in% names(dt)) dt[, cond1_id := case_id]
+  if (!"cond2_id" %in% names(dt) && "ctrl_id" %in% names(dt)) dt[, cond2_id := ctrl_id]
+  if (!"tf_expr_cond1" %in% names(dt) && "tf_expr_case" %in% names(dt)) dt[, tf_expr_cond1 := tf_expr_case]
+  if (!"tf_expr_cond2" %in% names(dt) && "tf_expr_ctrl" %in% names(dt)) dt[, tf_expr_cond2 := tf_expr_ctrl]
+  if (!"gene_expr_cond1" %in% names(dt) && "gene_expr_case" %in% names(dt)) dt[, gene_expr_cond1 := gene_expr_case]
+  if (!"gene_expr_cond2" %in% names(dt) && "gene_expr_ctrl" %in% names(dt)) dt[, gene_expr_cond2 := gene_expr_ctrl]
+  if (!"fp_score_cond1" %in% names(dt) && "fp_score_case" %in% names(dt)) dt[, fp_score_cond1 := fp_score_case]
+  if (!"fp_score_cond2" %in% names(dt) && "fp_score_ctrl" %in% names(dt)) dt[, fp_score_cond2 := fp_score_ctrl]
   .topic_assert_has_cols(
     dt,
     c(
-      "comparison_id", "case_id", "ctrl_id", "tf", "gene_key", "peak_id",
-      "fp_score_case", "fp_score_ctrl", "gene_expr_case", "gene_expr_ctrl"
+      "comparison_id", "cond1_id", "cond2_id", "tf", "gene_key", "peak_id",
+      "fp_score_cond1", "fp_score_cond2", "gene_expr_cond1", "gene_expr_cond2"
     ),
     context = "add_condition_tf_docs"
   )
 
   dt[, tf_doc := .topic_condition_tf_doc(tf, tf_cluster_map, doc_mode)]
 
-  case_dt <- data.table::copy(dt)
-  case_dt[, `:=`(
-    condition_label = as.character(case_id),
-    fp_score_condition = .topic_safe_num(fp_score_case),
-    gene_expr_condition = .topic_safe_num(gene_expr_case),
-    tf_expr_condition = if ("tf_expr_case" %in% names(case_dt)) .topic_safe_num(tf_expr_case) else NA_real_
+  cond1_dt <- data.table::copy(dt)
+  cond1_dt[, `:=`(
+    condition_label = as.character(cond1_id),
+    fp_score_condition = .topic_safe_num(fp_score_cond1),
+    gene_expr_condition = .topic_safe_num(gene_expr_cond1),
+    tf_expr_condition = if ("tf_expr_cond1" %in% names(cond1_dt)) .topic_safe_num(tf_expr_cond1) else NA_real_
   )]
 
-  ctrl_dt <- data.table::copy(dt)
-  ctrl_dt[, `:=`(
-    condition_label = as.character(ctrl_id),
-    fp_score_condition = .topic_safe_num(fp_score_ctrl),
-    gene_expr_condition = .topic_safe_num(gene_expr_ctrl),
-    tf_expr_condition = if ("tf_expr_ctrl" %in% names(ctrl_dt)) .topic_safe_num(tf_expr_ctrl) else NA_real_
+  cond2_dt <- data.table::copy(dt)
+  cond2_dt[, `:=`(
+    condition_label = as.character(cond2_id),
+    fp_score_condition = .topic_safe_num(fp_score_cond2),
+    gene_expr_condition = .topic_safe_num(gene_expr_cond2),
+    tf_expr_condition = if ("tf_expr_cond2" %in% names(cond2_dt)) .topic_safe_num(tf_expr_cond2) else NA_real_
   )]
 
-  out <- data.table::rbindlist(list(case_dt, ctrl_dt), use.names = TRUE, fill = TRUE)
+  out <- data.table::rbindlist(list(cond1_dt, cond2_dt), use.names = TRUE, fill = TRUE)
   out <- out[!is.na(condition_label) & nzchar(condition_label)]
   out[, doc_id := paste(condition_label, tf_doc, sep = "::")]
   out[]

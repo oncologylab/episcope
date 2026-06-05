@@ -138,6 +138,67 @@
   match.arg(mode, c("actual", "link_padded"))
 }
 
+.module3_first_present <- function(dt, choices) {
+  hit <- intersect(choices, names(dt))
+  if (length(hit)) hit[[1L]] else NULL
+}
+
+.module3_read_de_results <- function(rna_de_results = NULL, cfg = NULL) {
+  path <- rna_de_results %||% .module3_cfg_value(cfg, "rna_de_results", NULL)
+  if (is.null(path) || !nzchar(as.character(path)[[1L]])) return(NULL)
+  if (is.data.frame(path)) {
+    de <- data.table::as.data.table(path)
+  } else {
+    path <- as.character(path)[[1L]]
+    if (!file.exists(path)) .log_abort("RNA differential result file does not exist: {path}")
+    de <- data.table::fread(path, showProgress = FALSE)
+  }
+  gene_col <- .module3_first_present(de, c("gene_key", "gene_symbol", "Symbol", "symbol", "gene", "gene_id", "ENSEMBL"))
+  lfc_col <- .module3_first_present(de, c("log2fc_rna", "log2FC_rna", "log2FoldChange", "log2fc", "log2FC"))
+  if (is.null(gene_col) || is.null(lfc_col)) {
+    .log_abort("RNA differential results must include a gene column and a log2 fold-change column.")
+  }
+  p_col <- .module3_first_present(de, c("pvalue", "p_value", "p"))
+  padj_col <- .module3_first_present(de, c("padj", "fdr", "qvalue", "q_value"))
+  source_col <- .module3_first_present(de, c("de_source", "source"))
+  test_col <- .module3_first_present(de, c("de_test_id", "test_id", "contrast", "comparison_id"))
+  comp_col <- .module3_first_present(de, c("comparison_id", "contrast_id"))
+  out <- data.table::data.table(
+    comparison_id = if (!is.null(comp_col)) as.character(de[[comp_col]]) else NA_character_,
+    gene_key = as.character(de[[gene_col]]),
+    log2fc_rna = suppressWarnings(as.numeric(de[[lfc_col]])),
+    pvalue_rna = if (!is.null(p_col)) suppressWarnings(as.numeric(de[[p_col]])) else NA_real_,
+    padj_rna = if (!is.null(padj_col)) suppressWarnings(as.numeric(de[[padj_col]])) else NA_real_,
+    de_source = if (!is.null(source_col)) as.character(de[[source_col]]) else "external",
+    de_test_id = if (!is.null(test_col)) as.character(de[[test_col]]) else NA_character_
+  )
+  out <- out[!is.na(gene_key) & nzchar(gene_key) & is.finite(log2fc_rna)]
+  if (!nrow(out)) return(NULL)
+  out <- out[order(is.na(padj_rna), padj_rna)]
+  unique(out, by = c("comparison_id", "gene_key"))
+}
+
+.module3_lookup_de <- function(de_dt, genes) {
+  out <- list(
+    log2fc = rep(NA_real_, length(genes)),
+    pvalue = rep(NA_real_, length(genes)),
+    padj = rep(NA_real_, length(genes)),
+    source = rep("direct_fc", length(genes)),
+    test_id = rep(NA_character_, length(genes))
+  )
+  if (is.null(de_dt) || !nrow(de_dt)) return(out)
+  idx <- match(as.character(genes), de_dt$gene_key)
+  ok <- !is.na(idx)
+  if (any(ok)) {
+    out$log2fc[ok] <- de_dt$log2fc_rna[idx[ok]]
+    out$pvalue[ok] <- de_dt$pvalue_rna[idx[ok]]
+    out$padj[ok] <- de_dt$padj_rna[idx[ok]]
+    out$source[ok] <- de_dt$de_source[idx[ok]]
+    out$test_id[ok] <- de_dt$de_test_id[idx[ok]]
+  }
+  out
+}
+
 .module3_prepare_chunk_links <- function(link_dt, cand_dt, fp_corr, tf_corr) {
   if (!nrow(link_dt)) return(data.table::data.table())
   link_dt <- data.table::as.data.table(link_dt)
@@ -162,78 +223,102 @@
 
 .module3_build_chunk_delta_prepared <- function(link_dt,
                                                 multiomic_data,
-                                                case_id,
-                                                ctrl_id,
+                                                cond1_matrix_id,
+                                                cond2_matrix_id,
                                                 pseudocount = 1,
-                                                fp_signal_mode = c("actual", "link_padded")) {
+                                                fp_signal_mode = c("actual", "link_padded"),
+                                                rna_de_results = NULL,
+                                                comparison_id = NULL) {
   fp_signal_mode <- match.arg(fp_signal_mode)
   if (!nrow(link_dt)) return(data.table::data.table())
   mats <- multiomic_data$matrices
-  case_suffix <- paste0("_", case_id)
-  ctrl_suffix <- paste0("_", ctrl_id)
-  fp_case <- .module3_match_values(mats$fp_score, link_dt$fp_id, case_id)
-  fp_ctrl <- .module3_match_values(mats$fp_score, link_dt$fp_id, ctrl_id)
-  tf_case <- .module3_match_values(mats$gene_expr, link_dt$tf, case_id)
-  tf_ctrl <- .module3_match_values(mats$gene_expr, link_dt$tf, ctrl_id)
-  gene_case <- .module3_match_values(mats$gene_expr, link_dt$target_gene, case_id)
-  gene_ctrl <- .module3_match_values(mats$gene_expr, link_dt$target_gene, ctrl_id)
-  fp_bound_case <- .module3_match_flags(mats$fp_bound, link_dt$fp_id, case_id)
-  fp_bound_ctrl <- .module3_match_flags(mats$fp_bound, link_dt$fp_id, ctrl_id)
-  tf_flag_case <- .module3_match_flags(mats$gene_on, link_dt$tf, case_id)
-  tf_flag_ctrl <- .module3_match_flags(mats$gene_on, link_dt$tf, ctrl_id)
-  gene_flag_case <- .module3_match_flags(mats$gene_on, link_dt$target_gene, case_id)
-  gene_flag_ctrl <- .module3_match_flags(mats$gene_on, link_dt$target_gene, ctrl_id)
-  active_case <- fp_bound_case & tf_flag_case & gene_flag_case
-  active_ctrl <- fp_bound_ctrl & tf_flag_ctrl & gene_flag_ctrl
-  fp_case_signal <- fp_case
-  fp_ctrl_signal <- fp_ctrl
+  fp_cond1 <- .module3_match_values(mats$fp_score, link_dt$fp_id, cond1_matrix_id)
+  fp_cond2 <- .module3_match_values(mats$fp_score, link_dt$fp_id, cond2_matrix_id)
+  tf_cond1 <- .module3_match_values(mats$gene_expr, link_dt$tf, cond1_matrix_id)
+  tf_cond2 <- .module3_match_values(mats$gene_expr, link_dt$tf, cond2_matrix_id)
+  gene_cond1 <- .module3_match_values(mats$gene_expr, link_dt$target_gene, cond1_matrix_id)
+  gene_cond2 <- .module3_match_values(mats$gene_expr, link_dt$target_gene, cond2_matrix_id)
+  fp_bound_cond1 <- .module3_match_flags(mats$fp_bound, link_dt$fp_id, cond1_matrix_id)
+  fp_bound_cond2 <- .module3_match_flags(mats$fp_bound, link_dt$fp_id, cond2_matrix_id)
+  tf_flag_cond1 <- .module3_match_flags(mats$gene_on, link_dt$tf, cond1_matrix_id)
+  tf_flag_cond2 <- .module3_match_flags(mats$gene_on, link_dt$tf, cond2_matrix_id)
+  gene_flag_cond1 <- .module3_match_flags(mats$gene_on, link_dt$target_gene, cond1_matrix_id)
+  gene_flag_cond2 <- .module3_match_flags(mats$gene_on, link_dt$target_gene, cond2_matrix_id)
+  active_cond1 <- fp_bound_cond1 & tf_flag_cond1 & gene_flag_cond1
+  active_cond2 <- fp_bound_cond2 & tf_flag_cond2 & gene_flag_cond2
+  fp_cond1_signal <- fp_cond1
+  fp_cond2_signal <- fp_cond2
   if (identical(fp_signal_mode, "link_padded")) {
-    fp_case_signal <- data.table::fifelse(active_case, fp_case, 0)
-    fp_ctrl_signal <- data.table::fifelse(active_ctrl, fp_ctrl, 0)
+    fp_cond1_signal <- data.table::fifelse(active_cond1, fp_cond1, 0)
+    fp_cond2_signal <- data.table::fifelse(active_cond2, fp_cond2, 0)
   }
   score_base <- as.numeric(link_dt$r_gene) * as.numeric(link_dt$r_rna_gene)
-  score_case <- ifelse(active_case, score_base, 0)
-  score_ctrl <- ifelse(active_ctrl, score_base, 0)
+  score_cond1 <- ifelse(active_cond1, score_base, 0)
+  score_cond2 <- ifelse(active_cond2, score_base, 0)
+  de_dt <- rna_de_results
+  if (!is.null(de_dt) && nrow(de_dt) && !is.null(comparison_id) && "comparison_id" %in% names(de_dt)) {
+    comp_id <- as.character(comparison_id)
+    scoped <- de_dt[is.na(de_dt[["comparison_id"]]) | de_dt[["comparison_id"]] == comp_id]
+    de_dt <- scoped
+  }
+  de_gene <- .module3_lookup_de(de_dt, link_dt$target_gene)
+  de_tf <- .module3_lookup_de(de_dt, link_dt$tf)
+  direct_gene_lfc <- .module3_safe_log2fc(gene_cond1, gene_cond2, pseudocount)
+  direct_tf_lfc <- .module3_safe_log2fc(tf_cond1, tf_cond2, pseudocount)
+  gene_lfc <- de_gene$log2fc
+  tf_lfc <- de_tf$log2fc
+  gene_lfc[!is.finite(gene_lfc)] <- direct_gene_lfc[!is.finite(gene_lfc)]
+  tf_lfc[!is.finite(tf_lfc)] <- direct_tf_lfc[!is.finite(tf_lfc)]
 
   out <- data.table::data.table(
     tf = as.character(link_dt$tf),
     gene_key = as.character(link_dt$target_gene),
     peak_id = as.character(link_dt$fp_id)
   )
-  out[[paste0("link_score", case_suffix)]] <- score_case
-  out[[paste0("link_score", ctrl_suffix)]] <- score_ctrl
-  out[[paste0("link_sign", case_suffix)]] <- "+"
-  out[[paste0("link_sign", ctrl_suffix)]] <- "+"
-  out[[paste0("fp_score", case_suffix)]] <- fp_case_signal
-  out[[paste0("fp_score", ctrl_suffix)]] <- fp_ctrl_signal
-  out[[paste0("tf_expr", case_suffix)]] <- tf_case
-  out[[paste0("tf_expr", ctrl_suffix)]] <- tf_ctrl
-  out[[paste0("gene_expr", case_suffix)]] <- gene_case
-  out[[paste0("gene_expr", ctrl_suffix)]] <- gene_ctrl
-  out[[paste0("active", case_suffix)]] <- active_case
-  out[[paste0("active", ctrl_suffix)]] <- active_ctrl
-  out[[paste0("fp_bound", case_suffix)]] <- as.integer(fp_bound_case)
-  out[[paste0("fp_bound", ctrl_suffix)]] <- as.integer(fp_bound_ctrl)
-  out[[paste0("tf_expr_flag", case_suffix)]] <- as.integer(tf_flag_case)
-  out[[paste0("tf_expr_flag", ctrl_suffix)]] <- as.integer(tf_flag_ctrl)
-  out[[paste0("gene_expr_flag", case_suffix)]] <- as.integer(gene_flag_case)
-  out[[paste0("gene_expr_flag", ctrl_suffix)]] <- as.integer(gene_flag_ctrl)
+  out$link_score_cond1 <- score_cond1
+  out$link_score_cond2 <- score_cond2
+  out$link_sign_cond1 <- "+"
+  out$link_sign_cond2 <- "+"
+  out$fp_score_cond1 <- fp_cond1_signal
+  out$fp_score_cond2 <- fp_cond2_signal
+  out$tf_expr_cond1 <- tf_cond1
+  out$tf_expr_cond2 <- tf_cond2
+  out$gene_expr_cond1 <- gene_cond1
+  out$gene_expr_cond2 <- gene_cond2
+  out$active_cond1 <- active_cond1
+  out$active_cond2 <- active_cond2
+  out$fp_bound_cond1 <- as.integer(fp_bound_cond1)
+  out$fp_bound_cond2 <- as.integer(fp_bound_cond2)
+  out$tf_expr_flag_cond1 <- as.integer(tf_flag_cond1)
+  out$tf_expr_flag_cond2 <- as.integer(tf_flag_cond2)
+  out$gene_expr_flag_cond1 <- as.integer(gene_flag_cond1)
+  out$gene_expr_flag_cond2 <- as.integer(gene_flag_cond2)
   out <- data.table::copy(out)
   out[, `:=`(
-    delta_link_score = score_case - score_ctrl,
-    delta_fp_score = fp_case_signal - fp_ctrl_signal,
-    delta_tf_expr = tf_case - tf_ctrl,
-    delta_gene_expr = gene_case - gene_ctrl,
-    log2FC_fp_score = .module3_safe_log2fc(fp_case_signal, fp_ctrl_signal, pseudocount),
-    log2FC_tf_expr = .module3_safe_log2fc(tf_case, tf_ctrl, pseudocount),
-    log2FC_gene_expr = .module3_safe_log2fc(gene_case, gene_ctrl, pseudocount),
-    fc_link_score = (score_case + pseudocount) / (score_ctrl + pseudocount),
-    fc_fp_score = (fp_case_signal + pseudocount) / (fp_ctrl_signal + pseudocount),
-    fc_tf_expr = (tf_case + pseudocount) / (tf_ctrl + pseudocount),
-    fc_gene_expr = (gene_case + pseudocount) / (gene_ctrl + pseudocount),
-    edge_change = fifelse(score_case - score_ctrl > 0, "gain", fifelse(score_case - score_ctrl < 0, "loss", "shared")),
-    active_both = active_case & active_ctrl,
-    active_any = active_case | active_ctrl,
+    delta_link_score = score_cond1 - score_cond2,
+    delta_fp_score = fp_cond1_signal - fp_cond2_signal,
+    delta_tf_expr = tf_cond1 - tf_cond2,
+    delta_gene_expr = gene_cond1 - gene_cond2,
+    log2FC_fp_score = .module3_safe_log2fc(fp_cond1_signal, fp_cond2_signal, pseudocount),
+    log2FC_tf_expr = tf_lfc,
+    log2FC_gene_expr = gene_lfc,
+    log2FC_tf_expr_direct = direct_tf_lfc,
+    log2FC_gene_expr_direct = direct_gene_lfc,
+    p_rna_de_gene = de_gene$pvalue,
+    p_adj_rna_de_gene = de_gene$padj,
+    p_rna_de_tf = de_tf$pvalue,
+    p_adj_rna_de_tf = de_tf$padj,
+    de_source_gene = de_gene$source,
+    de_source_tf = de_tf$source,
+    de_test_id_gene = de_gene$test_id,
+    de_test_id_tf = de_tf$test_id,
+    fc_link_score = (score_cond1 + pseudocount) / (score_cond2 + pseudocount),
+    fc_fp_score = (fp_cond1_signal + pseudocount) / (fp_cond2_signal + pseudocount),
+    fc_tf_expr = (tf_cond1 + pseudocount) / (tf_cond2 + pseudocount),
+    fc_gene_expr = (gene_cond1 + pseudocount) / (gene_cond2 + pseudocount),
+    edge_change = fifelse(score_cond1 - score_cond2 > 0, "gain", fifelse(score_cond1 - score_cond2 < 0, "loss", "shared")),
+    active_both = active_cond1 & active_cond2,
+    active_any = active_cond1 | active_cond2,
     fp_signal_mode = fp_signal_mode,
     r_gene = as.numeric(link_dt$r_gene),
     p_gene = as.numeric(link_dt$p_gene),
@@ -252,19 +337,21 @@
                                        fp_corr,
                                        tf_corr,
                                        multiomic_data,
-                                       case_id,
-                                       ctrl_id,
+                                       cond1_matrix_id,
+                                       cond2_matrix_id,
                                        pseudocount = 1,
-                                       fp_signal_mode = c("actual", "link_padded")) {
+                                       fp_signal_mode = c("actual", "link_padded"),
+                                       rna_de_results = NULL) {
   fp_signal_mode <- match.arg(fp_signal_mode)
   prepared <- .module3_prepare_chunk_links(link_dt, cand_dt, fp_corr, tf_corr)
   .module3_build_chunk_delta_prepared(
     prepared,
     multiomic_data,
-    case_id,
-    ctrl_id,
+    cond1_matrix_id,
+    cond2_matrix_id,
     pseudocount = pseudocount,
-    fp_signal_mode = fp_signal_mode
+    fp_signal_mode = fp_signal_mode,
+    rna_de_results = rna_de_results
   )
 }
 
@@ -287,15 +374,10 @@
   fp_value <- if (identical(mode, "delta")) dt$delta_fp_score else dt$log2FC_fp_score
   gene_l2 <- dt$log2FC_gene_expr
   tf_l2 <- dt$log2FC_tf_expr
-  case_fp <- grep("^fp_score_", names(dt), value = TRUE)[1L]
-  ctrl_fp <- grep("^fp_score_", names(dt), value = TRUE)[2L]
-  case_tf <- grep("^tf_expr_", names(dt), value = TRUE)[1L]
-  ctrl_tf <- grep("^tf_expr_", names(dt), value = TRUE)[2L]
-  case_gene <- grep("^gene_expr_", names(dt), value = TRUE)[1L]
-  ctrl_gene <- grep("^gene_expr_", names(dt), value = TRUE)[2L]
-  fp_high <- ifelse(gene_l2 >= 0, dt[[case_fp]], dt[[ctrl_fp]])
-  tf_high <- ifelse(gene_l2 >= 0, dt[[case_tf]], dt[[ctrl_tf]])
-  gene_high <- ifelse(gene_l2 >= 0, dt[[case_gene]], dt[[ctrl_gene]])
+  de_padj_cut <- as.numeric(.module3_cfg_value(cfg, "gene_de_padj_cutoff", NA_real_))[[1L]]
+  fp_high <- ifelse(gene_l2 >= 0, dt$fp_score_cond1, dt$fp_score_cond2)
+  tf_high <- ifelse(gene_l2 >= 0, dt$tf_expr_cond1, dt$tf_expr_cond2)
+  gene_high <- ifelse(gene_l2 >= 0, dt$gene_expr_cond1, dt$gene_expr_cond2)
   tf_opp <- is.finite(tf_l2) & is.finite(gene_l2) & abs(tf_l2) >= tf_opposition_cut & sign(tf_l2) == -sign(gene_l2)
   base_keep <- dt$active_any %in% TRUE &
     is.finite(gene_l2) &
@@ -304,6 +386,9 @@
     is.finite(tf_high) & tf_high > tf_expr_cut &
     is.finite(gene_high) & gene_high > gene_expr_cut &
     !tf_opp
+  if (is.finite(de_padj_cut)) {
+    base_keep <- base_keep & is.finite(dt$p_adj_rna_de_gene) & dt$p_adj_rna_de_gene <= de_padj_cut
+  }
   if (identical(direction, "up")) {
     keep <- base_keep & gene_l2 >= gene_cut & fp_value >= fp_cut
   } else {
@@ -323,13 +408,23 @@
   }
   if (!is.data.frame(compar)) .log_abort("`compar` must be a data.frame or CSV path.")
   compar <- data.table::as.data.table(compar)
-  if (!all(c("cond1_label", "cond2_label") %in% names(compar))) {
+  if (!all(c("cond1_label", "cond2_label") %in% names(compar)) &&
+      !all(c("cond1_matrix_id", "cond2_matrix_id") %in% names(compar))) {
     .log_abort("`compar` must include cond1_label and cond2_label columns.")
   }
-  compar[, `:=`(
-    cond1_label = as.character(cond1_label),
-    cond2_label = as.character(cond2_label)
-  )]
+  if (!"cond1_label" %in% names(compar)) compar[, cond1_label := as.character(cond1_matrix_id)]
+  if (!"cond2_label" %in% names(compar)) compar[, cond2_label := as.character(cond2_matrix_id)]
+  compar[, `:=`(cond1_label = as.character(cond1_label), cond2_label = as.character(cond2_label))]
+  if ("cond1_matrix_id" %in% names(compar)) {
+    data.table::set(compar, j = "cond1_matrix_id", value = as.character(compar[["cond1_matrix_id"]]))
+  } else {
+    data.table::set(compar, j = "cond1_matrix_id", value = compar[["cond1_label"]])
+  }
+  if ("cond2_matrix_id" %in% names(compar)) {
+    data.table::set(compar, j = "cond2_matrix_id", value = as.character(compar[["cond2_matrix_id"]]))
+  } else {
+    data.table::set(compar, j = "cond2_matrix_id", value = compar[["cond2_label"]])
+  }
   if ("comparison_id" %in% names(compar)) {
     compar[, comparison_id := as.character(compar[["comparison_id"]])]
   } else if ("contrast_id" %in% names(compar)) {
@@ -347,28 +442,36 @@
   bad_id <- is.na(compar$comparison_id) | !nzchar(trimws(compar$comparison_id))
   compar[bad_id, comparison_id := fallback_id[bad_id]]
   compar[, comparison_id := .module3_safe_label(compar[["comparison_id"]])]
-  if ("cond1_base" %in% names(compar)) {
-    data.table::set(compar, j = "case_label", value = as.character(compar[["cond1_base"]]))
+  if ("cond1_id" %in% names(compar)) {
+    data.table::set(compar, j = "cond1_id", value = as.character(compar[["cond1_id"]]))
+  } else if ("cond1_base" %in% names(compar)) {
+    data.table::set(compar, j = "cond1_id", value = as.character(compar[["cond1_base"]]))
   } else if ("case_label" %in% names(compar)) {
-    data.table::set(compar, j = "case_label", value = as.character(compar[["case_label"]]))
+    data.table::set(compar, j = "cond1_id", value = as.character(compar[["case_label"]]))
   } else {
-    data.table::set(compar, j = "case_label", value = compar[["cond1_label"]])
+    data.table::set(compar, j = "cond1_id", value = compar[["cond1_label"]])
   }
-  if ("cond2_base" %in% names(compar)) {
-    data.table::set(compar, j = "ctrl_label", value = as.character(compar[["cond2_base"]]))
+  if ("cond2_id" %in% names(compar)) {
+    data.table::set(compar, j = "cond2_id", value = as.character(compar[["cond2_id"]]))
+  } else if ("cond2_base" %in% names(compar)) {
+    data.table::set(compar, j = "cond2_id", value = as.character(compar[["cond2_base"]]))
   } else if ("ctrl_label" %in% names(compar)) {
-    data.table::set(compar, j = "ctrl_label", value = as.character(compar[["ctrl_label"]]))
+    data.table::set(compar, j = "cond2_id", value = as.character(compar[["ctrl_label"]]))
   } else {
-    data.table::set(compar, j = "ctrl_label", value = compar[["cond2_label"]])
+    data.table::set(compar, j = "cond2_id", value = compar[["cond2_label"]])
   }
+  if (!"cond1_display" %in% names(compar)) data.table::set(compar, j = "cond1_display", value = compar[["cond1_id"]])
+  if (!"cond2_display" %in% names(compar)) data.table::set(compar, j = "cond2_display", value = compar[["cond2_id"]])
   if (!"comparison_group" %in% names(compar)) data.table::set(compar, j = "comparison_group", value = NA_character_)
   unique(data.table::data.table(
     comparison_id = compar[["comparison_id"]],
     comparison_group = as.character(compar[["comparison_group"]]),
-    cond1_label = compar[["cond1_label"]],
-    cond2_label = compar[["cond2_label"]],
-    case_label = compar[["case_label"]],
-    ctrl_label = compar[["ctrl_label"]]
+    cond1_id = compar[["cond1_id"]],
+    cond2_id = compar[["cond2_id"]],
+    cond1_label = as.character(compar[["cond1_display"]]),
+    cond2_label = as.character(compar[["cond2_display"]]),
+    cond1_matrix_id = compar[["cond1_matrix_id"]],
+    cond2_matrix_id = compar[["cond2_matrix_id"]]
   ))
 }
 
@@ -392,6 +495,10 @@
 #' @param n_cores Number of data.table threads to use while reading and joining chunks. Defaults to all available cores.
 #'   Comparison-level parallelism is controlled by `module3_comparison_workers` in the project config and defaults to 1 for RAM safety.
 #' @param pseudocount Pseudocount for log2 fold-change calculations.
+#' @param rna_de_results Optional standardized RNA differential expression
+#'   table or CSV. When provided, target-gene and TF log2 fold changes are read
+#'   from this table and direct condition fold changes are used only for missing
+#'   genes.
 #' @param fp_signal_mode FP signal used for differential FP fold changes.
 #'   actual uses the measured FP score in both conditions. link_padded
 #'   sets the FP score to zero in conditions where the TF-FP-gene link is not
@@ -408,6 +515,7 @@ module3_prepare_differential_links <- function(module2,
                                                output_dir = NULL,
                                                n_cores = NULL,
                                                pseudocount = 1,
+                                               rna_de_results = NULL,
                                                fp_signal_mode = NULL,
                                                overwrite = FALSE,
                                                verbose = TRUE) {
@@ -423,6 +531,8 @@ module3_prepare_differential_links <- function(module2,
   dir.create(qc_dir, recursive = TRUE, showWarnings = FALSE)
   specs <- .module3_comparison_specs(compar, cfg)
   if (!nrow(specs)) .log_abort("No Module 3 comparisons to process.")
+  de_dt <- .module3_read_de_results(rna_de_results, cfg)
+  if (isTRUE(verbose) && !is.null(de_dt)) .log_inform("Module 3 bridge: using RNA DE results for {nrow(de_dt)} gene(s).")
 
   link_manifest <- .module3_table_rows(module2, "module2_links")
   cand_manifest <- .module3_table_rows(module2, "module2_fp_target_candidates")
@@ -460,19 +570,21 @@ module3_prepare_differential_links <- function(module2,
     data.table::data.table()
   }
   comparison_info <- lapply(seq_len(nrow(specs)), function(i) {
-    case_id <- specs$cond1_label[[i]]
-    ctrl_id <- specs$cond2_label[[i]]
+    cond1_matrix_id <- specs$cond1_matrix_id[[i]]
+    cond2_matrix_id <- specs$cond2_matrix_id[[i]]
     stem <- specs$comparison_id[[i]]
     up_path <- file.path(output_dir, paste0(stem, "_filtered_links_up.csv"))
     down_path <- file.path(output_dir, paste0(stem, "_filtered_links_down.csv"))
     skipped <- !isTRUE(overwrite) && file.exists(up_path) && file.exists(down_path)
     list(
-      case_id = case_id,
-      ctrl_id = ctrl_id,
+      cond1_id = specs$cond1_id[[i]],
+      cond2_id = specs$cond2_id[[i]],
+      cond1_label = specs$cond1_label[[i]],
+      cond2_label = specs$cond2_label[[i]],
+      cond1_matrix_id = cond1_matrix_id,
+      cond2_matrix_id = cond2_matrix_id,
       stem = stem,
       comparison_group = specs$comparison_group[[i]],
-      case_label = specs$case_label[[i]],
-      ctrl_label = specs$ctrl_label[[i]],
       up_path = up_path,
       down_path = down_path,
       skipped = skipped
@@ -485,7 +597,7 @@ module3_prepare_differential_links <- function(module2,
     old_row <- if ("comparison_id" %in% names(old_manifest)) old_manifest[comparison_id == info$stem] else data.table::data.table()
     n_up <- if (nrow(old_row) && "n_up" %in% names(old_row)) old_row$n_up[[1L]] else NA_integer_
     n_down <- if (nrow(old_row) && "n_down" %in% names(old_row)) old_row$n_down[[1L]] else NA_integer_
-    res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
+    res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
   }
 
   qc_rows <- list()
@@ -516,16 +628,18 @@ module3_prepare_differential_links <- function(module2,
         delta_dt <- .module3_build_chunk_delta_prepared(
           prepared,
           multiomic_data,
-          info$case_id,
-          info$ctrl_id,
+          info$cond1_matrix_id,
+          info$cond2_matrix_id,
           pseudocount = pseudocount,
-          fp_signal_mode = fp_signal_mode
+          fp_signal_mode = fp_signal_mode,
+          rna_de_results = de_dt,
+          comparison_id = info$stem
         )
         up_dt <- .module3_filter_direction(delta_dt, cfg, "up")
         down_dt <- .module3_filter_direction(delta_dt, cfg, "down")
         up_parts[[k]][[j]] <- up_dt
         down_parts[[k]][[j]] <- down_dt
-        qc_parts[[k]][[j]] <- data.table::data.table(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
+        qc_parts[[k]][[j]] <- data.table::data.table(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
         rm(delta_dt, up_dt, down_dt)
       }
       rm(prepared)
@@ -538,12 +652,12 @@ module3_prepare_differential_links <- function(module2,
       down <- data.table::rbindlist(down_parts[[k]], use.names = TRUE, fill = TRUE)
       if (nrow(up)) up <- unique(up, by = c("tf", "gene_key", "peak_id"))
       if (nrow(down)) down <- unique(down, by = c("tf", "gene_key", "peak_id"))
-      up[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label)]
-      down[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label)]
+      up[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
+      down[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
       data.table::fwrite(up, info$up_path)
       data.table::fwrite(down, info$down_path)
       qc_rows[[length(qc_rows) + 1L]] <- data.table::rbindlist(qc_parts[[k]], use.names = TRUE, fill = TRUE)
-      res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, case_id = info$case_id, ctrl_id = info$ctrl_id, case_label = info$case_label, ctrl_label = info$ctrl_label, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
+      res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
     }
   }
   manifest <- dplyr::bind_rows(res)
@@ -553,10 +667,12 @@ module3_prepare_differential_links <- function(module2,
     data.table::data.table(
       comparison_id = character(),
       comparison_group = character(),
-      case_id = character(),
-      ctrl_id = character(),
-      case_label = character(),
-      ctrl_label = character(),
+      cond1_id = character(),
+      cond2_id = character(),
+      cond1_label = character(),
+      cond2_label = character(),
+      cond1_matrix_id = character(),
+      cond2_matrix_id = character(),
       chunk_id = integer(),
       n_links = integer(),
       n_prepared = integer(),
@@ -566,7 +682,7 @@ module3_prepare_differential_links <- function(module2,
     )
   }
   qc_summary <- if (nrow(qc_chunks)) {
-    by_cols <- c("comparison_id", "comparison_group", "case_id", "ctrl_id", "case_label", "ctrl_label")
+    by_cols <- c("comparison_id", "comparison_group", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "cond1_matrix_id", "cond2_matrix_id")
     qc_chunks[, .(
       n_chunks = .N,
       n_links = sum(get("n_links")),
@@ -580,10 +696,12 @@ module3_prepare_differential_links <- function(module2,
     data.table::data.table(
       comparison_id = manifest_dt[["comparison_id"]],
       comparison_group = manifest_dt[["comparison_group"]],
-      case_id = manifest_dt[["case_id"]],
-      ctrl_id = manifest_dt[["ctrl_id"]],
-      case_label = manifest_dt[["case_label"]],
-      ctrl_label = manifest_dt[["ctrl_label"]],
+      cond1_id = manifest_dt[["cond1_id"]],
+      cond2_id = manifest_dt[["cond2_id"]],
+      cond1_label = manifest_dt[["cond1_label"]],
+      cond2_label = manifest_dt[["cond2_label"]],
+      cond1_matrix_id = manifest_dt[["cond1_matrix_id"]],
+      cond2_matrix_id = manifest_dt[["cond2_matrix_id"]],
       n_chunks = 0L,
       n_links = 0,
       n_prepared = 0,

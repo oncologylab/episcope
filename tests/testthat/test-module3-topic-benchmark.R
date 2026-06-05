@@ -356,9 +356,9 @@ test_that("Module 3 prepares reusable topic input caches", {
   out_dir <- file.path(root, "topic_documents")
   dir.create(filtered_dir, recursive = TRUE)
   links <- data.table::data.table(
-    comparison_id = "Case_vs_Ctrl",
-    case_id = "Case",
-    ctrl_id = "Ctrl",
+    comparison_id = "Cond1_vs_Cond2",
+    cond1_id = "Cond1",
+    cond2_id = "Cond2",
     tf = c("TF1", "TF1"),
     gene_key = c("G1", "G2"),
     peak_id = c("P1", "P2"),
@@ -366,16 +366,16 @@ test_that("Module 3 prepares reusable topic input caches", {
     delta_fp_score = c(2, -2),
     log2FC_gene_expr = c(2, -2),
     log2FC_tf_expr = c(1, 1),
-    fp_bound_Case = TRUE,
-    fp_bound_Ctrl = TRUE,
-    tf_expr_Case = 10,
-    tf_expr_Ctrl = 10,
-    gene_expr_Case = 10,
-    gene_expr_Ctrl = 10,
-    fp_score_Case = 10,
-    fp_score_Ctrl = 10
+    fp_bound_cond1 = TRUE,
+    fp_bound_cond2 = TRUE,
+    tf_expr_cond1 = 10,
+    tf_expr_cond2 = 10,
+    gene_expr_cond1 = 10,
+    gene_expr_cond2 = 10,
+    fp_score_cond1 = 10,
+    fp_score_cond2 = 10
   )
-  data.table::fwrite(links, file.path(filtered_dir, "Case_vs_Ctrl_delta_links_filtered_up.csv"))
+  data.table::fwrite(links, file.path(filtered_dir, "Cond1_vs_Cond2_delta_links_filtered_up.csv"))
   res <- module3_prepare_topic_inputs(
     filtered_dir = filtered_dir,
     output_dir = out_dir,

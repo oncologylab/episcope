@@ -1136,10 +1136,10 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
   sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
   if (length(sample_subset)) {
-    if (!all(c("case_id", "ctrl_id") %in% names(edges_dt))) {
-      .log_abort("sample_subset requires case_id and ctrl_id columns in Module 3 links.")
+    if (!all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
+      .log_abort("sample_subset requires cond1_id and cond2_id columns in Module 3 links.")
     }
-    edges_dt <- edges_dt[case_id %in% sample_subset & ctrl_id %in% sample_subset]
+    edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
   }
   if (!nrow(edges_dt)) .log_abort("No Module 3 links remain after sample subsetting.")
   edges_filt <- filter_edges_for_tf_topics(
