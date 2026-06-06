@@ -58,12 +58,14 @@ jaccard
 jaspar
 JASPAR
 kb
+KEGG
 Lifecycle
 magrittr
 methylation
 MDS
 mh
 MLP
+MSigDB
 multilayer
 multiomic
 Ncor
@@ -90,6 +92,7 @@ rds
 README
 reclustering
 regulons
+Reactome
 saveRDS
 scalable
 sd
@@ -115,4 +118,5 @@ variational
 vec
 WarpLDA
 warplda
+WikiPathways
 xL

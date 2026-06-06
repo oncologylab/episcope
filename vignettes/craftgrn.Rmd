@@ -301,14 +301,14 @@ package tutorial.
 ### Summarize pathways and master TFs
 
 ```{r module-3-summaries, purl=FALSE}
-run_diff_grn_pathway_analysis(
-  link_dir = "differential_links",
-  output_dir = "pathway_analysis"
+report_differential_pathways(
+  filtered_dir = "differential_links",
+  output_dir = "regulatory_topics/reports"
 )
 
-run_diff_grn_master_tf_summary(
-  link_dir = "differential_links",
-  output_dir = "master_tf_summary"
+report_master_tfs(
+  filtered_dir = "differential_links",
+  output_dir = "regulatory_topics/reports"
 )
 ```
 

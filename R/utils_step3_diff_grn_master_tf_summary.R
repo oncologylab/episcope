@@ -6,6 +6,60 @@
 # Package-level downstream master TF summary utilities for Step3 differential
 # GRN filtered links.
 
+#' Report master TF activity
+#'
+#' @description
+#' Builds standard Module 3 master-TF reports from filtered differential links.
+#' User-facing plots are written directly under `output_dir`; supporting
+#' per-comparison summary tables are written under `output_dir/master_tf_tables`.
+#'
+#' @param filtered_dir Directory containing filtered differential-link CSVs.
+#' @param output_dir Directory where user-facing report outputs are written.
+#' @param overwrite If TRUE, overwrite existing outputs.
+#' @param connectivity_min_degree Deprecated. Min-distance heatmaps include
+#'   source rows with at least one outgoing TF-to-TF link and target columns with
+#'   at least one incoming TF-to-TF link.
+#' @param waterfall_min_abs_net Minimum absolute net unique target count used to
+#'   display TFs in the waterfall plot.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return Invisibly returns a data.table manifest of written/skipped outputs.
+#' @export
+report_master_tfs <- function(filtered_dir,
+                              output_dir,
+                              overwrite = TRUE,
+                              connectivity_min_degree = 5L,
+                              waterfall_min_abs_net = 20L,
+                              verbose = TRUE) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  table_dir <- file.path(output_dir, "master_tf_tables")
+  manifest <- run_diff_grn_master_tf_summary(
+    filtered_dir = filtered_dir,
+    out_dir = table_dir,
+    overwrite = overwrite,
+    connectivity_min_degree = connectivity_min_degree,
+    waterfall_min_abs_net = waterfall_min_abs_net,
+    verbose = verbose
+  )
+  if (nrow(manifest)) {
+    path_cols <- intersect(
+      c("summary_pdf", "waterfall_pdf", "mindist_pdf", "composite_pdf"),
+      names(manifest)
+    )
+    for (col in path_cols) {
+      paths <- manifest[[col]]
+      paths <- paths[!is.na(paths) & nzchar(paths) & file.exists(paths)]
+      for (src in paths) {
+        dest <- file.path(output_dir, basename(src))
+        if (!identical(normalizePath(src, winslash = "/", mustWork = FALSE), normalizePath(dest, winslash = "/", mustWork = FALSE))) {
+          file.copy(src, dest, overwrite = TRUE)
+        }
+      }
+    }
+  }
+  invisible(manifest)
+}
+
 #' Run master TF summaries from filtered differential GRN links
 #'
 #' @description
@@ -25,7 +79,7 @@
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Invisibly returns a data.table manifest of written/skipped outputs.
-#' @export
+#' @noRd
 run_diff_grn_master_tf_summary <- function(filtered_dir,
                                            out_dir,
                                            overwrite = TRUE,
@@ -107,7 +161,7 @@ run_diff_grn_master_tf_summary <- function(filtered_dir,
 #' @param cond2 Optional condition-2 label used to find TF expression columns.
 #'
 #' @return A data.table with one row per TF.
-#' @export
+#' @noRd
 summarize_diff_grn_master_tf_links <- function(links_dt, cond1 = NULL, cond2 = NULL) {
   dt <- data.table::as.data.table(links_dt)
   tf_col <- if ("tf" %in% names(dt)) "tf" else if ("TF" %in% names(dt)) "TF" else NULL
@@ -203,7 +257,7 @@ summarize_diff_grn_master_tf_links <- function(links_dt, cond1 = NULL, cond2 = N
 #'   plot, after ranking by link count and absolute delta score.
 #'
 #' @return Invisibly returns \code{out_pdf}.
-#' @export
+#' @noRd
 plot_diff_grn_master_tf_summary <- function(summary_dt,
                                             links_dt = NULL,
                                             out_pdf,
@@ -359,7 +413,7 @@ plot_diff_grn_master_tf_summary <- function(summary_dt,
 #' @param waterfall_min_abs_net Minimum absolute net target count for display.
 #'
 #' @return Invisibly returns \code{out_pdf}.
-#' @export
+#' @noRd
 plot_diff_grn_master_tf_waterfall <- function(links_dt,
                                               out_pdf,
                                               title_text = "TF hubs",
@@ -424,7 +478,7 @@ plot_diff_grn_master_tf_waterfall <- function(links_dt,
 #'   at least one incoming TF-to-TF link.
 #'
 #' @return Invisibly returns a character vector of output PDF paths.
-#' @export
+#' @noRd
 plot_diff_grn_master_tf_connectivity <- function(links_dt,
                                                  out_pdf_mindist,
                                                  out_pdf_composite,
@@ -590,7 +644,7 @@ plot_diff_grn_master_tf_connectivity <- function(links_dt,
 #' @param png_path Optional PNG output path written in addition to the PDF.
 #'
 #' @return Invisibly returns \code{out_pdf}.
-#' @export
+#' @noRd
 plot_diff_grn_master_tf_connectivity_matrix <- function(mat,
                                                         out_pdf,
                                                         title_text,

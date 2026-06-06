@@ -91,8 +91,8 @@ test_that("pkgdown reference uses clean Module 3 public API names", {
   ))
   expect_equal(reports$contents, c(
     "build_module3_qc_report",
-    "run_diff_grn_pathway_analysis",
-    "run_diff_grn_master_tf_summary"
+    "report_differential_pathways",
+    "report_master_tfs"
   ))
   expect_equal(utils$contents, c(
     "load_differential_links",
@@ -105,4 +105,7 @@ test_that("pkgdown reference uses clean Module 3 public API names", {
   expect_false("extract_regulatory_topics" %in% all_contents)
   expect_false("load_delta_links_many" %in% all_contents)
   expect_false("build_tf_cluster_map_from_motif" %in% all_contents)
+  expect_false("default_diff_grn_pathway_databases" %in% all_contents)
+  expect_false("run_diff_grn_pathway_analysis" %in% all_contents)
+  expect_false("run_diff_grn_master_tf_summary" %in% all_contents)
 })

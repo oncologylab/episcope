@@ -12,11 +12,7 @@
 # - The standard input is a diff_links_filtered directory containing
 #   *_filtered_links_up.csv and *_filtered_links_down.csv files.
 
-#' Default Enrichr databases for differential GRN pathway analysis
-#'
-#' @return Character vector of Enrichr library names.
-#' @export
-default_diff_grn_pathway_databases <- function() {
+.default_pathway_databases <- function() {
   c(
     "GO_Biological_Process_2023",
     "GO_Cellular_Component_2023",
@@ -26,6 +22,135 @@ default_diff_grn_pathway_databases <- function() {
     "MSigDB_Hallmark_2020",
     "KEGG_2021_Human"
   )
+}
+
+#' Report differential pathway enrichment
+#'
+#' @description
+#' Runs pathway enrichment from Module 3 filtered differential links and writes
+#' user-facing pathway report outputs. Supporting enrichment tables are written
+#' under `output_dir/pathway_tables`.
+#'
+#' When `pathway_databases = NULL`, CraftGRN uses the package default Enrichr
+#' databases: GO Biological Process 2023, GO Cellular Component 2023, GO
+#' Molecular Function 2023, Reactome 2022, WikiPathways 2024 Human, MSigDB
+#' Hallmark 2020, and KEGG 2021 Human.
+#'
+#' @param filtered_dir Directory containing files named
+#'   \code{*_filtered_links_up.csv} and \code{*_filtered_links_down.csv}.
+#' @param output_dir Directory where user-facing report outputs are written.
+#' @param comparison_file Optional comparison design CSV.
+#' @param pathway_databases Optional character vector of Enrichr database names.
+#' @param tag Output filename and plot title tag.
+#' @param overwrite If TRUE, recompute existing enrichment tables.
+#' @param make_dotplot If TRUE, write the pathway term dotplot PDF.
+#' @param gene_col Gene column in filtered link files.
+#' @param padj_cut Adjusted p-value cutoff for significant enrichment outputs.
+#' @param min_genes Minimum distinct genes required before running Enrichr.
+#' @param verbose Emit concise progress messages.
+#' @param top_n Number of top pathways selected per comparison and direction.
+#' @param padj_display_cut Adjusted p-value cutoff used before top-n selection.
+#' @param condition_order Optional project-specific condition order.
+#' @param cell_line_order Optional project-specific cell line order.
+#' @param stress_order Optional project-specific stress order.
+#' @param direction_order Direction facet/order.
+#' @param size_metric Dot size metric passed to the internal dotplot builder.
+#' @param sig_color_break Color and border threshold passed to the internal
+#'   dotplot builder.
+#' @param panel_width Optional fixed dot-panel width in inches.
+#' @param panel_height Optional fixed dot-panel height in inches.
+#' @param font_family Optional PDF font family.
+#'
+#' @return Invisibly returns a list with output paths and selected terms.
+#' @export
+report_differential_pathways <- function(filtered_dir,
+                                         output_dir,
+                                         comparison_file = NULL,
+                                         pathway_databases = NULL,
+                                         tag = "module3",
+                                         overwrite = FALSE,
+                                         make_dotplot = TRUE,
+                                         gene_col = "gene_key",
+                                         padj_cut = 0.05,
+                                         min_genes = 5L,
+                                         verbose = TRUE,
+                                         top_n = 5L,
+                                         padj_display_cut = 0.05,
+                                         condition_order = NULL,
+                                         cell_line_order = NULL,
+                                         stress_order = NULL,
+                                         direction_order = c("up", "down"),
+                                         size_metric = c("odds_ratio", "combined_score", "log10_combined_score", "overlap_percent"),
+                                         sig_color_break = 1.3,
+                                         panel_width = NULL,
+                                         panel_height = NULL,
+                                         font_family = NULL) {
+  size_metric <- match.arg(size_metric)
+  dbs <- if (is.null(pathway_databases)) .default_pathway_databases() else pathway_databases
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  table_dir <- file.path(output_dir, "pathway_tables")
+  dir.create(table_dir, recursive = TRUE, showWarnings = FALSE)
+  enrichment_files <- run_diff_grn_pathway_enrichment(
+    filtered_dir = filtered_dir,
+    out_dir = table_dir,
+    dbs = dbs,
+    gene_col = gene_col,
+    padj_cut = padj_cut,
+    min_genes = min_genes,
+    overwrite = overwrite,
+    verbose = verbose
+  )
+  enrich_dt <- read_diff_grn_pathway_enrichment(
+    pathway_dir = table_dir,
+    comparison_file = comparison_file
+  )
+  selected_terms <- if (nrow(enrich_dt)) {
+    select_diff_grn_pathway_terms(
+      enrich_dt = enrich_dt,
+      top_n = top_n,
+      padj_display_cut = padj_display_cut,
+      condition_order = condition_order,
+      cell_line_order = cell_line_order,
+      stress_order = stress_order,
+      direction_order = direction_order
+    )
+  } else {
+    data.table::data.table(
+      comparison_id = character(),
+      direction = character(),
+      database = character(),
+      pathway = character(),
+      adjusted_p = numeric(),
+      overlap_hits = integer()
+    )
+  }
+  term_path <- file.path(table_dir, sprintf("%s_pathway_plot_terms.csv", tag))
+  data.table::fwrite(selected_terms, term_path)
+  dotplot_path <- file.path(output_dir, sprintf("%s_pathway_term_dotplot.pdf", tag))
+  if (isTRUE(make_dotplot) && nrow(enrich_dt)) {
+    plot_diff_grn_pathway_dotplot(
+      enrich_dt = enrich_dt,
+      out_file = dotplot_path,
+      tag = tag,
+      top_n = top_n,
+      padj_display_cut = padj_display_cut,
+      condition_order = condition_order,
+      cell_line_order = cell_line_order,
+      stress_order = stress_order,
+      direction_order = direction_order,
+      size_metric = size_metric,
+      sig_color_break = sig_color_break,
+      panel_width = panel_width,
+      panel_height = panel_height,
+      font_family = font_family
+    )
+  }
+  invisible(list(
+    enrichment_files = enrichment_files,
+    selected_terms_file = term_path,
+    dotplot_file = if (isTRUE(make_dotplot)) dotplot_path else NA_character_,
+    selected_terms = selected_terms
+  ))
 }
 
 #' Run pathway enrichment for filtered differential GRN links
@@ -46,10 +171,10 @@ default_diff_grn_pathway_databases <- function() {
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Invisibly returns a character vector of full enrichment CSV paths.
-#' @export
+#' @noRd
 run_diff_grn_pathway_enrichment <- function(filtered_dir,
                                             out_dir,
-                                            dbs = default_diff_grn_pathway_databases(),
+                                            dbs = .default_pathway_databases(),
                                             gene_col = "gene_key",
                                             padj_cut = 0.05,
                                             min_genes = 5L,
@@ -170,7 +295,7 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
 #' @param term_max_chars Maximum displayed term label length.
 #'
 #' @return A data.table with enrichment rows and comparison metadata.
-#' @export
+#' @noRd
 read_diff_grn_pathway_enrichment <- function(pathway_dir,
                                              comparison_file = NULL,
                                              term_max_chars = 58L) {
@@ -249,7 +374,7 @@ read_diff_grn_pathway_enrichment <- function(pathway_dir,
 #'
 #' @return A data.table containing selected pathway rows, all occurrences of
 #'   selected pathways across conditions, and \code{is_cluster_top_pathway}.
-#' @export
+#' @noRd
 select_diff_grn_pathway_terms <- function(enrich_dt,
                                           top_n = 5L,
                                           padj_display_cut = 0.05,
@@ -258,6 +383,16 @@ select_diff_grn_pathway_terms <- function(enrich_dt,
                                           stress_order = NULL,
                                           direction_order = c("up", "down")) {
   top_n <- max(1L, as.integer(top_n))
+  if (!("adjusted_p" %in% names(enrich_dt))) {
+    return(data.table::data.table(
+      comparison_id = character(),
+      direction = character(),
+      database = character(),
+      pathway = character(),
+      adjusted_p = numeric(),
+      overlap_hits = integer()
+    ))
+  }
   dt <- data.table::as.data.table(enrich_dt)[is.finite(adjusted_p)]
   if (!nrow(dt)) return(dt)
   group_order <- .diff_grn_pathway_group_order(
@@ -344,7 +479,7 @@ select_diff_grn_pathway_terms <- function(enrich_dt,
 #' @param font_family Optional PDF font family.
 #'
 #' @return Invisibly returns \code{out_file}.
-#' @export
+#' @noRd
 plot_diff_grn_pathway_dotplot <- function(enrich_dt,
                                           out_file,
                                           tag = NULL,
@@ -495,7 +630,7 @@ plot_diff_grn_pathway_dotplot <- function(enrich_dt,
 #' @param font_family Optional PDF font family.
 #'
 #' @return Invisibly returns \code{out_file}, or FALSE if no network is drawn.
-#' @export
+#' @noRd
 plot_diff_grn_pathway_network <- function(enrich_dt,
                                           out_file,
                                           tag = NULL,
@@ -631,14 +766,14 @@ plot_diff_grn_pathway_network <- function(enrich_dt,
 #' @param ... Reserved for future extensions.
 #'
 #' @return Invisibly returns a list with output paths and selected terms.
-#' @export
+#' @noRd
 run_diff_grn_pathway_analysis <- function(filtered_dir,
                                           comparison_file = NULL,
                                           out_dir,
                                           tag = "diff_grn",
                                           overwrite = FALSE,
                                           make_dotplot = TRUE,
-                                          dbs = default_diff_grn_pathway_databases(),
+                                          dbs = .default_pathway_databases(),
                                           gene_col = "gene_key",
                                           padj_cut = 0.05,
                                           min_genes = 5L,
