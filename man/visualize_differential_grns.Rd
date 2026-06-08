@@ -7,7 +7,11 @@
 visualize_differential_grns(
   differential_links_dir,
   output_dir = file.path(differential_links_dir, "reports"),
-  top_n = 50L,
+  top_tf_n = 10L,
+  top_link_n = 300L,
+  default_direction = "up",
+  browser_max_rows_per_file = 50000L,
+  top_n = NULL,
   verbose = TRUE
 )
 }
@@ -17,7 +21,19 @@ visualize_differential_grns(
 \item{output_dir}{Directory where the browser HTML and CSV summaries are
 written.}
 
-\item{top_n}{Number of top TF rows retained per comparison in the browser.}
+\item{top_tf_n}{Default number of top TFs shown in the browser.}
+
+\item{top_link_n}{Default number of top TF-to-gene links shown in the
+browser.}
+
+\item{default_direction}{Initial direction selected in the browser.}
+
+\item{browser_max_rows_per_file}{Maximum filtered-link rows read from each
+comparison/direction file when building the browser payload. The full
+filtered-link CSVs remain the authoritative data source; this cap keeps
+the self-contained HTML browser responsive for large projects.}
+
+\item{top_n}{Deprecated compatibility alias for \code{top_tf_n}.}
 
 \item{verbose}{Emit concise progress messages.}
 }
@@ -25,6 +41,8 @@ written.}
 Path to the HTML browser.
 }
 \description{
-Summarizes Module 3 filtered differential links across all comparisons and
-writes a searchable HTML browser plus supporting CSV summaries.
+Builds an interactive TF-to-gene network browser from Module 3 filtered
+differential links. Users can select a comparison, choose up or down
+differential links, adjust the number of top TFs and links to display, and
+inspect footprint-supported edge evidence in tooltips.
 }

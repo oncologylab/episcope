@@ -151,9 +151,9 @@ Primary package functions:
   topics.
 - `build_module3_qc_report()` summarizes topic inputs, model outputs,
   differential links, and top differential TFs.
-- `visualize_topic_modeling_results()` and `visualize_differential_grns()`
-  export interactive HTML browsers for topic-modeling results and differential
-  GRNs.
+- `visualize_topic_modeling_results()` exports topic-modeling review browsers,
+  and `visualize_differential_grns()` exports an interactive differential GRN
+  network browser with comparison, direction, Top TF, and Top link controls.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 

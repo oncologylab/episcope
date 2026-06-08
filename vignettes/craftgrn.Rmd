@@ -313,7 +313,9 @@ visualize_topic_modeling_results(
 
 visualize_differential_grns(
   differential_links_dir = "differential_links",
-  output_dir = "regulatory_topics/reports"
+  output_dir = "regulatory_topics/reports",
+  top_tf_n = 10,
+  top_link_n = 300
 )
 ```
 
@@ -321,7 +323,9 @@ visualize_differential_grns(
 
 Module 3 creates:
 
-- Differential link tables and comparison-level plots.
+- Differential link tables, comparison-level plots, and an interactive
+  differential GRN network browser with comparison, direction, Top TF, and Top
+  link controls.
 - Model selection metrics across topic-number choices.
 - Topic-term and topic-link probability tables.
 - Topic assignments for regulatory links.

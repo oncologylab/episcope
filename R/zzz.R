@@ -31,7 +31,9 @@ utils::globalVariables(c(
   "cond2_matrix_id", "ctrl_id", "d2_loglik",
   "active_any", "active_both", "active_cond1", "active_cond2",
   "abs_net_target_gene_count",
+  "comparison_group",
   "delta_abs", "delta_fp", "delta_fp_bed_score", "delta_fp_score",
+  "delta_link_score",
   "delta_gene", "delta_gene_expr", "de_source", "de_test_id",
   "direction_label", "display_label", "doc_id", "dominant_direction", "down",
   "doc_idx", "doc_weight_total", "dot_top_n_per_topic", "fail",
@@ -77,6 +79,12 @@ utils::globalVariables(c(
   "tf_weight", "tf_weight_norm", "topic", "topic_label", "topic_max",
   "topic_mean_abs_delta", "topic_n_links", "topic_n_target_genes",
   "theta_condition_label_score", "theta_condition_separation_score",
+  "abs_edge_score", "best_distance_to_tss", "best_peak_ID",
+  "edge_rank", "edge_score", "edge_score_row", "edge_r",
+  "from", "max_abs_r_gene", "max_abs_r_rna_gene",
+  "median_log2FC_gene_expr", "n_edges", "n_genes",
+  "n_supporting_links", "n_tfs", "r_gene", "r_rna_gene",
+  "tf_edge_score_sum", "tf_rank", "tf_target_count", "to",
   "topic_n_TFs", "topic_num", "topic_rank", "total", "value_diff",
   "up", "value_max", "value_min", "value_raw", "value_tol", "w", "weight_raw"
 ))

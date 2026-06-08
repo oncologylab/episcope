@@ -1753,6 +1753,225 @@
   dcast
 }
 
+.module3_diff_grn_read_browser_file <- function(path, nrows = Inf) {
+  header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
+  cols <- intersect(
+    c(
+      "tf", "gene_key", "peak_id", "delta_link_score", "link_score_cond1",
+      "link_score_cond2", "delta_fp_score", "delta_tf_expr",
+      "delta_gene_expr", "log2FC_tf_expr", "log2FC_gene_expr",
+      "distance_to_tss", "candidate_source", "r_gene", "r_rna_gene",
+      "comparison_id", "comparison_group", "cond1_id", "cond2_id",
+      "cond1_label", "cond2_label"
+    ),
+    header
+  )
+  if (is.finite(nrows)) {
+    dt <- data.table::fread(
+      path,
+      select = cols,
+      nrows = max(1L, as.integer(nrows)[[1L]]),
+      showProgress = FALSE
+    )
+  } else {
+    dt <- data.table::fread(path, select = cols, showProgress = FALSE)
+  }
+  if (!nrow(dt) || !all(c("tf", "gene_key") %chin% names(dt))) return(data.table::data.table())
+  direction <- if (grepl("_filtered_links_up[.]csv$", basename(path))) "up" else "down"
+  comparison_id <- sub("_filtered_links_(up|down)[.]csv$", "", basename(path))
+  if (!("comparison_id" %in% names(dt))) dt[, comparison_id := comparison_id]
+  dt[, direction := direction]
+  for (col in c("comparison_group", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "peak_id", "candidate_source")) {
+    if (!(col %in% names(dt))) dt[, (col) := NA_character_]
+  }
+  for (col in c("delta_link_score", "link_score_cond1", "link_score_cond2", "delta_fp_score", "delta_tf_expr", "delta_gene_expr", "log2FC_tf_expr", "log2FC_gene_expr", "distance_to_tss", "r_gene", "r_rna_gene")) {
+    if (!(col %in% names(dt))) dt[, (col) := NA_real_]
+    dt[, (col) := suppressWarnings(as.numeric(get(col)))]
+  }
+  dt[, `:=`(
+    tf = as.character(tf),
+    gene_key = as.character(gene_key),
+    peak_id = as.character(peak_id)
+  )]
+  dt[!is.na(tf) & nzchar(tf) & !is.na(gene_key) & nzchar(gene_key)]
+}
+
+.module3_diff_grn_aggregate_network_edges <- function(differential_links_dir,
+                                                       browser_edge_cap_per_group = NULL,
+                                                       tf_keep_by_comparison = NULL,
+                                                       browser_max_rows_per_file = 50000L) {
+  files <- .module3_qc_filtered_link_files(differential_links_dir)
+  if (!length(files)) return(list(edges = data.table::data.table(), browser_edges = data.table::data.table(), manifest = data.table::data.table()))
+  if (is.null(browser_edge_cap_per_group)) browser_edge_cap_per_group <- 300L
+  browser_edge_cap_per_group <- max(1L, as.integer(browser_edge_cap_per_group)[[1L]])
+  max_finite <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    x <- x[is.finite(x)]
+    if (length(x)) max(x) else NA_real_
+  }
+  min_abs_finite <- function(x) {
+    x <- suppressWarnings(abs(as.numeric(x)))
+    x <- x[is.finite(x)]
+    if (length(x)) min(x) else NA_real_
+  }
+  median_finite <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    x <- x[is.finite(x)]
+    if (length(x)) stats::median(x) else NA_real_
+  }
+  aggregate_one <- function(path) {
+    dt <- .module3_diff_grn_read_browser_file(path, nrows = browser_max_rows_per_file)
+    if (!nrow(dt)) return(data.table::data.table())
+    if (!is.null(tf_keep_by_comparison)) {
+      comp <- as.character(dt$comparison_id[[1L]])
+      keep <- tf_keep_by_comparison[[comp]]
+      if (!is.null(keep) && length(keep)) {
+        dt <- dt[toupper(tf) %chin% keep]
+        if (!nrow(dt)) return(data.table::data.table())
+      }
+    }
+    dt[, `:=`(
+      edge_score_row = abs(data.table::fcoalesce(delta_link_score, delta_fp_score, log2FC_gene_expr, 0)),
+      from = toupper(tf),
+      to = as.character(gene_key)
+    )]
+    out <- dt[, {
+      best_i <- which.max(edge_score_row)
+      if (!length(best_i) || !is.finite(edge_score_row[best_i])) best_i <- 1L
+      data.table::data.table(
+        comparison_group = comparison_group[[1L]],
+        cond1_id = cond1_id[[1L]],
+        cond2_id = cond2_id[[1L]],
+        cond1_label = cond1_label[[1L]],
+        cond2_label = cond2_label[[1L]],
+        from = from[[1L]],
+        to = to[[1L]],
+        edge_class = paste0(direction[[1L]], "_differential"),
+        edge_score = sum(delta_link_score, na.rm = TRUE),
+        abs_edge_score = max_finite(edge_score_row),
+        edge_r = max_finite(edge_score_row),
+        n_supporting_links = data.table::uniqueN(peak_id[!is.na(peak_id) & nzchar(peak_id)]),
+        best_peak_ID = peak_id[[best_i]],
+        best_distance_to_tss = min_abs_finite(distance_to_tss),
+        candidate_source = candidate_source[[best_i]],
+        median_log2FC_tf_expr = median_finite(log2FC_tf_expr),
+        median_log2FC_gene_expr = median_finite(log2FC_gene_expr),
+        max_abs_r_gene = max_finite(abs(r_gene)),
+        max_abs_r_rna_gene = max_finite(abs(r_rna_gene))
+      )
+    }, by = .(comparison_id, direction, tf, gene_key)]
+    for (col in c("abs_edge_score", "edge_r", "best_distance_to_tss", "median_log2FC_tf_expr", "median_log2FC_gene_expr", "max_abs_r_gene", "max_abs_r_rna_gene")) {
+      out[!is.finite(get(col)), (col) := NA_real_]
+    }
+    out[is.na(n_supporting_links), n_supporting_links := 0L]
+    out[, tf_target_count := data.table::uniqueN(to), by = .(comparison_id, direction, from)]
+    out[, tf_edge_score_sum := sum(abs_edge_score, na.rm = TRUE), by = .(comparison_id, direction, from)]
+    data.table::setorder(out, comparison_id, direction, -tf_target_count, -tf_edge_score_sum, -abs_edge_score, from, to)
+    tf_rank <- unique(out[, .(comparison_id, direction, from, tf_target_count, tf_edge_score_sum)])
+    data.table::setorder(tf_rank, comparison_id, direction, -tf_target_count, -tf_edge_score_sum, from)
+    tf_rank[, tf_rank := seq_len(.N), by = .(comparison_id, direction)]
+    out <- merge(out, tf_rank[, .(comparison_id, direction, from, tf_rank)], by = c("comparison_id", "direction", "from"), all.x = TRUE, sort = FALSE)
+    data.table::setorder(out, comparison_id, direction, -tf_target_count, -tf_edge_score_sum, -abs_edge_score, from, to)
+    out[, edge_rank := seq_len(.N), by = .(comparison_id, direction)]
+    out
+  }
+  edge_dt <- data.table::rbindlist(lapply(files, aggregate_one), use.names = TRUE, fill = TRUE)
+  if (!nrow(edge_dt)) return(list(edges = data.table::data.table(), browser_edges = data.table::data.table(), manifest = data.table::data.table()))
+  for (col in c("abs_edge_score", "edge_r", "best_distance_to_tss", "median_log2FC_tf_expr", "median_log2FC_gene_expr", "max_abs_r_gene", "max_abs_r_rna_gene")) {
+    edge_dt[!is.finite(get(col)), (col) := NA_real_]
+  }
+  data.table::setorder(edge_dt, comparison_id, direction, -tf_target_count, -tf_edge_score_sum, -abs_edge_score, from, to)
+  browser_dt <- edge_dt[edge_rank <= browser_edge_cap_per_group]
+  manifest <- unique(edge_dt[, .(
+    comparison_group,
+    cond1_id,
+    cond2_id,
+    cond1_label,
+    cond2_label,
+    n_edges = .N,
+    n_tfs = data.table::uniqueN(from),
+    n_genes = data.table::uniqueN(to)
+  ), by = .(comparison_id, direction)])
+  data.table::setorder(manifest, comparison_id, direction)
+  list(edges = edge_dt, browser_edges = browser_dt, manifest = manifest)
+}
+
+.module3_diff_grn_write_network_browser <- function(edges,
+                                                    manifest,
+                                                    out_html,
+                                                    top_tf_n = 10L,
+                                                    top_link_n = 300L,
+                                                    default_direction = "up",
+                                                    title = "Differential GRN browser") {
+  dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
+  if (!nrow(edges)) {
+    writeLines("<!doctype html><html><head><meta charset=\"utf-8\"/></head><body><b>No differential GRN edges to plot.</b></body></html>", out_html, useBytes = TRUE)
+    return(out_html)
+  }
+  payload <- edges[, .(
+    comparison_id,
+    direction,
+    from,
+    to,
+    edge_score,
+    abs_edge_score,
+    n_supporting_links,
+    best_peak_ID,
+    best_distance_to_tss,
+    tf_target_count,
+    tf_rank,
+    edge_rank
+  )]
+  payload_json <- jsonlite::toJSON(payload, dataframe = "rows", auto_unbox = TRUE, null = "null", na = "null")
+  manifest_json <- jsonlite::toJSON(manifest, dataframe = "rows", auto_unbox = TRUE, null = "null", na = "null")
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    paste0("<title>", .m3tb_html_escape(title), "</title>"),
+    "<style>",
+    "body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}",
+    ".wrap{max-width:min(calc((100vh - 245px) * 1.7778),calc(100vw - 24px));margin:0 auto;padding:12px 12px 16px 12px}",
+    ".top{display:block;border-bottom:1px solid #d6d6d0;padding-bottom:10px;margin-bottom:10px}",
+    "h1{font-size:21px;line-height:1.18;margin:0 0 6px 0}.meta{font-size:12px;line-height:1.35;color:#555;max-width:1250px;margin-bottom:10px}",
+    ".controls{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap}.control{display:flex;gap:5px;align-items:center;font-size:12px;color:#333;white-space:nowrap}",
+    "select,input{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:6px 8px}input{width:74px}input[type=range]{width:96px;padding:0}input[type=color]{width:32px;height:30px;padding:2px}input[type=checkbox]{width:auto}",
+    "#comparisonSelect{width:270px}#directionSelect{width:96px}#layoutSelect{width:116px}#paletteSelect{width:220px}#nodeSelect{width:170px}",
+    "button{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #777;background:#222;color:#fff;border-radius:3px;padding:7px 10px;cursor:pointer}",
+    ".note{font-size:11px;color:#666;margin:0 0 10px 0}.canvas{position:relative;width:100%;aspect-ratio:16/9;max-height:calc(100vh - 245px);border:1px solid #d6d6d0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);overflow:hidden;cursor:grab}.canvas.panning{cursor:grabbing}",
+    "svg{width:100%;height:100%;display:block;background:#fff}.edge{fill:none}.node{stroke:transparent;stroke-width:0;cursor:grab}.node:active{cursor:grabbing}.label{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#fff;stroke:#666;stroke-width:2.4px;paint-order:stroke;dominant-baseline:middle;text-anchor:middle;pointer-events:none}.geneLabel{fill:#111;stroke:#fff;stroke-width:2.6px;paint-order:stroke;text-anchor:start}.selected{stroke:#d7263d;stroke-width:2.6}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:390px;line-height:1.35}",
+    "</style></head><body><div class=\"wrap\"><div class=\"top\"><div>",
+    paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
+    "<div class=\"meta\">Select a comparison and direction, then choose how many top TFs and top TF-to-gene links to draw. Edges aggregate footprint-supported Module 3 differential links; tooltips retain footprint support and differential metrics.</div></div>",
+    "<div class=\"controls\">",
+    "<label class=\"control\">Comparison <select id=\"comparisonSelect\"></select></label>",
+    "<label class=\"control\">Direction <select id=\"directionSelect\"><option value=\"up\">Up</option><option value=\"down\">Down</option></select></label>",
+    paste0("<label class=\"control\">Top TFs <input id=\"topTfN\" type=\"number\" min=\"1\" value=\"", as.integer(top_tf_n)[[1L]], "\"/></label>"),
+    paste0("<label class=\"control\">Top links <input id=\"topLinkN\" type=\"number\" min=\"1\" value=\"", as.integer(top_link_n)[[1L]], "\"/></label>"),
+    "<label class=\"control\">Layout <select id=\"layoutSelect\"><option value=\"force\" selected>Force</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
+    "<label class=\"control\">Spacing <input id=\"spacingRange\" type=\"range\" min=\"0.5\" max=\"2\" step=\"0.01\" value=\"1\"/><input id=\"spacingValue\" type=\"number\" min=\"0.5\" max=\"2\" step=\"0.01\" value=\"1\"/></label>",
+    "<label class=\"control\">TF box <input id=\"tfBoxMin\" type=\"number\" min=\"6\" max=\"80\" step=\"1\" value=\"8\"/><input id=\"tfBoxMax\" type=\"number\" min=\"8\" max=\"110\" step=\"1\" value=\"28\"/></label>",
+    "<label class=\"control\">Labels <input id=\"showGeneLabels\" type=\"checkbox\" checked/></label><label class=\"control\">Arrows <input id=\"showArrows\" type=\"checkbox\" checked/></label>",
+    "<label class=\"control\">Palette <select id=\"paletteSelect\"><option value=\"default\" selected>Default by direction</option><option value=\"npg\">NPG inspired</option><option value=\"aaas\">AAAS inspired</option><option value=\"nejm\">NEJM inspired</option><option value=\"lancet\">Lancet inspired</option><option value=\"jama\">JAMA inspired</option><option value=\"bmj\">BMJ inspired</option><option value=\"jco\">JCO inspired</option><option value=\"ucscgb\">UCSCGB inspired</option><option value=\"d3\">D3 inspired</option><option value=\"gephi\">Gephi inspired</option><option value=\"observable\">Observable inspired</option><option value=\"primer\">Primer inspired</option><option value=\"atlassian\">Atlassian inspired</option><option value=\"iterm\">iTerm inspired</option><option value=\"locuszoom\">LocusZoom inspired</option><option value=\"igv\">IGV inspired</option><option value=\"cosmic\">COSMIC inspired</option><option value=\"uchicago\">UChicago inspired</option><option value=\"startrek\">Star Trek inspired</option><option value=\"tron\">Tron inspired</option><option value=\"futurama\">Futurama inspired</option><option value=\"rickandmorty\">Rick and Morty inspired</option><option value=\"simpsons\">Simpsons inspired</option><option value=\"flatui\">Flat UI inspired</option><option value=\"frontiers\">Frontiers inspired</option><option value=\"gsea\">GSEA inspired</option><option value=\"bootstrap5\">Bootstrap 5 inspired</option><option value=\"material\">Material Design inspired</option><option value=\"tailwind\">Tailwind CSS inspired</option></select></label>",
+    "<label class=\"control\">Select node <select id=\"nodeSelect\"></select></label><button id=\"resetButton\" type=\"button\">Reset layout</button><button id=\"exportSvgButton\" type=\"button\">Export SVG</button>",
+    "</div></div><p class=\"note\" id=\"statsLine\"></p><div class=\"canvas\" id=\"canvas\"><div class=\"tooltip\" id=\"tooltip\"></div><svg id=\"networkSvg\" viewBox=\"0 0 1600 900\" role=\"img\" aria-label=\"Differential GRN network\"><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"5\" markerHeight=\"5\" orient=\"auto\"><path d=\"M 0 0 L 10 5 L 0 10 z\" fill=\"#8a8a8a\" fill-opacity=\"0.55\"/></marker></defs><g id=\"viewLayer\"><g id=\"edgeLayer\"></g><g id=\"nodeLayer\"></g><g id=\"labelLayer\"></g></g></svg></div></div>",
+    "<script>",
+    paste0("const FULL_EDGES=", payload_json, ";"),
+    paste0("const MANIFEST=", manifest_json, ";"),
+    paste0("const DEFAULT_DIRECTION='", .m3tb_html_escape(default_direction), "';"),
+    "const WIDTH=1600,HEIGHT=900,svg=document.getElementById('networkSvg'),canvas=document.getElementById('canvas'),viewLayer=document.getElementById('viewLayer'),edgeLayer=document.getElementById('edgeLayer'),nodeLayer=document.getElementById('nodeLayer'),labelLayer=document.getElementById('labelLayer'),comparisonSelect=document.getElementById('comparisonSelect'),directionSelect=document.getElementById('directionSelect'),topTfN=document.getElementById('topTfN'),topLinkN=document.getElementById('topLinkN'),layoutSelect=document.getElementById('layoutSelect'),spacingRange=document.getElementById('spacingRange'),spacingValue=document.getElementById('spacingValue'),tfBoxMin=document.getElementById('tfBoxMin'),tfBoxMax=document.getElementById('tfBoxMax'),showGeneLabels=document.getElementById('showGeneLabels'),showArrows=document.getElementById('showArrows'),paletteSelect=document.getElementById('paletteSelect'),nodeSelect=document.getElementById('nodeSelect'),statsLine=document.getElementById('statsLine'),tooltip=document.getElementById('tooltip');",
+    "const COLOR_PRESETS={default_up:['#B2182B','#2166AC','#A0A0A0','#B2182B'],default_down:['#2166AC','#B2182B','#A0A0A0','#2166AC'],npg:['#E64B35','#4DBBD5','#7E6148','#3C5488'],aaas:['#EE0000','#3B4992','#008B45','#631879'],nejm:['#BC3C29','#0072B5','#E18727','#20854E'],lancet:['#ED0000','#00468B','#42B540','#0099B4'],jama:['#374E55','#DF8F44','#B24745','#6A6599'],bmj:['#2B8CBE','#E34A33','#969696','#636363'],jco:['#CD534C','#0073C2','#868686','#EFC000'],ucscgb:['#FF0000','#0000FF','#999999','#666666'],d3:['#FF7F0E','#1F77B4','#7F7F7F','#2CA02C'],gephi:['#FF7F00','#377EB8','#999999','#4DAF4A'],observable:['#4269D0','#EF553B','#AAAAAA','#6CC5B0'],primer:['#CF222E','#0969DA','#8C959F','#57606A'],atlassian:['#FF5630','#0052CC','#97A0AF','#42526E'],iterm:['#CC241D','#458588','#A89984','#665C54'],locuszoom:['#D7191C','#2C7BB6','#ABD9E9','#7570B3'],igv:['#E41A1C','#377EB8','#999999','#4DAF4A'],cosmic:['#D73027','#4575B4','#969696','#542788'],uchicago:['#800000','#155F83','#8A9045','#767676'],startrek:['#CC0C00','#5C88DA','#9C9C9C','#FFCC00'],tron:['#FF410D','#0085CA','#6EE2FF','#F7C530'],futurama:['#FF6F00','#1B9E77','#A6A6A6','#7570B3'],rickandmorty:['#FAFD7C','#00B0C8','#B2DF8A','#808080'],simpsons:['#FED439','#709AE1','#8A9197','#D2AF81'],flatui:['#E74C3C','#3498DB','#95A5A6','#2C3E50'],frontiers:['#E64B35','#4DBBD5','#B09C85','#3C5488'],gsea:['#E31A1C','#1F78B4','#BDBDBD','#33A02C'],bootstrap5:['#DC3545','#0D6EFD','#6C757D','#198754'],material:['#F44336','#2196F3','#9E9E9E','#4CAF50'],tailwind:['#EF4444','#3B82F6','#9CA3AF','#10B981']};let state={nodes:[],edges:[],drag:null,pan:null,selected:'',view:{x:0,y:0,k:1}};",
+    "function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function num(x,d){const v=Number(x);return Number.isFinite(v)?v:d}function spacing(){return Math.max(.5,Math.min(2,num(spacingValue.value,1)))}function colors(){const p=paletteSelect.value;if(p==='default')return COLOR_PRESETS[directionSelect.value==='down'?'default_down':'default_up'];return COLOR_PRESETS[p]||COLOR_PRESETS.default_up}function hexRgb(hex){const x=String(hex||'#777777').replace('#','');const v=parseInt(x,16);return{r:(v>>16)&255,g:(v>>8)&255,b:v&255}}function mixRgb(a,b,t){return 'rgb('+Math.round(a.r+(b.r-a.r)*t)+','+Math.round(a.g+(b.g-a.g)*t)+','+Math.round(a.b+(b.b-a.b)*t)+')'}function edgeColor(v,lo,hi){const t=hi>lo?(v-lo)/(hi-lo):.8;return mixRgb({r:226,g:226,b:226},hexRgb(colors()[3]),Math.max(0,Math.min(1,t)))}function selectedRows(){const cmp=comparisonSelect.value,dir=directionSelect.value,tfN=Math.max(1,Math.floor(num(topTfN.value,10))),linkN=Math.max(1,Math.floor(num(topLinkN.value,300)));return FULL_EDGES.filter(e=>e.comparison_id===cmp&&e.direction===dir&&num(e.tf_rank,999999)<=tfN).sort((a,b)=>num(b.abs_edge_score,0)-num(a.abs_edge_score,0)||String(a.from).localeCompare(String(b.from))||String(a.to).localeCompare(String(b.to))).slice(0,linkN)}",
+    "function buildGraph(){const edges=selectedRows();const nodeMap=new Map();edges.forEach(e=>{if(!nodeMap.has(e.from))nodeMap.set(e.from,{id:e.from,node_type:'TF',shared_targets:0,score:0});if(!nodeMap.has(e.to))nodeMap.set(e.to,{id:e.to,node_type:'Gene',shared_targets:0,score:0});const tf=nodeMap.get(e.from);tf.shared_targets+=1;tf.score+=num(e.abs_edge_score,0)});return{nodes:Array.from(nodeMap.values()),edges:edges.map(e=>Object.assign({},e,{edge_r:num(e.abs_edge_score,0)})),totalEdges:FULL_EDGES.filter(e=>e.comparison_id===comparisonSelect.value&&e.direction===directionSelect.value).length}}",
+    "function sortedTf(ns){return ns.filter(n=>n.node_type==='TF').sort((a,b)=>num(b.shared_targets,0)-num(a.shared_targets,0)||a.id.localeCompare(b.id))}function sortedGenes(ns){return ns.filter(n=>n.node_type==='Gene').sort((a,b)=>a.id.localeCompare(b.id))}function setColumn(items,x,top,bottom){const desired=(items.some(n=>n.node_type==='TF')?86:64)*spacing(),gap=Math.min(desired,(bottom-top)/Math.max(items.length-1,1));items.forEach((n,i)=>{n.x=x;n.y=(top+bottom)/2-gap*(items.length-1)/2+i*gap})}function placeRing(items,ring,a0){items.forEach((n,i)=>{const a=a0+2*Math.PI*i/Math.max(items.length,1);n.x=WIDTH/2+Math.cos(a)*ring*spacing();n.y=HEIGHT/2+Math.sin(a)*ring*spacing()})}function radialLayout(ns){placeRing(sortedTf(ns),210,-Math.PI/2);placeRing(sortedGenes(ns),360,-Math.PI/2)}function columnsLayout(ns){setColumn(sortedTf(ns),WIDTH/2-330*spacing(),70,830);setColumn(sortedGenes(ns),WIDTH/2+330*spacing(),70,830)}function forceLayout(ns,es){radialLayout(ns);const by=new Map(ns.map(n=>[n.id,n]));for(let iter=0;iter<180;iter++){ns.forEach(n=>{n.vx=n.vx||0;n.vy=n.vy||0});for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++){const a=ns[i],b=ns[j];let dx=a.x-b.x,dy=a.y-b.y,d2=Math.max(dx*dx+dy*dy,64),d=Math.sqrt(d2),f=Math.min(3,2500*spacing()*spacing()/d2);dx/=d;dy/=d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f}es.forEach(e=>{const a=by.get(e.from),b=by.get(e.to);if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y,d=Math.max(Math.sqrt(dx*dx+dy*dy),1),target=120*spacing(),f=(d-target)*.012;dx/=d;dy/=d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f});ns.forEach(n=>{n.vx+=(WIDTH/2-n.x)*.002;n.vy+=(HEIGHT/2-n.y)*.002;n.x=Math.max(35,Math.min(WIDTH-35,n.x+n.vx));n.y=Math.max(35,Math.min(HEIGHT-35,n.y+n.vy));n.vx*=.76;n.vy*=.76})}ns.forEach(n=>{delete n.vx;delete n.vy})}function layout(ns,es){const m=layoutSelect.value;if(m==='columns'||m==='bipartite'||m==='hierarchy')columnsLayout(ns);else if(m==='radial'||m==='concentric'||m==='circle'||m==='grid'||m==='spiral'||m==='clustered')radialLayout(ns);else forceLayout(ns,es)}",
+    "function radiusScale(ns){const vals=ns.filter(n=>n.node_type==='TF').map(n=>num(n.shared_targets,1)),lo=Math.min(...vals,1),hi=Math.max(...vals,1),b0=num(tfBoxMin.value,8),b1=num(tfBoxMax.value,28);return n=>{if(n.node_type==='Gene')return 6;if(hi<=lo)return 16;const t=(num(n.shared_targets,1)-lo)/(hi-lo);return b0+Math.pow(Math.max(0,Math.min(1,t)),.85)*(b1-b0)}}function lineEnd(a,b){const dx=b.x-a.x,dy=b.y-a.y,len=Math.max(Math.sqrt(dx*dx+dy*dy),1),r=b.node_type==='TF'?b.r*1.2:b.r;return{x:b.x-dx/len*r,y:b.y-dy/len*r}}function labelPos(n){if(n.node_type==='Gene')return{x:n.x+n.r+7,y:n.y,anchor:'start'};return{x:n.x,y:n.y,anchor:'middle'}}function applyView(){viewLayer.setAttribute('transform','translate('+state.view.x+' '+state.view.y+') scale('+state.view.k+')')}function screenPoint(ev){const p=svg.createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;return p.matrixTransform(svg.getScreenCTM().inverse())}function screenToWorld(ev){const p=screenPoint(ev);return{x:(p.x-state.view.x)/state.view.k,y:(p.y-state.view.y)/state.view.k}}",
+    "function render(){const g=buildGraph();state.nodes=g.nodes;state.edges=g.edges;const rFor=radiusScale(state.nodes);state.nodes.forEach(n=>{n.r=rFor(n)});layout(state.nodes,state.edges);const by=new Map(state.nodes.map(n=>[n.id,n])),scores=state.edges.map(e=>num(e.abs_edge_score,0)),lo=Math.min(...scores,0),hi=Math.max(...scores,1);edgeLayer.replaceChildren();nodeLayer.replaceChildren();labelLayer.replaceChildren();nodeSelect.replaceChildren();state.edges.forEach(e=>{const a=by.get(e.from),b=by.get(e.to);if(!a||!b)return;const end=lineEnd(a,b),line=el('line',{class:'edge',x1:a.x,y1:a.y,x2:end.x,y2:end.y,stroke:edgeColor(num(e.abs_edge_score,0),lo,hi),'stroke-width':1.15,'stroke-opacity':.48});if(showArrows.checked)line.setAttribute('marker-end','url(#arrow)');line.dataset.title=e.from+' -> '+e.to+'\\ncomparison: '+e.comparison_id+'\\ndirection: '+e.direction+'\\nsupporting footprints: '+e.n_supporting_links+'\\nbest footprint: '+(e.best_peak_ID||'NA')+'\\nbest distance to TSS: '+(e.best_distance_to_tss==null?'NA':Math.round(e.best_distance_to_tss))+'\\nedge score: '+num(e.abs_edge_score,0).toFixed(3);edgeLayer.appendChild(line)});state.nodes.forEach(n=>{const fill=n.node_type==='TF'?colors()[1]:colors()[2];let c;if(n.node_type==='TF'){c=el('rect',{class:'node',x:n.x-n.r*1.35,y:n.y-n.r*.78,width:n.r*2.7,height:n.r*1.56,rx:3,ry:3,fill:fill})}else{c=el('circle',{class:'node',cx:n.x,cy:n.y,r:n.r,fill:fill})}c.dataset.id=n.id;c.dataset.title=n.id+'\\n'+n.node_type+'\\nselected targets: '+num(n.shared_targets,0);nodeLayer.appendChild(c);if(n.node_type!=='Gene'||showGeneLabels.checked){const p=labelPos(n),t=el('text',{class:'label '+(n.node_type==='Gene'?'geneLabel':''),x:p.x,y:p.y,'text-anchor':p.anchor,'font-size':n.node_type==='TF'?Math.max(9,Math.min(19,n.r*.48)):9});t.dataset.id=n.id;t.textContent=n.id;labelLayer.appendChild(t)}});state.nodes.slice().sort((a,b)=>a.id.localeCompare(b.id)).forEach(n=>{const o=document.createElement('option');o.value=n.id;o.textContent=n.id;nodeSelect.appendChild(o)});statsLine.textContent='Showing '+state.nodes.length+' nodes and '+state.edges.length+'/'+g.totalEdges+' embedded TF-to-gene edges for '+comparisonSelect.value+' '+directionSelect.value+'. Edges aggregate footprint-supported differential GRN links.';applyView()}",
+    "function init(){Array.from(new Set(MANIFEST.map(d=>d.comparison_id))).sort().forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=id;comparisonSelect.appendChild(o)});if(comparisonSelect.options.length)comparisonSelect.value=comparisonSelect.options[0].value;directionSelect.value=DEFAULT_DIRECTION;[comparisonSelect,directionSelect,topTfN,topLinkN,layoutSelect,tfBoxMin,tfBoxMax,showGeneLabels,showArrows,paletteSelect].forEach(x=>{x.addEventListener('change',render);x.addEventListener('input',render)});spacingRange.addEventListener('input',()=>{spacingValue.value=spacingRange.value;render()});spacingValue.addEventListener('change',()=>{spacingRange.value=spacingValue.value;render()});document.getElementById('resetButton').addEventListener('click',()=>{state.view={x:0,y:0,k:1};render()});document.getElementById('exportSvgButton').addEventListener('click',exportSvg);render()}function inlineSvgStyles(clone){clone.querySelectorAll('line').forEach(x=>{x.setAttribute('fill','none');x.setAttribute('stroke-linecap','round')});clone.querySelectorAll('rect,circle').forEach(x=>{x.setAttribute('stroke','none')});Array.from(clone.querySelectorAll('text')).forEach(x=>{const isGene=String(x.getAttribute('class')||'').includes('geneLabel'),fs=Number(x.getAttribute('font-size')||11);x.setAttribute('font-family','Arial, Helvetica, sans-serif');x.setAttribute('font-weight','700');x.setAttribute('dominant-baseline','alphabetic');x.setAttribute('y',Number(x.getAttribute('y')||0)+fs*0.34);x.removeAttribute('paint-order');const halo=x.cloneNode(true);halo.setAttribute('fill','none');halo.setAttribute('stroke',isGene?'#fff':'#666');halo.setAttribute('stroke-width',isGene?'3':'2.8');halo.setAttribute('stroke-linejoin','round');halo.setAttribute('stroke-linecap','round');x.parentNode.insertBefore(halo,x);x.setAttribute('fill',isGene?'#111':'#fff');x.setAttribute('stroke','none')})}function exportSvg(){const clone=svg.cloneNode(true);clone.setAttribute('xmlns','http://www.w3.org/2000/svg');clone.setAttribute('width',WIDTH);clone.setAttribute('height',HEIGHT);inlineSvgStyles(clone);const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');bg.setAttribute('x',0);bg.setAttribute('y',0);bg.setAttribute('width',WIDTH);bg.setAttribute('height',HEIGHT);bg.setAttribute('fill','#fff');clone.insertBefore(bg,clone.firstChild);const text=new XMLSerializer().serializeToString(clone),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'differential_grn_network').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
+    "nodeSelect.addEventListener('change',()=>{state.selected=nodeSelect.value;nodeLayer.querySelectorAll('.node').forEach(c=>c.classList.toggle('selected',c.dataset.id===state.selected))});svg.addEventListener('wheel',ev=>{ev.preventDefault();const p=screenPoint(ev),old=state.view.k,next=Math.max(.25,Math.min(6,old*(ev.deltaY<0?1.15:1/1.15)));state.view.x=p.x-(p.x-state.view.x)*next/old;state.view.y=p.y-(p.y-state.view.y)*next/old;state.view.k=next;applyView()},{passive:false});svg.addEventListener('mousedown',ev=>{if(ev.target.classList&&ev.target.classList.contains('node'))return;const p=screenPoint(ev);state.pan={startX:p.x,startY:p.y,x:state.view.x,y:state.view.y};canvas.classList.add('panning')});svg.addEventListener('mousemove',ev=>{if(state.pan){const p=screenPoint(ev);state.view.x=state.pan.x+(p.x-state.pan.startX);state.view.y=state.pan.y+(p.y-state.pan.startY);applyView()}tooltip.style.left=(ev.offsetX+12)+'px';tooltip.style.top=(ev.offsetY+12)+'px'});svg.addEventListener('mouseup',()=>{state.pan=null;canvas.classList.remove('panning')});svg.addEventListener('mouseleave',()=>{state.pan=null;canvas.classList.remove('panning');tooltip.style.display='none'});svg.addEventListener('mouseover',ev=>{const title=ev.target.dataset?ev.target.dataset.title:'';if(!title)return;tooltip.innerHTML=esc(title).replace(/\\n/g,'<br/>');tooltip.style.display='block'});svg.addEventListener('mouseout',ev=>{if(ev.target.dataset&&ev.target.dataset.title)tooltip.style.display='none'});init();",
+    "</script></body></html>"
+  )
+  writeLines(html, out_html, useBytes = TRUE)
+  out_html
+}
+
 #' Run a Module 3 topic benchmark and review report
 #'
 #' Runs or reviews Module 3 topic models using the package-native benchmark
@@ -2375,60 +2594,83 @@ visualize_topic_modeling_results <- function(topic_dir,
 #' Export an interactive HTML browser of differential GRNs
 #'
 #' @description
-#' Summarizes Module 3 filtered differential links across all comparisons and
-#' writes a searchable HTML browser plus supporting CSV summaries.
+#' Builds an interactive TF-to-gene network browser from Module 3 filtered
+#' differential links. Users can select a comparison, choose up or down
+#' differential links, adjust the number of top TFs and links to display, and
+#' inspect footprint-supported edge evidence in tooltips.
 #'
 #' @param differential_links_dir Module 3 differential-link directory.
 #' @param output_dir Directory where the browser HTML and CSV summaries are
 #'   written.
-#' @param top_n Number of top TF rows retained per comparison in the browser.
+#' @param top_tf_n Default number of top TFs shown in the browser.
+#' @param top_link_n Default number of top TF-to-gene links shown in the
+#'   browser.
+#' @param default_direction Initial direction selected in the browser.
+#' @param browser_max_rows_per_file Maximum filtered-link rows read from each
+#'   comparison/direction file when building the browser payload. The full
+#'   filtered-link CSVs remain the authoritative data source; this cap keeps
+#'   the self-contained HTML browser responsive for large projects.
+#' @param top_n Deprecated compatibility alias for \code{top_tf_n}.
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Path to the HTML browser.
 #' @export
 visualize_differential_grns <- function(differential_links_dir,
                                         output_dir = file.path(differential_links_dir, "reports"),
-                                        top_n = 50L,
+                                        top_tf_n = 10L,
+                                        top_link_n = 300L,
+                                        default_direction = "up",
+                                        browser_max_rows_per_file = 50000L,
+                                        top_n = NULL,
                                         verbose = TRUE) {
   if (!dir.exists(differential_links_dir)) .log_abort("`differential_links_dir` not found: {differential_links_dir}")
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  if (!is.null(top_n)) top_tf_n <- top_n
+  top_tf_n <- max(1L, as.integer(top_tf_n)[[1L]])
+  top_link_n <- max(1L, as.integer(top_link_n)[[1L]])
+  browser_max_rows_per_file <- max(1L, as.integer(browser_max_rows_per_file)[[1L]])
+  default_direction <- match.arg(default_direction, c("up", "down"))
+  browser_tf_cap <- max(20L, top_tf_n * 2L)
   diff_summary <- .module3_qc_read_differential_summary(differential_links_dir)
   tf_summary <- .module3_qc_summarize_differential_tfs(
     differential_links_dir = differential_links_dir,
     output_dir = output_dir,
-    top_n = top_n,
+    top_n = browser_tf_cap,
     verbose = verbose
   )
   summary_path <- file.path(output_dir, "differential_grn_summary.csv")
   data.table::fwrite(diff_summary, summary_path)
-  browser_dt <- tf_summary$combined
-  table_html <- function(dt) {
-    if (!nrow(dt)) return("<p>No differential TF rows found.</p>")
-    keep <- intersect(
-      c("comparison_id", "TF", "dominant_direction", "net_target_gene_count", "n_links_up", "n_links_down", "tf_delta_sum_abs", "median_log2FC_tf_expr", "rank"),
-      names(dt)
-    )
-    rows <- apply(as.data.frame(dt[, keep, with = FALSE]), 1, function(x) {
-      paste0("<tr>", paste0("<td>", .m3tb_html_escape(x), "</td>", collapse = ""), "</tr>")
-    })
-    paste0(
-      "<table id=\"tbl\"><thead><tr>",
-      paste0("<th>", .m3tb_html_escape(keep), "</th>", collapse = ""),
-      "</tr></thead><tbody>", paste(rows, collapse = ""), "</tbody></table>"
-    )
+  tf_keep <- NULL
+  if (is.data.frame(tf_summary$combined) && nrow(tf_summary$combined) && all(c("comparison_id", "TF") %in% names(tf_summary$combined))) {
+    tf_keep <- split(toupper(as.character(tf_summary$combined$TF)), tf_summary$combined$comparison_id)
+    tf_keep <- lapply(tf_keep, unique)
   }
-  html <- c(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Differential GRN browser</title>",
-    "<style>body{font-family:Arial,sans-serif;margin:28px;color:#17212b;background:#fbfbf8}table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #d7d1c3;padding:7px 9px;font-size:12px}th{background:#eef3f1;text-align:left}input{padding:7px;width:300px;margin:8px 0 14px 0}.muted{color:#667085}</style>",
-    "</head><body><h1>Differential GRN browser</h1>",
-    paste0("<p class=\"muted\">Differential-link directory: ", .m3tb_html_escape(normalizePath(differential_links_dir, winslash = "/", mustWork = FALSE)), "</p>"),
-    "<input id=\"q\" placeholder=\"Filter comparison or TF\" oninput=\"filterRows()\">",
-    table_html(browser_dt),
-    "<script>function filterRows(){const q=document.getElementById('q').value.toLowerCase();document.querySelectorAll('#tbl tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(q)?'':'none';});}</script>",
-    "</body></html>"
+  network_dir <- file.path(output_dir, "differential_grn_networks")
+  dir.create(network_dir, recursive = TRUE, showWarnings = FALSE)
+  browser_edge_cap <- max(300L, top_link_n)
+  network <- .module3_diff_grn_aggregate_network_edges(
+    differential_links_dir = differential_links_dir,
+    browser_edge_cap_per_group = browser_edge_cap,
+    tf_keep_by_comparison = tf_keep,
+    browser_max_rows_per_file = browser_max_rows_per_file
   )
+  if (nrow(network$manifest)) network$manifest[, browser_max_rows_per_file := browser_max_rows_per_file]
+  edges_path <- file.path(network_dir, "differential_grn_edges.csv")
+  browser_edges_path <- file.path(network_dir, "differential_grn_browser_edges.csv")
+  manifest_path <- file.path(output_dir, "differential_grn_browser_manifest.csv")
+  data.table::fwrite(network$edges, edges_path)
+  data.table::fwrite(network$browser_edges, browser_edges_path)
+  data.table::fwrite(network$manifest, manifest_path)
   out <- file.path(output_dir, "differential_grns.html")
-  writeLines(html, out, useBytes = TRUE)
+  .module3_diff_grn_write_network_browser(
+    edges = network$browser_edges,
+    manifest = network$manifest,
+    out_html = out,
+    top_tf_n = top_tf_n,
+    top_link_n = top_link_n,
+    default_direction = default_direction,
+    title = sprintf("Differential GRN browser (%s default)", default_direction)
+  )
   if (isTRUE(verbose)) .log_inform("Wrote differential GRN browser: {out}")
   invisible(out)
 }
