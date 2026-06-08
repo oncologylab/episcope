@@ -58,6 +58,41 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     link_pass = TRUE
   )
   data.table::fwrite(topic_links, file.path(extraction_dir, "topic_links.csv"))
+  pathway_rows <- data.table::data.table(
+    topic = c(1L, 1L, 2L),
+    pathway = c("Hallmark: Signal A", "Reactome: Signal B", "Hallmark: Signal A"),
+    padj = c(0.001, 0.002, 0.003),
+    overlap = c("2/3", "1/3", "1/3"),
+    overlap_hits = c(2L, 1L, 1L),
+    genes = c("G1;G2", "G2", "G1")
+  )
+  data.table::fwrite(
+    pathway_rows,
+    file.path(extraction_dir, "topic_pathway_enrichment_peak_and_gene_dotplot.csv")
+  )
+  dir.create(file.path(model_dir, "rds"), recursive = TRUE)
+  saveRDS(
+    data.table::data.table(term_id = c("GENE:G1", "GENE:G2", "GENE:G3", "PEAK:P1")),
+    file.path(model_dir, "rds", "doc_term.rds")
+  )
+  data.table::fwrite(
+    data.table::data.table(
+      topic = 0L,
+      pathway = c("Hallmark: Signal A", "Reactome: Signal B"),
+      pathway_key = c("Hallmark: Signal A", "Reactome: Signal B"),
+      padj = c(0.01, 0.02),
+      overlap = c("10/100", "5/100"),
+      overlap_hits = c(10L, 5L),
+      genes = c("G1;G2;G3", "G2;G3")
+    ),
+    file.path(model_dir, "topic_pathway_enrichment_gene_universe_all.csv")
+  )
+  per_group_dir <- file.path(extraction_dir, "per_comparison_pathway_peak_pass_gene_pass")
+  dir.create(per_group_dir, recursive = TRUE)
+  data.table::fwrite(
+    pathway_rows[topic == 1L],
+    file.path(per_group_dir, "CondA_rep1_All_dotplot.csv")
+  )
 
   comparisons <- data.table::data.table(
     condition_label = c("CondA_rep1", "CondA_rep2", "CondB_rep1", "CondB_rep2"),
@@ -102,9 +137,22 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(topic_html, "Condition Waterfall", fixed = TRUE)
   expect_match(topic_html, "Pathways", fixed = TRUE)
   expect_match(topic_html, "Export SVG", fixed = TRUE)
+  expect_match(topic_html, "Genes in full document gene-universe enrichment", fixed = TRUE)
+  expect_match(topic_html, "topic genes", fixed = TRUE)
+  expect_match(topic_html, "universe remainder", fixed = TRUE)
+  expect_match(topic_html, "gene_total_universe", fixed = TRUE)
+  expect_match(topic_html, "mdsLeader", fixed = TRUE)
   expect_match(condition_html, "Condition/Comparison MDS", fixed = TRUE)
   expect_match(condition_html, "Topic Waterfall", fixed = TRUE)
+  expect_match(condition_html, "mdsImage", fixed = TRUE)
+  expect_match(condition_html, "drawMdsHotspots", fixed = TRUE)
+  expect_match(condition_html, "selectGroup", fixed = TRUE)
+  expect_match(condition_html, "pathLabelTopicSpecific", fixed = TRUE)
+  expect_match(condition_html, "Pathway name colors", fixed = TRUE)
   expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
+
+  condition_svg <- file.path(root, "review", "assets", "condition_mds_K2.svg")
+  expect_true(file.exists(condition_svg))
 
   score_mat <- data.table::fread(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
   expect_equal(score_mat$method_setup, "cond fp aggr weight | LDA")

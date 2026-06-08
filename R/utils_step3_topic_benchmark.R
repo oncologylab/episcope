@@ -1000,17 +1000,145 @@
   dirs[[1L]]
 }
 
-.m3tb_read_pathway_tables <- function(extraction_dir, per_group = FALSE) {
+.m3tb_parse_overlap_hits <- function(overlap) {
+  vals <- suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))
+  vals[!is.finite(vals)] <- NA_integer_
+  vals
+}
+
+.m3tb_parse_overlap_total <- function(overlap) {
+  vals <- suppressWarnings(as.integer(sub("^.*/", "", as.character(overlap))))
+  vals[!is.finite(vals)] <- NA_integer_
+  vals
+}
+
+.m3tb_find_doc_term_file <- function(model_dir) {
+  if (is.null(model_dir) || !nzchar(as.character(model_dir)[[1L]])) return(NA_character_)
+  files <- c(
+    file.path(model_dir, "rds", "doc_term.rds"),
+    file.path(model_dir, "doc_term.rds"),
+    file.path(model_dir, "doc_term.csv"),
+    file.path(model_dir, "doc_term.arrow")
+  )
+  hit <- files[file.exists(files)]
+  if (length(hit)) return(hit[[1L]])
+  found <- list.files(model_dir, pattern = "^doc_term[.](rds|csv|arrow)$", recursive = TRUE, full.names = TRUE)
+  if (length(found)) found[[1L]] else NA_character_
+}
+
+.m3tb_doc_term_gene_universe <- function(doc_term_file) {
+  if (is.na(doc_term_file) || !file.exists(doc_term_file)) return(character())
+  if (grepl("[.]rds$", doc_term_file, ignore.case = TRUE)) {
+    dt <- data.table::as.data.table(readRDS(doc_term_file))
+  } else if (grepl("[.]arrow$", doc_term_file, ignore.case = TRUE)) {
+    if (!requireNamespace("arrow", quietly = TRUE)) return(character())
+    dt <- data.table::as.data.table(arrow::read_ipc_file(doc_term_file))
+  } else {
+    dt <- data.table::fread(doc_term_file, showProgress = FALSE)
+  }
+  if (!"term_id" %in% names(dt)) return(character())
+  genes <- as.character(dt$term_id)
+  genes <- genes[grepl("^GENE:", genes)]
+  genes <- sub("^GENE:", "", genes)
+  sort(unique(genes[!is.na(genes) & nzchar(genes)]))
+}
+
+.m3tb_universe_pathway_cache_file <- function(model_dir, extraction_dir) {
+  candidates <- unique(c(
+    file.path(model_dir, "topic_pathway_enrichment_gene_universe_all.csv"),
+    file.path(extraction_dir, "topic_pathway_enrichment_gene_universe_all.csv"),
+    file.path(dirname(extraction_dir), "topic_pathway_enrichment_gene_universe_all.csv")
+  ))
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit)) return(hit[[1L]])
+  candidates[[1L]]
+}
+
+.m3tb_read_or_compute_universe_pathways <- function(model_dir,
+                                                    extraction_dir,
+                                                    compute_if_missing = TRUE,
+                                                    verbose = FALSE) {
+  cache_file <- .m3tb_universe_pathway_cache_file(model_dir, extraction_dir)
+  if (file.exists(cache_file)) {
+    return(data.table::fread(cache_file, showProgress = FALSE))
+  }
+  if (!isTRUE(compute_if_missing)) return(data.table::data.table())
+  genes <- .m3tb_doc_term_gene_universe(.m3tb_find_doc_term_file(model_dir))
+  if (!length(genes)) return(data.table::data.table())
+  if (!requireNamespace("enrichR", quietly = TRUE)) {
+    .log_abort("Package enrichR is required to compute Module 3 pathway universe totals.")
+  }
+  if (!isTRUE(.ensure_enrichr_ready(verbose = FALSE))) {
+    .log_abort("Enrichr is not reachable; cannot compute Module 3 pathway universe totals.")
+  }
+  if (isTRUE(verbose)) {
+    .log_inform("Computing Module 3 pathway universe totals for {length(genes)} document genes.")
+  }
+  enr <- tryCatch(
+    enrichR::enrichr(genes, .default_pathway_databases()),
+    error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
+  )
+  out <- .topic_enrichr_result_to_table(enr, topic_name = 0L, genes = genes)
+  if (nrow(out)) {
+    dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
+    data.table::fwrite(out, cache_file)
+  }
+  out
+}
+
+.m3tb_apply_universe_pathway_counts <- function(pathways, universe_pathways) {
+  dt <- data.table::copy(data.table::as.data.table(pathways))
+  if (!nrow(dt)) return(dt)
+  uni <- data.table::as.data.table(universe_pathways)
+  if (!nrow(uni)) return(dt)
+  if (!"pathway" %in% names(uni) && "term" %in% names(uni)) data.table::setnames(uni, "term", "pathway")
+  if (!"pathway_key" %in% names(uni)) uni[, pathway_key := pathway]
+  if (!"overlap_hits" %in% names(uni)) uni[, overlap_hits := .m3tb_parse_overlap_hits(overlap)]
+  uni[, `:=`(
+    pathway = as.character(pathway),
+    pathway_key = as.character(pathway_key),
+    overlap_hits = suppressWarnings(as.integer(overlap_hits))
+  )]
+  by_pathway <- uni[
+    !is.na(pathway) & nzchar(pathway) & is.finite(overlap_hits),
+    .(gene_total_universe = max(overlap_hits, na.rm = TRUE)),
+    by = pathway
+  ]
+  if ("gene_total_universe" %in% names(dt)) dt[, gene_total_universe := NULL]
+  dt <- merge(dt, by_pathway, by = "pathway", all.x = TRUE, sort = FALSE)
+  if (any(is.na(dt$gene_total_universe)) && "pathway_key" %in% names(dt)) {
+    by_key <- uni[
+      !is.na(pathway_key) & nzchar(pathway_key) & is.finite(overlap_hits),
+      .(gene_total_universe_key = max(overlap_hits, na.rm = TRUE)),
+      by = pathway_key
+    ]
+    dt <- merge(dt, by_key, by = "pathway_key", all.x = TRUE, sort = FALSE)
+    dt[is.na(gene_total_universe), gene_total_universe := gene_total_universe_key]
+    dt[, gene_total_universe_key := NULL]
+  }
+  dt[is.na(gene_total_universe) | !is.finite(gene_total_universe), gene_total_universe := pmax(gene_total, gene_in, na.rm = TRUE)]
+  dt[, gene_total_universe := pmax(as.integer(gene_total_universe), as.integer(gene_in), na.rm = TRUE)]
+  dt[, gene_out := pmax(as.integer(gene_total_universe) - as.integer(gene_in), 0L)]
+  dt[]
+}
+
+.m3tb_read_pathway_tables <- function(extraction_dir,
+                                      per_group = FALSE,
+                                      model_dir = NULL,
+                                      compute_universe = TRUE,
+                                      verbose = FALSE) {
   empty <- data.table::data.table(
     topic = integer(),
     topic_num = integer(),
     comparison_label = character(),
     display_label = character(),
     pathway = character(),
+    pathway_key = character(),
     padj = numeric(),
     overlap = character(),
     gene_in = integer(),
     gene_total = integer(),
+    gene_total_universe = integer(),
     gene_out = integer(),
     genes = character()
   )
@@ -1029,7 +1157,8 @@
     if (!"padj" %in% names(dt) && "adjusted_p_value" %in% names(dt)) data.table::setnames(dt, "adjusted_p_value", "padj")
     if (!"topic" %in% names(dt) && "topic_num" %in% names(dt)) data.table::setnames(dt, "topic_num", "topic")
     if (!"overlap" %in% names(dt)) dt[, overlap := NA_character_]
-    if (!"overlap_hits" %in% names(dt)) dt[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
+    if (!"overlap_hits" %in% names(dt)) dt[, overlap_hits := .m3tb_parse_overlap_hits(overlap)]
+    if (!"pathway_key" %in% names(dt)) dt[, pathway_key := pathway]
     if (!"genes" %in% names(dt)) dt[, genes := NA_character_]
     if (isTRUE(per_group)) {
       label <- sub("_dotplot[.]csv$", "", basename(path))
@@ -1045,11 +1174,13 @@
       topic_num = as.integer(topic),
       padj = suppressWarnings(as.numeric(padj)),
       gene_in = suppressWarnings(as.integer(overlap_hits)),
-      gene_total = suppressWarnings(as.integer(sub("^.*/", "", as.character(overlap)))),
+      gene_total = .m3tb_parse_overlap_total(overlap),
       pathway = as.character(pathway),
+      pathway_key = as.character(pathway_key),
       genes = as.character(genes)
     )]
     dt[is.na(gene_total) | !is.finite(gene_total), gene_total := pmax(gene_in, 1L, na.rm = TRUE)]
+    dt[, gene_total_universe := gene_total]
     dt[, gene_out := pmax(gene_total - gene_in, 0L)]
     keep <- intersect(names(empty), names(dt))
     dt[, ..keep]
@@ -1058,7 +1189,17 @@
   if (!nrow(out)) return(empty)
   out <- out[is.finite(topic_num) & !is.na(pathway) & nzchar(pathway)]
   out[, rank := data.table::frank(padj, ties.method = "first"), by = .(topic_num, comparison_label)]
-  out[rank <= 30L][, rank := NULL][]
+  out <- out[rank <= 30L][, rank := NULL][]
+  if (!is.null(model_dir)) {
+    universe <- .m3tb_read_or_compute_universe_pathways(
+      model_dir = model_dir,
+      extraction_dir = extraction_dir,
+      compute_if_missing = compute_universe,
+      verbose = verbose
+    )
+    out <- .m3tb_apply_universe_pathway_counts(out, universe)
+  }
+  out[]
 }
 
 .m3tb_topic_report_html <- function(title, topic_mds, waterfall, pathways, out_html) {
@@ -1076,7 +1217,7 @@
     ".grid{height:calc(100vh - 58px);display:grid;grid-template-columns:minmax(420px,0.9fr) minmax(620px,1.45fr);gap:8px;padding:8px;box-sizing:border-box}",
     ".left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}",
     ".pane h2{font-size:17px;line-height:1.05;margin:6px 8px}.body{position:relative;flex:1;min-height:0}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}",
-    "svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}",
+    "svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#334155;stroke-width:1.4;opacity:.78}.mdsLabel{font-size:22px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round}",
     "@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:62px}.grid{height:calc(100vh - 62px)}}",
     "</style></head><body>",
     "<div class=\"top\"><div>",
@@ -1086,7 +1227,7 @@
     "<main class=\"grid\"><div class=\"left\">",
     "<section class=\"pane\"><h2>Intertopic Distance Map</h2><div class=\"body\"><svg id=\"topicSvg\" viewBox=\"0 0 900 560\"></svg></div><div class=\"note\">Topics are embedded by Jensen-Shannon distance.</div></section>",
     "<section class=\"pane\"><h2>Condition Waterfall</h2><div class=\"body\"><svg id=\"waterfallSvg\" viewBox=\"0 0 900 620\"></svg></div><div class=\"note\">Bars use one shared x-scale inside this report.</div></section>",
-    "</div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1300 880\"></svg></div><div class=\"note\">Red shows topic genes; blue shows remaining pathway universe when available.</div></section></main>",
+    "</div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"></svg></div><div class=\"note\">Filter: N_gene >= 5, adjusted p-value < 0.05, top 30 per topic. X-axis is full gene-universe pathway hits; red is topic overlap and blue is remaining universe hits.</div></section></main>",
     "<script>",
     paste0("const TOPICS=", topic_json, ";"),
     paste0("const WATERFALL=", waterfall_json, ";"),
@@ -1096,9 +1237,12 @@
     "function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}",
     "function color(t){const n=Number(String(t).replace(/^Topic/,''));return PAL[(Math.max(1,n)-1)%PAL.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
     "function init(){TOPICS.sort((a,b)=>topicNum(a.topic)-topicNum(b.topic)).forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic);topicSelect.appendChild(o)});topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',()=>{const b=new Blob([document.documentElement.outerHTML],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=document.title.replace(/[^A-Za-z0-9_.-]+/g,'_')+'.html';a.click();URL.revokeObjectURL(a.href)});draw()}",
-    "function drawTopic(){topicSvg.replaceChildren();const w=900,h=560,p=80,sx=sc(TOPICS.map(d=>+d.MDS1),p,w-p),sy=sc(TOPICS.map(d=>+d.MDS2),h-p,p),mx=Math.max(...TOPICS.map(d=>+d.mean_theta||0),1e-6),sel=topicSelect.value;TOPICS.forEach(d=>{const r=24+55*Math.sqrt((+d.mean_theta||0)/mx),c=el('circle',{cx:sx(+d.MDS1),cy:sy(+d.MDS2),r:r,fill:color(d.topic),opacity:d.topic===sel?0.92:0.5,stroke:d.topic===sel?'#111':'#fff','stroke-width':d.topic===sel?5:2});c.onclick=()=>{topicSelect.value=d.topic;draw()};topicSvg.appendChild(c);const t=el('text',{x:sx(+d.MDS1),y:sy(+d.MDS2)+5,'text-anchor':'middle',class:'label'});t.textContent=topicNum(d.topic);topicSvg.appendChild(t)})}",
+    "function drawTopic(){topicSvg.replaceChildren();const w=900,h=560,p=86,sx=sc(TOPICS.map(d=>+d.MDS1),p,w-p),sy=sc(TOPICS.map(d=>+d.MDS2),h-p,p),mx=Math.max(...TOPICS.map(d=>+d.mean_theta||0),1e-6),sel=topicSelect.value,cx=w/2,cy=h/2;const pts=TOPICS.map((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),r=20+42*Math.sqrt((+d.mean_theta||0)/mx);return{d,i,x,y,r}});pts.forEach(p=>{const c=el('circle',{cx:p.x,cy:p.y,r:p.r,fill:color(p.d.topic),opacity:p.d.topic===sel?0.92:0.46,stroke:p.d.topic===sel?'#111':'#fff','stroke-width':p.d.topic===sel?5:2,style:'cursor:pointer'});c.onclick=()=>{topicSelect.value=p.d.topic;draw()};topicSvg.appendChild(c)});pts.forEach(p=>{let dx=p.x-cx,dy=p.y-cy,len=Math.hypot(dx,dy);if(len<1){dx=Math.cos((p.i+1)*2.39);dy=Math.sin((p.i+1)*2.39);len=1}const lx=Math.max(25,Math.min(w-25,p.x+dx/len*(p.r+34))),ly=Math.max(25,Math.min(h-25,p.y+dy/len*(p.r+34)));if(Math.hypot(lx-p.x,ly-p.y)>p.r+12){const line=el('line',{x1:p.x+dx/len*p.r,y1:p.y+dy/len*p.r,x2:lx,y2:ly,class:'mdsLeader',style:'cursor:pointer'});line.onclick=()=>{topicSelect.value=p.d.topic;draw()};topicSvg.appendChild(line)}const t=el('text',{x:lx,y:ly+6,'text-anchor':'middle',class:'mdsLabel',style:'cursor:pointer'});t.textContent=topicNum(p.d.topic);t.onclick=()=>{topicSelect.value=p.d.topic;draw()};topicSvg.appendChild(t)})}",
     "function drawWaterfall(){waterfallSvg.replaceChildren();const sel=topicSelect.value,rows=WATERFALL.filter(d=>d.topic===sel).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)).slice(0,16),w=900,h=620,left=245,right=40,top=42,rowH=Math.min(26,(h-top-38)/Math.max(1,rows.length)),mx=Math.max(...WATERFALL.map(d=>+d.theta_mean||0),0.001);rows.forEach((d,i)=>{const y=top+i*rowH,bw=(+d.theta_mean||0)/mx*(w-left-right);const lab=el('text',{x:left-10,y:y+rowH*.7,'text-anchor':'end',class:'label'});lab.textContent=String(d.display_label||d.comparison_label).slice(0,28);waterfallSvg.appendChild(lab);waterfallSvg.appendChild(el('rect',{x:left,y:y+4,width:Math.max(2,bw),height:Math.max(7,rowH-9),fill:color(sel),opacity:.86}));const val=el('text',{x:left+bw+6,y:y+rowH*.7,class:'small'});val.textContent=(+d.theta_mean||0).toFixed(3);waterfallSvg.appendChild(val)})}",
-    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn).sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,24),w=1300,h=880,left=570,right=45,top=58,rowH=Math.min(26,(h-top-46)/Math.max(1,rows.length)),mx=Math.max(...rows.map(d=>Math.max(+d.gene_total||0,(+d.gene_in||0)+(+d.gene_out||0))),1);if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}rows.forEach((d,i)=>{const y=top+i*rowH,gi=+d.gene_in||0,go=+d.gene_out||0,wi=gi/mx*(w-left-right),wo=go/mx*(w-left-right);const lab=el('text',{x:left-12,y:y+rowH*.65,'text-anchor':'end',class:'label'});lab.textContent=String(d.pathway||'').slice(0,64);pathSvg.appendChild(lab);pathSvg.appendChild(el('rect',{x:left,y:y+5,width:Math.max(gi?2:0,wi),height:Math.max(7,rowH-10),class:'barIn'}));pathSvg.appendChild(el('rect',{x:left+wi,y:y+5,width:Math.max(go?2:0,wo),height:Math.max(7,rowH-10),class:'barOut'}))})}",
+    "function niceTicks(maxVal,n){const out=[];if(!Number.isFinite(maxVal)||maxVal<=0)return[0,1];const raw=maxVal/Math.max(1,n),pow=Math.pow(10,Math.floor(Math.log10(raw))),step=([1,2,5,10].map(v=>v*pow).find(v=>raw<=v)||10*pow);for(let x=0;x<=maxVal+step*.5;x+=step)out.push(x);return out}",
+    "function wrapWords(s,maxChars,maxLines){const words=String(s||'').split(/\\s+/),lines=[];let line='';words.forEach(w=>{const next=line?line+' '+w:w;if(next.length>maxChars&&line){lines.push(line);line=w}else line=next});if(line)lines.push(line);if(lines.length>maxLines){lines.length=maxLines;lines[maxLines-1]=lines[maxLines-1].slice(0,Math.max(0,maxChars-2))+'..'}return lines}",
+    "function addWrappedLabel(layer,text,x,y,maxChars,maxLines,lineHeight,fontSize,cls){const t=el('text',{x:x,y:y,'text-anchor':'end',class:cls||'pathLabel','font-size':fontSize});wrapWords(text,maxChars,maxLines).forEach((line,i)=>{const sp=el('tspan',{x:x,dy:i===0?0:lineHeight});sp.textContent=line;t.appendChild(sp)});layer.appendChild(t);return t}",
+    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn).sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,30),topicMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic)});const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathSvg.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathSvg.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathSvg.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathSvg.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathSvg.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathSvg.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathSvg.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathSvg.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),cls=(topicMap.get(String(d.pathway||''))||new Set()).size===1?'pathLabel pathLabelTopicSpecific':'pathLabel';const lab=addWrappedLabel(pathSvg,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls);const inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside));pathSvg.appendChild(el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}));pathSvg.appendChild(el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}));lab.appendChild(el('title',{})).textContent=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total})}",
     "function draw(){drawTopic();drawWaterfall();drawPathways()}init();",
     "</script></body></html>"
   )
@@ -1107,29 +1251,125 @@
   out_html
 }
 
-.m3tb_condition_report_html <- function(title, group_mds, group_topic, pathways, out_html) {
+.m3tb_condition_mds_svg_path <- function(out_html) {
+  stem <- sub("[.]html$", "", basename(out_html))
+  stem <- sub("^condition_topic_report_", "condition_mds_", stem)
+  file.path(dirname(out_html), "assets", paste0(stem, ".svg"))
+}
+
+.m3tb_write_condition_mds_svg <- function(group_mds, out_svg) {
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    .log_abort("Package ggplot2 is required to render Module 3 condition MDS SVG reports.")
+  }
+  if (!requireNamespace("ggrepel", quietly = TRUE)) {
+    .log_abort("Package ggrepel is required to render Module 3 condition MDS SVG reports.")
+  }
+  dt <- data.table::copy(data.table::as.data.table(group_mds))
+  if (!nrow(dt)) return(invisible(FALSE))
+  if (!"mds_label" %in% names(dt)) dt[, mds_label := .m3tb_short_label(display_label, 18L)]
+  if (!"color" %in% names(dt)) dt[, color := .m3tb_group_color(display_label)]
+  if (!"shape_value" %in% names(dt)) {
+    dt[, shape_value := data.table::fifelse(grepl("Down|Target-Down", paste(display_label, comparison_label), ignore.case = TRUE), 25L, 16L)]
+  }
+  dt[, `:=`(
+    plot_label = data.table::fifelse(!is.na(mds_label) & nzchar(mds_label), mds_label, display_label),
+    color_value = data.table::fifelse(grepl("^#[0-9A-Fa-f]{6}$", color), color, "#2A9D8F"),
+    shape_value = data.table::fifelse(as.integer(shape_value) == 25L, 25L, 16L)
+  )]
+  is_comparison <- any(dt$doc_design == "comparison" | dt$shape_value == 25L, na.rm = TRUE)
+  if (is_comparison) {
+    dt[, split_panel_label := data.table::fifelse(shape_value == 25L, "Down", "Up")]
+    dt[, split_panel_label := factor(split_panel_label, levels = c("Up", "Down"))]
+  } else {
+    dt[, split_panel_label := "Condition"]
+  }
+  p <- ggplot2::ggplot(dt, ggplot2::aes(MDS1, MDS2)) +
+    ggplot2::geom_point(
+      ggplot2::aes(color = color_value, fill = color_value, shape = shape_value),
+      size = 6.4,
+      alpha = 0.9,
+      stroke = 0.8
+    ) +
+    ggrepel::geom_label_repel(
+      ggplot2::aes(label = plot_label, color = color_value),
+      fontface = "bold",
+      size = if (is_comparison) 4.25 else 4.75,
+      min.segment.length = 0,
+      box.padding = 1.45,
+      point.padding = 0.55,
+      force = 28,
+      force_pull = 0.55,
+      max.iter = 90000,
+      max.time = 6,
+      max.overlaps = Inf,
+      segment.color = "grey35",
+      segment.size = 0.5,
+      label.padding = grid::unit(0.15, "lines"),
+      label.r = grid::unit(0.08, "lines"),
+      label.size = 0.25,
+      fill = grDevices::adjustcolor("white", alpha.f = 0.86),
+      seed = 1
+    ) +
+    ggplot2::scale_color_identity() +
+    ggplot2::scale_fill_identity() +
+    ggplot2::scale_shape_identity() +
+    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = 0.55)) +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = 0.55)) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::labs(x = "MDS1", y = "MDS2") +
+    ggplot2::theme_classic(base_size = 14, base_family = "Helvetica") +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold"),
+      axis.title = ggplot2::element_text(face = "bold", size = 15),
+      axis.text = ggplot2::element_text(face = "bold", size = 12),
+      strip.text = ggplot2::element_text(face = "bold", size = 16),
+      strip.background = ggplot2::element_rect(fill = "grey95", color = "grey72", linewidth = 0.35),
+      panel.spacing = grid::unit(12, "pt"),
+      plot.margin = ggplot2::margin(16, 24, 16, 24),
+      legend.position = "none",
+      aspect.ratio = if (is_comparison) 1.05 else 1.15
+    )
+  if (is_comparison) p <- p + ggplot2::facet_wrap(~ split_panel_label, ncol = 2, scales = "free")
+  dir.create(dirname(out_svg), recursive = TRUE, showWarnings = FALSE)
+  grDevices::svg(out_svg, width = if (is_comparison) 9.8 else 8.2, height = 6.2, bg = "white")
+  on.exit(grDevices::dev.off(), add = TRUE)
+  print(p)
+  invisible(TRUE)
+}
+
+.m3tb_condition_report_html <- function(title, group_mds, group_topic, pathways, out_html, mds_svg_src = NULL) {
   group_json <- .m3tb_json_for_html(group_mds)
   topic_json <- .m3tb_json_for_html(group_topic)
   pathway_json <- .m3tb_json_for_html(pathways)
+  mds_img <- if (!is.null(mds_svg_src) && nzchar(mds_svg_src)) {
+    paste0("<img id=\"mdsImage\" class=\"mdsImage\" src=\"", .m3tb_html_escape(mds_svg_src), "\" alt=\"Condition MDS\"/><div id=\"mdsHotspotLayer\" class=\"mdsHotspotLayer\"></div>")
+  } else {
+    "<svg id=\"mdsSvg\" viewBox=\"0 0 900 560\"></svg>"
+  }
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
-    "<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:58px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px 12px;box-sizing:border-box}h1{font-size:17px;line-height:1.1;margin:0}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}select,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}.grid{height:calc(100vh - 58px);display:grid;grid-template-columns:minmax(420px,0.9fr) minmax(620px,1.45fr);gap:8px;padding:8px;box-sizing:border-box}.left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}.pane h2{font-size:17px;line-height:1.05;margin:6px 8px}.body{flex:1;min-height:0}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:62px}.grid{height:calc(100vh - 62px)}}</style>",
+    "<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:58px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px 12px;box-sizing:border-box}h1{font-size:17px;line-height:1.1;margin:0}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}select,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}.grid{height:calc(100vh - 58px);display:grid;grid-template-columns:minmax(420px,0.9fr) minmax(620px,1.45fr);gap:8px;padding:8px;box-sizing:border-box}.left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}.pane h2{font-size:17px;line-height:1.05;margin:6px 8px}.body{position:relative;flex:1;min-height:0}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.mdsImage{width:100%;height:100%;object-fit:contain;display:block;background:#fff}.mdsHotspotLayer{position:absolute;inset:0;pointer-events:none}.mdsHotspot{position:absolute;transform:translate(-50%,-50%);width:46px;height:46px;border-radius:50%;background:rgba(0,0,0,0);border:2px solid transparent;cursor:pointer;pointer-events:auto;box-sizing:border-box}svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:62px}.grid{height:calc(100vh - 62px)}}</style>",
     "</head><body><div class=\"top\"><div>",
     paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
     "<div class=\"small\">MDS uses condition/comparison mean document-to-topic probability profiles.</div></div>",
     "<div class=\"controls\"><label>Condition/comparison <select id=\"groupSelect\"></select></label><label>Topic <select id=\"topicSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
-    "<main class=\"grid\"><div class=\"left\"><section class=\"pane\"><h2>Condition/Comparison MDS</h2><div class=\"body\"><svg id=\"mdsSvg\" viewBox=\"0 0 900 560\"></svg></div><div class=\"note\">Dots are embedded by Jensen-Shannon distance.</div></section><section class=\"pane\"><h2>Topic Waterfall</h2><div class=\"body\"><svg id=\"waterfallSvg\" viewBox=\"0 0 900 620\"></svg></div><div class=\"note\">Topics are ranked for the selected condition/comparison.</div></section></div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1300 880\"></svg></div><div class=\"note\">Pathways are filtered and ranked for the selected topic and group when available.</div></section></main>",
+    paste0("<main class=\"grid\"><div class=\"left\"><section class=\"pane\"><h2>Condition/Comparison MDS</h2><div class=\"body\">", mds_img, "</div><div class=\"note\">Dots are condition/comparison mean document-to-topic probability profiles (theta) using Jensen-Shannon distance.</div></section><section class=\"pane\"><h2>Topic Waterfall</h2><div class=\"body\"><svg id=\"waterfallSvg\" viewBox=\"0 0 900 620\"></svg></div><div class=\"note\">Topics are ranked for the selected condition/comparison.</div></section></div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"></svg></div><div class=\"note\">Filter: N_gene >= 5, adjusted p-value < 0.05, top 30 per topic. Pathway name colors: red = topic-specific, blue = condition/comparison-specific, purple = both.</div></section></main>"),
     "<script>",
     paste0("const GROUPS=", group_json, ";"),
     paste0("const GROUP_TOPIC=", topic_json, ";"),
     paste0("const PATHWAYS=", pathway_json, ";"),
-    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#9C755F','#BAB0AC','#1F77B4'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),mdsSvg=document.getElementById('mdsSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg');function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function color(i){return PAL[i%PAL.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
-    "function init(){GROUPS.forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});groupSelect.addEventListener('change',()=>{fillTopics();draw()});topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',()=>{const b=new Blob([document.documentElement.outerHTML],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=document.title.replace(/[^A-Za-z0-9_.-]+/g,'_')+'.html';a.click();URL.revokeObjectURL(a.href)});fillTopics();draw()}",
+    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#9C755F','#BAB0AC','#1F77B4'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),mdsSvg=document.getElementById('mdsSvg'),mdsImage=document.getElementById('mdsImage'),mdsHotspotLayer=document.getElementById('mdsHotspotLayer'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg');function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function color(i){return PAL[i%PAL.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
+    "function selectGroup(id){groupSelect.value=id;fillTopics();draw()}",
+    "function init(){GROUPS.forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});groupSelect.addEventListener('change',()=>selectGroup(groupSelect.value));topicSelect.addEventListener('change',draw);if(mdsImage)mdsImage.addEventListener('load',drawMdsHotspots);window.addEventListener('resize',drawMdsHotspots);document.getElementById('exportSvgButton').addEventListener('click',()=>{const b=new Blob([document.documentElement.outerHTML],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=document.title.replace(/[^A-Za-z0-9_.-]+/g,'_')+'.html';a.click();URL.revokeObjectURL(a.href)});fillTopics();draw()}",
     "function fillTopics(){const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean));topicSelect.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic)+' ('+(+d.theta_mean||0).toFixed(3)+')';topicSelect.appendChild(o)})}",
-    "function drawMds(){mdsSvg.replaceChildren();const w=900,h=560,p=90,sx=sc(GROUPS.map(d=>+d.MDS1),p,w-p),sy=sc(GROUPS.map(d=>+d.MDS2),h-p,p),sel=groupSelect.value,dense=GROUPS.length>10;GROUPS.forEach((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),isSel=d.comparison_label===sel,c=el('circle',{cx:x,cy:y,r:isSel?20:15,fill:d.color||color(i),opacity:.84,stroke:isSel?'#111':'#fff','stroke-width':isSel?5:2});const ttl=el('title',{});ttl.textContent=d.display_label||d.comparison_label;c.appendChild(ttl);c.onclick=()=>{groupSelect.value=d.comparison_label;fillTopics();draw()};mdsSvg.appendChild(c);if(isSel||!dense){const t=el('text',{x:x+8,y:y-8,class:'label'});t.textContent=String(d.mds_label||d.display_label||d.comparison_label).slice(0,24);mdsSvg.appendChild(t)}})}",
-    "function drawWaterfall(){waterfallSvg.replaceChildren();const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)).slice(0,12),w=900,h=620,left=185,right=45,top=42,rowH=Math.min(32,(h-top-38)/Math.max(1,rows.length)),mx=Math.max(...GROUP_TOPIC.map(d=>+d.theta_mean||0),0.001),sel=topicSelect.value;rows.forEach((d,i)=>{const y=top+i*rowH,bw=(+d.theta_mean||0)/mx*(w-left-right);const lab=el('text',{x:left-10,y:y+rowH*.68,'text-anchor':'end',class:'label'});lab.textContent='Topic '+topicNum(d.topic);waterfallSvg.appendChild(lab);waterfallSvg.appendChild(el('rect',{x:left,y:y+5,width:Math.max(2,bw),height:Math.max(9,rowH-11),fill:color(topicNum(d.topic)),opacity:d.topic===sel?.96:.65,stroke:d.topic===sel?'#111':'none','stroke-width':d.topic===sel?3:0}));const val=el('text',{x:left+bw+6,y:y+rowH*.68,class:'small'});val.textContent=(+d.theta_mean||0).toFixed(3);waterfallSvg.appendChild(val)})}",
-    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value;let rows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!d.comparison_label||d.comparison_label===grp));if(!rows.length)rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn);rows=rows.sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,24);const w=1300,h=880,left=570,right=45,top=58,rowH=Math.min(26,(h-top-46)/Math.max(1,rows.length)),mx=Math.max(...rows.map(d=>Math.max(+d.gene_total||0,(+d.gene_in||0)+(+d.gene_out||0))),1);if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}rows.forEach((d,i)=>{const y=top+i*rowH,gi=+d.gene_in||0,go=+d.gene_out||0,wi=gi/mx*(w-left-right),wo=go/mx*(w-left-right);const lab=el('text',{x:left-12,y:y+rowH*.65,'text-anchor':'end',class:'label'});lab.textContent=String(d.pathway||'').slice(0,64);pathSvg.appendChild(lab);pathSvg.appendChild(el('rect',{x:left,y:y+5,width:Math.max(gi?2:0,wi),height:Math.max(7,rowH-10),class:'barIn'}));pathSvg.appendChild(el('rect',{x:left+wi,y:y+5,width:Math.max(go?2:0,wo),height:Math.max(7,rowH-10),class:'barOut'}))})}",
+    "function drawMdsHotspots(){if(!mdsHotspotLayer||!mdsImage)return;mdsHotspotLayer.replaceChildren();const box=mdsImage.getBoundingClientRect(),host=mdsHotspotLayer.getBoundingClientRect();if(!box.width||!box.height)return;const xs=GROUPS.map(d=>+d.MDS1),ys=GROUPS.map(d=>+d.MDS2),sx=sc(xs,box.left-host.left+box.width*.12,box.left-host.left+box.width*.92),sy=sc(ys,box.top-host.top+box.height*.84,box.top-host.top+box.height*.22);GROUPS.forEach(d=>{const b=document.createElement('button');b.type='button';b.className='mdsHotspot';b.style.left=sx(+d.MDS1)+'px';b.style.top=sy(+d.MDS2)+'px';b.setAttribute('aria-label',d.display_label||d.comparison_label);b.onclick=()=>selectGroup(d.comparison_label);mdsHotspotLayer.appendChild(b)})}",
+    "function drawMds(){if(mdsImage){drawMdsHotspots();return}mdsSvg.replaceChildren();const w=900,h=560,p=90,sx=sc(GROUPS.map(d=>+d.MDS1),p,w-p),sy=sc(GROUPS.map(d=>+d.MDS2),h-p,p),sel=groupSelect.value;GROUPS.forEach((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),isSel=d.comparison_label===sel,c=el('circle',{cx:x,cy:y,r:isSel?20:15,fill:d.color||color(i),opacity:.84,stroke:isSel?'#111':'#fff','stroke-width':isSel?5:2});c.onclick=()=>selectGroup(d.comparison_label);mdsSvg.appendChild(c);const t=el('text',{x:x+8,y:y-8,class:'label'});t.textContent=String(d.mds_label||d.display_label||d.comparison_label).slice(0,24);mdsSvg.appendChild(t)})}",
+    "function drawWaterfall(){waterfallSvg.replaceChildren();const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)).slice(0,30),w=900,h=620,left=185,right=45,top=56,rowH=Math.min(32,(h-top-38)/Math.max(1,rows.length)),mx=Math.max(...GROUP_TOPIC.map(d=>+d.theta_mean||0),0.001),sel=topicSelect.value;rows.forEach((d,i)=>{const y=top+i*rowH,bw=(+d.theta_mean||0)/mx*(w-left-right);const lab=el('text',{x:left-10,y:y+rowH*.68,'text-anchor':'end',class:'label'});lab.textContent='Topic '+topicNum(d.topic);waterfallSvg.appendChild(lab);const r=el('rect',{x:left,y:y+5,width:Math.max(2,bw),height:Math.max(9,rowH-11),fill:color(topicNum(d.topic)),opacity:d.topic===sel?.96:.65,stroke:d.topic===sel?'#111':'none','stroke-width':d.topic===sel?3:0,style:'cursor:pointer'});r.onclick=()=>{topicSelect.value=d.topic;draw()};waterfallSvg.appendChild(r);const val=el('text',{x:left+bw+6,y:y+rowH*.68,class:'small'});val.textContent=(+d.theta_mean||0).toFixed(3);waterfallSvg.appendChild(val)})}",
+    "function niceTicks(maxVal,n){const out=[];if(!Number.isFinite(maxVal)||maxVal<=0)return[0,1];const raw=maxVal/Math.max(1,n),pow=Math.pow(10,Math.floor(Math.log10(raw))),step=([1,2,5,10].map(v=>v*pow).find(v=>raw<=v)||10*pow);for(let x=0;x<=maxVal+step*.5;x+=step)out.push(x);return out}",
+    "function wrapWords(s,maxChars,maxLines){const words=String(s||'').split(/\\s+/),lines=[];let line='';words.forEach(w=>{const next=line?line+' '+w:w;if(next.length>maxChars&&line){lines.push(line);line=w}else line=next});if(line)lines.push(line);if(lines.length>maxLines){lines.length=maxLines;lines[maxLines-1]=lines[maxLines-1].slice(0,Math.max(0,maxChars-2))+'..'}return lines}",
+    "function addWrappedLabel(layer,text,x,y,maxChars,maxLines,lineHeight,fontSize,cls){const t=el('text',{x:x,y:y,'text-anchor':'end',class:cls||'pathLabel','font-size':fontSize});wrapWords(text,maxChars,maxLines).forEach((line,i)=>{const sp=el('tspan',{x:x,dy:i===0?0:lineHeight});sp.textContent=line;t.appendChild(sp)});layer.appendChild(t);return t}",
+    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value;let rows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!d.comparison_label||d.comparison_label===grp));if(!rows.length)rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn);rows=rows.sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,30);const topicMap=new Map(),groupMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||''),g=String(d.comparison_label||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic);if(g){if(!groupMap.has(k))groupMap.set(k,new Set());groupMap.get(k).add(g)}});const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathSvg.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathSvg.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathSvg.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathSvg.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathSvg.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathSvg.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathSvg.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathSvg.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),pkey=String(d.pathway||''),topicSpecific=(topicMap.get(pkey)||new Set()).size===1,groupSpecific=(groupMap.get(pkey)||new Set()).size===1,cls=topicSpecific&&groupSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':groupSpecific?'pathLabel pathLabelGroupSpecific':'pathLabel';addWrappedLabel(pathSvg,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls);const inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside));pathSvg.appendChild(el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}));pathSvg.appendChild(el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}))})}",
     "function draw(){drawMds();drawWaterfall();drawPathways()}init();",
     "</script></body></html>"
   )
@@ -1231,7 +1471,12 @@
       topic_mds <- .m3tb_topic_mds_from_phi(phi, theta)
       waterfall <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
       extraction_dir <- .m3tb_find_extraction_subdir(row)
-      pathways <- .m3tb_read_pathway_tables(extraction_dir, per_group = FALSE)
+      pathways <- .m3tb_read_pathway_tables(
+        extraction_dir,
+        per_group = FALSE,
+        model_dir = row$model_dir[[1L]],
+        compute_universe = TRUE
+      )
       label <- sprintf("%s | K%d", row$method_setup[[1L]], as.integer(row$selected_k[[1L]]))
       out <- file.path(html_dir, sprintf("topic_report_K%d.html", as.integer(row$selected_k[[1L]])))
       .m3tb_topic_report_html(label, topic_mds, waterfall, pathways, out)
@@ -1249,10 +1494,18 @@
       theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
       group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
       extraction_dir <- .m3tb_find_extraction_subdir(row)
-      pathways <- .m3tb_read_pathway_tables(extraction_dir, per_group = TRUE)
+      pathways <- .m3tb_read_pathway_tables(
+        extraction_dir,
+        per_group = TRUE,
+        model_dir = row$model_dir[[1L]],
+        compute_universe = TRUE
+      )
       label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
       out <- file.path(html_dir, sprintf("condition_topic_report_K%d.html", k))
-      .m3tb_condition_report_html(label, group_mds, group_topic, pathways, out)
+      condition_mds_svg <- .m3tb_condition_mds_svg_path(out)
+      .m3tb_write_condition_mds_svg(group_mds, condition_mds_svg)
+      mds_src <- file.path("assets", basename(condition_mds_svg))
+      .m3tb_condition_report_html(label, group_mds, group_topic, pathways, out, mds_svg_src = mds_src)
       data.table::data.table(label = label, k = k, path = out)
     })
     condition_reports <- data.table::rbindlist(condition_rows, use.names = TRUE, fill = TRUE)
