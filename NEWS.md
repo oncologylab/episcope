@@ -1,12 +1,13 @@
 # craftgrn 0.1.4
 
 * Added production-oriented Module 3 APIs for regulatory topic modeling:
-  `run_regulatory_topics()`, `module3_prepare_topic_inputs()`, and
+  `run_topic_modeling()`, `module3_construct_docs()`,
+  `module3_train_topic_models()`, `module3_extract_topics()`, and
   `build_module3_qc_report()`.
 * Added reusable Module 3 topic-input caches and compact pass-only topic-link
   output as the default production behavior.
-* Updated Module 3 benchmark/report discovery to read compact topic-link
-  outputs.
+* Added `visualize_topic_modeling_results()` and
+  `visualize_differential_grns()` for standard Module 3 result browsers.
 
 # craftgrn 0.1.3
 

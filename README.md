@@ -1,6 +1,6 @@
 # CraftGRN <img src="man/figures/logo.png" align="right" height="139" alt="CraftGRN logo" />
 
-[![Version](https://img.shields.io/badge/version-0.1.2-2C3E50.svg?style=flat-square)](https://github.com/oncologylab/craftgrn)
+[![Version](https://img.shields.io/github/r-package/v/oncologylab/craftgrn?style=flat-square&color=2C3E50)](https://github.com/oncologylab/craftgrn)
 [![License](https://img.shields.io/badge/license-GPLv3-16A085.svg?style=flat-square)](https://github.com/oncologylab/craftgrn/blob/main/LICENSE.md)
 [![Documentation](https://img.shields.io/badge/docs-pkgdown-4DBBD5.svg?style=flat-square)](https://oncologylab.github.io/craftgrn/)
 [![pkgdown](https://img.shields.io/github/actions/workflow/status/oncologylab/craftgrn/pkgdown.yaml?branch=main&label=pkgdown&style=flat-square&color=27AE60)](https://github.com/oncologylab/craftgrn/actions/workflows/pkgdown.yaml)
@@ -122,7 +122,9 @@ footprint or peak signal, and cross-condition correlation evidence.
 
 Primary package functions:
 
-- `link_tf_targets()` connects predicted TFBS to target genes using TF-target and FP-target correlations.
+- `predict_tf_targets()` predicts TF target genes from predicted TFBS, TF-target
+  correlations, FP-target correlations, genomic proximity, and optional
+  regulatory priors.
 - `build_module2_qc_report()` writes an HTML QC report for compact handoff checks, TF-target and FP-target filters, candidate source and distance-to-TSS evidence, final-link integrity, condition activity, warning checks, top TF/target/FP summaries, and related browser reports. The report combines relational flow diagrams, density and cumulative distance plots, scatter summaries, heatmaps, and lollipop rank plots.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg" alt="Module 2 workflow" width="800">
@@ -135,22 +137,23 @@ to topics, and summarizes pathway and master TF programs.
 
 Primary package functions:
 
-- `run_regulatory_topics()` runs one selected Module 3 topic-document method
+- `run_topic_modeling()` runs one selected Module 3 topic-document method
   with a clean output layout, compact topic-link outputs, and a QC report.
-- `module3_prepare_topic_inputs()` builds reusable topic-document, document-term,
+- `module3_prepare_differential_links()` prepares filtered differential links
+  from Module 2 predicted links and condition comparisons.
+- `module3_construct_docs()` builds reusable topic-document, document-term,
   and sparse matrix caches for step-by-step inspection.
-- `train_topic_models()` trains regulatory topic models across a user-defined
+- `module3_train_topic_models()` trains regulatory topic models across a user-defined
   topic-number grid using the native `warp_omp` WarpLDA sampler by default.
   Use `warplda_sampler = "warp_ref"` only when you need a slower sequential
   fixed-seed reference run from the native backend.
-- `extract_regulatory_topics()` assigns links and terms to selected regulatory
+- `module3_extract_topics()` assigns links and terms to selected regulatory
   topics.
-- `run_module3_topic_benchmark()` runs or reviews a Module 3 topic benchmark
-  and writes condition-separation tables and method/K review reports.
-- `run_diff_grn_pathway_analysis()` and related plotting functions summarize
-  pathway programs.
-- `run_diff_grn_master_tf_summary()` and related plotting functions summarize
-  master TF connectivity.
+- `build_module3_qc_report()` summarizes topic inputs, model outputs,
+  differential links, and top differential TFs.
+- `visualize_topic_modeling_results()` and `visualize_differential_grns()`
+  export interactive HTML browsers for topic-modeling results and differential
+  GRNs.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 
