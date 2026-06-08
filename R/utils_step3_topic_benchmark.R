@@ -265,13 +265,12 @@
     return(out)
   }
   if (identical(output_layout, "standard")) {
-    slug <- .m3tb_backend_slug(out$backend[[1L]], out$vae_variant[[1L]])
     out[, `:=`(
       run_id = "selected",
       run_slug = .m3tb_method_slug(out[1]),
       run_dir = output_dir,
       topic_documents_dir = file.path(output_dir, "topic_documents"),
-      topic_models_dir = file.path(output_dir, "topic_models", slug),
+      topic_models_dir = file.path(output_dir, "topic_models"),
       topic_extraction_dir = file.path(output_dir, "topic_extraction")
     )]
     return(out)
@@ -288,6 +287,17 @@
     topic_extraction_dir = file.path(run_dir, "topic_extraction")
   )]
   out[]
+}
+
+.m3tb_extraction_output_dirs <- function(row, k_grid, output_layout) {
+  k_grid <- sort(unique(as.integer(k_grid)))
+  k_grid <- k_grid[is.finite(k_grid)]
+  if (!length(k_grid)) return(character())
+  root <- row$topic_extraction_dir[[1L]]
+  if (identical(output_layout, "standard") && length(k_grid) == 1L) {
+    return(root)
+  }
+  file.path(root, paste0("K", k_grid))
 }
 
 .m3tb_review_dir <- function(output_dir, output_layout) {
@@ -2125,8 +2135,10 @@ run_module3_topic_benchmark <- function(filtered_dir,
     for (i in seq_len(nrow(method_plan))) {
       row <- method_plan[i]
       model_root <- row$topic_models_dir[[1L]]
-      for (k in k_grid) {
-        extract_root <- file.path(row$topic_extraction_dir[[1L]], paste0("K", k))
+      extract_roots <- .m3tb_extraction_output_dirs(row, k_grid, output_layout)
+      for (j in seq_along(k_grid)) {
+        k <- k_grid[[j]]
+        extract_root <- extract_roots[[j]]
         if (isTRUE(verbose)) {
           .log_inform("Extracting Module 3 topics for method: {row$method_setup}; K={k}.")
         }
@@ -2765,6 +2777,77 @@ run_regulatory_topics <- function(filtered_dir,
   invisible(res)
 }
 
+.module3_read_project_config <- function(project_config) {
+  if (is.null(project_config)) return(list())
+  if (is.character(project_config) && length(project_config) == 1L) {
+    if (!file.exists(project_config)) .log_abort("Module 3 project config not found: {project_config}")
+    return(yaml::read_yaml(project_config))
+  }
+  if (is.list(project_config)) return(project_config)
+  .log_abort("`project_config` must be NULL, a YAML path, or a list.")
+}
+
+.module3_cfg_value <- function(cfg, names, default = NULL) {
+  for (nm in names) {
+    if (!is.null(cfg[[nm]])) return(cfg[[nm]])
+  }
+  default
+}
+
+.module3_cfg_int_vector <- function(x, default = NULL) {
+  if (is.null(x)) return(default)
+  if (is.character(x) && length(x) == 1L && grepl(",", x, fixed = TRUE)) {
+    x <- strsplit(x, ",", fixed = TRUE)[[1L]]
+  }
+  vals <- suppressWarnings(as.integer(x))
+  vals <- vals[is.finite(vals) & vals > 1L]
+  vals <- sort(unique(vals))
+  if (!length(vals)) return(default)
+  vals
+}
+
+.module3_resolve_topic_run_config <- function(project_config = NULL,
+                                             method = NULL,
+                                             k_grid = NULL,
+                                             warplda_iterations = NULL,
+                                             topic_link_output = NULL) {
+  cfg <- .module3_read_project_config(project_config)
+  method <- if (is.null(method)) {
+    as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "condition_aggr_weight_lda"))[[1L]]
+  } else {
+    as.character(method)
+  }
+  k_raw <- if (is.null(k_grid)) {
+    .module3_cfg_value(cfg, c("topic_k", "module3_topic_k", "topic_k_grid", "module3_topic_k_grid"), 10L)
+  } else {
+    k_grid
+  }
+  k_grid <- .module3_cfg_int_vector(k_raw, default = 10L)
+  iterations <- if (is.null(warplda_iterations)) {
+    .module3_cfg_value(cfg, c("warplda_iterations", "topic_warplda_iterations", "module3_warplda_iterations"), 2000L)
+  } else {
+    warplda_iterations
+  }
+  iterations <- suppressWarnings(as.integer(iterations[[1L]]))
+  if (!is.finite(iterations) || iterations < 1L) iterations <- 2000L
+  link_output <- if (is.null(topic_link_output)) {
+    as.character(.module3_cfg_value(cfg, c("topic_link_output", "module3_topic_link_output"), "pass"))[[1L]]
+  } else {
+    as.character(topic_link_output)[[1L]]
+  }
+  list(
+    method = method,
+    k_grid = k_grid,
+    warplda_iterations = iterations,
+    topic_link_output = link_output,
+    benchmark = list(
+      enabled = isTRUE(.module3_cfg_value(cfg, c("topic_benchmark_enabled", "module3_topic_benchmark_enabled"), FALSE)),
+      methods = .module3_cfg_value(cfg, c("topic_benchmark_methods", "module3_topic_benchmark_methods"), character()),
+      k_grid = .module3_cfg_int_vector(.module3_cfg_value(cfg, c("topic_benchmark_k_grid", "module3_topic_benchmark_k_grid"), NULL), default = integer())
+    )
+  )
+}
+
 #' Run topic modeling
 #'
 #' @description
@@ -2777,9 +2860,18 @@ run_regulatory_topics <- function(filtered_dir,
 #'   `replicate_documents = TRUE`.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #' @param output_dir Topic output directory.
-#' @param method Single Module 3 method ID.
-#' @param k_grid Integer topic numbers.
-#' @param warplda_iterations Number of native WarpLDA iterations.
+#' @param project_config Optional project YAML path or config list. When
+#'   supplied, `topic_method`, `topic_k` or `topic_k_grid`,
+#'   `warplda_iterations`, and `topic_link_output` are used for arguments that
+#'   are left as `NULL`.
+#' @param method Single Module 3 method ID. If `NULL`, read from
+#'   `project_config` or use the package default.
+#' @param k_grid Integer topic numbers. If `NULL`, read from `project_config`
+#'   or use `10`.
+#' @param warplda_iterations Number of native WarpLDA iterations. If `NULL`,
+#'   read from `project_config` or use `2000`.
+#' @param topic_link_output Topic-link output mode. If `NULL`, read from
+#'   `project_config` or use `"pass"`.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -2790,18 +2882,28 @@ run_topic_modeling <- function(filtered_dir,
                                multiomic_data = NULL,
                                comparisons,
                                output_dir,
-                               method = "condition_aggr_weight_lda",
-                               k_grid = 10L,
-                               warplda_iterations = 2000L,
+                               project_config = NULL,
+                               method = NULL,
+                               k_grid = NULL,
+                               warplda_iterations = NULL,
+                               topic_link_output = NULL,
                                ...) {
+  resolved <- .module3_resolve_topic_run_config(
+    project_config = project_config,
+    method = method,
+    k_grid = k_grid,
+    warplda_iterations = warplda_iterations,
+    topic_link_output = topic_link_output
+  )
   run_regulatory_topics(
     filtered_dir = filtered_dir,
     multiomic_data = multiomic_data,
     comparisons = comparisons,
     output_dir = output_dir,
-    method = method,
-    k_grid = k_grid,
-    warplda_iterations = warplda_iterations,
+    method = resolved$method,
+    k_grid = resolved$k_grid,
+    warplda_iterations = resolved$warplda_iterations,
+    topic_link_output = resolved$topic_link_output,
     ...
   )
 }

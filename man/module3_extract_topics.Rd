@@ -4,7 +4,13 @@
 \alias{module3_extract_topics}
 \title{Extract Module 3 regulatory topics}
 \usage{
-module3_extract_topics(k, model_dir, output_dir, ...)
+module3_extract_topics(
+  k,
+  model_dir,
+  output_dir,
+  flatten_single_output = TRUE,
+  ...
+)
 }
 \arguments{
 \item{k}{Integer K selected for extraction.}
@@ -12,6 +18,9 @@ module3_extract_topics(k, model_dir, output_dir, ...)
 \item{model_dir}{Directory containing trained topic model outputs.}
 
 \item{output_dir}{Directory to write extracted topic outputs.}
+
+\item{flatten_single_output}{Whether to write a single selected model
+directly under `output_dir`. Defaults to `TRUE` for the public step API.}
 
 \item{...}{Additional arguments passed to the internal extraction engine,
 such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.}

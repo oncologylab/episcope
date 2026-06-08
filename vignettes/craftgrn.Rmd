@@ -251,19 +251,29 @@ model fit. For fixed-seed validation runs, set
 `warplda_sampler = "warp_ref"`; this native sequential reference sampler is
 much slower than `warp_omp`.
 
-For regular analysis, use `run_topic_modeling()` with one selected document
-construction method. It writes a clean single-method layout with reusable topic
-input caches, model outputs, compact passing topic-link output, review tables,
-and `module3_qc_report.html`.
+For regular analysis, keep one selected document construction method in the
+project YAML config. A standard run writes a flat single-method layout:
+`topic_documents/`, `topic_models/`, `topic_extraction/`, `review/`, and
+`reports/`. Benchmark-only method grids can be stored separately in the config
+and left disabled for normal package runs.
+
+```yaml
+topic_method: condition_aggr_weight_lda
+topic_k: 10
+warplda_iterations: 2000
+topic_link_output: pass
+
+topic_benchmark_enabled: false
+topic_benchmark_methods: []
+topic_benchmark_k_grid: []
+```
 
 ```{r module-3-regulatory-topics, purl=FALSE}
 run_topic_modeling(
   filtered_dir = "differential_links",
   comparisons = "module3_comparisons.csv",
   output_dir = "regulatory_topics",
-  method = "condition_aggr_weight_lda",
-  k_grid = c(10, 15, 20),
-  topic_link_output = "pass"
+  project_config = "project.yaml"
 )
 ```
 
@@ -288,7 +298,7 @@ module3_train_topic_models(
 module3_extract_topics(
   k = 10,
   model_dir = "topic_models",
-  output_dir = "final_topics",
+  output_dir = "topic_extraction",
   topic_report_args = list()
 )
 ```

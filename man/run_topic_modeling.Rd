@@ -9,9 +9,11 @@ run_topic_modeling(
   multiomic_data = NULL,
   comparisons,
   output_dir,
-  method = "condition_aggr_weight_lda",
-  k_grid = 10L,
-  warplda_iterations = 2000L,
+  project_config = NULL,
+  method = NULL,
+  k_grid = NULL,
+  warplda_iterations = NULL,
+  topic_link_output = NULL,
   ...
 )
 }
@@ -26,11 +28,22 @@ files.}
 
 \item{output_dir}{Topic output directory.}
 
-\item{method}{Single Module 3 method ID.}
+\item{project_config}{Optional project YAML path or config list. When
+supplied, `topic_method`, `topic_k` or `topic_k_grid`,
+`warplda_iterations`, and `topic_link_output` are used for arguments that
+are left as `NULL`.}
 
-\item{k_grid}{Integer topic numbers.}
+\item{method}{Single Module 3 method ID. If `NULL`, read from
+`project_config` or use the package default.}
 
-\item{warplda_iterations}{Number of native WarpLDA iterations.}
+\item{k_grid}{Integer topic numbers. If `NULL`, read from `project_config`
+or use `10`.}
+
+\item{warplda_iterations}{Number of native WarpLDA iterations. If `NULL`,
+read from `project_config` or use `2000`.}
+
+\item{topic_link_output}{Topic-link output mode. If `NULL`, read from
+`project_config` or use `"pass"`.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

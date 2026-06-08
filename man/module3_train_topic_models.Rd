@@ -4,7 +4,13 @@
 \alias{module3_train_topic_models}
 \title{Train Module 3 topic models}
 \usage{
-module3_train_topic_models(k_grid, filtered_dir, output_dir, ...)
+module3_train_topic_models(
+  k_grid,
+  filtered_dir,
+  output_dir,
+  flat_output = TRUE,
+  ...
+)
 }
 \arguments{
 \item{k_grid}{Integer vector of K values for training.}
@@ -13,6 +19,9 @@ module3_train_topic_models(k_grid, filtered_dir, output_dir, ...)
 files.}
 
 \item{output_dir}{Directory to write topic model outputs.}
+
+\item{flat_output}{Whether to write this selected setup directly under
+`output_dir`. Defaults to `TRUE` for the public step API.}
 
 \item{...}{Additional arguments passed to the internal training engine, such
 as `doc_design`, `fp_term_mode`, `backend`, and `local_threads`.}

@@ -138,7 +138,9 @@ to topics, and summarizes pathway and master TF programs.
 Primary package functions:
 
 - `run_topic_modeling()` runs one selected Module 3 topic-document method
-  with a clean output layout, compact topic-link outputs, and a QC report.
+  with a flat standard output layout, compact topic-link outputs, and a QC
+  report. The selected method, K value or K grid, WarpLDA iterations, and
+  topic-link output mode can be stored in the project YAML config.
 - `module3_prepare_differential_links()` prepares filtered differential links
   from Module 2 predicted links and condition comparisons.
 - `module3_construct_docs()` builds reusable topic-document, document-term,
@@ -154,6 +156,23 @@ Primary package functions:
 - `visualize_topic_modeling_results()` exports topic-modeling review browsers,
   and `visualize_differential_grns()` exports an interactive differential GRN
   network browser with comparison, direction, Top TF, and Top link controls.
+
+For regular package runs, keep one selected Module 3 setup in `project.yaml`,
+for example:
+
+```yaml
+topic_method: condition_aggr_weight_lda
+topic_k: 10
+warplda_iterations: 2000
+topic_link_output: pass
+
+topic_benchmark_enabled: false
+topic_benchmark_methods: []
+topic_benchmark_k_grid: []
+```
+
+Benchmark grids are optional and should be enabled only for method-comparison
+experiments.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 

@@ -210,10 +210,53 @@ test_that("Module 3 topic benchmark uses a clean standard layout for one selecte
   expect_equal(res$output_layout, "standard")
   expect_equal(res$method_plan$run_id, "selected")
   expect_equal(res$method_plan$topic_documents_dir, file.path(root, "topic_documents"))
-  expect_equal(res$method_plan$topic_models_dir, file.path(root, "topic_models", "lda"))
+  expect_equal(res$method_plan$topic_models_dir, file.path(root, "topic_models"))
   expect_equal(res$method_plan$topic_extraction_dir, file.path(root, "topic_extraction"))
   expect_equal(res$review_dir, file.path(root, "review"))
   expect_false(grepl("std_tf_", res$method_plan$topic_models_dir, fixed = TRUE))
+  expect_false(grepl("lda$", res$method_plan$topic_models_dir))
+})
+
+test_that("Module 3 standard layout flattens one selected K extraction", {
+  root <- tempfile("module3-topic-standard-single-k-")
+  dir.create(root, recursive = TRUE)
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = "condition_aggr_weight_lda",
+    k_grid = 10L,
+    output_layout = "standard",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    verbose = FALSE
+  )
+
+  extract_roots <- .m3tb_extraction_output_dirs(res$method_plan[1], 10L, res$output_layout)
+  expect_equal(extract_roots[[1L]], file.path(root, "topic_extraction"))
+
+  res_multi_k <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = "condition_aggr_weight_lda",
+    k_grid = c(10L, 12L),
+    output_layout = "standard",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    verbose = FALSE
+  )
+  extract_roots <- .m3tb_extraction_output_dirs(res_multi_k$method_plan[1], c(10L, 12L), res_multi_k$output_layout)
+  expect_equal(extract_roots, file.path(root, "topic_extraction", c("K10", "K12")))
 })
 
 test_that("Module 3 topic benchmark exposes project-agnostic sample subsetting", {
@@ -223,6 +266,10 @@ test_that("Module 3 topic benchmark exposes project-agnostic sample subsetting",
   expect_false("celllines" %in% names(formals(train_topic_models)))
   expect_true("sample_subset" %in% names(formals(train_topic_models)))
   expect_true("analysis_label" %in% names(formals(train_topic_models)))
+  expect_true("flat_output" %in% names(formals(module3_train_topic_models)))
+  expect_true(isTRUE(formals(module3_train_topic_models)$flat_output))
+  expect_true("flatten_single_output" %in% names(formals(module3_extract_topics)))
+  expect_true(isTRUE(formals(module3_extract_topics)$flatten_single_output))
 })
 
 test_that("Module 3 topic benchmark uses shallow run folders for method grids", {
@@ -517,6 +564,7 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("run_topic_modeling" %in% getNamespaceExports("craftgrn"))
   expect_true("module3_construct_docs" %in% getNamespaceExports("craftgrn"))
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
+  expect_true("project_config" %in% names(formals(run_topic_modeling)))
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
   root <- tempfile("module3-qc-")
   dir.create(file.path(root, "review", "tables"), recursive = TRUE)
@@ -529,4 +577,36 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   html <- paste(readLines(report, warn = FALSE), collapse = "\n")
   expect_true(grepl("Module 3 QC report", html, fixed = TRUE))
   expect_true(grepl("Method Plan", html, fixed = TRUE))
+})
+
+test_that("Module 3 topic wrapper resolves standard run settings from project config", {
+  cfg <- list(
+    topic_method = "comparison_aggr_weight_lda",
+    topic_k_grid = c(8L, 10L),
+    warplda_iterations = 25L,
+    topic_link_output = "none",
+    topic_benchmark_enabled = TRUE,
+    topic_benchmark_methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    topic_benchmark_k_grid = c(5L, 6L)
+  )
+  resolved <- .module3_resolve_topic_run_config(project_config = cfg)
+  expect_equal(resolved$method, "comparison_aggr_weight_lda")
+  expect_equal(resolved$k_grid, c(8L, 10L))
+  expect_equal(resolved$warplda_iterations, 25L)
+  expect_equal(resolved$topic_link_output, "none")
+  expect_true(resolved$benchmark$enabled)
+  expect_equal(resolved$benchmark$methods, cfg$topic_benchmark_methods)
+  expect_equal(resolved$benchmark$k_grid, c(5L, 6L))
+
+  overridden <- .module3_resolve_topic_run_config(
+    project_config = cfg,
+    method = "condition_aggr_lda",
+    k_grid = 12L,
+    warplda_iterations = 3L,
+    topic_link_output = "pass"
+  )
+  expect_equal(overridden$method, "condition_aggr_lda")
+  expect_equal(overridden$k_grid, 12L)
+  expect_equal(overridden$warplda_iterations, 3L)
+  expect_equal(overridden$topic_link_output, "pass")
 })

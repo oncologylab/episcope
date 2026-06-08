@@ -8322,6 +8322,8 @@ train_topic_models <- function(Kgrid,
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files.
 #' @param output_dir Directory to write topic model outputs.
+#' @param flat_output Whether to write this selected setup directly under
+#'   `output_dir`. Defaults to `TRUE` for the public step API.
 #' @param ... Additional arguments passed to the internal training engine, such
 #'   as `doc_design`, `fp_term_mode`, `backend`, and `local_threads`.
 #'
@@ -8330,11 +8332,13 @@ train_topic_models <- function(Kgrid,
 module3_train_topic_models <- function(k_grid,
                                        filtered_dir,
                                        output_dir,
+                                       flat_output = TRUE,
                                        ...) {
   train_topic_models(
     Kgrid = k_grid,
     input_dir = filtered_dir,
     output_dir = output_dir,
+    flat_output = flat_output,
     ...
   )
 }
@@ -8538,6 +8542,8 @@ extract_regulatory_topics <- function(k,
 #' @param k Integer K selected for extraction.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write extracted topic outputs.
+#' @param flatten_single_output Whether to write a single selected model
+#'   directly under `output_dir`. Defaults to `TRUE` for the public step API.
 #' @param ... Additional arguments passed to the internal extraction engine,
 #'   such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.
 #'
@@ -8546,11 +8552,13 @@ extract_regulatory_topics <- function(k,
 module3_extract_topics <- function(k,
                                    model_dir,
                                    output_dir,
+                                   flatten_single_output = TRUE,
                                    ...) {
   extract_regulatory_topics(
     k = k,
     model_dir = model_dir,
     output_dir = output_dir,
+    flatten_single_output = flatten_single_output,
     ...
   )
 }
