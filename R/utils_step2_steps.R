@@ -167,8 +167,40 @@ module2_assemble_links <- function(module2_inputs, candidates, tf_target_corr, f
 #' @param output_format One of auto, parquet, or csv.
 #' @param verbose Emit concise progress messages.
 #' @return A Module 2 result list.
-#' @export
+#' @noRd
 output_predicted_links <- function(module2_inputs, candidates, tf_target_corr, fp_target_corr, output_dir = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE) {
+  module2_assemble_links(
+    module2_inputs = module2_inputs,
+    candidates = candidates,
+    tf_target_corr = tf_target_corr,
+    fp_target_corr = fp_target_corr,
+    output_dir = output_dir,
+    output_format = output_format,
+    verbose = verbose
+  )
+}
+
+#' Assemble, filter, and output final predicted TF-FP-target links
+#'
+#' @param module2_inputs Output from [module2_identify_candidate_links()].
+#' @param candidates Candidate table from [module2_link_fp_targets()].
+#' @param tf_target_corr TF-target correlation table from
+#'   [module2_correlate_tf_targets()].
+#' @param fp_target_corr FP-target correlation table from
+#'   [module2_correlate_fp_targets()].
+#' @param output_dir Optional output directory.
+#' @param output_format One of auto, parquet, or csv.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return A Module 2 result list.
+#' @export
+module2_output_predicted_links <- function(module2_inputs,
+                                           candidates,
+                                           tf_target_corr,
+                                           fp_target_corr,
+                                           output_dir = NULL,
+                                           output_format = c("auto", "parquet", "csv"),
+                                           verbose = TRUE) {
   module2_assemble_links(
     module2_inputs = module2_inputs,
     candidates = candidates,

@@ -376,7 +376,7 @@ test_that("Module 3 prepares reusable topic input caches", {
     fp_score_cond2 = 10
   )
   data.table::fwrite(links, file.path(filtered_dir, "Cond1_vs_Cond2_delta_links_filtered_up.csv"))
-  res <- module3_prepare_topic_inputs(
+  res <- module3_construct_docs(
     filtered_dir = filtered_dir,
     output_dir = out_dir,
     tf_cluster_map = c(TF1 = "K01"),
@@ -399,7 +399,7 @@ test_that("Module 3 prepares reusable topic input caches", {
   expect_true(file.exists(file.path(out_dir, "rds", "dtm.rds")))
   expect_true(file.exists(file.path(out_dir, "topic_input_summary.csv")))
   expect_gt(res$summary$n_documents[[1L]], 0)
-  reused <- module3_prepare_topic_inputs(
+  reused <- module3_construct_docs(
     filtered_dir = filtered_dir,
     output_dir = out_dir,
     tf_cluster_map = c(TF1 = "K01"),
@@ -413,10 +413,9 @@ test_that("Module 3 prepares reusable topic input caches", {
 })
 
 test_that("Module 3 production wrapper exposes compact defaults and QC report", {
-  expect_true("run_regulatory_topics" %in% getNamespaceExports("craftgrn"))
-  expect_true("module3_prepare_topic_inputs" %in% getNamespaceExports("craftgrn"))
+  expect_true("run_topic_modeling" %in% getNamespaceExports("craftgrn"))
+  expect_true("module3_construct_docs" %in% getNamespaceExports("craftgrn"))
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
-  expect_identical(eval(formals(run_regulatory_topics)$topic_link_output)[[1L]], "pass")
   root <- tempfile("module3-qc-")
   dir.create(file.path(root, "review", "csv"), recursive = TRUE)
   data.table::fwrite(

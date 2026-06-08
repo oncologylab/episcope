@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_predict_tf_targets.R
 \name{query_predicted_links}
 \alias{query_predicted_links}
-\title{Query specific Module 2 links by TFs or distance to TSS}
+\title{Query specific links by TFs or distance to TSS}
 \usage{
 query_predicted_links(
   module2,
@@ -30,5 +30,5 @@ query_predicted_links(
 A tibble of matching final links.
 }
 \description{
-Query specific Module 2 links by TFs or distance to TSS
+Query specific links by TFs or distance to TSS
 }

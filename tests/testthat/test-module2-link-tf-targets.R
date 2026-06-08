@@ -34,7 +34,7 @@ test_that("Module 2 computes TF-target first and restricts FP-target candidates"
   pred <- tibble::tibble(fp_id = c("chr1:100-140", "chr1:500-540"), chr = "chr1", start = c(100L, 500L), end = c(140L, 540L), atac_peak = c("chr1:90-160", "chr1:490-560"), tf = c("TF_A", "TF_B"))
   gene_tss <- tibble::tibble(target_gene = c("GENE_UP", "GENE_DOWN"), target_chr = "chr1", target_tss = c(120L, 520L), target_strand = "+")
   res <- predict_tf_targets(compact, pred, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), max_distance_bp = 1000, n_cores = 1, verbose = FALSE)
-  expect_true(check_module2_links(res))
+  expect_true(check_predicted_links(res))
   expect_true(all(c("tf", "target_gene", "pass") %in% names(res$tf_target_corr)))
   expect_true(any(res$tf_target_corr$tf == "TF_A" & res$tf_target_corr$target_gene == "GENE_UP" & res$tf_target_corr$pass))
   expect_false(any(res$candidates$fp_id == "chr1:100-140" & res$candidates$target_gene == "GENE_DOWN"))
@@ -160,7 +160,7 @@ test_that("Module 2 streams predicted TFBS manifests", {
   gene_tss <- tibble::tibble(target_gene = c("GENE_UP", "GENE_DOWN"), target_chr = "chr1", target_tss = c(120L, 520L), target_strand = "+")
   out_dir <- tempfile("module2-stream-")
   res <- predict_tf_targets(compact, pred_manifest_path, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), output_dir = out_dir, max_distance_bp = 1000, n_cores = 1, output_format = "csv", verbose = FALSE)
-  expect_true(check_module2_links(res))
+  expect_true(check_predicted_links(res))
   expect_true(file.exists(res$reports$links_manifest))
   expect_true(file.exists(file.path(out_dir, "module2_qc_report.html")))
   expect_false(dir.exists(file.path(out_dir, "module2_fp_target_candidates_chunks")))
@@ -172,7 +172,7 @@ test_that("Module 2 streams predicted TFBS manifests", {
   expect_true(file.exists(file.path(out_dir, "data", "links", "module2_links_manifest.csv")))
   expect_true(dir.exists(file.path(out_dir, "reports")))
   loaded <- load_predicted_links(out_dir)
-  expect_true(check_module2_links(loaded))
+  expect_true(check_predicted_links(loaded))
   q <- query_predicted_links(loaded, tf = "TF_A")
   expect_true(nrow(q) > 0)
   expect_true(all(q$tf == "TF_A"))
@@ -208,7 +208,7 @@ test_that("Module 2 streams one deduplicated FP-target candidate universe", {
 
   res <- predict_tf_targets(compact, pred_manifest_path, gene_tss, project_config = list(module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), output_dir = out_dir, max_distance_bp = 1000, n_cores = 1, output_format = "csv", verbose = FALSE)
 
-  expect_true(check_module2_links(res))
+  expect_true(check_predicted_links(res))
   manifest <- readr::read_csv(file.path(out_dir, "module2_manifest.csv"), show_col_types = FALSE)
   cand_row <- manifest[manifest$table == "module2_fp_target_candidates", , drop = FALSE]
   expect_equal(nrow(cand_row), 1L)

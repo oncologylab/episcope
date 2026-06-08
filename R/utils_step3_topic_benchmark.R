@@ -19,6 +19,16 @@
   x
 }
 
+.m3tb_relative_path <- function(paths, from_dir) {
+  paths_n <- normalizePath(paths, winslash = "/", mustWork = FALSE)
+  from_n <- normalizePath(from_dir, winslash = "/", mustWork = FALSE)
+  from_n <- paste0(sub("/+$", "", from_n), "/")
+  out <- paths_n
+  inside <- startsWith(paths_n, from_n)
+  out[inside] <- substring(paths_n[inside], nchar(from_n) + 1L)
+  out
+}
+
 .m3tb_method_dictionary <- function() {
   data.table::data.table(
     method = c(
@@ -830,6 +840,175 @@
   invisible(html)
 }
 
+.module3_qc_detect_differential_links_dir <- function(topic_dir, differential_links_dir = NULL) {
+  if (!is.null(differential_links_dir) && nzchar(as.character(differential_links_dir)[[1L]])) {
+    path <- as.character(differential_links_dir)[[1L]]
+    if (dir.exists(path)) return(path)
+    return(NULL)
+  }
+  candidates <- unique(c(
+    file.path(topic_dir, "differential_links"),
+    file.path(dirname(topic_dir), "differential_links"),
+    topic_dir
+  ))
+  hit <- candidates[dir.exists(candidates) & file.exists(file.path(candidates, "filtered_links_manifest.csv"))]
+  if (length(hit)) return(hit[[1L]])
+  hit <- candidates[dir.exists(candidates) & length(list.files(candidates, "_filtered_links_(up|down)[.]csv$", full.names = FALSE)) > 0L]
+  if (length(hit)) hit[[1L]] else NULL
+}
+
+.module3_qc_filtered_link_files <- function(differential_links_dir) {
+  if (is.null(differential_links_dir) || !dir.exists(differential_links_dir)) return(character())
+  manifest <- file.path(differential_links_dir, "filtered_links_manifest.csv")
+  if (file.exists(manifest)) {
+    man <- data.table::fread(manifest, showProgress = FALSE)
+    files <- unique(c(as.character(man$up_path), as.character(man$down_path)))
+    files <- ifelse(file.exists(files), files, file.path(differential_links_dir, basename(files)))
+    return(files[file.exists(files)])
+  }
+  list.files(differential_links_dir, "_filtered_links_(up|down)[.]csv$", full.names = TRUE)
+}
+
+.module3_qc_read_filtered_link_file <- function(path) {
+  header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
+  cols <- intersect(
+    c(
+      "tf", "gene_key", "peak_id", "delta_fp_score", "log2FC_tf_expr",
+      "comparison_id", "comparison_group", "cond1_id", "cond2_id",
+      "cond1_label", "cond2_label"
+    ),
+    header
+  )
+  dt <- data.table::fread(path, select = cols, showProgress = FALSE)
+  if (!("tf" %in% names(dt))) return(data.table::data.table())
+  if (!("gene_key" %in% names(dt))) dt[, gene_key := NA_character_]
+  if (!("delta_fp_score" %in% names(dt))) dt[, delta_fp_score := NA_real_]
+  if (!("log2FC_tf_expr" %in% names(dt))) dt[, log2FC_tf_expr := NA_real_]
+  direction <- if (grepl("_filtered_links_up[.]csv$", basename(path))) "up" else "down"
+  comparison_id <- sub("_filtered_links_(up|down)[.]csv$", "", basename(path))
+  if (!("comparison_id" %in% names(dt))) dt[, comparison_id := comparison_id]
+  dt[, direction := direction]
+  dt
+}
+
+.module3_qc_empty_tf_summary <- function() {
+  data.table::data.table(
+    comparison_id = character(),
+    comparison_group = character(),
+    cond1_id = character(),
+    cond2_id = character(),
+    cond1_label = character(),
+    cond2_label = character(),
+    TF = character(),
+    n_links_up = integer(),
+    n_links_down = integer(),
+    n_target_genes_up = integer(),
+    n_target_genes_down = integer(),
+    net_target_gene_count = integer(),
+    tf_delta_sum = numeric(),
+    tf_delta_sum_abs = numeric(),
+    median_log2FC_tf_expr = numeric(),
+    dominant_direction = character(),
+    rank = integer()
+  )
+}
+
+.module3_qc_summarize_differential_tfs <- function(differential_links_dir,
+                                                   output_dir,
+                                                   top_n = 20L,
+                                                   verbose = TRUE) {
+  files <- .module3_qc_filtered_link_files(differential_links_dir)
+  out_dir <- file.path(output_dir, "differential_tf_summary")
+  per_dir <- file.path(out_dir, "per_comparison")
+  dir.create(per_dir, recursive = TRUE, showWarnings = FALSE)
+  if (!length(files)) {
+    empty <- .module3_qc_empty_tf_summary()
+    data.table::fwrite(empty, file.path(out_dir, "module3_top_differential_tfs.csv"))
+    return(list(combined = empty, files = character(), output_dir = out_dir))
+  }
+  dt <- data.table::rbindlist(lapply(files, .module3_qc_read_filtered_link_file), use.names = TRUE, fill = TRUE)
+  if (!nrow(dt)) {
+    empty <- .module3_qc_empty_tf_summary()
+    data.table::fwrite(empty, file.path(out_dir, "module3_top_differential_tfs.csv"))
+    return(list(combined = empty, files = character(), output_dir = out_dir))
+  }
+  for (col in c("comparison_group", "cond1_id", "cond2_id", "cond1_label", "cond2_label")) {
+    if (!(col %in% names(dt))) dt[, (col) := NA_character_]
+  }
+  dt[, `:=`(
+    TF = as.character(tf),
+    gene_key = as.character(gene_key),
+    delta_fp_score = suppressWarnings(as.numeric(delta_fp_score)),
+    log2FC_tf_expr = suppressWarnings(as.numeric(log2FC_tf_expr))
+  )]
+  dt <- dt[!is.na(TF) & nzchar(TF)]
+  if (!nrow(dt)) {
+    empty <- .module3_qc_empty_tf_summary()
+    data.table::fwrite(empty, file.path(out_dir, "module3_top_differential_tfs.csv"))
+    return(list(combined = empty, files = character(), output_dir = out_dir))
+  }
+  gene_dt <- unique(dt[, .(comparison_id, TF, gene_key, direction)])
+  count_dt <- gene_dt[, .(
+    n_target_genes_up = data.table::uniqueN(gene_key[direction == "up" & !is.na(gene_key)]),
+    n_target_genes_down = data.table::uniqueN(gene_key[direction == "down" & !is.na(gene_key)])
+  ), by = .(comparison_id, TF)]
+  link_dt <- dt[, .(
+    comparison_group = .SD$comparison_group[[1L]],
+    cond1_id = .SD$cond1_id[[1L]],
+    cond2_id = .SD$cond2_id[[1L]],
+    cond1_label = .SD$cond1_label[[1L]],
+    cond2_label = .SD$cond2_label[[1L]],
+    n_links_up = sum(direction == "up", na.rm = TRUE),
+    n_links_down = sum(direction == "down", na.rm = TRUE),
+    tf_delta_sum = sum(delta_fp_score, na.rm = TRUE),
+    tf_delta_sum_abs = sum(abs(delta_fp_score), na.rm = TRUE),
+    median_log2FC_tf_expr = stats::median(log2FC_tf_expr, na.rm = TRUE)
+  ), by = .(comparison_id, TF)]
+  out <- merge(link_dt, count_dt, by = c("comparison_id", "TF"), all.x = TRUE, sort = FALSE)
+  out[is.na(n_target_genes_up), n_target_genes_up := 0L]
+  out[is.na(n_target_genes_down), n_target_genes_down := 0L]
+  out[, net_target_gene_count := n_target_genes_up - n_target_genes_down]
+  out[, dominant_direction := data.table::fifelse(net_target_gene_count > 0, "up", data.table::fifelse(net_target_gene_count < 0, "down", "balanced"))]
+  out[!is.finite(median_log2FC_tf_expr), median_log2FC_tf_expr := NA_real_]
+  out[, abs_net_target_gene_count := abs(net_target_gene_count)]
+  data.table::setorder(out, comparison_id, -abs_net_target_gene_count, -tf_delta_sum_abs, TF)
+  out[, rank := seq_len(.N), by = comparison_id]
+  out[, abs_net_target_gene_count := NULL]
+  top_n <- max(1L, as.integer(top_n)[[1L]])
+  combined <- out[rank <= top_n]
+  combined_path <- file.path(out_dir, "module3_top_differential_tfs.csv")
+  data.table::fwrite(combined, combined_path)
+  per_files <- vapply(split(out, out$comparison_id), function(x) {
+    path <- file.path(per_dir, paste0(.m3tb_safe_label(x$comparison_id[[1L]]), "_differential_tfs.csv"))
+    data.table::fwrite(x, path)
+    path
+  }, character(1L))
+  if (isTRUE(verbose)) {
+    .log_inform("Wrote Module 3 differential TF summaries for {length(per_files)} comparison(s): {out_dir}")
+  }
+  list(combined = combined, files = unname(per_files), output_dir = out_dir, combined_file = combined_path)
+}
+
+.module3_qc_read_differential_summary <- function(differential_links_dir) {
+  path <- if (!is.null(differential_links_dir)) file.path(differential_links_dir, "qc", "differential_link_summary.csv") else NULL
+  if (!is.null(path) && file.exists(path)) return(data.table::fread(path, showProgress = FALSE))
+  files <- .module3_qc_filtered_link_files(differential_links_dir)
+  if (!length(files)) return(data.table::data.table())
+  rows <- lapply(files, function(path) {
+    header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
+    n <- nrow(data.table::fread(path, select = intersect("tf", header), showProgress = FALSE))
+    comparison_id <- sub("_filtered_links_(up|down)[.]csv$", "", basename(path))
+    direction <- if (grepl("_filtered_links_up[.]csv$", basename(path))) "up" else "down"
+    data.table::data.table(comparison_id = comparison_id, direction = direction, n = n)
+  })
+  dt <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  dcast <- data.table::dcast(dt, comparison_id ~ direction, value.var = "n", fill = 0)
+  if (!("up" %in% names(dcast))) dcast[, up := 0L]
+  if (!("down" %in% names(dcast))) dcast[, down := 0L]
+  data.table::setnames(dcast, c("up", "down"), c("n_up", "n_down"))
+  dcast
+}
+
 #' Run a Module 3 topic benchmark and review report
 #'
 #' Runs or reviews Module 3 topic models using the package-native benchmark
@@ -1077,7 +1256,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #' @param verbose Emit concise progress messages.
 #'
 #' @return A list with cache paths and input summary counts.
-#' @export
+#' @noRd
 module3_prepare_topic_inputs <- function(filtered_dir,
                                          output_dir,
                                          tf_cluster_map,
@@ -1219,23 +1398,58 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   invisible(list(output_dir = output_dir, summary = summary_dt, reused = FALSE))
 }
 
+#' Construct input documents for topic modeling
+#'
+#' @description
+#' Builds and caches the document-level link table, document-term table, sparse
+#' document-term matrix, and summary metadata used by Module 3 topic modeling.
+#'
+#' @param filtered_dir Directory containing Module 3 filtered differential-link
+#'   CSV files.
+#' @param output_dir Directory where topic input caches are written.
+#' @param tf_cluster_map Named vector mapping TF names to motif clusters.
+#' @param ... Additional topic-document construction arguments passed to the
+#'   internal Module 3 document builder.
+#'
+#' @return A list with cache paths and input summary counts.
+#' @export
+module3_construct_docs <- function(filtered_dir,
+                                   output_dir,
+                                   tf_cluster_map,
+                                   ...) {
+  module3_prepare_topic_inputs(
+    filtered_dir = filtered_dir,
+    output_dir = output_dir,
+    tf_cluster_map = tf_cluster_map,
+    ...
+  )
+}
+
 #' Build a Module 3 QC HTML report
 #'
-#' Writes a lightweight self-contained HTML report for Module 3 topic-model
-#' outputs. The report summarizes topic-input caches, model rows, theta
-#' separation scores, and compact topic-link pass counts when available.
+#' Writes a self-contained HTML report for Module 3 topic-model outputs. The
+#' report summarizes topic-input caches, model rows, theta separation scores,
+#' compact topic-link pass counts, and differential-link summaries when
+#' available.
 #'
 #' @param topic_dir Module 3 topic output directory.
 #' @param output_dir Directory where the report is written. Defaults to
 #'   `topic_dir/reports`.
+#' @param differential_links_dir Optional Module 3 differential-link directory.
+#'   If `NULL`, CraftGRN tries to detect a sibling or nested
+#'   `differential_links` directory.
 #' @param title Report title.
+#' @param top_n Number of top differential TFs retained per comparison in the
+#'   QC summary CSV.
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Path to the HTML report.
 #' @export
 build_module3_qc_report <- function(topic_dir,
                                     output_dir = file.path(topic_dir, "reports"),
+                                    differential_links_dir = NULL,
                                     title = "Module 3 QC report",
+                                    top_n = 20L,
                                     verbose = TRUE) {
   .assert_pkg("data.table")
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -1260,6 +1474,14 @@ build_module3_qc_report <- function(topic_dir,
   } else {
     data.table::data.table()
   }
+  differential_links_dir <- .module3_qc_detect_differential_links_dir(topic_dir, differential_links_dir)
+  differential_summary <- .module3_qc_read_differential_summary(differential_links_dir)
+  differential_tfs <- .module3_qc_summarize_differential_tfs(
+    differential_links_dir = differential_links_dir,
+    output_dir = output_dir,
+    top_n = top_n,
+    verbose = verbose
+  )
   table_html <- function(dt, empty_label = "No rows available") {
     if (!nrow(dt)) return(paste0("<p class=\"muted\">", .m3tb_html_escape(empty_label), "</p>"))
     dt <- utils::head(dt, 20L)
@@ -1280,6 +1502,12 @@ build_module3_qc_report <- function(topic_dir,
   }
   n_models <- if (nrow(method_plan)) nrow(method_plan) else length(list.files(topic_dir, "theta_K[0-9]+[.]csv$", recursive = TRUE))
   n_pass <- if (nrow(pass_counts) && "status" %in% names(pass_counts)) sum(pass_counts$status == "Pass" & is.finite(pass_counts$count), na.rm = TRUE) else NA_real_
+  n_diff_comparisons <- if (nrow(differential_summary) && "comparison_id" %in% names(differential_summary)) data.table::uniqueN(differential_summary$comparison_id) else NA_real_
+  n_diff_links <- if (nrow(differential_summary) && all(c("n_up", "n_down") %in% names(differential_summary))) {
+    sum(suppressWarnings(as.numeric(differential_summary$n_up)), suppressWarnings(as.numeric(differential_summary$n_down)), na.rm = TRUE)
+  } else {
+    NA_real_
+  }
   css <- paste0(
     "body{font-family:Arial,sans-serif;margin:30px;color:#17212b;background:#fbfbf8}",
     "h1{font-size:26px;margin-bottom:4px}h2{font-size:18px;margin-top:28px}",
@@ -1298,8 +1526,12 @@ build_module3_qc_report <- function(topic_dir,
     metric_card("Input docs", if (nrow(input_summary)) input_summary$n_documents[[1L]] else "NA"),
     metric_card("Input terms", if (nrow(input_summary)) input_summary$n_terms[[1L]] else "NA"),
     metric_card("Passing links", if (is.finite(n_pass)) n_pass else "NA"),
+    metric_card("Diff comparisons", if (is.finite(n_diff_comparisons)) n_diff_comparisons else "NA"),
+    metric_card("Diff links", if (is.finite(n_diff_links)) n_diff_links else "NA"),
     "</div>",
     "<h2>Topic Input Summary</h2>", table_html(input_summary),
+    "<h2>Differential GRN Summary</h2>", table_html(differential_summary),
+    "<h2>Top Differential TFs</h2>", table_html(differential_tfs$combined),
     "<h2>Method Plan</h2>", table_html(method_plan),
     "<h2>Theta Separation Scores</h2>", table_html(theta_scores),
     "<h2>Topic-Link Pass Counts</h2>", table_html(pass_counts),
@@ -1309,6 +1541,133 @@ build_module3_qc_report <- function(topic_dir,
   writeLines(html, report_path, useBytes = TRUE)
   if (isTRUE(verbose)) .log_inform("Wrote Module 3 QC report: {report_path}")
   invisible(report_path)
+}
+
+#' Export interactive HTML browsers of topic modeling results
+#'
+#' @description
+#' Builds a self-contained index browser for existing Module 3 topic-modeling
+#' review outputs at the topic, condition, comparison, and pathway levels. This
+#' function organizes existing outputs and does not train or extract models.
+#'
+#' @param topic_dir Module 3 topic output directory.
+#' @param output_dir Directory where the browser HTML and manifest are written.
+#' @param include Existing output families to include.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return Path to the HTML browser.
+#' @export
+visualize_topic_modeling_results <- function(topic_dir,
+                                             output_dir = file.path(topic_dir, "reports"),
+                                             include = c("topic", "condition", "comparison", "pathway"),
+                                             verbose = TRUE) {
+  if (!dir.exists(topic_dir)) .log_abort("`topic_dir` not found: {topic_dir}")
+  include <- match.arg(include, choices = c("topic", "condition", "comparison", "pathway"), several.ok = TRUE)
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  html_files <- list.files(topic_dir, "[.]html$", recursive = TRUE, full.names = TRUE)
+  html_files <- html_files[normalizePath(html_files, winslash = "/", mustWork = FALSE) != normalizePath(file.path(output_dir, "topic_modeling_results.html"), winslash = "/", mustWork = FALSE)]
+  classify <- function(path) {
+    b <- tolower(basename(path))
+    p <- tolower(path)
+    if (grepl("pathway", b) || grepl("pathway", p)) return("pathway")
+    if (grepl("condition|group_mds", b)) return("condition")
+    if (grepl("comparison|theta_phi", b)) return("comparison")
+    "topic"
+  }
+  manifest <- data.table::data.table(
+    family = vapply(html_files, classify, character(1L)),
+    file = basename(html_files),
+    path = html_files,
+    rel_path = .m3tb_relative_path(html_files, output_dir)
+  )
+  manifest <- manifest[family %in% include]
+  data.table::fwrite(manifest, file.path(output_dir, "topic_modeling_results_manifest.csv"))
+  table_rows <- if (nrow(manifest)) {
+    paste0(
+      "<tr><td>", .m3tb_html_escape(manifest$family), "</td><td>",
+      "<a href=\"", .m3tb_html_escape(manifest$rel_path), "\">",
+      .m3tb_html_escape(manifest$file), "</a></td></tr>",
+      collapse = ""
+    )
+  } else {
+    "<tr><td colspan=\"2\">No existing topic-modeling HTML outputs found.</td></tr>"
+  }
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Topic modeling results</title>",
+    "<style>body{font-family:Arial,sans-serif;margin:28px;color:#17212b;background:#fbfbf8}table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #d7d1c3;padding:7px 9px;font-size:13px}th{background:#eef3f1;text-align:left}input{padding:7px;width:280px;margin:8px 0 14px 0}</style>",
+    "</head><body><h1>Topic modeling results</h1>",
+    "<input id=\"q\" placeholder=\"Filter reports\" oninput=\"filterRows()\">",
+    "<table id=\"tbl\"><thead><tr><th>Family</th><th>Report</th></tr></thead><tbody>",
+    table_rows,
+    "</tbody></table>",
+    "<script>function filterRows(){const q=document.getElementById('q').value.toLowerCase();document.querySelectorAll('#tbl tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(q)?'':'none';});}</script>",
+    "</body></html>"
+  )
+  out <- file.path(output_dir, "topic_modeling_results.html")
+  writeLines(html, out, useBytes = TRUE)
+  if (isTRUE(verbose)) .log_inform("Wrote topic-modeling results browser: {out}")
+  invisible(out)
+}
+
+#' Export an interactive HTML browser of differential GRNs
+#'
+#' @description
+#' Summarizes Module 3 filtered differential links across all comparisons and
+#' writes a searchable HTML browser plus supporting CSV summaries.
+#'
+#' @param differential_links_dir Module 3 differential-link directory.
+#' @param output_dir Directory where the browser HTML and CSV summaries are
+#'   written.
+#' @param top_n Number of top TF rows retained per comparison in the browser.
+#' @param verbose Emit concise progress messages.
+#'
+#' @return Path to the HTML browser.
+#' @export
+visualize_differential_grns <- function(differential_links_dir,
+                                        output_dir = file.path(differential_links_dir, "reports"),
+                                        top_n = 50L,
+                                        verbose = TRUE) {
+  if (!dir.exists(differential_links_dir)) .log_abort("`differential_links_dir` not found: {differential_links_dir}")
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  diff_summary <- .module3_qc_read_differential_summary(differential_links_dir)
+  tf_summary <- .module3_qc_summarize_differential_tfs(
+    differential_links_dir = differential_links_dir,
+    output_dir = output_dir,
+    top_n = top_n,
+    verbose = verbose
+  )
+  summary_path <- file.path(output_dir, "differential_grn_summary.csv")
+  data.table::fwrite(diff_summary, summary_path)
+  browser_dt <- tf_summary$combined
+  table_html <- function(dt) {
+    if (!nrow(dt)) return("<p>No differential TF rows found.</p>")
+    keep <- intersect(
+      c("comparison_id", "TF", "dominant_direction", "net_target_gene_count", "n_links_up", "n_links_down", "tf_delta_sum_abs", "median_log2FC_tf_expr", "rank"),
+      names(dt)
+    )
+    rows <- apply(as.data.frame(dt[, keep, with = FALSE]), 1, function(x) {
+      paste0("<tr>", paste0("<td>", .m3tb_html_escape(x), "</td>", collapse = ""), "</tr>")
+    })
+    paste0(
+      "<table id=\"tbl\"><thead><tr>",
+      paste0("<th>", .m3tb_html_escape(keep), "</th>", collapse = ""),
+      "</tr></thead><tbody>", paste(rows, collapse = ""), "</tbody></table>"
+    )
+  }
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Differential GRN browser</title>",
+    "<style>body{font-family:Arial,sans-serif;margin:28px;color:#17212b;background:#fbfbf8}table{border-collapse:collapse;width:100%;background:#fff}th,td{border:1px solid #d7d1c3;padding:7px 9px;font-size:12px}th{background:#eef3f1;text-align:left}input{padding:7px;width:300px;margin:8px 0 14px 0}.muted{color:#667085}</style>",
+    "</head><body><h1>Differential GRN browser</h1>",
+    paste0("<p class=\"muted\">Differential-link directory: ", .m3tb_html_escape(normalizePath(differential_links_dir, winslash = "/", mustWork = FALSE)), "</p>"),
+    "<input id=\"q\" placeholder=\"Filter comparison or TF\" oninput=\"filterRows()\">",
+    table_html(browser_dt),
+    "<script>function filterRows(){const q=document.getElementById('q').value.toLowerCase();document.querySelectorAll('#tbl tbody tr').forEach(r=>{r.style.display=r.textContent.toLowerCase().includes(q)?'':'none';});}</script>",
+    "</body></html>"
+  )
+  out <- file.path(output_dir, "differential_grns.html")
+  writeLines(html, out, useBytes = TRUE)
+  if (isTRUE(verbose)) .log_inform("Wrote differential GRN browser: {out}")
+  invisible(out)
 }
 
 #' Run regulatory topic modeling
@@ -1345,7 +1704,7 @@ build_module3_qc_report <- function(topic_dir,
 #'
 #' @return An invisible list with topic input/model/extraction paths, review
 #'   outputs, and `qc_report` when requested.
-#' @export
+#' @noRd
 run_regulatory_topics <- function(filtered_dir,
                                   multiomic_data = NULL,
                                   comparisons,
@@ -1393,7 +1752,45 @@ run_regulatory_topics <- function(filtered_dir,
     verbose = verbose
   )
   if (isTRUE(build_qc_report)) {
-    res$qc_report <- build_module3_qc_report(output_dir, verbose = verbose)
+    res$qc_report <- build_module3_qc_report(output_dir, differential_links_dir = filtered_dir, verbose = verbose)
   }
   invisible(res)
+}
+
+#' Run topic modeling
+#'
+#' @description
+#' Wrapper function to conduct the full regulatory topic-modeling workflow for
+#' one selected topic-document construction method.
+#'
+#' @param filtered_dir Directory containing Module 3 filtered differential-link
+#'   files.
+#' @param multiomic_data Optional CraftGRN multiomic object. Required when
+#'   `replicate_documents = TRUE`.
+#' @param comparisons Comparison or condition grouping table, or a CSV path.
+#' @param output_dir Topic output directory.
+#' @param method Single Module 3 method ID.
+#' @param k_grid Integer topic numbers.
+#' @param ... Additional arguments passed to the internal topic-modeling
+#'   wrapper.
+#'
+#' @return An invisible list with topic input/model/extraction paths, review
+#'   outputs, and `qc_report` when requested.
+#' @export
+run_topic_modeling <- function(filtered_dir,
+                               multiomic_data = NULL,
+                               comparisons,
+                               output_dir,
+                               method = "condition_aggr_weight_lda",
+                               k_grid = 10L,
+                               ...) {
+  run_regulatory_topics(
+    filtered_dir = filtered_dir,
+    multiomic_data = multiomic_data,
+    comparisons = comparisons,
+    output_dir = output_dir,
+    method = method,
+    k_grid = k_grid,
+    ...
+  )
 }

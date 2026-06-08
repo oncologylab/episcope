@@ -41,15 +41,19 @@ reference:
   - save_omics_data
   - load_prep_multiomic_data
 
-- title: TF binding site prediction
-  desc: Predict transcription factor binding sites from motif-supported footprints and TF expression.
+- title: TF binding site and motif utilities
+  desc: Work with motif resources, footprints, and TF-footprint correlations.
   contents:
   - predict_tfbs
-  - build_module1_qc_report
   - module1_prepare_tfbs_inputs
   - module1_correlate_TF_to_canonical_tfbs
   - module1_filter_canonical_bound_tfbs
   - module1_predict_full_tfbs
+  - build_module1_qc_report
+
+- title: TFBS auxiliary functions
+  desc: Load, export, and hand off Module 1 predicted TFBS.
+  contents:
   - output_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
@@ -59,15 +63,19 @@ reference:
   desc: Predict TF targets through TFBS-target and TF-target correlations.
   contents:
   - predict_tf_targets
-  - build_module2_qc_report
   - module2_identify_candidate_links
   - module2_correlate_tf_targets
   - module2_link_fp_targets
   - module2_correlate_fp_targets
-  - output_predicted_links
+  - module2_output_predicted_links
+  - build_module2_qc_report
+
+- title: TF target auxiliary functions
+  desc: Load, query, validate, export, and report Module 2 predicted links.
+  contents:
   - load_predicted_links
   - query_predicted_links
-  - check_module2_links
+  - check_predicted_links
   - export_tf_target_bedpe
   - report_top_tf_targets
   - report_direct_tf_tf_regulations
@@ -75,24 +83,18 @@ reference:
 - title: Regulatory topic modeling
   desc: Build topic inputs, train models, extract topics, and review Module 3 outputs.
   contents:
-  - run_regulatory_topics
+  - run_topic_modeling
   - module3_prepare_differential_links
-  - module3_prepare_topic_inputs
+  - module3_construct_docs
   - module3_train_topic_models
   - module3_extract_topics
-
-- title: Module 3 reports
-  desc: Build standard Module 3 QC, pathway, and master-TF reports.
-  contents:
   - build_module3_qc_report
-  - report_differential_pathways
-  - report_master_tfs
 
-- title: Module 3 utilities
-  desc: Load and query Module 3 differential-link outputs.
+- title: Module 3 visualization utilities
+  desc: Export standard Module 3 topic and differential GRN browsers.
   contents:
-  - load_differential_links
-  - query_differential_links
+  - visualize_topic_modeling_results
+  - visualize_differential_grns
 
 development:
   mode: auto

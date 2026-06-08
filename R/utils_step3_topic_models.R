@@ -379,7 +379,7 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
 #' @param n_max_files Optional maximum number of files to load.
 #'
 #' @return A data.table of standardized differential links.
-#' @export
+#' @noRd
 load_differential_links <- function(path, keep_original = FALSE, n_max_files = Inf) {
   .assert_pkg("data.table")
   path <- as.character(path)
@@ -422,7 +422,7 @@ load_differential_links <- function(path, keep_original = FALSE, n_max_files = I
 #' @param keep_original Keep original columns when `links` is a path.
 #'
 #' @return A data.table of matching Module 3 differential links.
-#' @export
+#' @noRd
 query_differential_links <- function(links,
                                      comparison_id = NULL,
                                      direction = NULL,

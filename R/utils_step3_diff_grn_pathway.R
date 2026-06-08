@@ -62,7 +62,7 @@
 #' @param font_family Optional PDF font family.
 #'
 #' @return Invisibly returns a list with output paths and selected terms.
-#' @export
+#' @noRd
 report_differential_pathways <- function(filtered_dir,
                                          output_dir,
                                          comparison_file = NULL,

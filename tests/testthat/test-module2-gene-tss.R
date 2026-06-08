@@ -32,6 +32,6 @@ test_that("Module 2 can resolve gene TSS from project config", {
   tss_path <- tempfile(fileext = ".csv")
   readr::write_csv(tibble::tibble(target_gene = "GENE_UP", target_chr = "chr1", target_tss = 120L, target_strand = "+"), tss_path)
   res <- predict_tf_targets(compact, pred, project_config = list(ref_genome = "hg38", gene_tss = tss_path, module2 = list(threshold_tf_target_corr_r = 0.8, threshold_fp_target_corr_r = 0.8)), max_distance_bp = 1000, n_cores = 1, verbose = FALSE)
-  expect_true(check_module2_links(res))
+  expect_true(check_predicted_links(res))
   expect_true(nrow(res$links) > 0)
 })

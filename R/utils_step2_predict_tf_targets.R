@@ -756,7 +756,7 @@ predict_tf_targets <- function(multiomic_data, predicted_tfbs, gene_tss = NULL, 
   dplyr::bind_rows(rows)
 }
 
-#' Load Module 2 outputs
+#' Load predicted links from Module 2
 #'
 #' @param path Module 2 output directory or module2_manifest.csv path.
 #' @return A named list of tables.
@@ -829,7 +829,7 @@ query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = 
   .log_abort("Module 2 links table not found.")
 }
 
-#' Query specific Module 2 links by TFs or distance to TSS
+#' Query specific links by TFs or distance to TSS
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @param tf Optional TF filter.
@@ -883,8 +883,17 @@ validate_module2_links <- function(module2) {
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @return TRUE invisibly when valid.
-#' @export
+#' @noRd
 check_module2_links <- function(module2) {
+  validate_module2_links(module2)
+}
+
+#' Perform sanity check for predicted links
+#'
+#' @param module2 Module 2 result list or loaded output list.
+#' @return TRUE invisibly when valid.
+#' @export
+check_predicted_links <- function(module2) {
   validate_module2_links(module2)
 }
 

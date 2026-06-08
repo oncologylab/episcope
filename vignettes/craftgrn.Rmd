@@ -251,13 +251,13 @@ model fit. For fixed-seed validation runs, set
 `warplda_sampler = "warp_ref"`; this native sequential reference sampler is
 much slower than `warp_omp`.
 
-For regular analysis, use `run_regulatory_topics()` with one selected document
+For regular analysis, use `run_topic_modeling()` with one selected document
 construction method. It writes a clean single-method layout with reusable topic
 input caches, model outputs, compact passing topic-link output, review tables,
 and `module3_qc_report.html`.
 
 ```{r module-3-regulatory-topics, purl=FALSE}
-run_regulatory_topics(
+run_topic_modeling(
   filtered_dir = "differential_links",
   comparisons = "module3_comparisons.csv",
   output_dir = "regulatory_topics",
@@ -271,7 +271,7 @@ The lower-level calls remain available when you want to inspect inputs, separate
 model training from topic extraction, or rerun only one stage.
 
 ```{r module-3-topic-models, purl=FALSE}
-module3_prepare_topic_inputs(
+module3_construct_docs(
   filtered_dir = "differential_links",
   output_dir = "topic_documents",
   tf_cluster_map = tf_cluster_map,
@@ -298,16 +298,21 @@ the K-review tables and topic-model diagnostics for the selected method. Broad
 multi-method benchmarks are developer workflows and are not part of the normal
 package tutorial.
 
-### Summarize pathways and master TFs
+### Review topic modeling and differential GRNs
 
 ```{r module-3-summaries, purl=FALSE}
-report_differential_pathways(
-  filtered_dir = "differential_links",
+build_module3_qc_report(
+  topic_dir = "regulatory_topics",
+  differential_links_dir = "differential_links"
+)
+
+visualize_topic_modeling_results(
+  topic_dir = "regulatory_topics",
   output_dir = "regulatory_topics/reports"
 )
 
-report_master_tfs(
-  filtered_dir = "differential_links",
+visualize_differential_grns(
+  differential_links_dir = "differential_links",
   output_dir = "regulatory_topics/reports"
 )
 ```

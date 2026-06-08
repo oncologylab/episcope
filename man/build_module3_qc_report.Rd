@@ -7,7 +7,9 @@
 build_module3_qc_report(
   topic_dir,
   output_dir = file.path(topic_dir, "reports"),
+  differential_links_dir = NULL,
   title = "Module 3 QC report",
+  top_n = 20L,
   verbose = TRUE
 )
 }
@@ -17,7 +19,14 @@ build_module3_qc_report(
 \item{output_dir}{Directory where the report is written. Defaults to
 `topic_dir/reports`.}
 
+\item{differential_links_dir}{Optional Module 3 differential-link directory.
+If `NULL`, CraftGRN tries to detect a sibling or nested
+`differential_links` directory.}
+
 \item{title}{Report title.}
+
+\item{top_n}{Number of top differential TFs retained per comparison in the
+QC summary CSV.}
 
 \item{verbose}{Emit concise progress messages.}
 }
@@ -25,7 +34,8 @@ build_module3_qc_report(
 Path to the HTML report.
 }
 \description{
-Writes a lightweight self-contained HTML report for Module 3 topic-model
-outputs. The report summarizes topic-input caches, model rows, theta
-separation scores, and compact topic-link pass counts when available.
+Writes a self-contained HTML report for Module 3 topic-model outputs. The
+report summarizes topic-input caches, model rows, theta separation scores,
+compact topic-link pass counts, and differential-link summaries when
+available.
 }

@@ -24,7 +24,7 @@
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Invisibly returns a data.table manifest of written/skipped outputs.
-#' @export
+#' @noRd
 report_master_tfs <- function(filtered_dir,
                               output_dir,
                               overwrite = TRUE,
