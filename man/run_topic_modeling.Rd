@@ -11,6 +11,7 @@ run_topic_modeling(
   output_dir,
   method = "condition_aggr_weight_lda",
   k_grid = 10L,
+  warplda_iterations = 2000L,
   ...
 )
 }
@@ -28,6 +29,8 @@ files.}
 \item{method}{Single Module 3 method ID.}
 
 \item{k_grid}{Integer topic numbers.}
+
+\item{warplda_iterations}{Number of native WarpLDA iterations.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

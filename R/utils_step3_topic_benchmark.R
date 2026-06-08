@@ -1039,6 +1039,7 @@
 #'   grouped by the condition label after removing a trailing replicate suffix.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
+#' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param sample_subset Optional condition/sample labels passed to the Module 3
 #'   training engine. When supplied, only comparisons whose condition labels are
 #'   both in this vector are used.
@@ -1063,6 +1064,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         replicate_documents = FALSE,
                                         reuse_if_exists = TRUE,
                                         local_threads = NULL,
+                                        warplda_iterations = 2000L,
                                         sample_subset = NULL,
                                         analysis_label = NULL,
                                         extraction_topic_report_args = list(),
@@ -1133,17 +1135,26 @@ run_module3_topic_benchmark <- function(filtered_dir,
         vae_variant = row$vae_variant[[1L]],
         reuse_if_exists = reuse_if_exists,
         local_threads = local_threads,
+        warplda_iterations = warplda_iterations,
         save_full_doc_term_csv = FALSE,
         topic_report_args = list()
       )
     }
   }
   if (isTRUE(run_extraction)) {
-    link_topic_n_cores <- if (is.null(local_threads)) {
+    link_topic_requested_cores <- if (is.null(local_threads)) {
       .available_cores(logical = TRUE)
     } else {
       max(1L, as.integer(local_threads[[1L]]))
     }
+    link_topic_core_cap <- getOption("craftgrn.topic_link.max_cores", NULL)
+    if (is.null(link_topic_core_cap)) {
+      env_cap <- Sys.getenv("CRAFTGRN_TOPIC_LINK_MAX_CORES", unset = "")
+      link_topic_core_cap <- if (nzchar(env_cap)) suppressWarnings(as.integer(env_cap)) else 8L
+    }
+    link_topic_core_cap <- suppressWarnings(as.integer(link_topic_core_cap[[1L]]))
+    if (!is.finite(link_topic_core_cap) || link_topic_core_cap < 1L) link_topic_core_cap <- 8L
+    link_topic_n_cores <- min(link_topic_requested_cores, link_topic_core_cap)
     for (i in seq_len(nrow(method_plan))) {
       row <- method_plan[i]
       model_root <- row$topic_models_dir[[1L]]
@@ -1301,16 +1312,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
     return(invisible(list(output_dir = output_dir, summary = summary_dt, reused = TRUE)))
   }
-  manifest_path <- file.path(filtered_dir, "filtered_links_manifest.csv")
-  delta_files <- character()
-  if (file.exists(manifest_path)) {
-    manifest <- data.table::fread(manifest_path, showProgress = FALSE)
-    path_cols <- intersect(c("up_path", "down_path"), names(manifest))
-    if (length(path_cols)) {
-      delta_files <- unique(as.character(unlist(manifest[, path_cols, with = FALSE], use.names = FALSE)))
-      delta_files <- delta_files[!is.na(delta_files) & nzchar(delta_files) & file.exists(delta_files)]
-    }
-  }
+  delta_files <- .module3_filtered_link_files(filtered_dir)
   if (!length(delta_files)) {
     delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
   }
@@ -1702,6 +1704,7 @@ visualize_differential_grns <- function(differential_links_dir,
 #'   resolved for condition-separation scoring.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
+#' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param sample_subset Optional condition/sample labels to keep.
 #' @param analysis_label Label used to name the topic-model analysis.
 #' @param topic_link_output Topic-link output mode. `"pass"` writes compact
@@ -1727,6 +1730,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   replicate_documents = FALSE,
                                   reuse_if_exists = TRUE,
                                   local_threads = NULL,
+                                  warplda_iterations = 2000L,
                                   sample_subset = NULL,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
@@ -1756,6 +1760,7 @@ run_regulatory_topics <- function(filtered_dir,
     replicate_documents = replicate_documents,
     reuse_if_exists = reuse_if_exists,
     local_threads = local_threads,
+    warplda_iterations = warplda_iterations,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
     extraction_topic_report_args = extraction_args,
@@ -1784,6 +1789,7 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param output_dir Topic output directory.
 #' @param method Single Module 3 method ID.
 #' @param k_grid Integer topic numbers.
+#' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -1796,6 +1802,7 @@ run_topic_modeling <- function(filtered_dir,
                                output_dir,
                                method = "condition_aggr_weight_lda",
                                k_grid = 10L,
+                               warplda_iterations = 2000L,
                                ...) {
   run_regulatory_topics(
     filtered_dir = filtered_dir,
@@ -1804,6 +1811,7 @@ run_topic_modeling <- function(filtered_dir,
     output_dir = output_dir,
     method = method,
     k_grid = k_grid,
+    warplda_iterations = warplda_iterations,
     ...
   )
 }

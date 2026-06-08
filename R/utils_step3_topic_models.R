@@ -365,6 +365,42 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
   data.table::rbindlist(lst, use.names = TRUE, fill = TRUE)
 }
 
+.module3_filtered_link_files <- function(path) {
+  .assert_pkg("data.table")
+  path <- as.character(path)
+  if (!length(path)) .log_abort("`path` must contain at least one file or directory.")
+  if (length(path) == 1L && dir.exists(path)) {
+    manifest <- file.path(path, "filtered_links_manifest.csv")
+    if (file.exists(manifest)) {
+      man <- data.table::fread(manifest, showProgress = FALSE)
+      path_cols <- intersect(c("up_path", "down_path"), names(man))
+      files <- if (length(path_cols)) {
+        unique(as.character(unlist(man[, path_cols, with = FALSE], use.names = FALSE)))
+      } else {
+        character()
+      }
+      files <- files[!is.na(files) & nzchar(files)]
+      files <- ifelse(file.exists(files), files, file.path(path, basename(files)))
+    } else {
+      files <- list.files(path, "_filtered_links_(up|down)[.]csv$", full.names = TRUE)
+    }
+  } else if (length(path) == 1L && file.exists(path) && grepl("manifest[.]csv$", basename(path))) {
+    man <- data.table::fread(path, showProgress = FALSE)
+    path_cols <- intersect(c("up_path", "down_path"), names(man))
+    files <- if (length(path_cols)) {
+      unique(as.character(unlist(man[, path_cols, with = FALSE], use.names = FALSE)))
+    } else {
+      character()
+    }
+    files <- files[!is.na(files) & nzchar(files)]
+    manifest_dir <- dirname(path)
+    files <- ifelse(file.exists(files), files, file.path(manifest_dir, basename(files)))
+  } else {
+    files <- path
+  }
+  files[file.exists(files)]
+}
+
 #' Load Module 3 differential links
 #'
 #' Load filtered differential-link files produced by
@@ -381,27 +417,7 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
 #' @return A data.table of standardized differential links.
 #' @noRd
 load_differential_links <- function(path, keep_original = FALSE, n_max_files = Inf) {
-  .assert_pkg("data.table")
-  path <- as.character(path)
-  if (!length(path)) .log_abort("`path` must contain at least one file or directory.")
-  if (length(path) == 1L && dir.exists(path)) {
-    manifest <- file.path(path, "filtered_links_manifest.csv")
-    if (file.exists(manifest)) {
-      man <- data.table::fread(manifest, showProgress = FALSE)
-      files <- unique(c(as.character(man$up_path), as.character(man$down_path)))
-      files <- ifelse(file.exists(files), files, file.path(path, basename(files)))
-    } else {
-      files <- list.files(path, "_filtered_links_(up|down)[.]csv$", full.names = TRUE)
-    }
-  } else if (length(path) == 1L && file.exists(path) && grepl("manifest[.]csv$", basename(path))) {
-    man <- data.table::fread(path, showProgress = FALSE)
-    files <- unique(c(as.character(man$up_path), as.character(man$down_path)))
-    manifest_dir <- dirname(path)
-    files <- ifelse(file.exists(files), files, file.path(manifest_dir, basename(files)))
-  } else {
-    files <- path
-  }
-  files <- files[file.exists(files)]
+  files <- .module3_filtered_link_files(path)
   if (!length(files)) .log_abort("No Module 3 filtered-link CSV files were found.")
   load_delta_links_many(files, keep_original = keep_original, n_max_files = n_max_files)
 }
@@ -6180,7 +6196,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     plot_tf_doc_topic_assignment_heatmaps(
       theta = topic_base$theta,
       phi = topic_base$phi,
-      out_file = file.path(out_dir, "HPAFII_tf_topic_assignment_heatmaps.pdf"),
+      out_file = file.path(out_dir, "tf_topic_assignment_heatmaps.pdf"),
       topic_terms = topic_terms,
       title_prefix = title_prefix,
       doc_design = doc_design,
@@ -7234,7 +7250,7 @@ run_vae_topic_report_py <- function(doc_term,
 
 run_vae_ctf_multivi <- function(edges_all,
                                 out_root,
-                                celllines = c("AsPC1", "HPAFII", "Panc1"),
+                                celllines = NULL,
                                 tf_cluster_map,
                                 tf_exclude = NULL,
                                 k_grid_default,
@@ -7262,6 +7278,9 @@ run_vae_ctf_multivi <- function(edges_all,
   if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
   if (!("cellline" %in% names(edges_dt))) {
     edges_dt[, cellline := sub("_.*$", "", comparison_id)]
+  }
+  if (is.null(celllines)) {
+    celllines <- sort(unique(as.character(edges_dt$cellline)))
   }
   dir.create(out_root, recursive = TRUE, showWarnings = FALSE)
 
@@ -7906,6 +7925,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param vae_variant VAE variant name.
 #' @param backend Topic model backend. `"warplda"` is the default native
 #'   WarpLDA backend; `"vae"` runs the optional VAE backend.
+#' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
 #'   the slower sequential fixed-seed reference sampler,
@@ -7953,6 +7973,7 @@ train_topic_models <- function(Kgrid,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
                                backend = c("warplda", "vae"),
+                               warplda_iterations = 2000L,
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
                                reuse_if_exists = TRUE,
@@ -7982,12 +8003,17 @@ train_topic_models <- function(Kgrid,
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   count_input <- match.arg(count_input)
   backend <- match.arg(backend)
+  warplda_iterations <- as.integer(warplda_iterations[[1L]])
+  if (!is.finite(warplda_iterations) || warplda_iterations < 1L) .log_abort("`warplda_iterations` must be a positive integer.")
   warplda_sampler <- match.arg(warplda_sampler)
   doc_mode <- match.arg(doc_mode)
   doc_design <- match.arg(doc_design)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   weight_label <- if (identical(doc_design, "condition")) "peak_score_gene_expr" else "peak_log2fc_fp_gene_fc_expr"
-  delta_files <- list.files(input_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+  delta_files <- .module3_filtered_link_files(input_dir)
+  if (!length(delta_files)) {
+    delta_files <- list.files(input_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+  }
   if (!length(delta_files)) {
     delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
   }
@@ -8232,7 +8258,7 @@ train_topic_models <- function(Kgrid,
       fits_out <- run_warplda_models(
         dtm,
         K_grid = Kgrid,
-        iterations = 2000L,
+        iterations = warplda_iterations,
         alpha_by_topic = TRUE,
         alpha = NULL,
         beta = warplda_beta,

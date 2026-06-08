@@ -430,6 +430,7 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("run_topic_modeling" %in% getNamespaceExports("craftgrn"))
   expect_true("module3_construct_docs" %in% getNamespaceExports("craftgrn"))
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
+  expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
   root <- tempfile("module3-qc-")
   dir.create(file.path(root, "review", "csv"), recursive = TRUE)
   data.table::fwrite(
