@@ -783,7 +783,7 @@ load_module2_links <- function(path) {
   out
 }
 
-#' Load Module 2 outputs
+#' Load predicted links from Module 2
 #'
 #' @param path Module 2 output directory or module2_manifest.csv path.
 #' @return A named list of Module 2 tables.
@@ -829,7 +829,7 @@ query_module2_links <- function(module2, tf = NULL, fp_id = NULL, target_gene = 
   .log_abort("Module 2 links table not found.")
 }
 
-#' Query specific links by TFs or distance to TSS
+#' Query specific links by TF(s) and/or distance to TSS
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @param tf Optional TF filter.
@@ -888,7 +888,7 @@ check_module2_links <- function(module2) {
   validate_module2_links(module2)
 }
 
-#' Perform sanity check for predicted links
+#' Perform sanity check for predicted links for Module 2 diagnostics
 #'
 #' @param module2 Module 2 result list or loaded output list.
 #' @return TRUE invisibly when valid.

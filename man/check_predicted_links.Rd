@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils_step2_predict_tf_targets.R
 \name{check_predicted_links}
 \alias{check_predicted_links}
-\title{Perform sanity check for predicted links}
+\title{Perform sanity check for predicted links for Module 2 diagnostics}
 \usage{
 check_predicted_links(module2)
 }
@@ -13,5 +13,5 @@ check_predicted_links(module2)
 TRUE invisibly when valid.
 }
 \description{
-Perform sanity check for predicted links
+Perform sanity check for predicted links for Module 2 diagnostics
 }
