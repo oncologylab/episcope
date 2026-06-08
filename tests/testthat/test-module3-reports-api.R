@@ -20,11 +20,11 @@ test_that("Module 3 report API exposes publication-facing helpers", {
 test_that("Module 3 QC report writes differential TF summaries", {
   root <- tempfile("module3-qc-topic-")
   diff_dir <- tempfile("module3-qc-diff-")
-  dir.create(file.path(root, "review", "csv"), recursive = TRUE)
+  dir.create(file.path(root, "review", "tables"), recursive = TRUE)
   dir.create(diff_dir, recursive = TRUE)
   data.table::fwrite(
     data.table::data.table(method = "condition_aggr_weight_lda", method_setup = "cond fp aggr weight | LDA"),
-    file.path(root, "review", "csv", "module3_topic_method_plan.csv")
+    file.path(root, "review", "tables", "module3_topic_method_plan.csv")
   )
   links <- data.table::data.table(
     comparison_id = "CondA_vs_CondB",
@@ -55,9 +55,9 @@ test_that("Module 3 QC report writes differential TF summaries", {
 test_that("Module 3 visualization helpers write self-contained index pages", {
   topic_dir <- tempfile("module3-topic-vis-")
   diff_dir <- tempfile("module3-diff-vis-")
-  dir.create(file.path(topic_dir, "review", "html"), recursive = TRUE)
+  dir.create(file.path(topic_dir, "review"), recursive = TRUE)
   dir.create(diff_dir, recursive = TRUE)
-  writeLines("<!doctype html><html><body>Topic MDS</body></html>", file.path(topic_dir, "review", "html", "topic_method_k_topic_mds_report.html"))
+  writeLines("<!doctype html><html><body>Topic MDS</body></html>", file.path(topic_dir, "review", "topic_method_k_topic_mds_report.html"))
   data.table::fwrite(
     data.table::data.table(
       comparison_id = "CondA_vs_CondB",

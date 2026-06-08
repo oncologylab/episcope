@@ -29,6 +29,29 @@
   out
 }
 
+.m3tb_review_tables_dir <- function(review_dir) {
+  file.path(review_dir, "tables")
+}
+
+.m3tb_review_html_dir <- function(review_dir) {
+  review_dir
+}
+
+.m3tb_review_read_dir <- function(topic_dir) {
+  candidates <- c(
+    file.path(topic_dir, "review", "tables"),
+    file.path(topic_dir, "review", "csv"),
+    file.path(topic_dir, "review_topic_experiments", "tables"),
+    file.path(topic_dir, "review_topic_experiments", "csv")
+  )
+  hit <- candidates[dir.exists(candidates)]
+  if (length(hit)) hit[[1L]] else candidates[[1L]]
+}
+
+.m3tb_plot_dir <- function(review_dir) {
+  file.path(review_dir, "assets")
+}
+
 .m3tb_method_dictionary <- function() {
   data.table::data.table(
     method = c(
@@ -275,6 +298,15 @@
   }
 }
 
+.m3tb_clean_stale_review_layout <- function(review_dir) {
+  stale <- file.path(review_dir, c("csv", "html"))
+  stale <- stale[dir.exists(stale)]
+  if (length(stale)) {
+    unlink(stale, recursive = TRUE, force = TRUE)
+  }
+  invisible(TRUE)
+}
+
 .m3tb_read_theta <- function(path) {
   dt <- data.table::fread(path, showProgress = FALSE)
   if (!"doc_id" %in% names(dt)) data.table::setnames(dt, names(dt)[[1L]], "doc_id")
@@ -331,8 +363,49 @@
   x <- gsub("_vs_", " vs ", x, fixed = TRUE)
   x <- gsub("::Target-Up", " Up", x, fixed = TRUE)
   x <- gsub("::Target-Down", " Down", x, fixed = TRUE)
+  x <- gsub("::Up", " Up", x, fixed = TRUE)
+  x <- gsub("::Down", " Down", x, fixed = TRUE)
   x <- gsub("_", " ", x, fixed = TRUE)
   trimws(x)
+}
+
+.m3tb_short_label <- function(x, max_chars = 18L) {
+  x <- .m3tb_display_label(x)
+  x <- gsub("[()]", "", x)
+  x <- gsub("[[:space:]]+", " ", x)
+  max_chars <- as.integer(max_chars[[1L]])
+  ifelse(nchar(x) > max_chars, paste0(substr(x, 1L, max_chars - 1L), "."), x)
+}
+
+.m3tb_color_family <- function(x) {
+  x <- as.character(x)
+  data.table::fcase(
+    grepl("BATF", x, ignore.case = TRUE), "BATF",
+    grepl("IRF4", x, ignore.case = TRUE), "IRF4",
+    grepl("RUNX3|Runx3", x, ignore.case = TRUE), "RUNX3",
+    grepl("TBET|Tbet|Tbx21", x, ignore.case = TRUE), "Tbet",
+    grepl("Naive", x, ignore.case = TRUE), "Naive",
+    grepl("Restimulated", x, ignore.case = TRUE), "Restimulated",
+    grepl("Resting", x, ignore.case = TRUE), "Resting",
+    grepl("Dox|NoTF", x, ignore.case = TRUE), "Fibroblast",
+    default = "Other"
+  )
+}
+
+.m3tb_group_color <- function(x) {
+  fam <- .m3tb_color_family(x)
+  pal <- c(
+    BATF = "#D55E00",
+    IRF4 = "#0072B2",
+    RUNX3 = "#009E73",
+    Tbet = "#CC79A7",
+    Naive = "#666666",
+    Restimulated = "#E69F00",
+    Resting = "#56B4E9",
+    Fibroblast = "#8A5FBF",
+    Other = "#2A9D8F"
+  )
+  unname(pal[fam])
 }
 
 .m3tb_condition_base <- function(x) {
@@ -505,6 +578,20 @@
     )
   )
   data.table::fwrite(data.table::data.table(label = rownames(dmat), as.data.frame(dmat, check.names = FALSE)), jsd_path)
+  coords <- if (nrow(dmat) <= 1L) {
+    matrix(c(0, 0), ncol = 2L)
+  } else {
+    fit <- tryCatch(stats::cmdscale(stats::as.dist(dmat), k = 2L, eig = FALSE), error = function(e) NULL)
+    if (is.null(fit)) {
+      cbind(seq_len(nrow(dmat)), rep(0, nrow(dmat)))
+    } else if (is.null(dim(fit))) {
+      cbind(fit, rep(0, length(fit)))
+    } else if (ncol(fit) < 2L) {
+      cbind(fit[, 1L], rep(0, nrow(fit)))
+    } else {
+      fit[, 1:2, drop = FALSE]
+    }
+  }
   groups <- merged$metric_group
   per_label <- lapply(seq_len(nrow(dmat)), function(i) {
     same <- setdiff(which(groups == groups[[i]]), i)
@@ -538,7 +625,25 @@
     mean_inter_distance = mean(inter_distance, na.rm = TRUE),
     theta_condition_separation_score = mean(theta_condition_label_score, na.rm = TRUE)
   ), by = .(method_order, context_type, setup, setup_label, model_label, method_setup, k)]
-  list(score = score, per_label = per_label, profiles = profiles)
+  mds_points <- data.table::copy(merged)
+  mds_points[, `:=`(
+    group_label = comparison_label,
+    MDS1 = as.numeric(coords[, 1L]),
+    MDS2 = as.numeric(coords[, 2L]),
+    n_features = nrow(theta),
+    method_order = as.integer(row$method_order[[1L]]),
+    method_setup = row$method_setup[[1L]],
+    k = as.integer(row$selected_k[[1L]]),
+    setup = row$setup[[1L]],
+    setup_label = row$setup_label[[1L]],
+    doc_design = row$context_type[[1L]],
+    fp_term_mode = row$fp_mode[[1L]],
+    model_label = row$model_label[[1L]],
+    panel_label = paste(row$setup_label[[1L]], row$model_label[[1L]], sep = "\n"),
+    color_family = .m3tb_color_family(display_label),
+    color = .m3tb_group_color(display_label)
+  )]
+  list(score = score, per_label = per_label, profiles = profiles, mds_points = mds_points)
 }
 
 .m3tb_candidate_model_dirs <- function(output_dir, row) {
@@ -594,7 +699,7 @@
                                       multiomic_data = NULL,
                                       review_dir = NULL) {
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
-  csv_dir <- file.path(review_dir, "csv")
+  csv_dir <- .m3tb_review_tables_dir(review_dir)
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   design <- .m3tb_design_table(
     comparisons,
@@ -610,11 +715,14 @@
   })
   scores <- data.table::rbindlist(lapply(payload, `[[`, "score"), use.names = TRUE, fill = TRUE)
   per_label <- data.table::rbindlist(lapply(payload, `[[`, "per_label"), use.names = TRUE, fill = TRUE)
+  mds_points <- data.table::rbindlist(lapply(payload, `[[`, "mds_points"), use.names = TRUE, fill = TRUE)
   data.table::setorder(scores, method_order, k)
   data.table::setorder(per_label, method_order, k, comparison_label)
+  if (nrow(mds_points)) data.table::setorder(mds_points, k, method_order, group_label)
   data.table::fwrite(scores, file.path(csv_dir, paste0(score_prefix, "_scores.csv")))
   data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_per_label.csv")))
   data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_score_long.csv")))
+  data.table::fwrite(mds_points, file.path(csv_dir, "theta_group_mds_points.csv"))
   heatmap_values <- scores[, .(
     method_order,
     context_type,
@@ -635,7 +743,7 @@
   data.table::setnames(wide, intersect(k_cols, names(wide)), paste0("K", intersect(k_cols, names(wide))))
   data.table::setorder(wide, method_order)
   data.table::fwrite(wide, file.path(csv_dir, paste0(score_prefix, "_score_heatmap_values_matrix.csv")))
-  list(scores = scores, per_label = per_label, matrix = wide, design = design, score_prefix = score_prefix)
+  list(scores = scores, per_label = per_label, matrix = wide, design = design, mds_points = mds_points, score_prefix = score_prefix)
 }
 
 .m3tb_find_topic_links <- function(output_dir, row) {
@@ -763,7 +871,7 @@
     .m3tb_empty_shared_counts()
   }
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
-  csv_dir <- file.path(review_dir, "csv")
+  csv_dir <- .m3tb_review_tables_dir(review_dir)
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(pass, file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
   data.table::fwrite(shared, file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
@@ -791,43 +899,376 @@
   invisible(out_file)
 }
 
+.m3tb_json_for_html <- function(x) {
+  out <- jsonlite::toJSON(x, dataframe = "rows", auto_unbox = TRUE, null = "null", digits = 8)
+  gsub("</", "<\\/", as.character(out), fixed = TRUE)
+}
+
+.m3tb_read_probability_csv <- function(path, id_col) {
+  dt <- data.table::fread(path, showProgress = FALSE)
+  if (!id_col %in% names(dt)) data.table::setnames(dt, names(dt)[[1L]], id_col)
+  ids <- as.character(dt[[id_col]])
+  mat <- as.matrix(dt[, setdiff(names(dt), id_col), with = FALSE])
+  storage.mode(mat) <- "numeric"
+  rownames(mat) <- ids
+  mat
+}
+
+.m3tb_topic_mds_from_phi <- function(phi, theta) {
+  phi <- as.matrix(phi)
+  storage.mode(phi) <- "numeric"
+  row_names <- rownames(phi)
+  col_names <- colnames(phi)
+  row_topic <- !is.null(row_names) & grepl("^Topic[0-9]+$", row_names)
+  col_topic <- !is.null(col_names) & grepl("^Topic[0-9]+$", col_names)
+  if (sum(row_topic, na.rm = TRUE) >= 2L && sum(row_topic, na.rm = TRUE) >= sum(col_topic, na.rm = TRUE)) {
+    x <- phi
+    topic_names <- row_names
+  } else {
+    x <- t(phi)
+    topic_names <- col_names
+  }
+  if (is.null(topic_names)) topic_names <- paste0("Topic", seq_len(nrow(x)))
+  x[!is.finite(x) | x < 0] <- 0
+  coords <- if (nrow(x) <= 1L) {
+    matrix(c(0, 0), ncol = 2L)
+  } else {
+    d <- .m3tb_jsd_matrix(x)
+    fit <- tryCatch(stats::cmdscale(stats::as.dist(d), k = 2L, eig = FALSE), error = function(e) NULL)
+    if (is.null(fit)) {
+      cbind(seq_len(nrow(x)), rep(0, nrow(x)))
+    } else if (is.null(dim(fit))) {
+      cbind(fit, rep(0, length(fit)))
+    } else if (ncol(fit) < 2L) {
+      cbind(fit[, 1L], rep(0, nrow(fit)))
+    } else {
+      fit[, 1:2, drop = FALSE]
+    }
+  }
+  if (ncol(coords) < 2L) coords <- cbind(coords[, 1L], rep(0, nrow(coords)))
+  theta_mean <- colMeans(as.matrix(theta), na.rm = TRUE)
+  mean_theta <- if (all(topic_names %in% names(theta_mean))) {
+    as.numeric(theta_mean[topic_names])
+  } else if (length(theta_mean) == length(topic_names)) {
+    as.numeric(theta_mean)
+  } else {
+    rep(NA_real_, length(topic_names))
+  }
+  topic_num <- suppressWarnings(as.integer(sub("^Topic", "", topic_names)))
+  topic_num[!is.finite(topic_num)] <- seq_along(topic_num)[!is.finite(topic_num)]
+  data.table::data.table(
+    topic = topic_names,
+    topic_num = topic_num,
+    MDS1 = as.numeric(coords[, 1L]),
+    MDS2 = as.numeric(coords[, 2L]),
+    mean_theta = mean_theta
+  )
+}
+
+.m3tb_topic_waterfall <- function(theta, context_type) {
+  profiles <- .m3tb_topic_profiles(theta, context_type)
+  topic_cols <- grep("^Topic[0-9]+$", names(profiles), value = TRUE)
+  data.table::melt(
+    profiles,
+    id.vars = c("comparison_label", "display_label", "n_docs"),
+    measure.vars = topic_cols,
+    variable.name = "topic",
+    value.name = "theta_mean"
+  )[, `:=`(
+    topic = as.character(topic),
+    topic_num = as.integer(sub("^Topic", "", as.character(topic))),
+    theta_mean = as.numeric(theta_mean)
+  )][order(topic_num, -theta_mean)]
+}
+
+.m3tb_find_extraction_subdir <- function(row) {
+  roots <- unique(c(
+    if ("topic_extraction_dir" %in% names(row)) row$topic_extraction_dir[[1L]] else character(),
+    if ("selected_k" %in% names(row) && "topic_extraction_dir" %in% names(row)) {
+      file.path(row$topic_extraction_dir[[1L]], paste0("K", as.integer(row$selected_k[[1L]])))
+    } else {
+      character()
+    }
+  ))
+  roots <- roots[dir.exists(roots)]
+  if (!length(roots)) return(NA_character_)
+  dirs <- unique(c(roots, unlist(lapply(roots, list.dirs, recursive = TRUE, full.names = TRUE), use.names = FALSE)))
+  has_topic <- file.exists(file.path(dirs, "topic_terms.csv")) |
+    file.exists(file.path(dirs, "topic_links.csv")) |
+    file.exists(file.path(dirs, "topic_links_pass.csv"))
+  if (any(has_topic)) return(dirs[which(has_topic)[[1L]]])
+  dirs[[1L]]
+}
+
+.m3tb_read_pathway_tables <- function(extraction_dir, per_group = FALSE) {
+  empty <- data.table::data.table(
+    topic = integer(),
+    topic_num = integer(),
+    comparison_label = character(),
+    display_label = character(),
+    pathway = character(),
+    padj = numeric(),
+    overlap = character(),
+    gene_in = integer(),
+    gene_total = integer(),
+    gene_out = integer(),
+    genes = character()
+  )
+  if (is.na(extraction_dir) || !dir.exists(extraction_dir)) return(empty)
+  if (isTRUE(per_group)) {
+    files <- list.files(extraction_dir, "_dotplot[.]csv$", recursive = TRUE, full.names = TRUE)
+    files <- files[grepl("per_comparison_pathway", files, fixed = TRUE)]
+  } else {
+    files <- list.files(extraction_dir, "^topic_pathway_enrichment_.*_dotplot[.]csv$", full.names = TRUE)
+  }
+  if (!length(files)) return(empty)
+  rows <- lapply(files, function(path) {
+    dt <- data.table::fread(path, showProgress = FALSE)
+    if (!nrow(dt)) return(empty)
+    if (!"pathway" %in% names(dt) && "term" %in% names(dt)) data.table::setnames(dt, "term", "pathway")
+    if (!"padj" %in% names(dt) && "adjusted_p_value" %in% names(dt)) data.table::setnames(dt, "adjusted_p_value", "padj")
+    if (!"topic" %in% names(dt) && "topic_num" %in% names(dt)) data.table::setnames(dt, "topic_num", "topic")
+    if (!"overlap" %in% names(dt)) dt[, overlap := NA_character_]
+    if (!"overlap_hits" %in% names(dt)) dt[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
+    if (!"genes" %in% names(dt)) dt[, genes := NA_character_]
+    if (isTRUE(per_group)) {
+      label <- sub("_dotplot[.]csv$", "", basename(path))
+      label <- sub("_All$", "", label)
+      dt[, comparison_label := label]
+      dt[, display_label := .m3tb_display_label(label)]
+    } else {
+      dt[, comparison_label := NA_character_]
+      dt[, display_label := NA_character_]
+    }
+    dt[, `:=`(
+      topic = as.integer(topic),
+      topic_num = as.integer(topic),
+      padj = suppressWarnings(as.numeric(padj)),
+      gene_in = suppressWarnings(as.integer(overlap_hits)),
+      gene_total = suppressWarnings(as.integer(sub("^.*/", "", as.character(overlap)))),
+      pathway = as.character(pathway),
+      genes = as.character(genes)
+    )]
+    dt[is.na(gene_total) | !is.finite(gene_total), gene_total := pmax(gene_in, 1L, na.rm = TRUE)]
+    dt[, gene_out := pmax(gene_total - gene_in, 0L)]
+    keep <- intersect(names(empty), names(dt))
+    dt[, ..keep]
+  })
+  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  if (!nrow(out)) return(empty)
+  out <- out[is.finite(topic_num) & !is.na(pathway) & nzchar(pathway)]
+  out[, rank := data.table::frank(padj, ties.method = "first"), by = .(topic_num, comparison_label)]
+  out[rank <= 30L][, rank := NULL][]
+}
+
+.m3tb_topic_report_html <- function(title, topic_mds, waterfall, pathways, out_html) {
+  topic_json <- .m3tb_json_for_html(topic_mds)
+  waterfall_json <- .m3tb_json_for_html(waterfall)
+  pathway_json <- .m3tb_json_for_html(pathways)
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    paste0("<title>", .m3tb_html_escape(title), "</title>"),
+    "<style>",
+    "body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}",
+    ".top{height:78px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 16px;box-sizing:border-box}",
+    "h1{font-size:19px;margin:0}.meta{font-size:11px;color:#475569}.controls{display:flex;gap:9px;align-items:center}",
+    "select,button{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:6px 8px}button{background:#111;color:#fff}",
+    ".grid{height:calc(100vh - 78px);display:grid;grid-template-columns:minmax(440px,0.95fr) minmax(620px,1.35fr);gap:12px;padding:12px;box-sizing:border-box}",
+    ".left{display:grid;grid-template-rows:1fr 1.1fr;gap:12px}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0}",
+    ".pane h2{font-size:20px;margin:8px 10px}.body{position:relative;flex:1;min-height:0}.note{font-size:11px;color:#555;border-top:1px solid #e5e5df;padding:7px 10px}",
+    "svg{width:100%;height:100%;display:block}.label{font-size:13px;font-weight:700}.small{font-size:11px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}",
+    "@media(max-width:1100px){body{overflow:auto}.grid{height:auto;grid-template-columns:1fr}.pane{height:560px}}",
+    "</style></head><body>",
+    "<div class=\"top\"><div>",
+    paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
+    "<div class=\"meta\">Topic map uses topic-term profiles; waterfall values are mean document-to-topic probabilities.</div>",
+    "</div><div class=\"controls\"><label>Topic <select id=\"topicSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
+    "<main class=\"grid\"><div class=\"left\">",
+    "<section class=\"pane\"><h2>Intertopic Distance Map</h2><div class=\"body\"><svg id=\"topicSvg\" viewBox=\"0 0 900 560\"></svg></div><div class=\"note\">Topics are embedded by Jensen-Shannon distance.</div></section>",
+    "<section class=\"pane\"><h2>Condition Waterfall</h2><div class=\"body\"><svg id=\"waterfallSvg\" viewBox=\"0 0 900 620\"></svg></div><div class=\"note\">Bars use one shared x-scale inside this report.</div></section>",
+    "</div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1300 880\"></svg></div><div class=\"note\">Red shows topic genes; blue shows remaining pathway universe when available.</div></section></main>",
+    "<script>",
+    paste0("const TOPICS=", topic_json, ";"),
+    paste0("const WATERFALL=", waterfall_json, ";"),
+    paste0("const PATHWAYS=", pathway_json, ";"),
+    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#9C755F','#BAB0AC','#1F77B4'];",
+    "const topicSelect=document.getElementById('topicSelect'),topicSvg=document.getElementById('topicSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg');",
+    "function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}",
+    "function color(t){const n=Number(String(t).replace(/^Topic/,''));return PAL[(Math.max(1,n)-1)%PAL.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
+    "function init(){TOPICS.sort((a,b)=>topicNum(a.topic)-topicNum(b.topic)).forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic);topicSelect.appendChild(o)});topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',()=>{const b=new Blob([document.documentElement.outerHTML],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=document.title.replace(/[^A-Za-z0-9_.-]+/g,'_')+'.html';a.click();URL.revokeObjectURL(a.href)});draw()}",
+    "function drawTopic(){topicSvg.replaceChildren();const w=900,h=560,p=80,sx=sc(TOPICS.map(d=>+d.MDS1),p,w-p),sy=sc(TOPICS.map(d=>+d.MDS2),h-p,p),mx=Math.max(...TOPICS.map(d=>+d.mean_theta||0),1e-6),sel=topicSelect.value;TOPICS.forEach(d=>{const r=24+55*Math.sqrt((+d.mean_theta||0)/mx),c=el('circle',{cx:sx(+d.MDS1),cy:sy(+d.MDS2),r:r,fill:color(d.topic),opacity:d.topic===sel?0.92:0.5,stroke:d.topic===sel?'#111':'#fff','stroke-width':d.topic===sel?5:2});c.onclick=()=>{topicSelect.value=d.topic;draw()};topicSvg.appendChild(c);const t=el('text',{x:sx(+d.MDS1),y:sy(+d.MDS2)+5,'text-anchor':'middle',class:'label'});t.textContent=topicNum(d.topic);topicSvg.appendChild(t)})}",
+    "function drawWaterfall(){waterfallSvg.replaceChildren();const sel=topicSelect.value,rows=WATERFALL.filter(d=>d.topic===sel).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)).slice(0,25),w=900,h=620,left=250,right=40,top=50,rowH=Math.min(24,(h-top-40)/Math.max(1,rows.length)),mx=Math.max(...WATERFALL.map(d=>+d.theta_mean||0),0.001);rows.forEach((d,i)=>{const y=top+i*rowH,bw=(+d.theta_mean||0)/mx*(w-left-right);const lab=el('text',{x:left-10,y:y+rowH*.7,'text-anchor':'end',class:'label'});lab.textContent=String(d.display_label||d.comparison_label).slice(0,30);waterfallSvg.appendChild(lab);waterfallSvg.appendChild(el('rect',{x:left,y:y+3,width:Math.max(2,bw),height:Math.max(6,rowH-7),fill:color(sel),opacity:.86}));const val=el('text',{x:left+bw+6,y:y+rowH*.7,class:'small'});val.textContent=(+d.theta_mean||0).toFixed(3);waterfallSvg.appendChild(val)})}",
+    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn).sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,30),w=1300,h=880,left=610,right=45,top=70,rowH=Math.min(24,(h-top-55)/Math.max(1,rows.length)),mx=Math.max(...rows.map(d=>Math.max(+d.gene_total||0,(+d.gene_in||0)+(+d.gene_out||0))),1);if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}rows.forEach((d,i)=>{const y=top+i*rowH,gi=+d.gene_in||0,go=+d.gene_out||0,wi=gi/mx*(w-left-right),wo=go/mx*(w-left-right);const lab=el('text',{x:left-12,y:y+rowH*.65,'text-anchor':'end',class:'label'});lab.textContent=String(d.pathway||'').slice(0,70);pathSvg.appendChild(lab);pathSvg.appendChild(el('rect',{x:left,y:y+4,width:Math.max(gi?2:0,wi),height:Math.max(6,rowH-8),class:'barIn'}));pathSvg.appendChild(el('rect',{x:left+wi,y:y+4,width:Math.max(go?2:0,wo),height:Math.max(6,rowH-8),class:'barOut'}))})}",
+    "function draw(){drawTopic();drawWaterfall();drawPathways()}init();",
+    "</script></body></html>"
+  )
+  dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
+  writeLines(html, out_html, useBytes = TRUE)
+  out_html
+}
+
+.m3tb_condition_report_html <- function(title, group_mds, group_topic, pathways, out_html) {
+  group_json <- .m3tb_json_for_html(group_mds)
+  topic_json <- .m3tb_json_for_html(group_topic)
+  pathway_json <- .m3tb_json_for_html(pathways)
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    paste0("<title>", .m3tb_html_escape(title), "</title>"),
+    "<style>body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:78px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 16px;box-sizing:border-box}h1{font-size:19px;margin:0}.controls{display:flex;gap:9px;align-items:center}select,button{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:6px 8px}button{background:#111;color:#fff}.grid{height:calc(100vh - 78px);display:grid;grid-template-columns:minmax(440px,0.9fr) minmax(620px,1.4fr);gap:12px;padding:12px;box-sizing:border-box}.left{display:grid;grid-template-rows:1fr 1.05fr;gap:12px}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0}.pane h2{font-size:20px;margin:8px 10px}.body{flex:1;min-height:0}.note{font-size:11px;color:#555;border-top:1px solid #e5e5df;padding:7px 10px}svg{width:100%;height:100%;display:block}.label{font-size:13px;font-weight:700}.small{font-size:11px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}@media(max-width:1100px){body{overflow:auto}.grid{height:auto;grid-template-columns:1fr}.pane{height:560px}}</style>",
+    "</head><body><div class=\"top\"><div>",
+    paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
+    "<div class=\"small\">MDS uses condition/comparison mean document-to-topic probability profiles.</div></div>",
+    "<div class=\"controls\"><label>Condition/comparison <select id=\"groupSelect\"></select></label><label>Topic <select id=\"topicSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
+    "<main class=\"grid\"><div class=\"left\"><section class=\"pane\"><h2>Condition/Comparison MDS</h2><div class=\"body\"><svg id=\"mdsSvg\" viewBox=\"0 0 900 560\"></svg></div><div class=\"note\">Dots are embedded by Jensen-Shannon distance.</div></section><section class=\"pane\"><h2>Topic Waterfall</h2><div class=\"body\"><svg id=\"waterfallSvg\" viewBox=\"0 0 900 620\"></svg></div><div class=\"note\">Topics are ranked for the selected condition/comparison.</div></section></div><section class=\"pane\"><h2>Pathways</h2><div class=\"body\"><svg id=\"pathSvg\" viewBox=\"0 0 1300 880\"></svg></div><div class=\"note\">Pathways are filtered and ranked for the selected topic and group when available.</div></section></main>",
+    "<script>",
+    paste0("const GROUPS=", group_json, ";"),
+    paste0("const GROUP_TOPIC=", topic_json, ";"),
+    paste0("const PATHWAYS=", pathway_json, ";"),
+    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#9C755F','#BAB0AC','#1F77B4'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),mdsSvg=document.getElementById('mdsSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg');function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function color(i){return PAL[i%PAL.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
+    "function init(){GROUPS.forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});groupSelect.addEventListener('change',()=>{fillTopics();draw()});topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',()=>{const b=new Blob([document.documentElement.outerHTML],{type:'text/html'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=document.title.replace(/[^A-Za-z0-9_.-]+/g,'_')+'.html';a.click();URL.revokeObjectURL(a.href)});fillTopics();draw()}",
+    "function fillTopics(){const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean));topicSelect.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic)+' ('+(+d.theta_mean||0).toFixed(3)+')';topicSelect.appendChild(o)})}",
+    "function drawMds(){mdsSvg.replaceChildren();const w=900,h=560,p=90,sx=sc(GROUPS.map(d=>+d.MDS1),p,w-p),sy=sc(GROUPS.map(d=>+d.MDS2),h-p,p),sel=groupSelect.value,dense=GROUPS.length>10;GROUPS.forEach((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),isSel=d.comparison_label===sel,c=el('circle',{cx:x,cy:y,r:isSel?20:15,fill:d.color||color(i),opacity:.84,stroke:isSel?'#111':'#fff','stroke-width':isSel?5:2});const ttl=el('title',{});ttl.textContent=d.display_label||d.comparison_label;c.appendChild(ttl);c.onclick=()=>{groupSelect.value=d.comparison_label;fillTopics();draw()};mdsSvg.appendChild(c);if(isSel||!dense){const t=el('text',{x:x+8,y:y-8,class:'label'});t.textContent=String(d.mds_label||d.display_label||d.comparison_label).slice(0,24);mdsSvg.appendChild(t)}})}",
+    "function drawWaterfall(){waterfallSvg.replaceChildren();const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)),w=900,h=620,left=190,right=45,top=45,rowH=Math.min(30,(h-top-40)/Math.max(1,rows.length)),mx=Math.max(...GROUP_TOPIC.map(d=>+d.theta_mean||0),0.001),sel=topicSelect.value;rows.forEach((d,i)=>{const y=top+i*rowH,bw=(+d.theta_mean||0)/mx*(w-left-right);const lab=el('text',{x:left-10,y:y+rowH*.68,'text-anchor':'end',class:'label'});lab.textContent='Topic '+topicNum(d.topic);waterfallSvg.appendChild(lab);waterfallSvg.appendChild(el('rect',{x:left,y:y+4,width:Math.max(2,bw),height:Math.max(8,rowH-9),fill:color(topicNum(d.topic)),opacity:d.topic===sel?.96:.65,stroke:d.topic===sel?'#111':'none','stroke-width':d.topic===sel?3:0}));const val=el('text',{x:left+bw+6,y:y+rowH*.68,class:'small'});val.textContent=(+d.theta_mean||0).toFixed(3);waterfallSvg.appendChild(val)})}",
+    "function drawPathways(){pathSvg.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value;let rows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!d.comparison_label||d.comparison_label===grp));if(!rows.length)rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn);rows=rows.sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,30);const w=1300,h=880,left=610,right=45,top=70,rowH=Math.min(24,(h-top-55)/Math.max(1,rows.length)),mx=Math.max(...rows.map(d=>Math.max(+d.gene_total||0,(+d.gene_in||0)+(+d.gene_out||0))),1);if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathSvg.appendChild(t);return}rows.forEach((d,i)=>{const y=top+i*rowH,gi=+d.gene_in||0,go=+d.gene_out||0,wi=gi/mx*(w-left-right),wo=go/mx*(w-left-right);const lab=el('text',{x:left-12,y:y+rowH*.65,'text-anchor':'end',class:'label'});lab.textContent=String(d.pathway||'').slice(0,70);pathSvg.appendChild(lab);pathSvg.appendChild(el('rect',{x:left,y:y+4,width:Math.max(gi?2:0,wi),height:Math.max(6,rowH-8),class:'barIn'}));pathSvg.appendChild(el('rect',{x:left+wi,y:y+4,width:Math.max(go?2:0,wo),height:Math.max(6,rowH-8),class:'barOut'}))})}",
+    "function draw(){drawMds();drawWaterfall();drawPathways()}init();",
+    "</script></body></html>"
+  )
+  dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
+  writeLines(html, out_html, useBytes = TRUE)
+  out_html
+}
+
+.m3tb_write_review_pngs <- function(score_result, out_dir) {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  mds <- data.table::as.data.table(score_result$mds_points)
+  scores <- data.table::as.data.table(score_result$scores)
+  if (!nrow(mds)) return(data.table::data.table())
+  k_values <- sort(unique(as.integer(mds$k)))
+  rows <- lapply(k_values, function(k_value) {
+    left <- file.path(out_dir, sprintf("theta_phi_topic_distance_correlation_k%d.png", k_value))
+    right <- file.path(out_dir, sprintf("theta_group_mds_k%d.png", k_value))
+    grDevices::png(left, width = 1000, height = 1000, res = 140, bg = "white")
+    graphics::plot.new()
+    graphics::title(sprintf("K%d theta score summary", k_value))
+    sub <- scores[as.integer(k) == as.integer(k_value)]
+    if (nrow(sub)) {
+      graphics::barplot(sub$theta_condition_separation_score, names.arg = sub$method_setup, las = 2, col = "#4E79A7", ylab = "Separation score")
+    } else {
+      graphics::text(0.5, 0.5, "No score rows")
+    }
+    grDevices::dev.off()
+    grDevices::png(right, width = 1800, height = 1100, res = 150, bg = "white")
+    sub_mds <- mds[as.integer(k) == as.integer(k_value)]
+    if (nrow(sub_mds)) {
+      graphics::plot(sub_mds$MDS1, sub_mds$MDS2, pch = 19, col = sub_mds$color, xlab = "MDS1", ylab = "MDS2", main = sprintf("K%d condition/comparison MDS from theta", k_value))
+      if (nrow(sub_mds) <= 10L) {
+        graphics::text(sub_mds$MDS1, sub_mds$MDS2, labels = .m3tb_short_label(sub_mds$display_label, 12L), pos = 3, cex = 0.7, col = sub_mds$color)
+      }
+    } else {
+      graphics::plot.new()
+      graphics::text(0.5, 0.5, "No MDS rows")
+    }
+    grDevices::dev.off()
+    data.table::data.table(k = k_value, left_src = file.path("assets", basename(left)), right_src = file.path("assets", basename(right)))
+  })
+  data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+}
+
+.m3tb_write_theta_review_html <- function(score_result, out_file, image_manifest) {
+  manifest_json <- .m3tb_json_for_html(image_manifest)
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"/><title>Combined theta review</title>",
+    "<style>body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;overflow:hidden;font-weight:700}.top{height:48px;box-sizing:border-box;background:#fff;border-bottom:1px solid #d6d6d0;padding:5px 10px;display:flex;justify-content:space-between;gap:12px;align-items:center}h1{font-size:15px;line-height:1.1;margin:0}.controls{display:flex;gap:8px;align-items:center;font-size:13px;min-width:min(52vw,760px)}input[type=range]{width:100%;accent-color:#1f78b4}.dashboard{height:calc(100vh - 48px);display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,3.4fr);gap:6px;padding:6px;box-sizing:border-box}.pane{min-width:0;min-height:0;background:#fff;border:1px solid #d6d6d0;overflow:hidden;display:flex;align-items:center;justify-content:center}.plotImg{width:100%;height:100%;display:block;background:#fff;object-fit:contain}.rightPlot{object-fit:fill}@media(max-width:1200px){body{overflow:auto}.dashboard{height:auto;grid-template-columns:1fr}.pane{height:760px}}</style></head><body>",
+    "<div class=\"top\"><div><h1>Combined theta review</h1><div id=\"plotMeta\" style=\"font-size:10px;color:#555\"></div></div><label class=\"controls\">K <input id=\"kSlider\" type=\"range\" min=\"0\" max=\"0\" step=\"1\" value=\"0\"/></label></div>",
+    "<main class=\"dashboard\"><section class=\"pane\"><img id=\"correlationImg\" class=\"plotImg\" alt=\"Theta score summary\"/></section><section class=\"pane\"><img id=\"groupMdsImg\" class=\"plotImg rightPlot\" alt=\"Condition and comparison MDS from theta\"/></section></main>",
+    "<script>",
+    paste0("const IMAGE_MANIFEST=", manifest_json, ";"),
+    "const slider=document.getElementById('kSlider'),meta=document.getElementById('plotMeta'),left=document.getElementById('correlationImg'),right=document.getElementById('groupMdsImg');slider.max=Math.max(0,IMAGE_MANIFEST.length-1);function render(){const i=Math.max(0,Math.min(IMAGE_MANIFEST.length-1,Number(slider.value)||0));const item=IMAGE_MANIFEST[i]||{};left.src=item.left_src||'';right.src=item.right_src||'';meta.textContent=item.k?'Showing K'+item.k+'; both panels are R-rendered PNGs using the same source tables.':'No review images available.'}slider.addEventListener('input',render);render();",
+    "</script></body></html>"
+  )
+  writeLines(html, out_file, useBytes = TRUE)
+  out_file
+}
+
+.m3tb_write_combined_report_index <- function(out_file, reports, title) {
+  reports <- data.table::as.data.table(reports)
+  if (!nrow(reports)) return(NA_character_)
+  reports[, html := vapply(path, function(x) paste(readLines(x, warn = FALSE), collapse = "\n"), character(1L))]
+  json <- .m3tb_json_for_html(reports[, .(label, k, html)])
+  html <- c(
+    "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    paste0("<title>", .m3tb_html_escape(title), "</title>"),
+    "<style>body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;overflow:hidden}.top{height:50px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:8px 14px;border-bottom:1px solid #d6d6d0;background:#fff;box-sizing:border-box}h1{font-size:20px;line-height:1;margin:0;font-weight:700}.controls{display:flex;gap:10px;align-items:center;font-weight:700}select{font:700 13px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:6px 8px}iframe{display:block;width:100vw;height:calc(100vh - 50px);border:0;background:#fff}</style></head><body>",
+    "<div class=\"top\">",
+    paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
+    "<div class=\"controls\"><label>K <select id=\"kSelect\"></select></label><label>Report <select id=\"reportSelect\"></select></label></div></div><iframe id=\"frame\"></iframe>",
+    "<script>",
+    paste0("const REPORTS=", json, ";"),
+    "const kSelect=document.getElementById('kSelect'),reportSelect=document.getElementById('reportSelect'),frame=document.getElementById('frame');function uniq(x){return Array.from(new Set(x))}function fill(){const curK=kSelect.value;kSelect.replaceChildren();uniq(REPORTS.map(r=>String(r.k))).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;kSelect.appendChild(o)});if(curK)kSelect.value=curK;const rows=REPORTS.filter(r=>!kSelect.value||String(r.k)===kSelect.value);reportSelect.replaceChildren();rows.forEach((r,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=r.label;reportSelect.appendChild(o)});load()}function load(){const rows=REPORTS.filter(r=>!kSelect.value||String(r.k)===kSelect.value);const hit=rows[Number(reportSelect.value)||0]||rows[0]||REPORTS[0];if(hit)frame.srcdoc=hit.html||''}kSelect.addEventListener('change',fill);reportSelect.addEventListener('change',load);fill();",
+    "</script></body></html>"
+  )
+  writeLines(html, out_file, useBytes = TRUE)
+  out_file
+}
+
 .m3tb_write_review_html <- function(output_dir, score_result, link_summary, review_dir = NULL) {
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
-  html_dir <- file.path(review_dir, "html")
+  html_dir <- .m3tb_review_html_dir(review_dir)
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
-  matrix_html <- paste(utils::capture.output(print(score_result$matrix)), collapse = "\n")
-  pass_html <- paste(utils::capture.output(print(utils::head(link_summary$pass, 20L))), collapse = "\n")
-  shared_html <- paste(utils::capture.output(print(utils::head(link_summary$shared, 20L))), collapse = "\n")
-  base_doc <- function(title, body) {
-    c(
-      "<!doctype html>",
-      "<html><head><meta charset=\"utf-8\">",
-      paste0("<title>", .m3tb_html_escape(title), "</title>"),
-      "<style>body{font-family:Arial,sans-serif;margin:28px;color:#1f2933}h1{font-size:24px}pre{background:#f6f8fa;padding:14px;border:1px solid #d0d7de;overflow:auto}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}</style>",
-      "</head><body>",
-      paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
-      body,
-      "</body></html>"
-    )
+  asset_dir <- .m3tb_plot_dir(review_dir)
+  image_manifest <- .m3tb_write_review_pngs(score_result, asset_dir)
+  model_rows <- attr(score_result, "model_rows")
+  topic_reports <- data.table::data.table()
+  condition_reports <- data.table::data.table()
+  if (is.data.frame(model_rows) && nrow(model_rows)) {
+    topic_rows <- lapply(seq_len(nrow(model_rows)), function(i) {
+      row <- model_rows[i]
+      theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", as.integer(row$selected_k[[1L]])))
+      phi_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("phi_K%d.csv", as.integer(row$selected_k[[1L]])))
+      if (!file.exists(theta_file) || !file.exists(phi_file)) return(NULL)
+      theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
+      phi <- .m3tb_read_probability_csv(phi_file, "term_id")
+      topic_mds <- .m3tb_topic_mds_from_phi(phi, theta)
+      waterfall <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
+      extraction_dir <- .m3tb_find_extraction_subdir(row)
+      pathways <- .m3tb_read_pathway_tables(extraction_dir, per_group = FALSE)
+      label <- sprintf("%s | K%d", row$method_setup[[1L]], as.integer(row$selected_k[[1L]]))
+      out <- file.path(html_dir, sprintf("topic_report_K%d.html", as.integer(row$selected_k[[1L]])))
+      .m3tb_topic_report_html(label, topic_mds, waterfall, pathways, out)
+      data.table::data.table(label = label, k = as.integer(row$selected_k[[1L]]), path = out)
+    })
+    topic_reports <- data.table::rbindlist(topic_rows, use.names = TRUE, fill = TRUE)
+    condition_rows <- lapply(seq_len(nrow(model_rows)), function(i) {
+      row <- model_rows[i]
+      k <- as.integer(row$selected_k[[1L]])
+      group_mds <- data.table::as.data.table(score_result$mds_points)[as.integer(k) == as.integer(row$selected_k[[1L]]) & method_setup == row$method_setup[[1L]]]
+      if (!nrow(group_mds)) return(NULL)
+      group_mds[, mds_label := .m3tb_short_label(display_label, 18L)]
+      theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", k))
+      if (!file.exists(theta_file)) return(NULL)
+      theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
+      group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
+      extraction_dir <- .m3tb_find_extraction_subdir(row)
+      pathways <- .m3tb_read_pathway_tables(extraction_dir, per_group = TRUE)
+      label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
+      out <- file.path(html_dir, sprintf("condition_topic_report_K%d.html", k))
+      .m3tb_condition_report_html(label, group_mds, group_topic, pathways, out)
+      data.table::data.table(label = label, k = k, path = out)
+    })
+    condition_reports <- data.table::rbindlist(condition_rows, use.names = TRUE, fill = TRUE)
   }
-  theta_body <- paste0(
-    "<p>Condition separation scores are computed from Jensen-Shannon distances between mean theta profiles.</p>",
-    "<div class=\"grid\"><section><h2>Score matrix</h2><pre>", .m3tb_html_escape(matrix_html), "</pre></section>",
-    "<section><h2>Topic-link pass states</h2><pre>", .m3tb_html_escape(pass_html), "</pre></section></div>"
-  )
-  method_body <- paste0(
-    "<p>Topic method and K report for completed model outputs.</p>",
-    "<div class=\"grid\"><section><h2>Pass states</h2><pre>", .m3tb_html_escape(pass_html), "</pre></section>",
-    "<section><h2>Shared topic counts</h2><pre>", .m3tb_html_escape(shared_html), "</pre></section></div>"
-  )
   files <- c(
     theta_phi = file.path(html_dir, "theta_phi_and_group_mds.html"),
     method = file.path(html_dir, "topic_method_k_topic_mds_report.html"),
-    method_global = file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html")
+    condition = file.path(html_dir, "topic_method_k_condition_mds_report.html"),
+    method_global = file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html"),
+    condition_global = file.path(html_dir, "topic_method_k_condition_mds_report_global_term_group.html")
   )
-  writeLines(base_doc("Theta, phi, and group MDS review", theta_body), files[["theta_phi"]], useBytes = TRUE)
-  writeLines(base_doc("Topic method K report", method_body), files[["method"]], useBytes = TRUE)
-  writeLines(base_doc("Topic method K report - global term group", method_body), files[["method_global"]], useBytes = TRUE)
+  .m3tb_write_theta_review_html(score_result, files[["theta_phi"]], image_manifest)
+  .m3tb_write_combined_report_index(files[["method"]], topic_reports, "Topic Method/K Reports")
+  .m3tb_write_combined_report_index(files[["condition"]], condition_reports, "Topic Method/K Condition Reports")
+  .m3tb_write_combined_report_index(files[["method_global"]], topic_reports, "Topic Method/K Reports - global term group")
+  .m3tb_write_combined_report_index(files[["condition_global"]], condition_reports, "Topic Method/K Condition Reports - global term group")
   files
 }
 
@@ -1087,7 +1528,10 @@ run_module3_topic_benchmark <- function(filtered_dir,
   )
   method_plan <- .m3tb_apply_output_layout(method_plan, output_dir, output_layout)
   review_dir <- .m3tb_review_dir(output_dir, output_layout)
-  csv_dir <- file.path(review_dir, "csv")
+  if (!identical(output_layout, "legacy")) {
+    .m3tb_clean_stale_review_layout(review_dir)
+  }
+  csv_dir <- .m3tb_review_tables_dir(review_dir)
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
   data.table::fwrite(method_plan, file.path(csv_dir, "module3_topic_method_plan.csv"))
   if (identical(output_layout, "benchmark")) {
@@ -1137,6 +1581,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         local_threads = local_threads,
         warplda_iterations = warplda_iterations,
         save_full_doc_term_csv = FALSE,
+        flat_output = identical(output_layout, "standard"),
         topic_report_args = list()
       )
     }
@@ -1171,7 +1616,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
           vae_variant = row$vae_variant[[1L]],
           doc_mode = "tf",
           weight_label = row$weight_label[[1L]],
-          flatten_single_output = FALSE,
+          flatten_single_output = identical(output_layout, "standard"),
           topic_report_args = modifyList(
             list(
               fp_term_mode = row$fp_mode[[1L]],
@@ -1211,6 +1656,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
       multiomic_data = multiomic_data,
       review_dir = review_dir
     )
+    attr(score_result, "model_rows") <- model_rows
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
   }
@@ -1469,8 +1915,7 @@ build_module3_qc_report <- function(topic_dir,
   .assert_pkg("data.table")
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   report_path <- file.path(output_dir, "module3_qc_report.html")
-  review_csv <- file.path(topic_dir, "review", "csv")
-  if (!dir.exists(review_csv)) review_csv <- file.path(topic_dir, "review_topic_experiments", "csv")
+  review_csv <- .m3tb_review_read_dir(topic_dir)
   read_optional <- function(path) {
     if (file.exists(path)) data.table::fread(path, showProgress = FALSE) else data.table::data.table()
   }

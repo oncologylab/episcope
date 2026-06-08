@@ -7936,6 +7936,9 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
 #' @param save_full_doc_term_csv Whether to save the full document-term CSV.
+#' @param flat_output Whether to write one setup directly under `output_dir`
+#'   instead of adding a long analysis-specific subdirectory. This is intended
+#'   for standard package runs; benchmarks keep the nested layout.
 #' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses all available cores. Set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to cap automatic thread use.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #' @param binarize_method Topic binarization method.
@@ -7978,6 +7981,7 @@ train_topic_models <- function(Kgrid,
                                warplda_beta = NULL,
                                reuse_if_exists = TRUE,
                                save_full_doc_term_csv = FALSE,
+                               flat_output = FALSE,
                                local_threads = NULL,
                                check_repeated_values = TRUE,
                                binarize_method = "gammafit",
@@ -8156,10 +8160,14 @@ train_topic_models <- function(Kgrid,
     ), topic_report_args)
 
     model_name <- if (backend == "vae") vae_variant else "warplda"
-    out_dir <- file.path(
-      output_dir,
-      paste0(analysis_id, "_vae_joint_", doc_tag, "_docs_", weight_label, "_", model_name, "_Kgrid")
-    )
+    out_dir <- if (isTRUE(flat_output)) {
+      output_dir
+    } else {
+      file.path(
+        output_dir,
+        paste0(analysis_id, "_vae_joint_", doc_tag, "_docs_", weight_label, "_", model_name, "_Kgrid")
+      )
+    }
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     topic_input_summary <- data.table::data.table(
       analysis_label = analysis_id,
@@ -8375,12 +8383,16 @@ extract_regulatory_topics <- function(k,
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
   out_dirs <- list.dirs(model_dir, recursive = FALSE, full.names = TRUE)
+  if (dir.exists(file.path(model_dir, "vae_models"))) {
+    out_dirs <- c(model_dir, out_dirs)
+  }
   if (backend == "vae") {
     patt <- paste0("_vae_joint_", doc_tag, "_docs_", weight_label, "_", vae_variant, "_")
-    out_dirs <- out_dirs[grepl(patt, basename(out_dirs))]
+    out_dirs <- out_dirs[out_dirs == model_dir | grepl(patt, basename(out_dirs))]
   } else {
-    out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_", weight_label, "_warplda_"), basename(out_dirs))]
+    out_dirs <- out_dirs[out_dirs == model_dir | grepl(paste0("_vae_joint_", doc_tag, "_docs_", weight_label, "_warplda_"), basename(out_dirs))]
   }
+  out_dirs <- unique(out_dirs)
   if (!length(out_dirs)) .log_abort("No trained topic model directories found in {model_dir}")
   flatten_single_output <- isTRUE(flatten_single_output) && length(out_dirs) == 1L
 

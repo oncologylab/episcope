@@ -8,7 +8,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   )
   expect_equal(plan$method_setup, "cond fp aggr weight | LDA")
 
-  model_dir <- file.path(root, "topic_models", "lda", "fixture_model")
+  model_dir <- file.path(root, "topic_models", "lda")
   vae_dir <- file.path(model_dir, "vae_models")
   dir.create(vae_dir, recursive = TRUE)
 
@@ -18,9 +18,10 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     Topic2 = c(0.10, 0.18, 0.88, 0.82)
   )
   phi <- data.table::data.table(
-    term_id = c("GENE:G1", "GENE:G2", "PEAK:P1"),
-    Topic1 = c(0.7, 0.2, 0.1),
-    Topic2 = c(0.1, 0.7, 0.2)
+    term_id = c("Topic1", "Topic2"),
+    `GENE:G1` = c(0.7, 0.1),
+    `GENE:G2` = c(0.2, 0.7),
+    `PEAK:P1` = c(0.1, 0.2)
   )
   data.table::fwrite(theta, file.path(vae_dir, "theta_K2.csv"))
   data.table::fwrite(phi, file.path(vae_dir, "phi_K2.csv"))
@@ -31,15 +32,17 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     Topic2 = Topic2 - Topic3 / 2
   )]
   phi3 <- data.table::copy(phi)
-  phi3[, Topic3 := c(0.2, 0.2, 0.6)]
+  phi3 <- data.table::rbindlist(list(
+    phi3,
+    data.table::data.table(term_id = "Topic3", `GENE:G1` = 0.2, `GENE:G2` = 0.2, `PEAK:P1` = 0.6)
+  ), use.names = TRUE)
   data.table::fwrite(theta3, file.path(vae_dir, "theta_K3.csv"))
   data.table::fwrite(phi3, file.path(vae_dir, "phi_K3.csv"))
 
   extraction_dir <- file.path(
     root,
     "topic_extraction",
-    "K2",
-    "condition_aggr_weight_lda"
+    "K2"
   )
   dir.create(extraction_dir, recursive = TRUE)
   topic_links <- data.table::data.table(
@@ -75,19 +78,33 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     verbose = FALSE
   )
 
-  csv_dir <- file.path(root, "review", "csv")
-  html_dir <- file.path(root, "review", "html")
+  csv_dir <- file.path(root, "review", "tables")
+  html_dir <- file.path(root, "review")
 
   expect_s3_class(res$method_plan, "data.table")
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_long.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_pass_state_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_shared_topic_counts.csv")))
+  expect_true(file.exists(file.path(csv_dir, "theta_group_mds_points.csv")))
   expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_pass_state_counts.pdf")))
   expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_shared_topic_counts.pdf")))
   expect_true(file.exists(file.path(html_dir, "theta_phi_and_group_mds.html")))
   expect_true(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report.html")))
+  expect_true(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report.html")))
   expect_true(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html")))
+  expect_true(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report_global_term_group.html")))
+
+  topic_html <- paste(readLines(file.path(html_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
+  condition_html <- paste(readLines(file.path(html_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
+  theta_html <- paste(readLines(file.path(html_dir, "theta_phi_and_group_mds.html"), warn = FALSE), collapse = "\n")
+  expect_match(topic_html, "Intertopic Distance Map", fixed = TRUE)
+  expect_match(topic_html, "Condition Waterfall", fixed = TRUE)
+  expect_match(topic_html, "Pathways", fixed = TRUE)
+  expect_match(topic_html, "Export SVG", fixed = TRUE)
+  expect_match(condition_html, "Condition/Comparison MDS", fixed = TRUE)
+  expect_match(condition_html, "Topic Waterfall", fixed = TRUE)
+  expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
 
   score_mat <- data.table::fread(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
   expect_equal(score_mat$method_setup, "cond fp aggr weight | LDA")
@@ -299,7 +316,7 @@ test_that("Module 3 topic benchmark scores replicate-resolved condition and comp
     verbose = FALSE
   )
 
-  csv_dir <- file.path(root, "review", "csv")
+  csv_dir <- file.path(root, "review", "tables")
   expect_true(file.exists(file.path(csv_dir, "theta_condition_replicate_separation_score_heatmap_values_matrix.csv")))
   expect_false(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
   expect_equal(res$score$score_prefix, "theta_condition_replicate_separation")
@@ -432,10 +449,10 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
   root <- tempfile("module3-qc-")
-  dir.create(file.path(root, "review", "csv"), recursive = TRUE)
+  dir.create(file.path(root, "review", "tables"), recursive = TRUE)
   data.table::fwrite(
     data.table::data.table(method = "condition_aggr_weight_lda", method_setup = "cond fp aggr weight | LDA"),
-    file.path(root, "review", "csv", "module3_topic_method_plan.csv")
+    file.path(root, "review", "tables", "module3_topic_method_plan.csv")
   )
   report <- build_module3_qc_report(root, verbose = FALSE)
   expect_true(file.exists(report))
