@@ -190,11 +190,15 @@
   idx <- match(as.character(genes), de_dt$gene_key)
   ok <- !is.na(idx)
   if (any(ok)) {
+    pvalue <- if ("pvalue_rna" %in% names(de_dt)) de_dt$pvalue_rna else rep(NA_real_, nrow(de_dt))
+    padj <- if ("padj_rna" %in% names(de_dt)) de_dt$padj_rna else rep(NA_real_, nrow(de_dt))
+    source <- if ("de_source" %in% names(de_dt)) de_dt$de_source else rep("external", nrow(de_dt))
+    test_id <- if ("de_test_id" %in% names(de_dt)) de_dt$de_test_id else rep(NA_character_, nrow(de_dt))
     out$log2fc[ok] <- de_dt$log2fc_rna[idx[ok]]
-    out$pvalue[ok] <- de_dt$pvalue_rna[idx[ok]]
-    out$padj[ok] <- de_dt$padj_rna[idx[ok]]
-    out$source[ok] <- de_dt$de_source[idx[ok]]
-    out$test_id[ok] <- de_dt$de_test_id[idx[ok]]
+    out$pvalue[ok] <- pvalue[idx[ok]]
+    out$padj[ok] <- padj[idx[ok]]
+    out$source[ok] <- source[idx[ok]]
+    out$test_id[ok] <- test_id[idx[ok]]
   }
   out
 }
@@ -462,9 +466,17 @@
   }
   if (!"cond1_display" %in% names(compar)) data.table::set(compar, j = "cond1_display", value = compar[["cond1_id"]])
   if (!"cond2_display" %in% names(compar)) data.table::set(compar, j = "cond2_display", value = compar[["cond2_id"]])
+  if (!"comparison_display" %in% names(compar)) {
+    data.table::set(
+      compar,
+      j = "comparison_display",
+      value = paste(compar[["cond1_display"]], compar[["cond2_display"]], sep = " vs ")
+    )
+  }
   if (!"comparison_group" %in% names(compar)) data.table::set(compar, j = "comparison_group", value = NA_character_)
   unique(data.table::data.table(
     comparison_id = compar[["comparison_id"]],
+    comparison_label = as.character(compar[["comparison_display"]]),
     comparison_group = as.character(compar[["comparison_group"]]),
     cond1_id = compar[["cond1_id"]],
     cond2_id = compar[["cond2_id"]],
@@ -584,6 +596,7 @@ module3_prepare_differential_links <- function(module2,
       cond1_matrix_id = cond1_matrix_id,
       cond2_matrix_id = cond2_matrix_id,
       stem = stem,
+      comparison_label = specs$comparison_label[[i]],
       comparison_group = specs$comparison_group[[i]],
       up_path = up_path,
       down_path = down_path,
@@ -597,7 +610,7 @@ module3_prepare_differential_links <- function(module2,
     old_row <- if ("comparison_id" %in% names(old_manifest)) old_manifest[comparison_id == info$stem] else data.table::data.table()
     n_up <- if (nrow(old_row) && "n_up" %in% names(old_row)) old_row$n_up[[1L]] else NA_integer_
     n_down <- if (nrow(old_row) && "n_down" %in% names(old_row)) old_row$n_down[[1L]] else NA_integer_
-    res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
+    res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_label = info$comparison_label, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = n_up, n_down = n_down, fp_signal_mode = fp_signal_mode, skipped = TRUE)
   }
 
   qc_rows <- list()
@@ -639,7 +652,7 @@ module3_prepare_differential_links <- function(module2,
         down_dt <- .module3_filter_direction(delta_dt, cfg, "down")
         up_parts[[k]][[j]] <- up_dt
         down_parts[[k]][[j]] <- down_dt
-        qc_parts[[k]][[j]] <- data.table::data.table(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
+        qc_parts[[k]][[j]] <- data.table::data.table(comparison_id = info$stem, comparison_label = info$comparison_label, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, chunk_id = j, n_links = n_links, n_prepared = n_prepared, n_delta = nrow(delta_dt), n_up = nrow(up_dt), n_down = nrow(down_dt))
         rm(delta_dt, up_dt, down_dt)
       }
       rm(prepared)
@@ -652,12 +665,12 @@ module3_prepare_differential_links <- function(module2,
       down <- data.table::rbindlist(down_parts[[k]], use.names = TRUE, fill = TRUE)
       if (nrow(up)) up <- unique(up, by = c("tf", "gene_key", "peak_id"))
       if (nrow(down)) down <- unique(down, by = c("tf", "gene_key", "peak_id"))
-      up[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
-      down[, `:=`(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
+      up[, `:=`(comparison_id = info$stem, comparison_label = info$comparison_label, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
+      down[, `:=`(comparison_id = info$stem, comparison_label = info$comparison_label, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id)]
       data.table::fwrite(up, info$up_path)
       data.table::fwrite(down, info$down_path)
       qc_rows[[length(qc_rows) + 1L]] <- data.table::rbindlist(qc_parts[[k]], use.names = TRUE, fill = TRUE)
-      res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
+      res[[i]] <- tibble::tibble(comparison_id = info$stem, comparison_label = info$comparison_label, comparison_group = info$comparison_group, cond1_id = info$cond1_id, cond2_id = info$cond2_id, cond1_label = info$cond1_label, cond2_label = info$cond2_label, cond1_matrix_id = info$cond1_matrix_id, cond2_matrix_id = info$cond2_matrix_id, up_path = info$up_path, down_path = info$down_path, n_up = nrow(up), n_down = nrow(down), fp_signal_mode = fp_signal_mode, skipped = FALSE)
     }
   }
   manifest <- dplyr::bind_rows(res)
@@ -666,6 +679,7 @@ module3_prepare_differential_links <- function(module2,
   } else {
     data.table::data.table(
       comparison_id = character(),
+      comparison_label = character(),
       comparison_group = character(),
       cond1_id = character(),
       cond2_id = character(),
@@ -682,7 +696,7 @@ module3_prepare_differential_links <- function(module2,
     )
   }
   qc_summary <- if (nrow(qc_chunks)) {
-    by_cols <- c("comparison_id", "comparison_group", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "cond1_matrix_id", "cond2_matrix_id")
+    by_cols <- c("comparison_id", "comparison_label", "comparison_group", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "cond1_matrix_id", "cond2_matrix_id")
     qc_chunks[, .(
       n_chunks = .N,
       n_links = sum(get("n_links")),
@@ -695,6 +709,7 @@ module3_prepare_differential_links <- function(module2,
     manifest_dt <- data.table::as.data.table(manifest)
     data.table::data.table(
       comparison_id = manifest_dt[["comparison_id"]],
+      comparison_label = manifest_dt[["comparison_label"]],
       comparison_group = manifest_dt[["comparison_group"]],
       cond1_id = manifest_dt[["cond1_id"]],
       cond2_id = manifest_dt[["cond2_id"]],

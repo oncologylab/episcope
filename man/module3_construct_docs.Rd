@@ -4,7 +4,7 @@
 \alias{module3_construct_docs}
 \title{Construct input documents for topic modeling}
 \usage{
-module3_construct_docs(filtered_dir, output_dir, tf_cluster_map, ...)
+module3_construct_docs(filtered_dir, output_dir, tf_cluster_map = NULL, ...)
 }
 \arguments{
 \item{filtered_dir}{Directory containing Module 3 filtered differential-link

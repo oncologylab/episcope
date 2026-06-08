@@ -375,7 +375,20 @@ test_that("Module 3 prepares reusable topic input caches", {
     fp_score_cond1 = 10,
     fp_score_cond2 = 10
   )
-  data.table::fwrite(links, file.path(filtered_dir, "Cond1_vs_Cond2_delta_links_filtered_up.csv"))
+  active_path <- file.path(filtered_dir, "Cond1_vs_Cond2_delta_links_filtered_up.csv")
+  stale_path <- file.path(filtered_dir, "Stale_Contrast_delta_links_filtered_up.csv")
+  data.table::fwrite(links, active_path)
+  stale_links <- data.table::copy(links)
+  stale_links[, comparison_id := "Stale_Contrast"]
+  data.table::fwrite(stale_links, stale_path)
+  data.table::fwrite(
+    data.table::data.table(
+      comparison_id = "Cond1_vs_Cond2",
+      up_path = active_path,
+      down_path = NA_character_
+    ),
+    file.path(filtered_dir, "filtered_links_manifest.csv")
+  )
   res <- module3_construct_docs(
     filtered_dir = filtered_dir,
     output_dir = out_dir,
@@ -398,6 +411,7 @@ test_that("Module 3 prepares reusable topic input caches", {
   expect_true(file.exists(file.path(out_dir, "rds", "doc_term.rds")))
   expect_true(file.exists(file.path(out_dir, "rds", "dtm.rds")))
   expect_true(file.exists(file.path(out_dir, "topic_input_summary.csv")))
+  expect_equal(res$summary$n_link_rows_loaded[[1L]], nrow(links))
   expect_gt(res$summary$n_documents[[1L]], 0)
   reused <- module3_construct_docs(
     filtered_dir = filtered_dir,

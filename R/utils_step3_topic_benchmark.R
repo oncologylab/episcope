@@ -1226,7 +1226,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   CSV files.
 #' @param output_dir Directory where topic input caches are written.
-#' @param tf_cluster_map Named vector mapping TF names to motif clusters.
+#' @param tf_cluster_map Optional named vector mapping TF names to motif
+#'   clusters. Required only when `doc_mode = "tf_cluster"`.
 #' @param doc_mode Document mode, either `"tf"` or `"tf_cluster"`.
 #' @param doc_design Document design, either `"condition"` or `"comparison"`.
 #' @param fp_term_mode Footprint term mode: `"aggregate_weight"`,
@@ -1300,7 +1301,19 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
     return(invisible(list(output_dir = output_dir, summary = summary_dt, reused = TRUE)))
   }
-  delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+  manifest_path <- file.path(filtered_dir, "filtered_links_manifest.csv")
+  delta_files <- character()
+  if (file.exists(manifest_path)) {
+    manifest <- data.table::fread(manifest_path, showProgress = FALSE)
+    path_cols <- intersect(c("up_path", "down_path"), names(manifest))
+    if (length(path_cols)) {
+      delta_files <- unique(as.character(unlist(manifest[, path_cols, with = FALSE], use.names = FALSE)))
+      delta_files <- delta_files[!is.na(delta_files) & nzchar(delta_files) & file.exists(delta_files)]
+    }
+  }
+  if (!length(delta_files)) {
+    delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+  }
   if (!length(delta_files)) {
     delta_files <- list.files(filtered_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
   }
@@ -1415,7 +1428,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
 #' @export
 module3_construct_docs <- function(filtered_dir,
                                    output_dir,
-                                   tf_cluster_map,
+                                   tf_cluster_map = NULL,
                                    ...) {
   module3_prepare_topic_inputs(
     filtered_dir = filtered_dir,
