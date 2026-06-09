@@ -17,6 +17,27 @@ test_that("Module 3 report API exposes publication-facing helpers", {
   expect_false("plot_diff_grn_master_tf_summary" %in% exports)
 })
 
+test_that("Module 3 Enrichr helpers default to fast request scheduling", {
+  expect_equal(
+    formals(craftgrn:::plot_topic_pathway_enrichment_heatmap)$enrichr_sleep_time,
+    0
+  )
+  expect_equal(
+    formals(craftgrn:::plot_topic_pathway_enrichment_from_link_scores)$enrichr_sleep_time,
+    0
+  )
+  expect_equal(
+    formals(craftgrn:::run_tfdocs_report_from_topic_base)$pathway_enrichr_sleep_time,
+    0
+  )
+  expect_equal(
+    formals(craftgrn:::run_diff_grn_pathway_enrichment)$enrichr_sleep_time,
+    0
+  )
+  expect_equal(craftgrn:::.normalize_enrichr_sleep_time(-1), 0)
+  expect_equal(craftgrn:::.normalize_enrichr_sleep_time(0.25), 0.25)
+})
+
 test_that("Module 3 QC report writes differential TF summaries", {
   root <- tempfile("module3-qc-topic-")
   diff_dir <- tempfile("module3-qc-diff-")

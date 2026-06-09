@@ -4850,9 +4850,11 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   make_dotplot = TRUE,
                                                   tf_link_mode = c("theta", "none"),
                                                   tf_theta_top_n = 50L,
-                                                  tf_theta_min = NA_real_) {
+                                                  tf_theta_min = NA_real_,
+                                                  enrichr_sleep_time = 0) {
   .assert_pkg("data.table")
   tf_link_mode <- match.arg(tf_link_mode)
+  enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   log_path <- file.path(dirname(out_file), "topic_pathway_enrichment_debug.txt")
   log_msg <- function(msg) {
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
@@ -4950,7 +4952,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
       next
     }
     enr <- tryCatch(
-      .quiet_enrichr_call(enrichR::enrichr(genes, dbs)),
+      .quiet_enrichr_call(enrichR::enrichr(genes, dbs, sleepTime = enrichr_sleep_time)),
       error = function(e) {
         log_msg(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
         NULL
@@ -5195,9 +5197,13 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            split_direction = TRUE,
                                                            make_heatmap = TRUE,
                                                            make_dotplot = TRUE,
+                                                           enrichr_sleep_time = 0,
+                                                           overwrite = FALSE,
                                                            doc_design = c("comparison", "condition")) {
   .assert_pkg("data.table")
   doc_design <- match.arg(doc_design)
+  enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
+  overwrite <- isTRUE(overwrite)
   log_tag <- if (!is.null(file_tag) && nzchar(file_tag)) paste0("_", file_tag) else ""
   log_path <- file.path(out_dir, paste0("topic_pathway_enrichment_links_debug", log_tag, ".txt"))
   log_msg <- function(msg) {
@@ -5274,7 +5280,7 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
       }
       log_fun(sprintf("Topic %s gene count: %d", nm, length(genes)))
       enr <- tryCatch(
-        .quiet_enrichr_call(enrichR::enrichr(genes, dbs)),
+        .quiet_enrichr_call(enrichR::enrichr(genes, dbs, sleepTime = enrichr_sleep_time)),
         error = function(e) {
           log_fun(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
           NULL
@@ -5632,6 +5638,15 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           if (!nrow(sub_dt)) next
           log_msg(sprintf("Per-comparison %s | %s: links=%d", cmp, dir_lab, nrow(sub_dt)))
           log_local <- function(msg) log_msg(sprintf("%s | %s: %s", cmp, dir_lab, msg))
+          prefix <- file.path(cmp_dir, paste0(.safe_filename(cmp), "_", .safe_filename(dir_lab), "_dotplot"))
+          if (!overwrite && isTRUE(make_dotplot)) {
+            have_csv <- file.exists(paste0(prefix, ".csv"))
+            have_pdf <- file.exists(paste0(prefix, ".pdf"))
+            if (isTRUE(have_csv) && isTRUE(have_pdf)) {
+              log_local("Existing dot plot outputs found; skipping.")
+              next
+            }
+          }
           tf_sub <- NULL
           if (!is.null(tf_dt_all) && nrow(tf_dt_all)) {
             if (all(c("comparison_id", "direction_group") %in% names(tf_dt_all))) {
@@ -5679,7 +5694,6 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           data.table::setorder(res_sub, topic)
           plot_title <- paste(cmp, dir_lab, "Pathway enrichment (link scores)", sep = " | ")
           if (isTRUE(make_dotplot)) {
-            prefix <- file.path(cmp_dir, paste0(.safe_filename(cmp), "_", .safe_filename(dir_lab), "_dotplot"))
             .write_dotplot(res_sub, dot_prefix = prefix, plot_title = plot_title, log_fun = log_local)
           } else {
             log_local("Skipping dot plot: make_dotplot = FALSE.")
@@ -6124,6 +6138,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_per_comparison_dir = "per_comparison_pathway",
                                               pathway_per_comparison_flat = FALSE,
                                               pathway_split_direction = TRUE,
+                                              pathway_enrichr_sleep_time = 0,
                                               run_link_topic_scores = FALSE,
                                               fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                               link_topic_gate_mode = "none",
@@ -6163,6 +6178,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   pathway_tf_link_mode <- match.arg(pathway_tf_link_mode)
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
   pathway_source <- match.arg(pathway_source)
+  pathway_enrichr_sleep_time <- .normalize_enrichr_sleep_time(pathway_enrichr_sleep_time)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
@@ -6390,6 +6406,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           split_direction = pathway_split_direction,
           make_heatmap = pathway_make_heatmap,
           make_dotplot = pathway_make_dotplot,
+          enrichr_sleep_time = pathway_enrichr_sleep_time,
+          overwrite = pathway_overwrite,
           doc_design = doc_design
         )
       }
@@ -6408,7 +6426,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         theta = topic_base$theta,
         tf_link_mode = pathway_tf_link_mode,
         tf_theta_top_n = pathway_tf_top_n_docs,
-        tf_theta_min = pathway_tf_min_theta
+        tf_theta_min = pathway_tf_min_theta,
+        enrichr_sleep_time = pathway_enrichr_sleep_time
       )
 
       if (isTRUE(run_pathway_gsea)) {
@@ -6528,6 +6547,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_per_comparison_dir = "per_comparison_pathway",
                                           pathway_per_comparison_flat = FALSE,
                                           pathway_split_direction = TRUE,
+                                          pathway_enrichr_sleep_time = 0,
                                           run_link_topic_scores = FALSE,
                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                           link_topic_gate_mode = "none",
@@ -6560,6 +6580,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
   pathway_tf_link_mode <- match.arg(pathway_tf_link_mode)
   pathway_source <- match.arg(pathway_source)
+  pathway_enrichr_sleep_time <- .normalize_enrichr_sleep_time(pathway_enrichr_sleep_time)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   link_topic_efdr_scope <- match.arg(link_topic_efdr_scope)
   link_topic_method <- match.arg(link_topic_method)
@@ -6956,7 +6977,9 @@ run_tfdocs_warplda_one_option <- function(edges_all,
         per_comparison_dir = paste0(pathway_per_comparison_dir, "_", .pathway_method_suffix(method)),
         per_comparison_flat = pathway_per_comparison_flat,
         split_direction = pathway_split_direction,
-        make_heatmap = pathway_make_heatmap
+        make_heatmap = pathway_make_heatmap,
+        enrichr_sleep_time = pathway_enrichr_sleep_time,
+        overwrite = pathway_overwrite
       )
     }
   } else {
@@ -6973,7 +6996,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       theta = topic_base$theta,
       tf_link_mode = pathway_tf_link_mode,
       tf_theta_top_n = pathway_tf_top_n_docs,
-      tf_theta_min = pathway_tf_min_theta
+      tf_theta_min = pathway_tf_min_theta,
+      enrichr_sleep_time = pathway_enrichr_sleep_time
     )
 
     if (isTRUE(run_pathway_gsea)) {
@@ -7952,10 +7976,12 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
                                                 max_pathways = Inf,
                                                 per_comparison = TRUE,
                                                 split_direction = TRUE,
+                                                enrichr_sleep_time = 0,
                                                 doc_mode = c("tf_cluster", "tf")) {
   out_dirs <- unique(c(topic_root, list.dirs(topic_root, recursive = FALSE, full.names = TRUE)))
   backend <- match.arg(backend)
   doc_mode <- match.arg(doc_mode)
+  enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   if (backend == "vae") {
     out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
@@ -7983,7 +8009,9 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
         make_heatmap = FALSE,
         top_n_per_topic = top_n_per_topic,
         dot_top_n_per_topic = dot_top_n_per_topic,
-        max_pathways = max_pathways
+        max_pathways = max_pathways,
+        enrichr_sleep_time = enrichr_sleep_time,
+        overwrite = FALSE
       )
     }
   }

@@ -31,6 +31,12 @@ NULL
   invisible(TRUE)
 }
 
+.normalize_enrichr_sleep_time <- function(sleep_time = 0) {
+  sleep_time <- suppressWarnings(as.numeric(sleep_time[[1L]]))
+  if (!is.finite(sleep_time) || sleep_time < 0) sleep_time <- 0
+  sleep_time
+}
+
 # Internal Enrichr setup helper (no library(enrichR) needed in package code).
 .ensure_enrichr_ready <- function(site = "Enrichr", verbose = TRUE, log_fun = NULL) {
   if (!requireNamespace("enrichR", quietly = TRUE)) {
