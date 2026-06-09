@@ -473,10 +473,16 @@
       value = paste(compar[["cond1_display"]], compar[["cond2_display"]], sep = " vs ")
     )
   }
+  label_out <- as.character(compar[["comparison_display"]])
+  if ("comparison_label" %in% names(compar)) {
+    explicit_label <- as.character(compar[["comparison_label"]])
+    has_explicit_label <- !is.na(explicit_label) & nzchar(trimws(explicit_label))
+    label_out[has_explicit_label] <- explicit_label[has_explicit_label]
+  }
   if (!"comparison_group" %in% names(compar)) data.table::set(compar, j = "comparison_group", value = NA_character_)
   unique(data.table::data.table(
     comparison_id = compar[["comparison_id"]],
-    comparison_label = as.character(compar[["comparison_display"]]),
+    comparison_label = label_out,
     comparison_group = as.character(compar[["comparison_group"]]),
     cond1_id = compar[["cond1_id"]],
     cond2_id = compar[["cond2_id"]],

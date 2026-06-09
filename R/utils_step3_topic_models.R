@@ -371,6 +371,39 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
   data.table::rbindlist(lst, use.names = TRUE, fill = TRUE)
 }
 
+.apply_module3_manifest_labels <- function(edges_dt, filtered_dir) {
+  .assert_pkg("data.table")
+  dt <- data.table::as.data.table(edges_dt)
+  manifest <- file.path(as.character(filtered_dir)[[1L]], "filtered_links_manifest.csv")
+  if (!file.exists(manifest) || !"comparison_id" %in% names(dt)) {
+    return(dt[])
+  }
+  man <- data.table::fread(manifest, showProgress = FALSE)
+  if (!all(c("comparison_id", "comparison_label") %in% names(man))) {
+    return(dt[])
+  }
+  label_map <- unique(man[
+    !is.na(comparison_id) & nzchar(as.character(comparison_id)) &
+      !is.na(comparison_label) & nzchar(trimws(as.character(comparison_label))),
+    .(
+      comparison_id = as.character(comparison_id),
+      comparison_label_manifest = as.character(comparison_label)
+    )
+  ])
+  if (!nrow(label_map)) {
+    return(dt[])
+  }
+  dt[, comparison_id := as.character(comparison_id)]
+  dt <- merge(dt, label_map, by = "comparison_id", all.x = TRUE, sort = FALSE)
+  if (!"comparison_label" %in% names(dt)) {
+    dt[, comparison_label := comparison_id]
+  }
+  use_manifest <- !is.na(dt$comparison_label_manifest) & nzchar(trimws(dt$comparison_label_manifest))
+  dt[use_manifest, comparison_label := comparison_label_manifest]
+  dt[, comparison_label_manifest := NULL]
+  dt[]
+}
+
 .module3_filtered_link_files <- function(path) {
   .assert_pkg("data.table")
   path <- as.character(path)
@@ -8125,6 +8158,7 @@ train_topic_models <- function(Kgrid,
   .log_inform("Loading {length(delta_files)} delta-link file(s) from {input_dir}.")
   edges_all <- load_delta_links_many(delta_files, keep_original = FALSE)
   edges_dt <- data.table::as.data.table(edges_all)
+  edges_dt <- .apply_module3_manifest_labels(edges_dt, input_dir)
   .log_inform("Loaded {nrow(edges_dt)} delta-link row(s).")
   if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
 

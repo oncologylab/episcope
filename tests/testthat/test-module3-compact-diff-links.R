@@ -197,6 +197,21 @@ test_that("compact Module 3 bridge writes topic-compatible filtered links", {
   expect_equal(res_new$n_down[[1]], res$n_down[[1]])
 })
 
+test_that("compact Module 3 bridge prefers explicit comparison_label metadata", {
+  compar <- data.frame(
+    comparison_id = "Fib_BIRT_vs_BI",
+    comparison_label = "Fib BIRT vs BI",
+    comparison_display = "Fibroblast Dox72h BATF IRF4 RUNX3 Tbet vs Fibroblast Dox72h BATF IRF4",
+    cond1_label = "Cond1",
+    cond2_label = "Cond2"
+  )
+
+  out <- craftgrn:::.module3_comparison_specs(compar, list())
+
+  expect_equal(out$comparison_id[[1]], "Fib_BIRT_vs_BI")
+  expect_equal(out$comparison_label[[1]], "Fib BIRT vs BI")
+})
+
 test_that("Module 3 default differential-link output is shallow standard layout", {
   out <- .module3_default_output_dir(list(base_dir = "/project", module2_run_label = "m1R0p3_100kb"))
   expect_equal(out, file.path("/project", "regulatory_topics", "differential_links"))

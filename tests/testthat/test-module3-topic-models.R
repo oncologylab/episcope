@@ -251,6 +251,28 @@ test_that("topic comparison heatmap labels prefer comparison metadata labels", {
   expect_equal(out$comparison_id, c("Fib_BIRT_vs_BI", "Fib_BIRT_vs_BI"))
 })
 
+test_that("Module 3 edge loading applies readable labels from manifest", {
+  tmp <- withr::local_tempdir()
+  edges <- data.table::data.table(
+    comparison_id = "Fib_BIRT_vs_BI",
+    comparison_label = "Fib_BIRT_vs_BI",
+    tf = "TF1",
+    gene_key = "G1",
+    peak_id = "P1"
+  )
+  data.table::fwrite(edges, file.path(tmp, "Fib_BIRT_vs_BI_filtered_links_up.csv"))
+  data.table::fwrite(data.table::data.table(
+    comparison_id = "Fib_BIRT_vs_BI",
+    comparison_label = "Fibroblast BIRT vs BI",
+    up_path = file.path(tmp, "Fib_BIRT_vs_BI_filtered_links_up.csv"),
+    down_path = file.path(tmp, "Fib_BIRT_vs_BI_filtered_links_down.csv")
+  ), file.path(tmp, "filtered_links_manifest.csv"))
+
+  out <- craftgrn:::.apply_module3_manifest_labels(edges, tmp)
+
+  expect_equal(out$comparison_label[[1]], "Fibroblast BIRT vs BI")
+})
+
 test_that("condition doc_ctf wrapper keeps cluster-level documents", {
   edges <- data.table::data.table(
     comparison_id = "C1",

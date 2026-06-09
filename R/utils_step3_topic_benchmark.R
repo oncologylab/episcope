@@ -543,10 +543,10 @@
     } else {
       dt[, comparison_id := as.character(comparison_id)]
     }
-    if ("comparison_display" %in% names(dt)) {
-      display_base <- as.character(dt$comparison_display)
-    } else if ("comparison_label" %in% names(dt)) {
+    if ("comparison_label" %in% names(dt)) {
       display_base <- as.character(dt$comparison_label)
+    } else if ("comparison_display" %in% names(dt)) {
+      display_base <- as.character(dt$comparison_display)
     } else {
       display_base <- paste(as.character(dt$cond1_label), as.character(dt$cond2_label), sep = " vs ")
     }
@@ -810,7 +810,10 @@
   k <- as.integer(row$selected_k[[1L]])
   k_pattern <- paste0("(^|[^0-9])K", k, "([^0-9]|$)")
   keep <- grepl(k_pattern, files, perl = TRUE)
-  if (any(keep)) files[keep] else character()
+  if (any(keep)) return(files[keep])
+  direct <- files[normalizePath(dirname(files), winslash = "/", mustWork = FALSE) %in%
+    normalizePath(roots, winslash = "/", mustWork = FALSE)]
+  direct
 }
 
 .m3tb_empty_pass_counts <- function() {
@@ -2508,6 +2511,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   if (!length(delta_files)) .log_abort("No Module 3 filtered link files found in {filtered_dir}.")
   if (isTRUE(verbose)) .log_inform("Loading {length(delta_files)} Module 3 filtered-link file(s).")
   edges_dt <- data.table::as.data.table(load_delta_links_many(delta_files, keep_original = FALSE))
+  edges_dt <- .apply_module3_manifest_labels(edges_dt, filtered_dir)
   n_loaded <- nrow(edges_dt)
   if (!("comparison_id" %in% names(edges_dt))) .log_abort("Module 3 links are missing comparison_id.")
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))

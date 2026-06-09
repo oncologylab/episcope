@@ -274,6 +274,42 @@ test_that("Module 3 topic benchmark uses a clean standard layout for one selecte
   expect_false(grepl("lda$", res$method_plan$topic_models_dir))
 })
 
+test_that("Module 3 comparison design prefers concise comparison labels for display", {
+  design <- craftgrn:::.m3tb_design_table(
+    data.table::data.table(
+      comparison_id = "Fib_BIRT_vs_BI",
+      comparison_label = "Fib BIRT vs BI",
+      comparison_display = "Fibroblast Dox72h BATF IRF4 RUNX3 Tbet vs Fibroblast Dox72h BATF IRF4",
+      cond1_label = "Fib_BIRT",
+      cond2_label = "Fib_BI"
+    )
+  )
+
+  comparison_design <- design[context_type == "comparison"]
+  expect_equal(
+    comparison_design[comparison_label == "Fib_BIRT_vs_BI::Target-Up", display_label],
+    "Fib BIRT vs BI Target-Up"
+  )
+  expect_false(any(grepl("Fibroblast Dox72h", comparison_design$display_label, fixed = TRUE)))
+})
+
+test_that("Module 3 standard layout finds root topic-link files", {
+  root <- tempfile("module3-standard-topic-links-")
+  dir.create(file.path(root, "topic_extraction"), recursive = TRUE)
+  topic_links <- file.path(root, "topic_extraction", "topic_links_pass.csv")
+  data.table::fwrite(
+    data.table::data.table(doc_id = "Doc1", topic_num = 1L, tf = "TF1", peak_id = "P1", gene_key = "G1"),
+    topic_links
+  )
+  row <- .m3tb_apply_output_layout(
+    .module3_topic_method_plan(methods = "comparison_aggr_multivi", k_grid = 10L),
+    root,
+    "standard"
+  )
+  row[, selected_k := 10L]
+  expect_equal(craftgrn:::.m3tb_find_topic_links(root, row[1]), topic_links)
+})
+
 test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
   root <- tempfile("module3-topic-review-subfolders-")
   dir.create(root, recursive = TRUE)
