@@ -1127,7 +1127,12 @@
     .log_inform("Computing Module 3 pathway universe totals for {length(genes)} document genes.")
   }
   enr <- tryCatch(
-    enrichR::enrichr(genes, .default_pathway_databases(), sleepTime = 0),
+    .run_enrichr_cached(
+      genes = genes,
+      dbs = .default_pathway_databases(),
+      sleep_time = 0,
+      cache_dir = file.path(extraction_dir, "cache", "enrichr")
+    ),
     error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
   )
   out <- .topic_enrichr_result_to_table(enr, topic_name = 0L, genes = genes)

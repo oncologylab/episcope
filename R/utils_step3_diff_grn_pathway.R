@@ -169,6 +169,7 @@ report_differential_pathways <- function(filtered_dir,
 #' @param min_genes Minimum distinct genes required before running Enrichr.
 #' @param overwrite If TRUE, recompute existing enrichment CSVs.
 #' @param enrichr_sleep_time Seconds to pause between Enrichr requests.
+#' @param enrichr_cache_dir Optional directory for cached Enrichr responses.
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Invisibly returns a character vector of full enrichment CSV paths.
@@ -181,6 +182,7 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
                                             min_genes = 5L,
                                             overwrite = FALSE,
                                             enrichr_sleep_time = 0,
+                                            enrichr_cache_dir = NULL,
                                             verbose = TRUE) {
   if (!dir.exists(filtered_dir)) .log_abort("`filtered_dir` not found: {filtered_dir}")
   if (!requireNamespace("enrichR", quietly = TRUE)) {
@@ -188,6 +190,9 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
     return(invisible(character(0)))
   }
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
+  if (is.null(enrichr_cache_dir)) {
+    enrichr_cache_dir <- file.path(out_dir, "cache", "enrichr")
+  }
   .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   files <- sort(list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE))
@@ -232,7 +237,15 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
       )
       next
     }
-    enr <- tryCatch(enrichR::enrichr(genes, dbs, sleepTime = enrichr_sleep_time), error = function(e) e)
+    enr <- tryCatch(
+      .run_enrichr_cached(
+        genes = genes,
+        dbs = dbs,
+        sleep_time = enrichr_sleep_time,
+        cache_dir = enrichr_cache_dir
+      ),
+      error = function(e) e
+    )
     if (inherits(enr, "error")) {
       manifest[[i]] <- data.table::data.table(
         input_file = basename(path),
@@ -782,6 +795,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
                                           min_genes = 5L,
                                           verbose = TRUE,
                                           enrichr_sleep_time = 0,
+                                          enrichr_cache_dir = NULL,
                                           top_n = 5L,
                                           padj_display_cut = 0.05,
                                           condition_order = NULL,
@@ -804,6 +818,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
     min_genes = min_genes,
     overwrite = overwrite,
     enrichr_sleep_time = enrichr_sleep_time,
+    enrichr_cache_dir = enrichr_cache_dir,
     verbose = verbose
   )
   enrich_dt <- read_diff_grn_pathway_enrichment(

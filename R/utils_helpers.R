@@ -37,6 +37,63 @@ NULL
   sleep_time
 }
 
+.enrichr_cache_key <- function(genes, dbs, site = "Enrichr") {
+  .assert_pkg("digest")
+  genes <- sort(unique(as.character(genes)))
+  genes <- genes[!is.na(genes) & nzchar(genes)]
+  dbs <- sort(unique(as.character(dbs)))
+  dbs <- dbs[!is.na(dbs) & nzchar(dbs)]
+  digest::digest(
+    list(site = site, dbs = dbs, genes = genes),
+    algo = "xxhash64",
+    serialize = TRUE
+  )
+}
+
+.enrichr_cache_path <- function(cache_dir, genes, dbs, site = "Enrichr") {
+  if (is.null(cache_dir) || !nzchar(as.character(cache_dir)[[1L]])) {
+    return(NULL)
+  }
+  file.path(as.character(cache_dir)[[1L]], paste0(.enrichr_cache_key(genes, dbs, site = site), ".rds"))
+}
+
+.module3_default_enrichr_cache_dir <- function(out_dir) {
+  out_dir <- as.character(out_dir)[[1L]]
+  parent <- dirname(out_dir)
+  if (grepl("^K[0-9]+$", basename(parent))) {
+    return(file.path(dirname(parent), "cache", "enrichr"))
+  }
+  file.path(parent, "cache", "enrichr")
+}
+
+.run_enrichr_cached <- function(genes,
+                                dbs,
+                                sleep_time = 0,
+                                cache_dir = NULL,
+                                site = "Enrichr") {
+  sleep_time <- .normalize_enrichr_sleep_time(sleep_time)
+  cache_path <- .enrichr_cache_path(cache_dir, genes, dbs, site = site)
+  if (!is.null(cache_path) && file.exists(cache_path)) {
+    cached <- tryCatch(readRDS(cache_path), error = function(e) NULL)
+    if (is.list(cached)) return(cached)
+  }
+  res <- enrichR::enrichr(genes, dbs, sleepTime = sleep_time)
+  if (!is.null(cache_path)) {
+    dir.create(dirname(cache_path), recursive = TRUE, showWarnings = FALSE)
+    tmp <- paste0(cache_path, ".tmp.", Sys.getpid())
+    tryCatch(
+      {
+        saveRDS(res, tmp)
+        file.rename(tmp, cache_path)
+      },
+      error = function(e) {
+        if (file.exists(tmp)) unlink(tmp, force = TRUE)
+      }
+    )
+  }
+  res
+}
+
 # Internal Enrichr setup helper (no library(enrichR) needed in package code).
 .ensure_enrichr_ready <- function(site = "Enrichr", verbose = TRUE, log_fun = NULL) {
   if (!requireNamespace("enrichR", quietly = TRUE)) {

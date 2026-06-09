@@ -15,6 +15,7 @@ Imports:
     config,
     data.table,
     dplyr,
+    digest,
     future,
     future.apply,
     ggplot2,
