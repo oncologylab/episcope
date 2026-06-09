@@ -65,3 +65,15 @@ test_that("Shiny app packages stay optional dependencies", {
   expect_false(any(grepl("importFrom(shiny", namespace_lines, fixed = TRUE)))
   expect_false(any(grepl("importFrom(golem", namespace_lines, fixed = TRUE)))
 })
+
+test_that("Module 3 report packages install with the package", {
+  desc <- as.list(utils::packageDescription("craftgrn"))
+  imports <- desc$Imports %||% ""
+  suggests <- desc$Suggests %||% ""
+  required_report_packages <- c("pheatmap", "enrichR", "LDAvis")
+
+  for (pkg in required_report_packages) {
+    expect_true(grepl(pkg, imports, fixed = TRUE))
+    expect_false(grepl(pkg, suggests, fixed = TRUE))
+  }
+})
