@@ -835,6 +835,31 @@ test_that("Module 3 prepares reusable topic input caches", {
     verbose = FALSE
   )
   expect_true(reused$reused)
+
+  stale_summary <- data.table::fread(file.path(out_dir, "topic_input_summary.csv"))
+  stale_summary[, `:=`(doc_design = "condition", fp_term_mode = "aggregate_weight")]
+  data.table::fwrite(stale_summary, file.path(out_dir, "topic_input_summary.csv"))
+  rebuilt <- module3_construct_docs(
+    filtered_dir = filtered_dir,
+    output_dir = out_dir,
+    tf_cluster_map = c(TF1 = "K01"),
+    doc_mode = "tf",
+    doc_design = "comparison",
+    fp_term_mode = "aggregate",
+    min_df = 1,
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    threshold_tf_expr = 0,
+    direction_consistency = "none",
+    require_tf_expr_either = FALSE,
+    require_gene_expr_either = FALSE,
+    require_fp_bound_either = FALSE,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_false(rebuilt$reused)
+  expect_equal(rebuilt$summary$doc_design[[1L]], "comparison")
+  expect_equal(rebuilt$summary$fp_term_mode[[1L]], "aggregate")
 })
 
 test_that("Module 3 production wrapper exposes compact defaults and QC report", {

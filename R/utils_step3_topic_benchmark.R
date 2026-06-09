@@ -2494,9 +2494,19 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   required_cache <- file.path(rds_dir, c("edges_docs.rds", "doc_term.rds", "dtm.rds", "dtm_index.rds"))
   summary_path <- file.path(output_dir, "topic_input_summary.csv")
   if (!isTRUE(overwrite) && all(file.exists(required_cache)) && file.exists(summary_path)) {
-    if (isTRUE(verbose)) .log_inform("Reusing existing Module 3 topic input cache: {output_dir}")
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
-    return(invisible(list(output_dir = output_dir, summary = summary_dt, reused = TRUE)))
+    cache_matches <- nrow(summary_dt) &&
+      all(c("doc_design", "doc_mode", "fp_term_mode") %in% names(summary_dt)) &&
+      identical(as.character(summary_dt$doc_design[[1L]]), doc_design) &&
+      identical(as.character(summary_dt$doc_mode[[1L]]), doc_mode) &&
+      identical(as.character(summary_dt$fp_term_mode[[1L]]), fp_term_mode)
+    if (isTRUE(cache_matches)) {
+      if (isTRUE(verbose)) .log_inform("Reusing existing Module 3 topic input cache: {output_dir}")
+      return(invisible(list(output_dir = output_dir, summary = summary_dt, reused = TRUE)))
+    }
+    if (isTRUE(verbose)) {
+      .log_inform("Existing Module 3 topic input cache does not match requested document settings; rebuilding: {output_dir}")
+    }
   }
   delta_files <- .module3_filtered_link_files(filtered_dir)
   if (!length(delta_files)) {

@@ -26,6 +26,9 @@ three modules:
 
 The full pipeline is designed around a project YAML file that records paths,
 sample metadata, threshold values, genome settings, and output directories.
+For day-to-day analysis, the recommended workflow is wrapper-first: run one
+wrapper per module, then use the step functions when you want to inspect or
+customize a specific stage.
 
 ```{r install, eval=FALSE, purl=FALSE}
 remotes::install_github("oncologylab/craftgrn")
@@ -68,6 +71,26 @@ module1 <- predict_tfbs(
   verbose = TRUE
 )
 ```
+
+For project-level reproducibility, keep the run code in a short script beside
+the project YAML. The GSE192390 demo script follows this pattern: wrapper modes
+run full modules with one call, while step modes expose intermediate objects.
+
+```{r project-script-pattern, purl=FALSE}
+Sys.setenv(CRAFTGRN_DEMO_RUN_MODE = "full_wrapper")
+source("11_pipeline_gse192390_tcell_fibroblast_demo.R")
+
+Sys.setenv(CRAFTGRN_DEMO_RUN_MODE = "module3_steps")
+source("11_pipeline_gse192390_tcell_fibroblast_demo.R")
+```
+
+Supported project-script modes should stay simple and explicit:
+
+- `module1_wrapper`, `module2_wrapper`, and `module3_wrapper` run one module.
+- `module1_steps`, `module2_steps`, and `module3_steps` expose intermediate
+  objects for inspection.
+- `full_wrapper` runs Modules 1, 2, and 3 through wrapper calls.
+- `full_steps` runs Modules 1, 2, and 3 through step calls.
 
 Troubleshooting demo data:
 
@@ -262,6 +285,8 @@ topic_method: comparison_aggr_multivi
 topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
+topic_vae_device: auto
+topic_vae_batch_size: 512
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
@@ -273,7 +298,10 @@ run_topic_modeling(
   filtered_dir = "differential_links",
   comparisons = "module3_comparisons.csv",
   output_dir = "regulatory_topics",
-  project_config = "project.yaml"
+  project_config = "project.yaml",
+  run_training = TRUE,
+  run_extraction = TRUE,
+  run_reports = TRUE
 )
 ```
 
@@ -281,25 +309,54 @@ The lower-level calls remain available when you want to inspect inputs, separate
 model training from topic extraction, or rerun only one stage.
 
 ```{r module-3-topic-models, purl=FALSE}
+module3_prepare_differential_links(
+  module2 = "connect_tf_target_genes",
+  multiomic_data = module3_multiomic,
+  compar = "module3_comparisons.csv",
+  project_config = "project.yaml",
+  output_dir = "regulatory_topics/differential_links"
+)
+
 module3_construct_docs(
-  filtered_dir = "differential_links",
-  output_dir = "topic_documents",
-  tf_cluster_map = tf_cluster_map,
-  doc_design = "condition",
-  fp_term_mode = "aggregate_weight"
+  filtered_dir = "regulatory_topics/differential_links",
+  output_dir = "regulatory_topics/topic_documents",
+  tf_cluster_map = NULL,
+  doc_mode = "tf",
+  doc_design = "comparison",
+  fp_term_mode = "aggregate",
+  gene_term_mode = "unique",
+  count_method = "log",
+  include_tf_terms = TRUE
 )
 
 module3_train_topic_models(
-  k_grid = c(2:10, 15, 20, 25, 30),
-  filtered_dir = "differential_links",
-  output_dir = "topic_models"
+  k_grid = 10,
+  filtered_dir = "regulatory_topics/differential_links",
+  output_dir = "regulatory_topics/topic_models",
+  flat_output = TRUE,
+  tf_cluster_map = NULL,
+  doc_mode = "tf",
+  doc_design = "comparison",
+  fp_term_mode = "aggregate",
+  gene_term_mode = "unique",
+  count_method = "log",
+  include_tf_terms = TRUE,
+  backend = "vae",
+  vae_variant = "multivi_encoder",
+  vae_device = "auto"
 )
 
 module3_extract_topics(
   k = 10,
-  model_dir = "topic_models",
-  output_dir = "topic_extraction",
-  topic_report_args = list()
+  model_dir = "regulatory_topics/topic_models",
+  output_dir = "regulatory_topics/topic_extraction",
+  topic_input_dir = "regulatory_topics/topic_models",
+  backend = "vae",
+  vae_variant = "multivi_encoder",
+  doc_mode = "tf",
+  weight_label = "peak_log2fc_fp_gene_fc_expr",
+  flatten_single_output = TRUE,
+  topic_report_args = list(link_topic_output = "pass")
 )
 ```
 
@@ -339,7 +396,9 @@ Module 3 creates:
 - Model selection metrics across topic-number choices.
 - Topic-term and topic-link probability tables.
 - Topic assignments for regulatory links.
-- Benchmark review tables and HTML reports under `review_topic_experiments/`.
+- Standard topic review tables and HTML reports under `review/`.
+- Optional benchmark review tables and HTML reports under a separate benchmark
+  output directory when `topic_benchmark_enabled: true`.
 - `module3_qc_report.html`: a QC report summarizing topic inputs, method plan,
   theta separation scores, compact topic-link pass counts, and output files.
 - Pathway enrichment summaries and plots.
