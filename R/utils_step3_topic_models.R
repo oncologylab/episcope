@@ -4853,11 +4853,13 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   tf_theta_min = NA_real_,
                                                   enrichr_sleep_time = 0,
                                                   enrichr_cache_dir = NULL,
-                                                  enrichr_n_cores = 1L) {
+                                                  enrichr_n_cores = 1L,
+                                                  pathway_backend = NULL) {
   .assert_pkg("data.table")
   tf_link_mode <- match.arg(tf_link_mode)
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(dirname(out_file), "cache", "enrichr")
   }
@@ -4875,8 +4877,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     val
   }
 
-  if (!requireNamespace("enrichR", quietly = TRUE)) {
-    msg <- "Skipping pathway enrichment heatmap: enrichR not installed."
+  if (!.pathway_backend_available(pathway_backend)) {
+    msg <- "Skipping pathway enrichment heatmap: neither enrichly nor enrichR is installed."
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
@@ -4887,11 +4889,13 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     log_msg(msg)
     make_heatmap <- FALSE
   }
-  .ensure_enrichr_ready(
-    site = "Enrichr",
-    verbose = TRUE,
-    log_fun = log_msg
-  )
+  if (identical(pathway_backend, "enrichr")) {
+    .ensure_enrichr_ready(
+      site = "Enrichr",
+      verbose = TRUE,
+      log_fun = log_msg
+    )
+  }
 
   if (is.null(topic_terms) || !nrow(topic_terms)) {
     msg <- "Skipping pathway enrichment heatmap: topic_terms empty."
@@ -4962,7 +4966,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
         genes = genes,
         dbs = dbs,
         sleep_time = enrichr_sleep_time,
-        cache_dir = enrichr_cache_dir
+        cache_dir = enrichr_cache_dir,
+        backend = pathway_backend
       )),
       error = function(e) {
         log_msg(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
@@ -5225,12 +5230,14 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            enrichr_sleep_time = 0,
                                                            enrichr_cache_dir = NULL,
                                                            enrichr_n_cores = 1L,
+                                                           pathway_backend = NULL,
                                                            overwrite = FALSE,
                                                            doc_design = c("comparison", "condition")) {
   .assert_pkg("data.table")
   doc_design <- match.arg(doc_design)
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(out_dir, "cache", "enrichr")
   }
@@ -5250,17 +5257,19 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
     val
   }
 
-  if (!requireNamespace("enrichR", quietly = TRUE)) {
-    msg <- "Skipping link-score pathway enrichment: enrichR not installed."
+  if (!.pathway_backend_available(pathway_backend)) {
+    msg <- "Skipping link-score pathway enrichment: neither enrichly nor enrichR is installed."
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
   }
-  .ensure_enrichr_ready(
-    site = "Enrichr",
-    verbose = TRUE,
-    log_fun = log_msg
-  )
+  if (identical(pathway_backend, "enrichr")) {
+    .ensure_enrichr_ready(
+      site = "Enrichr",
+      verbose = TRUE,
+      log_fun = log_msg
+    )
+  }
 
   dt <- data.table::as.data.table(link_scores)
   if (!nrow(dt)) {
@@ -5313,7 +5322,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           genes = genes,
           dbs = dbs,
           sleep_time = enrichr_sleep_time,
-          cache_dir = enrichr_cache_dir
+          cache_dir = enrichr_cache_dir,
+          backend = pathway_backend
         )),
         error = function(e) {
           log_fun(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
@@ -6191,6 +6201,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_enrichr_sleep_time = 0,
                                               pathway_enrichr_cache_dir = NULL,
                                               pathway_enrichr_n_cores = NULL,
+                                              pathway_backend = NULL,
                                               run_link_topic_scores = FALSE,
                                               fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                               link_topic_gate_mode = "none",
@@ -6235,6 +6246,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
   }
   pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
@@ -6465,6 +6477,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           enrichr_sleep_time = pathway_enrichr_sleep_time,
           enrichr_cache_dir = pathway_enrichr_cache_dir,
           enrichr_n_cores = pathway_enrichr_n_cores,
+          pathway_backend = pathway_backend,
           overwrite = pathway_overwrite,
           doc_design = doc_design
         )
@@ -6487,7 +6500,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         tf_theta_min = pathway_tf_min_theta,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
         enrichr_cache_dir = pathway_enrichr_cache_dir,
-        enrichr_n_cores = pathway_enrichr_n_cores
+        enrichr_n_cores = pathway_enrichr_n_cores,
+        pathway_backend = pathway_backend
       )
 
       if (isTRUE(run_pathway_gsea)) {
@@ -6607,9 +6621,11 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_per_comparison_dir = "per_comparison_pathway",
                                           pathway_per_comparison_flat = FALSE,
                                           pathway_split_direction = TRUE,
+                                          pathway_overwrite = FALSE,
                                           pathway_enrichr_sleep_time = 0,
                                           pathway_enrichr_cache_dir = NULL,
                                           pathway_enrichr_n_cores = NULL,
+                                          pathway_backend = NULL,
                                           run_link_topic_scores = FALSE,
                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                           link_topic_gate_mode = "none",
@@ -6647,6 +6663,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
   }
   pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   link_topic_efdr_scope <- match.arg(link_topic_efdr_scope)
   link_topic_method <- match.arg(link_topic_method)
@@ -7047,6 +7064,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
         enrichr_cache_dir = pathway_enrichr_cache_dir,
         enrichr_n_cores = pathway_enrichr_n_cores,
+        pathway_backend = pathway_backend,
         overwrite = pathway_overwrite
       )
     }
@@ -7067,7 +7085,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       tf_theta_min = pathway_tf_min_theta,
       enrichr_sleep_time = pathway_enrichr_sleep_time,
       enrichr_cache_dir = pathway_enrichr_cache_dir,
-      enrichr_n_cores = pathway_enrichr_n_cores
+      enrichr_n_cores = pathway_enrichr_n_cores,
+      pathway_backend = pathway_backend
     )
 
     if (isTRUE(run_pathway_gsea)) {
@@ -8049,6 +8068,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
                                                 enrichr_sleep_time = 0,
                                                 enrichr_cache_dir = NULL,
                                                 enrichr_n_cores = NULL,
+                                                pathway_backend = NULL,
                                                 doc_mode = c("tf_cluster", "tf")) {
   out_dirs <- unique(c(topic_root, list.dirs(topic_root, recursive = FALSE, full.names = TRUE)))
   backend <- match.arg(backend)
@@ -8058,6 +8078,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
     enrichr_cache_dir <- file.path(topic_root, "cache", "enrichr")
   }
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   if (backend == "vae") {
     out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
@@ -8089,6 +8110,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
         enrichr_sleep_time = enrichr_sleep_time,
         enrichr_cache_dir = enrichr_cache_dir,
         enrichr_n_cores = enrichr_n_cores,
+        pathway_backend = pathway_backend,
         overwrite = FALSE
       )
     }

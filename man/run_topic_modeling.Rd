@@ -16,6 +16,7 @@ run_topic_modeling(
   topic_link_output = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
+  pathway_backend = NULL,
   ...
 )
 }
@@ -52,6 +53,10 @@ If `NULL`, read from `project_config` or use `"auto"`.}
 
 \item{vae_batch_size}{VAE mini-batch size. If `NULL`, read from
 `project_config` or use `64`.}
+
+\item{pathway_backend}{Pathway enrichment backend. Use `"enrichly"` for
+local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
+read from `project_config` or use `"enrichly"`.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

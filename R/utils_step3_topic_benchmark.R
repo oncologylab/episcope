@@ -1117,10 +1117,11 @@
   if (!isTRUE(compute_if_missing)) return(data.table::data.table())
   genes <- .m3tb_doc_term_gene_universe(.m3tb_find_doc_term_file(model_dir))
   if (!length(genes)) return(data.table::data.table())
-  if (!requireNamespace("enrichR", quietly = TRUE)) {
-    .log_abort("Package enrichR is required to compute Module 3 pathway universe totals.")
+  pathway_backend <- .pathway_backend(NULL)
+  if (!.pathway_backend_available(pathway_backend)) {
+    .log_abort("Computing Module 3 pathway universe totals requires either enrichly or enrichR.")
   }
-  if (!isTRUE(.ensure_enrichr_ready(verbose = FALSE))) {
+  if (identical(pathway_backend, "enrichr") && !isTRUE(.ensure_enrichr_ready(verbose = FALSE))) {
     .log_abort("Enrichr is not reachable; cannot compute Module 3 pathway universe totals.")
   }
   if (isTRUE(verbose)) {
@@ -1131,7 +1132,8 @@
       genes = genes,
       dbs = .default_pathway_databases(),
       sleep_time = 0,
-      cache_dir = file.path(extraction_dir, "cache", "enrichr")
+      cache_dir = file.path(extraction_dir, "cache", "enrichr"),
+      backend = pathway_backend
     ),
     error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
   )
@@ -2972,6 +2974,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   sample_subset = NULL,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
+                                  pathway_backend = NULL,
                                   extraction_topic_report_args = list(),
                                   run_training = TRUE,
                                   run_extraction = TRUE,
@@ -2983,7 +2986,8 @@ run_regulatory_topics <- function(filtered_dir,
   extraction_args <- modifyList(
     list(
       link_topic_output = topic_link_output,
-      pathway_link_scores_file = if (topic_link_output %in% c("pass", "both")) "topic_links_pass.csv" else "topic_links.csv"
+      pathway_link_scores_file = if (topic_link_output %in% c("pass", "both")) "topic_links_pass.csv" else "topic_links.csv",
+      pathway_backend = .pathway_backend(pathway_backend)
     ),
     extraction_topic_report_args
   )
@@ -3055,7 +3059,8 @@ run_regulatory_topics <- function(filtered_dir,
                                              warplda_iterations = NULL,
                                              topic_link_output = NULL,
                                              vae_device = NULL,
-                                             vae_batch_size = NULL) {
+                                             vae_batch_size = NULL,
+                                             pathway_backend = NULL) {
   cfg <- .module3_read_project_config(project_config)
   method <- if (is.null(method)) {
     as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "comparison_aggr_multivi"))[[1L]]
@@ -3091,6 +3096,12 @@ run_regulatory_topics <- function(filtered_dir,
     suppressWarnings(as.integer(vae_batch_size[[1L]]))
   }
   if (!is.finite(vae_batch_size) || vae_batch_size < 1L) vae_batch_size <- 64L
+  pathway_backend <- if (is.null(pathway_backend)) {
+    as.character(.module3_cfg_value(cfg, c("pathway_backend", "module3_pathway_backend"), "enrichly"))[[1L]]
+  } else {
+    as.character(pathway_backend)[[1L]]
+  }
+  pathway_backend <- .pathway_backend(pathway_backend)
   list(
     method = method,
     k_grid = k_grid,
@@ -3098,6 +3109,7 @@ run_regulatory_topics <- function(filtered_dir,
     topic_link_output = link_output,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
+    pathway_backend = pathway_backend,
     benchmark = list(
       enabled = isTRUE(.module3_cfg_value(cfg, c("topic_benchmark_enabled", "module3_topic_benchmark_enabled"), FALSE)),
       methods = .module3_cfg_value(cfg, c("topic_benchmark_methods", "module3_topic_benchmark_methods"), character()),
@@ -3134,6 +3146,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
 #'   `project_config` or use `64`.
+#' @param pathway_backend Pathway enrichment backend. Use `"enrichly"` for
+#'   local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
+#'   read from `project_config` or use `"enrichly"`.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -3151,6 +3166,7 @@ run_topic_modeling <- function(filtered_dir,
                                topic_link_output = NULL,
                                vae_device = NULL,
                                vae_batch_size = NULL,
+                               pathway_backend = NULL,
                                ...) {
   resolved <- .module3_resolve_topic_run_config(
     project_config = project_config,
@@ -3159,7 +3175,8 @@ run_topic_modeling <- function(filtered_dir,
     warplda_iterations = warplda_iterations,
     topic_link_output = topic_link_output,
     vae_device = vae_device,
-    vae_batch_size = vae_batch_size
+    vae_batch_size = vae_batch_size,
+    pathway_backend = pathway_backend
   )
   run_regulatory_topics(
     filtered_dir = filtered_dir,
@@ -3170,6 +3187,7 @@ run_topic_modeling <- function(filtered_dir,
     k_grid = resolved$k_grid,
     warplda_iterations = resolved$warplda_iterations,
     topic_link_output = resolved$topic_link_output,
+    pathway_backend = resolved$pathway_backend,
     vae_device = resolved$vae_device,
     vae_batch_size = resolved$vae_batch_size,
     ...

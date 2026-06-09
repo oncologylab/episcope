@@ -170,6 +170,8 @@ report_differential_pathways <- function(filtered_dir,
 #' @param overwrite If TRUE, recompute existing enrichment CSVs.
 #' @param enrichr_sleep_time Seconds to pause between Enrichr requests.
 #' @param enrichr_cache_dir Optional directory for cached Enrichr responses.
+#' @param pathway_backend Pathway backend, either `"enrichly"` for local cached
+#'   enrichment or `"enrichr"` for the Enrichr web API.
 #' @param verbose Emit concise progress messages.
 #'
 #' @return Invisibly returns a character vector of full enrichment CSV paths.
@@ -183,17 +185,21 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
                                             overwrite = FALSE,
                                             enrichr_sleep_time = 0,
                                             enrichr_cache_dir = NULL,
+                                            pathway_backend = NULL,
                                             verbose = TRUE) {
   if (!dir.exists(filtered_dir)) .log_abort("`filtered_dir` not found: {filtered_dir}")
-  if (!requireNamespace("enrichR", quietly = TRUE)) {
-    .log_warn("Skipping pathway enrichment because enrichR is not installed.")
+  pathway_backend <- .pathway_backend(pathway_backend)
+  if (!.pathway_backend_available(pathway_backend)) {
+    .log_warn("Skipping pathway enrichment because neither enrichly nor enrichR is installed.")
     return(invisible(character(0)))
   }
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(out_dir, "cache", "enrichr")
   }
-  .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
+  if (identical(pathway_backend, "enrichr")) {
+    .ensure_enrichr_ready(site = "Enrichr", verbose = verbose)
+  }
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   files <- sort(list.files(filtered_dir, "_filtered_links_(up|down)\\.csv$", full.names = TRUE))
   if (!length(files)) {
@@ -242,7 +248,8 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
         genes = genes,
         dbs = dbs,
         sleep_time = enrichr_sleep_time,
-        cache_dir = enrichr_cache_dir
+        cache_dir = enrichr_cache_dir,
+        backend = pathway_backend
       ),
       error = function(e) e
     )
@@ -796,6 +803,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
                                           verbose = TRUE,
                                           enrichr_sleep_time = 0,
                                           enrichr_cache_dir = NULL,
+                                          pathway_backend = NULL,
                                           top_n = 5L,
                                           padj_display_cut = 0.05,
                                           condition_order = NULL,
@@ -819,6 +827,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
     overwrite = overwrite,
     enrichr_sleep_time = enrichr_sleep_time,
     enrichr_cache_dir = enrichr_cache_dir,
+    pathway_backend = pathway_backend,
     verbose = verbose
   )
   enrich_dt <- read_diff_grn_pathway_enrichment(

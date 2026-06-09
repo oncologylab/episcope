@@ -37,24 +37,60 @@ NULL
   sleep_time
 }
 
-.enrichr_cache_key <- function(genes, dbs, site = "Enrichr") {
+.pathway_backend <- function(backend = NULL) {
+  if (is.null(backend) || !length(backend) || is.na(backend[[1L]]) || !nzchar(as.character(backend)[[1L]])) {
+    opt <- getOption("craftgrn.pathway_backend", NULL)
+    env <- Sys.getenv("CRAFTGRN_PATHWAY_BACKEND", unset = "")
+    backend <- if (!is.null(opt) && length(opt) && nzchar(as.character(opt)[[1L]])) opt else env
+  }
+  if (is.null(backend) || !length(backend) || is.na(backend[[1L]]) || !nzchar(as.character(backend)[[1L]])) {
+    backend <- "enrichly"
+  }
+  backend <- tolower(as.character(backend)[[1L]])
+  backend <- gsub("[^a-z0-9]+", "_", backend)
+  if (backend %in% c("local", "local_first", "enrichly_local")) backend <- "enrichly"
+  if (backend %in% c("web", "api", "enrichr_api")) backend <- "enrichr"
+  if (!(backend %in% c("enrichly", "enrichr"))) {
+    .log_abort("`pathway_backend` must be either 'enrichly' or 'enrichr'.")
+  }
+  backend
+}
+
+.pathway_backend_available <- function(backend = NULL) {
+  backend <- .pathway_backend(backend)
+  if (identical(backend, "enrichly") && .optional_namespace_available("enrichly")) {
+    return(TRUE)
+  }
+  requireNamespace("enrichR", quietly = TRUE)
+}
+
+.optional_namespace_available <- function(pkg) {
+  pkg <- as.character(pkg)[[1L]]
+  tryCatch(
+    requireNamespace(pkg, quietly = TRUE),
+    error = function(e) FALSE
+  )
+}
+
+.enrichr_cache_key <- function(genes, dbs, site = "Enrichr", backend = NULL) {
   .assert_pkg("digest")
   genes <- sort(unique(as.character(genes)))
   genes <- genes[!is.na(genes) & nzchar(genes)]
   dbs <- sort(unique(as.character(dbs)))
   dbs <- dbs[!is.na(dbs) & nzchar(dbs)]
+  backend <- .pathway_backend(backend)
   digest::digest(
-    list(site = site, dbs = dbs, genes = genes),
+    list(site = site, backend = backend, dbs = dbs, genes = genes),
     algo = "xxhash64",
     serialize = TRUE
   )
 }
 
-.enrichr_cache_path <- function(cache_dir, genes, dbs, site = "Enrichr") {
+.enrichr_cache_path <- function(cache_dir, genes, dbs, site = "Enrichr", backend = NULL) {
   if (is.null(cache_dir) || !nzchar(as.character(cache_dir)[[1L]])) {
     return(NULL)
   }
-  file.path(as.character(cache_dir)[[1L]], paste0(.enrichr_cache_key(genes, dbs, site = site), ".rds"))
+  file.path(as.character(cache_dir)[[1L]], paste0(.enrichr_cache_key(genes, dbs, site = site, backend = backend), ".rds"))
 }
 
 .module3_default_enrichr_cache_dir <- function(out_dir) {
@@ -76,18 +112,98 @@ NULL
   max(1L, min(n_cores, .available_cores(logical = TRUE)))
 }
 
+.enrichly_db_cache_dir <- function(cache_dir = NULL) {
+  opt <- getOption("craftgrn.enrichly.db_cache", NULL)
+  env <- Sys.getenv("CRAFTGRN_ENRICHLY_DB_CACHE", unset = "")
+  if (!is.null(opt) && length(opt) && nzchar(as.character(opt)[[1L]])) {
+    return(as.character(opt)[[1L]])
+  }
+  if (nzchar(env)) return(env)
+  file.path(tools::R_user_dir("craftgrn", which = "cache"), "enrichly_databases")
+}
+
+.enrichly_result_to_enrichr_list <- function(x) {
+  .assert_pkg("data.table")
+  dt <- data.table::as.data.table(x)
+  required <- c("database", "term", "p_value", "adjusted_p_value")
+  if (!all(required %in% names(dt))) {
+    .log_abort("enrichly result is missing required columns.")
+  }
+  if (!nrow(dt)) {
+    return(list())
+  }
+  if (!("overlap" %in% names(dt))) data.table::set(dt, j = "overlap", value = NA_character_)
+  if (!("overlap_genes" %in% names(dt))) data.table::set(dt, j = "overlap_genes", value = NA_character_)
+  if (!("odds_ratio" %in% names(dt))) data.table::set(dt, j = "odds_ratio", value = NA_real_)
+  if (!("combined_score" %in% names(dt))) data.table::set(dt, j = "combined_score", value = NA_real_)
+  data.table::setorderv(dt, c("database", "adjusted_p_value", "p_value", "term"))
+  out <- lapply(split(dt, dt[["database"]]), function(z) {
+    data.frame(
+      Term = as.character(z[["term"]]),
+      Overlap = as.character(z[["overlap"]]),
+      P.value = as.numeric(z[["p_value"]]),
+      Adjusted.P.value = as.numeric(z[["adjusted_p_value"]]),
+      Odds.Ratio = as.numeric(z[["odds_ratio"]]),
+      Combined.Score = as.numeric(z[["combined_score"]]),
+      Genes = as.character(z[["overlap_genes"]]),
+      stringsAsFactors = FALSE
+    )
+  })
+  out[sort(names(out))]
+}
+
+.run_enrichly_local <- function(genes, dbs, cache_dir = NULL, universe = NULL) {
+  if (!.optional_namespace_available("enrichly")) {
+    return(NULL)
+  }
+  db_cache_dir <- .enrichly_db_cache_dir(cache_dir)
+  enrichly_download <- getExportedValue("enrichly", "enrichly_download")
+  enrichly_load <- getExportedValue("enrichly", "enrichly_load")
+  enrichly_enrich <- getExportedValue("enrichly", "enrichly_enrich")
+  manifest <- enrichly_download(
+    databases = dbs,
+    cache_dir = db_cache_dir,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  db <- enrichly_load(manifest$path, databases = dbs)
+  res <- enrichly_enrich(
+    genes = genes,
+    db = db,
+    query_id = "query",
+    universe = universe
+  )
+  .enrichly_result_to_enrichr_list(res)
+}
+
 .run_enrichr_cached <- function(genes,
                                 dbs,
                                 sleep_time = 0,
                                 cache_dir = NULL,
-                                site = "Enrichr") {
+                                site = "Enrichr",
+                                backend = NULL,
+                                universe = NULL) {
   sleep_time <- .normalize_enrichr_sleep_time(sleep_time)
-  cache_path <- .enrichr_cache_path(cache_dir, genes, dbs, site = site)
+  backend <- .pathway_backend(backend)
+  cache_path <- .enrichr_cache_path(cache_dir, genes, dbs, site = site, backend = backend)
   if (!is.null(cache_path) && file.exists(cache_path)) {
     cached <- tryCatch(readRDS(cache_path), error = function(e) NULL)
     if (is.list(cached)) return(cached)
   }
-  res <- enrichR::enrichr(genes, dbs, sleepTime = sleep_time)
+  res <- NULL
+  if (identical(backend, "enrichly")) {
+    res <- tryCatch(
+      .run_enrichly_local(genes = genes, dbs = dbs, cache_dir = cache_dir, universe = universe),
+      error = function(e) NULL
+    )
+  }
+  if (!is.list(res)) {
+    if (!requireNamespace("enrichR", quietly = TRUE)) {
+      .log_abort("Pathway enrichment requires either {.pkg enrichly} for local analysis or {.pkg enrichR} for web API analysis.")
+    }
+    .ensure_enrichr_ready(site = site, verbose = FALSE)
+    res <- enrichR::enrichr(genes, dbs, sleepTime = sleep_time)
+  }
   if (!is.null(cache_path)) {
     dir.create(dirname(cache_path), recursive = TRUE, showWarnings = FALSE)
     tmp <- paste0(cache_path, ".tmp.", Sys.getpid())

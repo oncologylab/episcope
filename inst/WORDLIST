@@ -25,6 +25,8 @@ diag
 dotplot
 dtm
 enrichments
+enrichly
+enrichr
 Enrichr
 EnsDb
 epigenetic
@@ -45,6 +47,7 @@ gibbs
 golem
 GRN
 GRNs
+GSE
 GZ
 handoff
 hc

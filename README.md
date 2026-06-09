@@ -165,14 +165,17 @@ topic_method: comparison_aggr_multivi
 topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
+pathway_backend: enrichly
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
 topic_benchmark_k_grid: []
 ```
 
-Benchmark grids are optional and should be enabled only for method-comparison
-experiments.
+`pathway_backend: enrichly` uses local cached pathway libraries when the
+optional `enrichly` package is installed; `pathway_backend: enrichr` keeps the
+web API backend. Benchmark grids are optional and should be enabled only for
+method-comparison experiments.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 

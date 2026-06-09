@@ -60,6 +60,48 @@ test_that("Module 3 Enrichr helpers default to fast request scheduling", {
   expect_match(craftgrn:::.enrichr_cache_key(c("B", "A", "A"), c("DB2", "DB1")), "^[a-f0-9]+$")
 })
 
+test_that("Module 3 pathway backend supports local enrichly enrichment", {
+  skip_if_not_installed("enrichly")
+  old_opt <- options(craftgrn.pathway_backend = NULL, craftgrn.enrichly.db_cache = NULL)
+  on.exit(options(old_opt), add = TRUE)
+
+  expect_equal(craftgrn:::.pathway_backend(), "enrichly")
+  expect_equal(craftgrn:::.pathway_backend("enrichr"), "enrichr")
+  expect_error(craftgrn:::.pathway_backend("bad_backend"), "pathway_backend")
+  expect_false(identical(
+    craftgrn:::.enrichr_cache_key(c("B", "A"), "Toy_DB", backend = "enrichly"),
+    craftgrn:::.enrichr_cache_key(c("B", "A"), "Toy_DB", backend = "enrichr")
+  ))
+
+  db_cache <- tempfile("enrichly-db-cache-")
+  dir.create(db_cache, recursive = TRUE)
+  writeLines(
+    c(
+      paste(c("Term one", "desc", "A", "B", "C"), collapse = "\t"),
+      paste(c("Term two", "desc", "X", "Y", "Z"), collapse = "\t")
+    ),
+    file.path(db_cache, "Toy_DB.txt")
+  )
+  options(craftgrn.enrichly.db_cache = db_cache)
+
+  res <- craftgrn:::.run_enrichr_cached(
+    genes = c("A", "B"),
+    dbs = "Toy_DB",
+    cache_dir = tempfile("enrich-cache-"),
+    backend = "enrichly"
+  )
+
+  expect_named(res, "Toy_DB")
+  expect_true(all(c("Term", "P.value", "Adjusted.P.value", "Genes") %in% names(res$Toy_DB)))
+  expect_equal(res$Toy_DB$Term[[1L]], "Term one")
+  expect_equal(res$Toy_DB$Genes[[1L]], "A;B")
+
+  cfg <- tempfile("module3-pathway-backend-", fileext = ".yaml")
+  writeLines(c("pathway_backend: enrichr", "topic_k: 3"), cfg)
+  resolved <- craftgrn:::.module3_resolve_topic_run_config(project_config = cfg)
+  expect_equal(resolved$pathway_backend, "enrichr")
+})
+
 test_that("Module 3 QC report writes differential TF summaries", {
   root <- tempfile("module3-qc-topic-")
   diff_dir <- tempfile("module3-qc-diff-")

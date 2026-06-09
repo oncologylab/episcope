@@ -287,11 +287,16 @@ warplda_iterations: 2000
 topic_link_output: pass
 topic_vae_device: auto
 topic_vae_batch_size: 512
+pathway_backend: enrichly
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
 topic_benchmark_k_grid: []
 ```
+
+Use `pathway_backend: enrichly` for local cached pathway enrichment when the
+optional `enrichly` package is installed. Use `pathway_backend: enrichr` when
+you intentionally want the Enrichr web API backend.
 
 ```{r module-3-regulatory-topics, purl=FALSE}
 run_topic_modeling(
