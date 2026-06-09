@@ -154,10 +154,28 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     pattern = "_condition_topic_report[.]html$",
     full.names = TRUE
   )
+  topic_page_files <- list.files(
+    file.path(html_dir, "topic_reports", "pages"),
+    pattern = "_topic_report[.]html$",
+    full.names = TRUE
+  )
+  condition_page_files <- list.files(
+    file.path(html_dir, "condition_topic_reports", "pages"),
+    pattern = "_condition_topic_report[.]html$",
+    full.names = TRUE
+  )
   expect_true(length(topic_report_files) >= 1L)
   expect_true(length(condition_report_files) >= 1L)
-  topic_detail_html <- paste(readLines(topic_report_files[[1L]], warn = FALSE), collapse = "\n")
-  condition_detail_html <- paste(readLines(condition_report_files[[1L]], warn = FALSE), collapse = "\n")
+  expect_true(length(topic_page_files) >= 1L)
+  expect_true(length(condition_page_files) >= 1L)
+  topic_wrapper_html <- paste(readLines(topic_report_files[[1L]], warn = FALSE), collapse = "\n")
+  condition_wrapper_html <- paste(readLines(condition_report_files[[1L]], warn = FALSE), collapse = "\n")
+  expect_match(topic_wrapper_html, "K <select", fixed = TRUE)
+  expect_match(topic_wrapper_html, "pages/", fixed = TRUE)
+  expect_match(condition_wrapper_html, "K <select", fixed = TRUE)
+  expect_match(condition_wrapper_html, "pages/", fixed = TRUE)
+  topic_detail_html <- paste(readLines(topic_page_files[[1L]], warn = FALSE), collapse = "\n")
+  condition_detail_html <- paste(readLines(condition_page_files[[1L]], warn = FALSE), collapse = "\n")
   expect_match(topic_detail_html, "Intertopic Distance Map", fixed = TRUE)
   expect_match(topic_detail_html, "Condition Waterfall", fixed = TRUE)
   expect_match(topic_detail_html, "Pathways", fixed = TRUE)
@@ -209,7 +227,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
 
   condition_svg <- list.files(
-    file.path(root, "review", "condition_topic_reports", "assets"),
+    file.path(root, "review", "condition_topic_reports", "pages", "assets"),
     pattern = "[.]svg$",
     full.names = TRUE
   )
@@ -321,6 +339,79 @@ test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
   expect_match(condition_index, "condition_topic_reports/", fixed = TRUE)
   expect_match(topic_index, "Method <select", fixed = TRUE)
   expect_match(condition_index, "Method <select", fixed = TRUE)
+})
+
+test_that("Module 3 review HTML groups multiple K values inside one method report", {
+  root <- tempfile("module3-topic-review-k-dropdown-")
+  dir.create(root, recursive = TRUE)
+  plan <- .m3tb_apply_output_layout(
+    .module3_topic_method_plan(
+      methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+      k_grid = c(2L, 3L)
+    ),
+    root,
+    "benchmark"
+  )
+
+  make_fixture <- function(row) {
+    vae_dir <- file.path(row$topic_models_dir[[1L]], "fixture_model", "vae_models")
+    dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
+    for (k in c(2L, 3L)) {
+      theta <- data.table::data.table(
+        doc_id = c("CondA::TF1", "CondB::TF1"),
+        Topic1 = c(0.75, 0.25),
+        Topic2 = c(0.25, 0.75)
+      )
+      phi <- data.table::data.table(
+        term_id = c("GENE:G1", "GENE:G2", "PEAK:P1"),
+        Topic1 = c(0.7, 0.2, 0.1),
+        Topic2 = c(0.1, 0.7, 0.2)
+      )
+      if (k == 3L) {
+        theta[, Topic3 := c(0.05, 0.05)]
+        theta[, `:=`(Topic1 = Topic1 - 0.025, Topic2 = Topic2 - 0.025)]
+        phi[, Topic3 := c(0.2, 0.2, 0.6)]
+      }
+      data.table::fwrite(theta, file.path(vae_dir, sprintf("theta_K%d.csv", k)))
+      data.table::fwrite(phi, file.path(vae_dir, sprintf("phi_K%d.csv", k)))
+    }
+  }
+  for (i in seq_len(nrow(plan))) make_fixture(plan[i])
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    k_grid = c(2L, 3L),
+    output_layout = "benchmark",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = TRUE,
+    verbose = FALSE
+  )
+
+  review_dir <- res$review_dir
+  topic_reports <- list.files(file.path(review_dir, "topic_reports"), pattern = "_topic_report[.]html$", full.names = TRUE)
+  condition_reports <- list.files(file.path(review_dir, "condition_topic_reports"), pattern = "_condition_topic_report[.]html$", full.names = TRUE)
+  expect_equal(length(topic_reports), 2L)
+  expect_equal(length(condition_reports), 2L)
+  expect_equal(length(list.files(file.path(review_dir, "topic_reports", "pages"), pattern = "_topic_report[.]html$")), 4L)
+  expect_equal(length(list.files(file.path(review_dir, "condition_topic_reports", "pages"), pattern = "_condition_topic_report[.]html$")), 4L)
+
+  topic_html <- paste(readLines(topic_reports[[1L]], warn = FALSE), collapse = "\n")
+  condition_html <- paste(readLines(condition_reports[[1L]], warn = FALSE), collapse = "\n")
+  expect_match(topic_html, "K <select", fixed = TRUE)
+  expect_match(topic_html, "K2", fixed = TRUE)
+  expect_match(topic_html, "K3", fixed = TRUE)
+  expect_match(topic_html, "pages/", fixed = TRUE)
+  expect_match(condition_html, "K <select", fixed = TRUE)
+  expect_match(condition_html, "K2", fixed = TRUE)
+  expect_match(condition_html, "K3", fixed = TRUE)
+  expect_match(condition_html, "pages/", fixed = TRUE)
 })
 
 test_that("Module 3 standard layout flattens one selected K extraction", {
