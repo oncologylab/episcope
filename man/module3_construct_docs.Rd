@@ -4,7 +4,13 @@
 \alias{module3_construct_docs}
 \title{Construct input documents for topic modeling}
 \usage{
-module3_construct_docs(filtered_dir, output_dir, tf_cluster_map = NULL, ...)
+module3_construct_docs(
+  filtered_dir,
+  output_dir,
+  tf_cluster_map = NULL,
+  check_repeated_values = FALSE,
+  ...
+)
 }
 \arguments{
 \item{filtered_dir}{Directory containing Module 3 filtered differential-link
@@ -13,6 +19,10 @@ CSV files.}
 \item{output_dir}{Directory where topic input caches are written.}
 
 \item{tf_cluster_map}{Named vector mapping TF names to motif clusters.}
+
+\item{check_repeated_values}{Warn about repeated inconsistent term values.
+The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
+audits.}
 
 \item{...}{Additional topic-document construction arguments passed to the
 internal Module 3 document builder.}

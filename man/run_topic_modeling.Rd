@@ -47,8 +47,8 @@ read from `project_config` or use `2000`.}
 \item{topic_link_output}{Topic-link output mode. If `NULL`, read from
 `project_config` or use `"pass"`.}
 
-\item{vae_device}{VAE device, for example `"cpu"` or `"cuda"`. If `NULL`,
-read from `project_config` or use `"cpu"`.}
+\item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
+If `NULL`, read from `project_config` or use `"auto"`.}
 
 \item{vae_batch_size}{VAE mini-batch size. If `NULL`, read from
 `project_config` or use `64`.}

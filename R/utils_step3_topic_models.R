@@ -7037,7 +7037,7 @@ run_vae_topic_report_py <- function(doc_term,
                                     vae_hidden = 128L,
                                     vae_lr = 1e-3,
                                     vae_seed = 123L,
-                                    vae_device = "cpu",
+                                    vae_device = "auto",
                                     reuse_if_exists = TRUE,
                                     do_report = TRUE,
                                     chosen_K = NULL,
@@ -7931,7 +7931,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param vae_hidden VAE hidden-layer width.
 #' @param vae_lr VAE learning rate.
 #' @param vae_seed VAE random seed.
-#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`.
+#' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
+#'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
 #' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
@@ -7948,6 +7949,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #'   for standard package runs; benchmarks keep the nested layout.
 #' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses all available cores. Set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to cap automatic thread use.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
+#'   The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
+#'   audits.
 #' @param binarize_method Topic binarization method.
 #' @param thrP Topic term probability threshold.
 #' @param top_n_terms Number of terms per topic.
@@ -7989,7 +7992,7 @@ train_topic_models <- function(Kgrid,
                                vae_hidden = 128L,
                                vae_lr = 1e-3,
                                vae_seed = 123L,
-                               vae_device = "cpu",
+                               vae_device = "auto",
                                warplda_iterations = 2000L,
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
@@ -7997,7 +8000,7 @@ train_topic_models <- function(Kgrid,
                                save_full_doc_term_csv = FALSE,
                                flat_output = FALSE,
                                local_threads = NULL,
-                               check_repeated_values = TRUE,
+                               check_repeated_values = FALSE,
                                binarize_method = "gammafit",
                                thrP = 0.9,
                                top_n_terms = 500L,
@@ -8384,6 +8387,10 @@ module3_train_topic_models <- function(k_grid,
 #' @param flatten_single_output If `TRUE` and only one trained output directory
 #'   is matched, write reports directly under `output_dir`.
 #' @param topic_report_args Optional list of overrides for report settings.
+#'   Standard extraction keeps pathway enrichment and per-comparison pathway
+#'   reports disabled by default for speed; set `run_pathway_enrichment = TRUE`
+#'   and `pathway_per_comparison = TRUE` inside this list for the full pathway
+#'   review.
 #' @noRd
 extract_regulatory_topics <- function(k,
                                       model_dir,
@@ -8498,9 +8505,9 @@ extract_regulatory_topics <- function(k,
       pathway_link_tf_min_prob = 0.5,
       pathway_link_tf_max_topics = 5L,
       pathway_link_tf_top_n_per_topic = 30L,
-      pathway_per_comparison = TRUE,
+      pathway_per_comparison = FALSE,
       pathway_per_comparison_dir = "per_comparison_pathway",
-      pathway_per_comparison_flat = TRUE,
+      pathway_per_comparison_flat = FALSE,
       pathway_split_direction = TRUE,
       run_link_topic_scores = TRUE,
       link_topic_gate_mode = "none",
@@ -8520,7 +8527,7 @@ extract_regulatory_topics <- function(k,
       link_topic_output = "pass",
       run_gammafit_summary = TRUE,
       run_link_efdr_summary = TRUE,
-      run_pathway_enrichment = TRUE,
+      run_pathway_enrichment = FALSE,
       run_doc_topic_heatmaps = TRUE,
       run_tf_topic_heatmaps = TRUE,
       run_topic_by_comparison_heatmaps = TRUE,

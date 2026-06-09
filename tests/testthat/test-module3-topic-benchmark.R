@@ -632,6 +632,39 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(overridden$vae_batch_size, 128L)
 })
 
+test_that("Module 3 VAE device supports explicit auto mode", {
+  resolved_default <- .module3_resolve_topic_run_config(project_config = list())
+  expect_equal(resolved_default$vae_device, "auto")
+
+  resolved_auto <- .module3_resolve_topic_run_config(
+    project_config = list(topic_vae_device = "cuda"),
+    vae_device = "auto"
+  )
+  expect_equal(resolved_auto$vae_device, "auto")
+
+  py <- paste(readLines(system.file("python", "logistic_normal_vae_topics.py", package = "craftgrn"), warn = FALSE), collapse = "\n")
+  expect_match(py, 'choices=["cpu", "cuda", "auto"]', fixed = TRUE)
+  expect_match(py, "def _resolve_device", fixed = TRUE)
+  expect_match(py, "requested_device", fixed = TRUE)
+  expect_match(py, "resolved_device", fixed = TRUE)
+})
+
+test_that("Module 3 high-throughput topic input skips repeated-value diagnostics by default", {
+  expect_false(formals(train_topic_models)$check_repeated_values)
+  expect_false(formals(module3_construct_docs)$check_repeated_values)
+  expect_true(formals(build_doc_term_joint)$check_repeated_values)
+  expect_true(formals(build_doc_term_condition_union)$check_repeated_values)
+})
+
+test_that("Module 3 standard extraction keeps per-comparison pathway reports optional", {
+  model_defaults <- paste(
+    deparse(body(extract_regulatory_topics)),
+    collapse = "\n"
+  )
+  expect_match(model_defaults, "pathway_per_comparison = FALSE", fixed = TRUE)
+  expect_match(model_defaults, "run_pathway_enrichment = FALSE", fixed = TRUE)
+})
+
 test_that("Module 3 theta review PNG writer is headless safe", {
   skip_if_not(capabilities("cairo"))
   old_bitmap <- getOption("bitmapType")

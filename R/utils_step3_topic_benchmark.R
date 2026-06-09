@@ -2052,7 +2052,8 @@
 #' @param vae_hidden VAE hidden-layer width.
 #' @param vae_lr VAE learning rate.
 #' @param vae_seed VAE random seed.
-#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`.
+#' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
+#'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
 #' @param sample_subset Optional condition/sample labels passed to the Module 3
 #'   training engine. When supplied, only comparisons whose condition labels are
 #'   both in this vector are used.
@@ -2084,7 +2085,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         vae_hidden = 128L,
                                         vae_lr = 1e-3,
                                         vae_seed = 123L,
-                                        vae_device = "cpu",
+                                        vae_device = "auto",
                                         sample_subset = NULL,
                                         analysis_label = NULL,
                                         extraction_topic_report_args = list(),
@@ -2298,6 +2299,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #'   condition.
 #' @param direction_consistency Direction consistency filter mode.
 #' @param save_full_doc_term_csv Whether to write the full document-term CSV.
+#' @param check_repeated_values Warn about repeated inconsistent term values.
+#'   The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
+#'   audits.
 #' @param overwrite If FALSE, reuse an existing complete cache.
 #' @param verbose Emit concise progress messages.
 #'
@@ -2328,6 +2332,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          require_gene_expr_either = TRUE,
                                          direction_consistency = "aligned",
                                          save_full_doc_term_csv = FALSE,
+                                         check_repeated_values = FALSE,
                                          overwrite = FALSE,
                                          verbose = TRUE) {
   .assert_pkg("data.table")
@@ -2393,7 +2398,8 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       threshold_tf_expr = threshold_tf_expr,
       include_tf_terms = isTRUE(include_tf_terms),
       require_tf_expr = identical(doc_mode, "tf"),
-      fp_term_mode = fp_term_mode
+      fp_term_mode = fp_term_mode,
+      check_repeated_values = check_repeated_values
     )
   } else {
     edges_docs <- add_tf_docs(edges_filt, doc_mode = doc_mode, direction_by = "gene", tf_cluster_map = tf_cluster_map)
@@ -2415,7 +2421,8 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       threshold_gene_expr = threshold_gene_expr,
       threshold_fp_score = threshold_fp_score,
       threshold_tf_expr = threshold_tf_expr,
-      require_condition_thresholds = identical(doc_mode, "tf")
+      require_condition_thresholds = identical(doc_mode, "tf"),
+      check_repeated_values = check_repeated_values
     )
   }
   if (!nrow(doc_term)) .log_abort("Module 3 document-term table is empty.")
@@ -2457,6 +2464,9 @@ module3_prepare_topic_inputs <- function(filtered_dir,
 #'   CSV files.
 #' @param output_dir Directory where topic input caches are written.
 #' @param tf_cluster_map Named vector mapping TF names to motif clusters.
+#' @param check_repeated_values Warn about repeated inconsistent term values.
+#'   The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
+#'   audits.
 #' @param ... Additional topic-document construction arguments passed to the
 #'   internal Module 3 document builder.
 #'
@@ -2465,11 +2475,13 @@ module3_prepare_topic_inputs <- function(filtered_dir,
 module3_construct_docs <- function(filtered_dir,
                                    output_dir,
                                    tf_cluster_map = NULL,
+                                   check_repeated_values = FALSE,
                                    ...) {
   module3_prepare_topic_inputs(
     filtered_dir = filtered_dir,
     output_dir = output_dir,
     tf_cluster_map = tf_cluster_map,
+    check_repeated_values = check_repeated_values,
     ...
   )
 }
@@ -2793,7 +2805,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   vae_hidden = 128L,
                                   vae_lr = 1e-3,
                                   vae_seed = 123L,
-                                  vae_device = "cpu",
+                                  vae_device = "auto",
                                   sample_subset = NULL,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
@@ -2906,7 +2918,7 @@ run_regulatory_topics <- function(filtered_dir,
     as.character(topic_link_output)[[1L]]
   }
   vae_device <- if (is.null(vae_device)) {
-    as.character(.module3_cfg_value(cfg, c("topic_vae_device", "module3_topic_vae_device"), "cpu"))[[1L]]
+    as.character(.module3_cfg_value(cfg, c("topic_vae_device", "module3_topic_vae_device"), "auto"))[[1L]]
   } else {
     as.character(vae_device)[[1L]]
   }
@@ -2955,8 +2967,8 @@ run_regulatory_topics <- function(filtered_dir,
 #'   read from `project_config` or use `2000`.
 #' @param topic_link_output Topic-link output mode. If `NULL`, read from
 #'   `project_config` or use `"pass"`.
-#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`. If `NULL`,
-#'   read from `project_config` or use `"cpu"`.
+#' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
+#'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
 #'   `project_config` or use `64`.
 #' @param ... Additional arguments passed to the internal topic-modeling

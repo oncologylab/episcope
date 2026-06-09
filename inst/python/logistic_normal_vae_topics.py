@@ -8,6 +8,7 @@ import argparse
 import os
 import sys
 import time
+import warnings
 from typing import List
 
 import numpy as np
@@ -224,6 +225,23 @@ def _append_progress(path: str | None, stage: str, k: int | str, status: str, me
         handle.flush()
 
 
+def _cuda_available() -> bool:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            return bool(torch.cuda.is_available())
+        except Exception:
+            return False
+
+
+def _resolve_device(requested_device: str) -> str:
+    if requested_device == "auto":
+        return "cuda" if _cuda_available() else "cpu"
+    if requested_device == "cuda" and not _cuda_available():
+        return "cpu"
+    return requested_device
+
+
 def _prepare_matrix(doc_term: pd.DataFrame) -> tuple[sp.csr_matrix, List[str], List[str]]:
     doc_ids = doc_term["doc_id"].drop_duplicates().tolist()
     term_ids = doc_term["term_id"].drop_duplicates().tolist()
@@ -251,11 +269,10 @@ def _train_one(
 ) -> tuple[np.ndarray, np.ndarray, dict, str]:
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
+    requested_device = str(device)
+    device = _resolve_device(requested_device)
     if device == "cuda":
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        else:
-            device = "cpu"
+        torch.cuda.manual_seed_all(seed)
 
     if variant == "vae_mlp":
         model = LogisticNormalVAE(X.shape[1], n_topics, hidden=hidden)
@@ -335,7 +352,8 @@ def _train_one(
             f"Topics (K): {n_topics}",
             f"Vocab size: {X.shape[1]}",
             f"Hidden size: {hidden}",
-            f"Device: {device}",
+            f"Requested device: {requested_device}",
+            f"Resolved device: {device}",
             "",
             variant_detail,
             "",
@@ -356,7 +374,8 @@ def _train_one(
                     "batch_size": int(batch_size),
                     "lr": float(lr),
                     "seed": int(seed),
-                    "device": str(device),
+                    "requested_device": str(requested_device),
+                    "resolved_device": str(device),
                     "variant": str(variant),
                 },
             },
@@ -376,6 +395,8 @@ def _train_one(
         "hidden": int(hidden),
         "lr": float(lr),
         "variant": str(variant),
+        "requested_device": str(requested_device),
+        "resolved_device": str(device),
     }
     return theta, phi, metrics, model_summary
 
@@ -390,7 +411,7 @@ def main() -> None:
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--seed", type=int, default=123)
-    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    ap.add_argument("--device", choices=["cpu", "cuda", "auto"], default="auto")
     ap.add_argument(
         "--variant",
         choices=["vae_mlp", "moetm_encoder_decoder", "multivi_encoder"],
@@ -405,6 +426,15 @@ def main() -> None:
         torch_threads = 1
     if torch_threads > 0:
         torch.set_num_threads(torch_threads)
+
+    resolved_device = _resolve_device(args.device)
+    _append_progress(
+        args.progress_log,
+        "device",
+        "all",
+        "resolved",
+        f"requested_device={args.device};resolved_device={resolved_device};cuda_available={_cuda_available()}",
+    )
 
     _append_progress(args.progress_log, "read_doc_term", "all", "start", args.doc_term)
     doc_term = _read_doc_term(args.doc_term)
@@ -481,7 +511,8 @@ def main() -> None:
                 "batch_size": int(args.batch_size),
                 "lr": float(args.lr),
                 "seed": int(args.seed),
-                "device": str(args.device),
+                "requested_device": str(args.device),
+                "resolved_device": str(metrics.get("resolved_device")),
             }
         )
         _append_progress(args.progress_log, "train_k", int(k), "done", f"elapsed_sec={round(time.time() - t_k, 1)}")
