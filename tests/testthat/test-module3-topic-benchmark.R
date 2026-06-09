@@ -133,58 +133,87 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   topic_html <- paste(readLines(file.path(html_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
   condition_html <- paste(readLines(file.path(html_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
   theta_html <- paste(readLines(file.path(html_dir, "theta_phi_and_group_mds.html"), warn = FALSE), collapse = "\n")
-  expect_match(topic_html, "Intertopic Distance Map", fixed = TRUE)
-  expect_match(topic_html, "Condition Waterfall", fixed = TRUE)
-  expect_match(topic_html, "Pathways", fixed = TRUE)
-  expect_match(topic_html, "Export SVG", fixed = TRUE)
-  expect_match(topic_html, "image/svg+xml", fixed = TRUE)
-  expect_match(topic_html, "XMLSerializer", fixed = TRUE)
-  expect_match(topic_html, "exportSvg", fixed = TRUE)
-  expect_no_match(topic_html, "document.documentElement.outerHTML", fixed = TRUE)
-  expect_no_match(topic_html, "type:'text/html'", fixed = TRUE)
-  expect_match(topic_html, "Genes in full document gene-universe enrichment", fixed = TRUE)
-  expect_match(topic_html, "topic genes", fixed = TRUE)
-  expect_match(topic_html, "universe remainder", fixed = TRUE)
-  expect_match(topic_html, "gene_total_universe", fixed = TRUE)
-  expect_match(topic_html, "mdsLeader", fixed = TRUE)
-  expect_match(topic_html, "paletteSelect", fixed = TRUE)
-  expect_match(topic_html, "mdsLayer", fixed = TRUE)
-  expect_match(topic_html, "waterfallLayer", fixed = TRUE)
-  expect_match(topic_html, "pathLayer", fixed = TRUE)
-  expect_match(topic_html, "mdsTooltip", fixed = TRUE)
-  expect_match(topic_html, "wfTooltip", fixed = TRUE)
-  expect_match(topic_html, "pathTooltip", fixed = TRUE)
-  expect_match(topic_html, "mdsStats", fixed = TRUE)
-  expect_match(topic_html, "waterfallStats", fixed = TRUE)
-  expect_match(topic_html, "pathStats", fixed = TRUE)
-  expect_match(topic_html, "Mean document-to-topic probability", fixed = TRUE)
-  expect_match(topic_html, "marker", fixed = TRUE)
-  expect_match(condition_html, "Condition/Comparison MDS", fixed = TRUE)
-  expect_match(condition_html, "Topic Waterfall", fixed = TRUE)
-  expect_match(condition_html, "image/svg+xml", fixed = TRUE)
-  expect_match(condition_html, "XMLSerializer", fixed = TRUE)
-  expect_match(condition_html, "exportSvg", fixed = TRUE)
-  expect_no_match(condition_html, "document.documentElement.outerHTML", fixed = TRUE)
-  expect_no_match(condition_html, "type:'text/html'", fixed = TRUE)
-  expect_match(condition_html, "mdsImage", fixed = TRUE)
-  expect_match(condition_html, "mdsHotspotLayer", fixed = TRUE)
-  expect_match(condition_html, "function drawMdsHotspots()", fixed = TRUE)
-  expect_match(condition_html, "mdsHotspot", fixed = TRUE)
-  expect_match(condition_html, "groupColor", fixed = TRUE)
-  expect_match(condition_html, "selectGroup", fixed = TRUE)
-  expect_match(condition_html, "pathLabelTopicSpecific", fixed = TRUE)
-  expect_match(condition_html, "pathLabelGroupSpecific", fixed = TRUE)
-  expect_match(condition_html, "pathLabelBothSpecific", fixed = TRUE)
-  expect_match(condition_html, "Pathway name colors", fixed = TRUE)
-  expect_match(condition_html, "GROUP_MDS", fixed = TRUE)
-  expect_match(condition_html, "selectedGroupRows", fixed = TRUE)
-  expect_match(condition_html, "Document-to-topic probability", fixed = TRUE)
-  expect_match(condition_html, "waterfallLayer", fixed = TRUE)
-  expect_match(condition_html, "waterfallStats", fixed = TRUE)
+  expect_match(topic_html, "Topic Method/K Reports", fixed = TRUE)
+  expect_match(topic_html, "Method <select", fixed = TRUE)
+  expect_match(topic_html, "topic_reports/", fixed = TRUE)
+  expect_match(topic_html, "frame.src=hit.src", fixed = TRUE)
+  expect_no_match(topic_html, "srcdoc", fixed = TRUE)
+  expect_match(condition_html, "Topic Method/K Condition Reports", fixed = TRUE)
+  expect_match(condition_html, "Method <select", fixed = TRUE)
+  expect_match(condition_html, "condition_topic_reports/", fixed = TRUE)
+  expect_match(condition_html, "frame.src=hit.src", fixed = TRUE)
+  expect_no_match(condition_html, "srcdoc", fixed = TRUE)
+
+  topic_report_files <- list.files(
+    file.path(html_dir, "topic_reports"),
+    pattern = "_topic_report[.]html$",
+    full.names = TRUE
+  )
+  condition_report_files <- list.files(
+    file.path(html_dir, "condition_topic_reports"),
+    pattern = "_condition_topic_report[.]html$",
+    full.names = TRUE
+  )
+  expect_true(length(topic_report_files) >= 1L)
+  expect_true(length(condition_report_files) >= 1L)
+  topic_detail_html <- paste(readLines(topic_report_files[[1L]], warn = FALSE), collapse = "\n")
+  condition_detail_html <- paste(readLines(condition_report_files[[1L]], warn = FALSE), collapse = "\n")
+  expect_match(topic_detail_html, "Intertopic Distance Map", fixed = TRUE)
+  expect_match(topic_detail_html, "Condition Waterfall", fixed = TRUE)
+  expect_match(topic_detail_html, "Pathways", fixed = TRUE)
+  expect_match(topic_detail_html, "Export SVG", fixed = TRUE)
+  expect_match(topic_detail_html, "image/svg+xml", fixed = TRUE)
+  expect_match(topic_detail_html, "XMLSerializer", fixed = TRUE)
+  expect_match(topic_detail_html, "exportSvg", fixed = TRUE)
+  expect_no_match(topic_detail_html, "document.documentElement.outerHTML", fixed = TRUE)
+  expect_no_match(topic_detail_html, "type:'text/html'", fixed = TRUE)
+  expect_match(topic_detail_html, "Genes in full document gene-universe enrichment", fixed = TRUE)
+  expect_match(topic_detail_html, "topic genes", fixed = TRUE)
+  expect_match(topic_detail_html, "universe remainder", fixed = TRUE)
+  expect_match(topic_detail_html, "gene_total_universe", fixed = TRUE)
+  expect_match(topic_detail_html, "mdsLeader", fixed = TRUE)
+  expect_match(topic_detail_html, "paletteSelect", fixed = TRUE)
+  expect_match(topic_detail_html, "mdsLayer", fixed = TRUE)
+  expect_match(topic_detail_html, "waterfallLayer", fixed = TRUE)
+  expect_match(topic_detail_html, "pathLayer", fixed = TRUE)
+  expect_match(topic_detail_html, "mdsTooltip", fixed = TRUE)
+  expect_match(topic_detail_html, "wfTooltip", fixed = TRUE)
+  expect_match(topic_detail_html, "pathTooltip", fixed = TRUE)
+  expect_match(topic_detail_html, "mdsStats", fixed = TRUE)
+  expect_match(topic_detail_html, "waterfallStats", fixed = TRUE)
+  expect_match(topic_detail_html, "pathStats", fixed = TRUE)
+  expect_match(topic_detail_html, "Mean document-to-topic probability", fixed = TRUE)
+  expect_match(topic_detail_html, "marker", fixed = TRUE)
+  expect_match(condition_detail_html, "Condition/Comparison MDS", fixed = TRUE)
+  expect_match(condition_detail_html, "Topic Waterfall", fixed = TRUE)
+  expect_match(condition_detail_html, "image/svg+xml", fixed = TRUE)
+  expect_match(condition_detail_html, "XMLSerializer", fixed = TRUE)
+  expect_match(condition_detail_html, "exportSvg", fixed = TRUE)
+  expect_no_match(condition_detail_html, "document.documentElement.outerHTML", fixed = TRUE)
+  expect_no_match(condition_detail_html, "type:'text/html'", fixed = TRUE)
+  expect_match(condition_detail_html, "mdsImage", fixed = TRUE)
+  expect_match(condition_detail_html, "mdsHotspotLayer", fixed = TRUE)
+  expect_match(condition_detail_html, "function drawMdsHotspots()", fixed = TRUE)
+  expect_match(condition_detail_html, "mdsHotspot", fixed = TRUE)
+  expect_match(condition_detail_html, "groupColor", fixed = TRUE)
+  expect_match(condition_detail_html, "selectGroup", fixed = TRUE)
+  expect_match(condition_detail_html, "pathLabelTopicSpecific", fixed = TRUE)
+  expect_match(condition_detail_html, "pathLabelGroupSpecific", fixed = TRUE)
+  expect_match(condition_detail_html, "pathLabelBothSpecific", fixed = TRUE)
+  expect_match(condition_detail_html, "Pathway name colors", fixed = TRUE)
+  expect_match(condition_detail_html, "GROUP_MDS", fixed = TRUE)
+  expect_match(condition_detail_html, "selectedGroupRows", fixed = TRUE)
+  expect_match(condition_detail_html, "Document-to-topic probability", fixed = TRUE)
+  expect_match(condition_detail_html, "waterfallLayer", fixed = TRUE)
+  expect_match(condition_detail_html, "waterfallStats", fixed = TRUE)
   expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
 
-  condition_svg <- file.path(root, "review", "assets", "condition_mds_K2.svg")
-  expect_true(file.exists(condition_svg))
+  condition_svg <- list.files(
+    file.path(root, "review", "condition_topic_reports", "assets"),
+    pattern = "[.]svg$",
+    full.names = TRUE
+  )
+  expect_true(length(condition_svg) >= 1L)
 
   score_mat <- data.table::fread(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
   expect_equal(score_mat$method_setup, "cond fp aggr weight | LDA")
@@ -225,6 +254,73 @@ test_that("Module 3 topic benchmark uses a clean standard layout for one selecte
   expect_equal(res$review_dir, file.path(root, "review"))
   expect_false(grepl("std_tf_", res$method_plan$topic_models_dir, fixed = TRUE))
   expect_false(grepl("lda$", res$method_plan$topic_models_dir))
+})
+
+test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
+  root <- tempfile("module3-topic-review-subfolders-")
+  dir.create(root, recursive = TRUE)
+  plan <- .m3tb_apply_output_layout(
+    .module3_topic_method_plan(
+      methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+      k_grid = 2L
+    ),
+    root,
+    "benchmark"
+  )
+
+  make_fixture <- function(row) {
+    vae_dir <- file.path(row$topic_models_dir[[1L]], "fixture_model", "vae_models")
+    dir.create(vae_dir, recursive = TRUE, showWarnings = FALSE)
+    theta <- data.table::data.table(
+      doc_id = c("CondA::TF1", "CondB::TF1"),
+      Topic1 = c(0.8, 0.2),
+      Topic2 = c(0.2, 0.8)
+    )
+    phi <- data.table::data.table(
+      term_id = c("GENE:G1", "GENE:G2", "PEAK:P1"),
+      Topic1 = c(0.7, 0.2, 0.1),
+      Topic2 = c(0.1, 0.7, 0.2)
+    )
+    data.table::fwrite(theta, file.path(vae_dir, "theta_K2.csv"))
+    data.table::fwrite(phi, file.path(vae_dir, "phi_K2.csv"))
+  }
+  for (i in seq_len(nrow(plan))) make_fixture(plan[i])
+
+  res <- run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = c("CondA", "CondB"),
+      condition_group = c("CondA", "CondB")
+    ),
+    methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
+    k_grid = 2L,
+    output_layout = "benchmark",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = TRUE,
+    verbose = FALSE
+  )
+
+  review_dir <- res$review_dir
+  expect_true(file.exists(file.path(review_dir, "topic_method_k_topic_mds_report.html")))
+  expect_true(file.exists(file.path(review_dir, "topic_method_k_condition_mds_report.html")))
+  expect_false(file.exists(file.path(review_dir, "topic_report_K2.html")))
+  expect_false(file.exists(file.path(review_dir, "condition_topic_report_K2.html")))
+
+  topic_reports <- list.files(file.path(review_dir, "topic_reports"), pattern = "_topic_report[.]html$", full.names = TRUE)
+  condition_reports <- list.files(file.path(review_dir, "condition_topic_reports"), pattern = "_condition_topic_report[.]html$", full.names = TRUE)
+  expect_equal(length(topic_reports), 2L)
+  expect_equal(length(condition_reports), 2L)
+  expect_equal(length(unique(basename(topic_reports))), 2L)
+  expect_equal(length(unique(basename(condition_reports))), 2L)
+
+  topic_index <- paste(readLines(file.path(review_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
+  condition_index <- paste(readLines(file.path(review_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
+  expect_match(topic_index, "topic_reports/", fixed = TRUE)
+  expect_match(condition_index, "condition_topic_reports/", fixed = TRUE)
+  expect_match(topic_index, "Method <select", fixed = TRUE)
+  expect_match(condition_index, "Method <select", fixed = TRUE)
 })
 
 test_that("Module 3 standard layout flattens one selected K extraction", {

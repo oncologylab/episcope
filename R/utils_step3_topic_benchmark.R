@@ -1519,21 +1519,45 @@
   out_file
 }
 
+.m3tb_review_row_value <- function(row, name, default = NA_character_) {
+  if (name %in% names(row)) as.character(row[[name]][[1L]]) else default
+}
+
+.m3tb_review_report_slug <- function(row, k) {
+  parts <- c(
+    .m3tb_review_row_value(row, "run_id", ""),
+    .m3tb_review_row_value(row, "method", ""),
+    paste0("K", as.integer(k))
+  )
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+  if (!length(parts)) parts <- c(.m3tb_review_row_value(row, "method_setup", "method"), paste0("K", as.integer(k)))
+  .safe_filename(paste(parts, collapse = "_"))
+}
+
+.m3tb_relative_html_path <- function(path, base_dir) {
+  path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+  base_dir <- normalizePath(base_dir, winslash = "/", mustWork = FALSE)
+  rel <- sub(paste0("^", gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", base_dir), "/?"), "", path)
+  rel
+}
+
 .m3tb_write_combined_report_index <- function(out_file, reports, title) {
   reports <- data.table::as.data.table(reports)
   if (!nrow(reports)) return(NA_character_)
-  reports[, html := vapply(path, function(x) paste(readLines(x, warn = FALSE), collapse = "\n"), character(1L))]
-  json <- .m3tb_json_for_html(reports[, .(label, k, html)])
+  reports[, src := vapply(path, .m3tb_relative_html_path, character(1L), base_dir = dirname(out_file))]
+  if (!"method_setup" %in% names(reports)) reports[, method_setup := label]
+  if (!"run_id" %in% names(reports)) reports[, run_id := method_setup]
+  json <- .m3tb_json_for_html(reports[, .(label, k, method_setup, run_id, src)])
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
-    "<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif}.top{height:42px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 12px;border-bottom:1px solid #d6d6d0;background:#fff;box-sizing:border-box}h1{font-size:18px;line-height:1;margin:0;font-weight:700}.controls{display:flex;gap:8px;align-items:center;font-weight:700;white-space:nowrap}select{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:4px 7px}iframe{display:block;width:100vw;height:calc(100vh - 42px);border:0;background:#fff}</style></head><body>",
+    "<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif}.top{height:46px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 12px;border-bottom:1px solid #d6d6d0;background:#fff;box-sizing:border-box}h1{font-size:18px;line-height:1;margin:0;font-weight:700}.controls{display:flex;gap:8px;align-items:center;font-weight:700;white-space:nowrap}select{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;background:#fff;color:#111;border-radius:3px;padding:4px 7px}iframe{display:block;width:100vw;height:calc(100vh - 46px);border:0;background:#fff}</style></head><body>",
     "<div class=\"top\">",
     paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
-    "<div class=\"controls\"><label>K <select id=\"kSelect\"></select></label><label>Report <select id=\"reportSelect\"></select></label></div></div><iframe id=\"frame\"></iframe>",
+    "<div class=\"controls\"><label>Method <select id=\"methodSelect\"></select></label><label>K <select id=\"kSelect\"></select></label><label>Report <select id=\"reportSelect\"></select></label></div></div><iframe id=\"frame\"></iframe>",
     "<script>",
     paste0("const REPORTS=", json, ";"),
-    "const kSelect=document.getElementById('kSelect'),reportSelect=document.getElementById('reportSelect'),frame=document.getElementById('frame');function uniq(x){return Array.from(new Set(x))}function fill(){const curK=kSelect.value;kSelect.replaceChildren();uniq(REPORTS.map(r=>String(r.k))).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;kSelect.appendChild(o)});if(curK)kSelect.value=curK;const rows=REPORTS.filter(r=>!kSelect.value||String(r.k)===kSelect.value);reportSelect.replaceChildren();rows.forEach((r,i)=>{const o=document.createElement('option');o.value=String(i);o.textContent=r.label;reportSelect.appendChild(o)});load()}function load(){const rows=REPORTS.filter(r=>!kSelect.value||String(r.k)===kSelect.value);const hit=rows[Number(reportSelect.value)||0]||rows[0]||REPORTS[0];if(hit)frame.srcdoc=hit.html||''}kSelect.addEventListener('change',fill);reportSelect.addEventListener('change',load);fill();",
+    "const methodSelect=document.getElementById('methodSelect'),kSelect=document.getElementById('kSelect'),reportSelect=document.getElementById('reportSelect'),frame=document.getElementById('frame');function uniq(x){return Array.from(new Set(x))}function fillSelect(sel,vals,current){sel.replaceChildren();vals.forEach(v=>{const o=document.createElement('option');o.value=String(v);o.textContent=String(v);sel.appendChild(o)});if(current&&vals.map(String).includes(String(current)))sel.value=String(current)}function filtered(){return REPORTS.filter(r=>(!methodSelect.value||r.method_setup===methodSelect.value)&&(!kSelect.value||String(r.k)===kSelect.value))}function refresh(changed){const curM=methodSelect.value,curK=kSelect.value,curR=reportSelect.value;let rows=REPORTS;if(changed!=='method')fillSelect(methodSelect,uniq(REPORTS.map(r=>r.method_setup)),curM);rows=REPORTS.filter(r=>!methodSelect.value||r.method_setup===methodSelect.value);if(changed!=='k')fillSelect(kSelect,uniq(rows.map(r=>String(r.k))).sort((a,b)=>Number(a)-Number(b)),curK);rows=filtered();fillSelect(reportSelect,rows.map((r,i)=>String(i)),curR);Array.from(reportSelect.options).forEach((o,i)=>{const r=rows[i];if(r)o.textContent=r.label});load()}function load(){const rows=filtered();const hit=rows[Number(reportSelect.value)||0]||rows[0]||REPORTS[0];if(hit){methodSelect.value=hit.method_setup;kSelect.value=String(hit.k);frame.removeAttribute('src'+'doc');frame.src=hit.src;document.title=hit.label}}methodSelect.addEventListener('change',()=>refresh('method'));kSelect.addEventListener('change',()=>refresh('k'));reportSelect.addEventListener('change',load);refresh();",
     "</script></body></html>"
   )
   writeLines(html, out_file, useBytes = TRUE)
@@ -1544,6 +1568,11 @@
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
   html_dir <- .m3tb_review_html_dir(review_dir)
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
+  topic_report_dir <- file.path(html_dir, "topic_reports")
+  condition_report_dir <- file.path(html_dir, "condition_topic_reports")
+  dir.create(topic_report_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(condition_report_dir, recursive = TRUE, showWarnings = FALSE)
+  unlink(list.files(html_dir, pattern = "^(topic_report|condition_topic_report)_K[0-9]+[.]html$", full.names = TRUE))
   asset_dir <- .m3tb_plot_dir(review_dir)
   image_manifest <- .m3tb_write_review_pngs(score_result, asset_dir)
   model_rows <- attr(score_result, "model_rows")
@@ -1567,9 +1596,16 @@
         compute_universe = TRUE
       )
       label <- sprintf("%s | K%d", row$method_setup[[1L]], as.integer(row$selected_k[[1L]]))
-      out <- file.path(html_dir, sprintf("topic_report_K%d.html", as.integer(row$selected_k[[1L]])))
+      slug <- .m3tb_review_report_slug(row, row$selected_k[[1L]])
+      out <- file.path(topic_report_dir, sprintf("%s_topic_report.html", slug))
       .m3tb_topic_report_html(label, topic_mds, waterfall, pathways, out)
-      data.table::data.table(label = label, k = as.integer(row$selected_k[[1L]]), path = out)
+      data.table::data.table(
+        label = label,
+        k = as.integer(row$selected_k[[1L]]),
+        method_setup = row$method_setup[[1L]],
+        run_id = .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]]),
+        path = out
+      )
     })
     topic_reports <- data.table::rbindlist(topic_rows, use.names = TRUE, fill = TRUE)
     condition_rows <- lapply(seq_len(nrow(model_rows)), function(i) {
@@ -1590,12 +1626,19 @@
         compute_universe = TRUE
       )
       label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
-      out <- file.path(html_dir, sprintf("condition_topic_report_K%d.html", k))
+      slug <- .m3tb_review_report_slug(row, k)
+      out <- file.path(condition_report_dir, sprintf("%s_condition_topic_report.html", slug))
       condition_mds_svg <- .m3tb_condition_mds_svg_path(out)
       .m3tb_write_condition_mds_svg(group_mds, condition_mds_svg)
       mds_src <- file.path("assets", basename(condition_mds_svg))
       .m3tb_condition_report_html(label, group_mds, group_topic, pathways, out, mds_svg_src = mds_src)
-      data.table::data.table(label = label, k = k, path = out)
+      data.table::data.table(
+        label = label,
+        k = k,
+        method_setup = row$method_setup[[1L]],
+        run_id = .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]]),
+        path = out
+      )
     })
     condition_reports <- data.table::rbindlist(condition_rows, use.names = TRUE, fill = TRUE)
   }
