@@ -196,6 +196,61 @@ test_that("comparison doc_tf drops zero-direction rows before threshold selectio
   expect_equal(docs$gene_expr_condition, 10)
 })
 
+test_that("comparison topic documents preserve readable comparison labels", {
+  edges <- data.table::data.table(
+    comparison_id = c("Fib_BIRT_vs_BI", "Fib_BIRT_vs_BI"),
+    comparison_label = c("Fibroblast BIRT vs BI", "Fibroblast BIRT vs BI"),
+    tf = c("TF1", "TF2"),
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P2"),
+    log2fc_gene = c(1, -1),
+    tf_expr_cond1 = c(10, 10),
+    tf_expr_cond2 = c(10, 10),
+    gene_expr_cond1 = c(10, 10),
+    gene_expr_cond2 = c(10, 10),
+    fp_score_cond1 = c(2, 2),
+    fp_score_cond2 = c(2, 2)
+  )
+
+  docs <- add_tf_docs(edges, doc_mode = "tf", direction_by = "gene")
+
+  expect_equal(
+    docs$doc_id,
+    c("Fib_BIRT_vs_BI::TF1::Target-Up", "Fib_BIRT_vs_BI::TF2::Target-Down")
+  )
+  expect_equal(
+    docs$doc_display_label,
+    c("Fibroblast BIRT vs BI::Target-Up", "Fibroblast BIRT vs BI::Target-Down")
+  )
+  expect_equal(unique(docs$comparison_label), "Fibroblast BIRT vs BI")
+})
+
+test_that("topic comparison heatmap labels prefer comparison metadata labels", {
+  dt <- data.table::data.table(
+    doc_id = c("Fib_BIRT_vs_BI::TF1::Target-Up", "Fib_BIRT_vs_BI::TF2::Target-Down"),
+    comparison_id = c("Fib_BIRT_vs_BI", "Fib_BIRT_vs_BI"),
+    tf_doc = c("TF1", "TF2"),
+    direction = c("Target-Up", "Target-Down"),
+    direction_label = c("Target-Up", "Target-Down"),
+    Topic1 = c(0.8, 0.2),
+    Topic2 = c(0.2, 0.8)
+  )
+  edges_docs <- data.table::data.table(
+    doc_id = c("Fib_BIRT_vs_BI::TF1::Target-Up", "Fib_BIRT_vs_BI::TF2::Target-Down"),
+    comparison_id = c("Fib_BIRT_vs_BI", "Fib_BIRT_vs_BI"),
+    comparison_label = c("Fibroblast BIRT vs BI", "Fibroblast BIRT vs BI"),
+    doc_display_label = c("Fibroblast BIRT vs BI::Target-Up", "Fibroblast BIRT vs BI::Target-Down")
+  )
+
+  out <- craftgrn:::.resolve_topic_comparison_labels(dt, edges_docs = edges_docs)
+
+  expect_equal(
+    out$comparison_label,
+    c("Fibroblast BIRT vs BI::Target-Up", "Fibroblast BIRT vs BI::Target-Down")
+  )
+  expect_equal(out$comparison_id, c("Fib_BIRT_vs_BI", "Fib_BIRT_vs_BI"))
+})
+
 test_that("condition doc_ctf wrapper keeps cluster-level documents", {
   edges <- data.table::data.table(
     comparison_id = "C1",

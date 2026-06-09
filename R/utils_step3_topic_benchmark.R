@@ -532,12 +532,42 @@
   }
   if (all(c("cond1_label", "cond2_label") %in% names(dt))) {
     conds <- unique(c(as.character(dt$cond1_label), as.character(dt$cond2_label)))
-    return(data.table::data.table(
+    condition <- data.table::data.table(
       context_type = "condition",
       comparison_label = conds,
       display_label = .m3tb_display_label(conds),
       metric_group = conds
-    ))
+    )
+    if (!"comparison_id" %in% names(dt)) {
+      dt[, comparison_id := paste(as.character(cond1_label), as.character(cond2_label), sep = "_vs_")]
+    } else {
+      dt[, comparison_id := as.character(comparison_id)]
+    }
+    if ("comparison_display" %in% names(dt)) {
+      display_base <- as.character(dt$comparison_display)
+    } else if ("comparison_label" %in% names(dt)) {
+      display_base <- as.character(dt$comparison_label)
+    } else {
+      display_base <- paste(as.character(dt$cond1_label), as.character(dt$cond2_label), sep = " vs ")
+    }
+    display_base[is.na(display_base) | !nzchar(trimws(display_base))] <- dt$comparison_id[
+      is.na(display_base) | !nzchar(trimws(display_base))
+    ]
+    comparison <- data.table::rbindlist(list(
+      data.table::data.table(
+        context_type = "comparison",
+        comparison_label = paste(dt$comparison_id, "Target-Up", sep = "::"),
+        display_label = paste(display_base, "Target-Up"),
+        metric_group = paste(dt$comparison_id, "Target-Up", sep = "::")
+      ),
+      data.table::data.table(
+        context_type = "comparison",
+        comparison_label = paste(dt$comparison_id, "Target-Down", sep = "::"),
+        display_label = paste(display_base, "Target-Down"),
+        metric_group = paste(dt$comparison_id, "Target-Down", sep = "::")
+      )
+    ), use.names = TRUE, fill = TRUE)
+    return(unique(data.table::rbindlist(list(condition, comparison), use.names = TRUE, fill = TRUE)))
   }
   .log_abort("comparisons must include either condition_label/condition_group or cond1_label/cond2_label columns.")
 }
@@ -563,11 +593,20 @@
   if (!length(topic_cols)) topic_cols <- setdiff(names(profiles), c("comparison_label", "display_label", "n_docs"))
   merged <- merge(
     profiles,
-    design[context_type == row$context_type[[1L]], .(comparison_label, metric_group)],
+    design[context_type == row$context_type[[1L]], .(
+      comparison_label,
+      design_display_label = display_label,
+      metric_group
+    )],
     by = "comparison_label",
     all.x = TRUE,
     sort = FALSE
   )
+  if ("design_display_label" %in% names(merged)) {
+    use_design_label <- !is.na(merged$design_display_label) & nzchar(trimws(merged$design_display_label))
+    merged[use_design_label, display_label := design_display_label]
+    merged[, design_display_label := NULL]
+  }
   missing <- merged[is.na(metric_group) | !nzchar(metric_group)]
   if (nrow(missing)) {
     merged[is.na(metric_group) | !nzchar(metric_group), metric_group := comparison_label]

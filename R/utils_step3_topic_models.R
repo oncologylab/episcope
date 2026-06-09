@@ -191,12 +191,13 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   if (is.na(ids$cond1_id) || is.na(ids$cond2_id) || !nzchar(ids$cond1_id) || !nzchar(ids$cond2_id)) {
     if (!nrow(dt)) {
       if (!"comparison_id" %in% names(dt)) dt[, comparison_id := ids$comparison_id]
+      if (!"comparison_label" %in% names(dt)) dt[, comparison_label := ids$comparison_id]
       if (!"cond1_id" %in% names(dt)) dt[, cond1_id := ids$cond1_id]
       if (!"cond2_id" %in% names(dt)) dt[, cond2_id := ids$cond2_id]
       if (!is.null(ids$direction) && !"direction_group" %in% names(dt)) dt[, direction_group := ids$direction]
       if (!isTRUE(keep_original)) {
         keep <- c(
-          "comparison_id", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group",
+          "comparison_id", "comparison_label", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group",
           "tf", "gene_key", "peak_id",
           "fp_bound_cond1", "fp_bound_cond2",
           "tf_expr_flag_cond1", "tf_expr_flag_cond2",
@@ -207,7 +208,7 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
           "log2fc_tf", "fc_mag_tf"
         )
         missing <- setdiff(keep, names(dt))
-        for (nm_missing in missing) dt[[nm_missing]] <- if (nm_missing %in% c("comparison_id", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group", "tf", "gene_key", "peak_id")) character() else numeric()
+        for (nm_missing in missing) dt[[nm_missing]] <- if (nm_missing %in% c("comparison_id", "comparison_label", "cond1_id", "cond2_id", "cond1_label", "cond2_label", "direction_group", "tf", "gene_key", "peak_id")) character() else numeric()
         return(dt[, keep, with = FALSE])
       }
       return(dt)
@@ -247,6 +248,11 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
   dt[, cond2_id := if ("cond2_id" %in% names(dt)) as.character(cond2_id) else ids$cond2_id]
   if (!"cond1_label" %in% names(dt)) dt[, cond1_label := cond1_id]
   if (!"cond2_label" %in% names(dt)) dt[, cond2_label := cond2_id]
+  if (!"comparison_label" %in% names(dt)) {
+    dt[, comparison_label := comparison_id]
+  }
+  dt[, comparison_label := as.character(comparison_label)]
+  dt[is.na(comparison_label) | !nzchar(trimws(comparison_label)), comparison_label := comparison_id]
   if (!is.null(ids$direction)) {
     dt[, direction_group := ids$direction]
   }
@@ -324,7 +330,7 @@ standardize_delta_links_one <- function(file, keep_original = TRUE) {
 
   if (!isTRUE(keep_original)) {
     keep <- c(
-      "comparison_id","cond1_id","cond2_id","cond1_label","cond2_label","direction_group",
+      "comparison_id","comparison_label","cond1_id","cond2_id","cond1_label","cond2_label","direction_group",
       "tf","gene_key","peak_id",
       "fp_bound_cond1","fp_bound_cond2",
       "tf_expr_flag_cond1","tf_expr_flag_cond2",
@@ -2870,6 +2876,86 @@ plot_tf_topic_heatmaps_from_link_scores <- function(link_scores,
   invisible(TRUE)
 }
 
+.resolve_topic_comparison_labels <- function(dt,
+                                             edges_docs = NULL,
+                                             label_cleaner = NULL) {
+  .assert_pkg("data.table")
+  dt <- data.table::as.data.table(dt)
+  if (!"direction_label" %in% names(dt)) dt[, direction_label := NA_character_]
+  dt[, comparison_display := as.character(comparison_id)]
+  dt[, doc_display_label := NA_character_]
+
+  if (!is.null(edges_docs) && is.data.frame(edges_docs) && nrow(edges_docs)) {
+    ed <- data.table::as.data.table(edges_docs)
+    if ("comparison_label" %in% names(ed) && "doc_id" %in% names(ed)) {
+      ed[, comparison_label := as.character(comparison_label)]
+      doc_map <- ed[
+        !is.na(doc_id) & nzchar(as.character(doc_id)),
+        .(
+          comparison_display = {
+            x <- comparison_label[!is.na(comparison_label) & nzchar(trimws(comparison_label))]
+            if (length(x)) x[[1L]] else NA_character_
+          },
+          doc_display_label = {
+            if ("doc_display_label" %in% names(ed)) {
+              x <- as.character(doc_display_label)
+              x <- x[!is.na(x) & nzchar(trimws(x))]
+              if (length(x)) x[[1L]] else NA_character_
+            } else {
+              NA_character_
+            }
+          }
+        ),
+        by = doc_id
+      ]
+      dt <- merge(dt, doc_map, by = "doc_id", all.x = TRUE, suffixes = c("", "_from_edges"))
+      if ("comparison_display_from_edges" %in% names(dt)) {
+        use <- !is.na(dt$comparison_display_from_edges) & nzchar(trimws(dt$comparison_display_from_edges))
+        dt[use, comparison_display := comparison_display_from_edges]
+        dt[, comparison_display_from_edges := NULL]
+      }
+      if ("doc_display_label_from_edges" %in% names(dt)) {
+        use <- !is.na(dt$doc_display_label_from_edges) & nzchar(trimws(dt$doc_display_label_from_edges))
+        dt[use, doc_display_label := doc_display_label_from_edges]
+        dt[, doc_display_label_from_edges := NULL]
+      }
+    } else if ("comparison_label" %in% names(ed) && "comparison_id" %in% names(ed)) {
+      ed[, comparison_id := as.character(comparison_id)]
+      ed[, comparison_label := as.character(comparison_label)]
+      comp_map <- ed[
+        !is.na(comparison_id) & nzchar(comparison_id),
+        .(
+          comparison_display = {
+            x <- comparison_label[!is.na(comparison_label) & nzchar(trimws(comparison_label))]
+            if (length(x)) x[[1L]] else NA_character_
+          }
+        ),
+        by = comparison_id
+      ]
+      dt <- merge(dt, comp_map, by = "comparison_id", all.x = TRUE, suffixes = c("", "_from_edges"))
+      if ("comparison_display_from_edges" %in% names(dt)) {
+        use <- !is.na(dt$comparison_display_from_edges) & nzchar(trimws(dt$comparison_display_from_edges))
+        dt[use, comparison_display := comparison_display_from_edges]
+        dt[, comparison_display_from_edges := NULL]
+      }
+    }
+  }
+
+  dt[, comparison_label := ifelse(
+    !is.na(direction_label) & nzchar(direction_label),
+    paste(comparison_display, direction_label, sep = "::"),
+    comparison_display
+  )]
+  has_doc_display <- !is.na(dt$doc_display_label) & nzchar(trimws(dt$doc_display_label))
+  same_direction <- is.na(dt$direction_label) | !nzchar(dt$direction_label) |
+    endsWith(dt$doc_display_label, paste0("::", dt$direction_label))
+  dt[has_doc_display & same_direction, comparison_label := doc_display_label]
+  if (!is.null(label_cleaner)) {
+    dt[, comparison_label := label_cleaner(comparison_label)]
+  }
+  dt
+}
+
 plot_topic_by_comparison_heatmaps <- function(theta,
                                               out_dir,
                                               edges_docs = NULL,
@@ -3037,16 +3123,9 @@ plot_topic_by_comparison_heatmaps <- function(theta,
       dt[!is.na(fp_dir), direction_label := fp_dir]
     }
   }
-  dt[, comparison_label := ifelse(!is.na(direction_label) & nzchar(direction_label),
-    paste(comparison_id, direction_label, sep = "::"),
-    comparison_id
-  )]
-  if (!is.null(label_cleaner)) {
-    dt[, comparison_label := label_cleaner(comparison_label)]
-  }
+  dt <- .resolve_topic_comparison_labels(dt, edges_docs = edges_docs, label_cleaner = label_cleaner)
 
-  comp_avg <- dt[, lapply(.SD, mean, na.rm = TRUE), by = comparison_label, .SDcols = topic_cols]
-  comp_avg[, comparison_id := sub("::.*$", "", comparison_label)]
+  comp_avg <- dt[, lapply(.SD, mean, na.rm = TRUE), by = .(comparison_id, comparison_label), .SDcols = topic_cols]
   comp_avg[, cellline := .get_cellline_from_comparison(comparison_id)]
 
   cells <- unique(na.omit(comp_avg$cellline))
@@ -8743,6 +8822,12 @@ add_tf_docs <- function(edges,
     req <- c(req, "log2fc_fp")
   }
   .topic_assert_has_cols(dt, req, context = "add_tf_docs")
+  dt[, comparison_id := as.character(comparison_id)]
+  if (!"comparison_label" %in% names(dt)) {
+    dt[, comparison_label := comparison_id]
+  }
+  dt[, comparison_label := as.character(comparison_label)]
+  dt[is.na(comparison_label) | !nzchar(trimws(comparison_label)), comparison_label := comparison_id]
 
   if (identical(direction_by, "none")) {
     dt[, direction := NA_character_]
@@ -8777,8 +8862,10 @@ add_tf_docs <- function(edges,
 
   if (identical(doc_mode, "comparison")) {
     dt[, doc_id := if (identical(direction_by, "none")) comparison_id else paste(comparison_id, direction, sep = "::")]
+    dt[, doc_display_label := if (identical(direction_by, "none")) comparison_label else paste(comparison_label, direction, sep = "::")]
   } else {
     dt[, doc_id := paste(comparison_id, tf_doc, direction, sep = "::")]
+    dt[, doc_display_label := paste(comparison_label, direction, sep = "::")]
   }
 
   dt[, direction_sign := direction_sign]

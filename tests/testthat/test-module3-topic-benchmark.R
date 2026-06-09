@@ -499,6 +499,50 @@ test_that("Module 3 topic benchmark uses shallow run folders for method grids", 
   expect_true(file.exists(file.path(root, "runs.csv")))
 })
 
+test_that("Module 3 topic benchmark applies readable comparison labels", {
+  theta <- matrix(
+    c(
+      0.8, 0.2,
+      0.1, 0.9
+    ),
+    nrow = 2,
+    byrow = TRUE
+  )
+  rownames(theta) <- c(
+    "Fib_BIRT_vs_BI::TF1::Target-Up",
+    "Fib_BIRT_vs_BI::TF2::Target-Down"
+  )
+  colnames(theta) <- c("Topic1", "Topic2")
+  design <- .m3tb_design_table(data.table::data.table(
+    comparison_id = "Fib_BIRT_vs_BI",
+    comparison_display = "Fibroblast BIRT vs BI",
+    cond1_label = "Dox72h_BIRT",
+    cond2_label = "Dox72h_BI"
+  ))
+  row <- data.table::data.table(
+    method_order = 1L,
+    context_type = "comparison",
+    setup = "comparison_aggr_multivi",
+    setup_label = "diff fp aggr",
+    model_label = "MultiVI",
+    method_setup = "diff fp aggr | MultiVI",
+    selected_k = 2L,
+    fp_mode = "aggregate"
+  )
+  csv_dir <- tempfile("theta-labels-")
+  dir.create(csv_dir, recursive = TRUE)
+  out <- .m3tb_score_theta_one(theta, row, design, csv_dir = csv_dir)
+
+  expect_equal(
+    out$per_label$comparison_label,
+    c("Fib_BIRT_vs_BI::Target-Down", "Fib_BIRT_vs_BI::Target-Up")
+  )
+  expect_equal(
+    out$per_label$display_label,
+    c("Fibroblast BIRT vs BI Target-Down", "Fibroblast BIRT vs BI Target-Up")
+  )
+})
+
 test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
   root <- tempfile("module3-topic-benchmark-empty-links-")
   dir.create(root, recursive = TRUE)
