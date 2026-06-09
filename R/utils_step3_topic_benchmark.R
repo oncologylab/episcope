@@ -178,10 +178,10 @@
   }
 }
 
-.module3_topic_method_plan <- function(methods = "condition_aggr_weight_lda",
+.module3_topic_method_plan <- function(methods = "comparison_aggr_multivi",
                                        k_grid = 10L) {
   dict <- .m3tb_method_dictionary()
-  if (identical(methods, "default")) methods <- "condition_aggr_weight_lda"
+  if (identical(methods, "default")) methods <- "comparison_aggr_multivi"
   if (identical(methods, "all")) methods <- dict$method
   keep <- dict[method %in% methods]
   if (!nrow(keep)) {
@@ -1434,6 +1434,23 @@
   out_html
 }
 
+.m3tb_open_png <- function(filename, width, height, res = 140L) {
+  opened <- tryCatch({
+    grDevices::png(filename, width = width, height = height, res = res, bg = "white", type = "cairo")
+    TRUE
+  }, error = function(e) FALSE)
+  if (!opened) {
+    opened <- tryCatch({
+      grDevices::png(filename, width = width, height = height, res = res, bg = "white", type = "cairo-png")
+      TRUE
+    }, error = function(e) FALSE)
+  }
+  if (!opened) {
+    grDevices::png(filename, width = width, height = height, res = res, bg = "white")
+  }
+  invisible(TRUE)
+}
+
 .m3tb_write_review_pngs <- function(score_result, out_dir) {
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   mds <- data.table::as.data.table(score_result$mds_points)
@@ -1443,7 +1460,7 @@
   rows <- lapply(k_values, function(k_value) {
     left <- file.path(out_dir, sprintf("theta_phi_topic_distance_correlation_k%d.png", k_value))
     right <- file.path(out_dir, sprintf("theta_group_mds_k%d.png", k_value))
-    grDevices::png(left, width = 1000, height = 1000, res = 140, bg = "white")
+    .m3tb_open_png(left, width = 1000, height = 1000, res = 140)
     graphics::plot.new()
     graphics::title(sprintf("K%d theta score summary", k_value))
     sub <- scores[as.integer(k) == as.integer(k_value)]
@@ -1453,7 +1470,7 @@
       graphics::text(0.5, 0.5, "No score rows")
     }
     grDevices::dev.off()
-    grDevices::png(right, width = 1800, height = 1100, res = 150, bg = "white")
+    .m3tb_open_png(right, width = 1800, height = 1100, res = 150)
     sub_mds <- mds[as.integer(k) == as.integer(k_value)]
     if (nrow(sub_mds)) {
       graphics::plot(sub_mds$MDS1, sub_mds$MDS2, pch = 19, col = sub_mds$color, xlab = "MDS1", ylab = "MDS2", main = sprintf("K%d condition/comparison MDS from theta", k_value))
@@ -2013,6 +2030,13 @@
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
 #' @param warplda_iterations Number of native WarpLDA iterations.
+#' @param vae_python Optional Python executable for VAE training.
+#' @param vae_epochs Number of VAE training epochs.
+#' @param vae_batch_size VAE mini-batch size.
+#' @param vae_hidden VAE hidden-layer width.
+#' @param vae_lr VAE learning rate.
+#' @param vae_seed VAE random seed.
+#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`.
 #' @param sample_subset Optional condition/sample labels passed to the Module 3
 #'   training engine. When supplied, only comparisons whose condition labels are
 #'   both in this vector are used.
@@ -2031,13 +2055,20 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         multiomic_data = NULL,
                                         comparisons,
                                         output_dir,
-                                        methods = "condition_aggr_weight_lda",
+                                        methods = "comparison_aggr_multivi",
                                         k_grid = 10L,
                                         output_layout = c("auto", "standard", "benchmark", "legacy"),
                                         replicate_documents = FALSE,
                                         reuse_if_exists = TRUE,
                                         local_threads = NULL,
                                         warplda_iterations = 2000L,
+                                        vae_python = NULL,
+                                        vae_epochs = 200L,
+                                        vae_batch_size = 64L,
+                                        vae_hidden = 128L,
+                                        vae_lr = 1e-3,
+                                        vae_seed = 123L,
+                                        vae_device = "cpu",
                                         sample_subset = NULL,
                                         analysis_label = NULL,
                                         extraction_topic_report_args = list(),
@@ -2112,6 +2143,13 @@ run_module3_topic_benchmark <- function(filtered_dir,
         reuse_if_exists = reuse_if_exists,
         local_threads = local_threads,
         warplda_iterations = warplda_iterations,
+        vae_python = vae_python,
+        vae_epochs = vae_epochs,
+        vae_batch_size = vae_batch_size,
+        vae_hidden = vae_hidden,
+        vae_lr = vae_lr,
+        vae_seed = vae_seed,
+        vae_device = vae_device,
         save_full_doc_term_csv = FALSE,
         flat_output = identical(output_layout, "standard"),
         topic_report_args = list()
@@ -2727,12 +2765,19 @@ run_regulatory_topics <- function(filtered_dir,
                                   multiomic_data = NULL,
                                   comparisons,
                                   output_dir,
-                                  method = "condition_aggr_weight_lda",
+                                  method = "comparison_aggr_multivi",
                                   k_grid = 10L,
                                   replicate_documents = FALSE,
                                   reuse_if_exists = TRUE,
                                   local_threads = NULL,
                                   warplda_iterations = 2000L,
+                                  vae_python = NULL,
+                                  vae_epochs = 200L,
+                                  vae_batch_size = 64L,
+                                  vae_hidden = 128L,
+                                  vae_lr = 1e-3,
+                                  vae_seed = 123L,
+                                  vae_device = "cpu",
                                   sample_subset = NULL,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
@@ -2763,6 +2808,13 @@ run_regulatory_topics <- function(filtered_dir,
     reuse_if_exists = reuse_if_exists,
     local_threads = local_threads,
     warplda_iterations = warplda_iterations,
+    vae_python = vae_python,
+    vae_epochs = vae_epochs,
+    vae_batch_size = vae_batch_size,
+    vae_hidden = vae_hidden,
+    vae_lr = vae_lr,
+    vae_seed = vae_seed,
+    vae_device = vae_device,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
     extraction_topic_report_args = extraction_args,
@@ -2810,10 +2862,12 @@ run_regulatory_topics <- function(filtered_dir,
                                              method = NULL,
                                              k_grid = NULL,
                                              warplda_iterations = NULL,
-                                             topic_link_output = NULL) {
+                                             topic_link_output = NULL,
+                                             vae_device = NULL,
+                                             vae_batch_size = NULL) {
   cfg <- .module3_read_project_config(project_config)
   method <- if (is.null(method)) {
-    as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "condition_aggr_weight_lda"))[[1L]]
+    as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "comparison_aggr_multivi"))[[1L]]
   } else {
     as.character(method)
   }
@@ -2835,11 +2889,24 @@ run_regulatory_topics <- function(filtered_dir,
   } else {
     as.character(topic_link_output)[[1L]]
   }
+  vae_device <- if (is.null(vae_device)) {
+    as.character(.module3_cfg_value(cfg, c("topic_vae_device", "module3_topic_vae_device"), "cpu"))[[1L]]
+  } else {
+    as.character(vae_device)[[1L]]
+  }
+  vae_batch_size <- if (is.null(vae_batch_size)) {
+    suppressWarnings(as.integer(.module3_cfg_value(cfg, c("topic_vae_batch_size", "module3_topic_vae_batch_size"), 64L)[[1L]]))
+  } else {
+    suppressWarnings(as.integer(vae_batch_size[[1L]]))
+  }
+  if (!is.finite(vae_batch_size) || vae_batch_size < 1L) vae_batch_size <- 64L
   list(
     method = method,
     k_grid = k_grid,
     warplda_iterations = iterations,
     topic_link_output = link_output,
+    vae_device = vae_device,
+    vae_batch_size = vae_batch_size,
     benchmark = list(
       enabled = isTRUE(.module3_cfg_value(cfg, c("topic_benchmark_enabled", "module3_topic_benchmark_enabled"), FALSE)),
       methods = .module3_cfg_value(cfg, c("topic_benchmark_methods", "module3_topic_benchmark_methods"), character()),
@@ -2872,6 +2939,10 @@ run_regulatory_topics <- function(filtered_dir,
 #'   read from `project_config` or use `2000`.
 #' @param topic_link_output Topic-link output mode. If `NULL`, read from
 #'   `project_config` or use `"pass"`.
+#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`. If `NULL`,
+#'   read from `project_config` or use `"cpu"`.
+#' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
+#'   `project_config` or use `64`.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -2887,13 +2958,17 @@ run_topic_modeling <- function(filtered_dir,
                                k_grid = NULL,
                                warplda_iterations = NULL,
                                topic_link_output = NULL,
+                               vae_device = NULL,
+                               vae_batch_size = NULL,
                                ...) {
   resolved <- .module3_resolve_topic_run_config(
     project_config = project_config,
     method = method,
     k_grid = k_grid,
     warplda_iterations = warplda_iterations,
-    topic_link_output = topic_link_output
+    topic_link_output = topic_link_output,
+    vae_device = vae_device,
+    vae_batch_size = vae_batch_size
   )
   run_regulatory_topics(
     filtered_dir = filtered_dir,
@@ -2904,6 +2979,8 @@ run_topic_modeling <- function(filtered_dir,
     k_grid = resolved$k_grid,
     warplda_iterations = resolved$warplda_iterations,
     topic_link_output = resolved$topic_link_output,
+    vae_device = resolved$vae_device,
+    vae_batch_size = resolved$vae_batch_size,
     ...
   )
 }

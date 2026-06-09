@@ -7925,6 +7925,13 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param vae_variant VAE variant name.
 #' @param backend Topic model backend. `"warplda"` is the default native
 #'   WarpLDA backend; `"vae"` runs the optional VAE backend.
+#' @param vae_python Optional Python executable for VAE training.
+#' @param vae_epochs Number of VAE training epochs.
+#' @param vae_batch_size VAE mini-batch size.
+#' @param vae_hidden VAE hidden-layer width.
+#' @param vae_lr VAE learning rate.
+#' @param vae_seed VAE random seed.
+#' @param vae_device VAE device, for example `"cpu"` or `"cuda"`.
 #' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
@@ -7976,6 +7983,13 @@ train_topic_models <- function(Kgrid,
                                count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
                                vae_variant = "multivi_encoder",
                                backend = c("warplda", "vae"),
+                               vae_python = NULL,
+                               vae_epochs = 200L,
+                               vae_batch_size = 64L,
+                               vae_hidden = 128L,
+                               vae_lr = 1e-3,
+                               vae_seed = 123L,
+                               vae_device = "cpu",
                                warplda_iterations = 2000L,
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
@@ -8229,6 +8243,13 @@ train_topic_models <- function(Kgrid,
         vae_script = vae_script,
         k_grid = Kgrid,
         vae_variant = vae_variant,
+        vae_python = vae_python,
+        vae_epochs = vae_epochs,
+        vae_batch_size = vae_batch_size,
+        vae_hidden = vae_hidden,
+        vae_lr = vae_lr,
+        vae_seed = vae_seed,
+        vae_device = vae_device,
         do_report = FALSE,
         count_input = count_input,
         save_full_doc_term_csv = save_full_doc_term_csv,

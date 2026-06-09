@@ -566,6 +566,9 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
   expect_true("project_config" %in% names(formals(run_topic_modeling)))
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
+  expect_true("vae_device" %in% names(formals(run_topic_modeling)))
+  expect_true("vae_device" %in% names(formals(train_topic_models)))
+  expect_true("vae_batch_size" %in% names(formals(train_topic_models)))
   root <- tempfile("module3-qc-")
   dir.create(file.path(root, "review", "tables"), recursive = TRUE)
   data.table::fwrite(
@@ -585,6 +588,8 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_k_grid = c(8L, 10L),
     warplda_iterations = 25L,
     topic_link_output = "none",
+    topic_vae_device = "cuda",
+    topic_vae_batch_size = 512L,
     topic_benchmark_enabled = TRUE,
     topic_benchmark_methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
     topic_benchmark_k_grid = c(5L, 6L)
@@ -594,6 +599,8 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$k_grid, c(8L, 10L))
   expect_equal(resolved$warplda_iterations, 25L)
   expect_equal(resolved$topic_link_output, "none")
+  expect_equal(resolved$vae_device, "cuda")
+  expect_equal(resolved$vae_batch_size, 512L)
   expect_true(resolved$benchmark$enabled)
   expect_equal(resolved$benchmark$methods, cfg$topic_benchmark_methods)
   expect_equal(resolved$benchmark$k_grid, c(5L, 6L))
@@ -603,10 +610,41 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     method = "condition_aggr_lda",
     k_grid = 12L,
     warplda_iterations = 3L,
-    topic_link_output = "pass"
+    topic_link_output = "pass",
+    vae_device = "cpu",
+    vae_batch_size = 128L
   )
   expect_equal(overridden$method, "condition_aggr_lda")
   expect_equal(overridden$k_grid, 12L)
   expect_equal(overridden$warplda_iterations, 3L)
   expect_equal(overridden$topic_link_output, "pass")
+  expect_equal(overridden$vae_device, "cpu")
+  expect_equal(overridden$vae_batch_size, 128L)
+})
+
+test_that("Module 3 theta review PNG writer is headless safe", {
+  skip_if_not(capabilities("cairo"))
+  old_bitmap <- getOption("bitmapType")
+  withr::defer(options(bitmapType = old_bitmap))
+  options(bitmapType = "Xlib")
+  root <- tempfile("module3-review-png-")
+  score_result <- list(
+    mds_points = data.table::data.table(
+      k = 2L,
+      method_setup = "diff fp aggr | MultiVI",
+      display_label = c("Cond A", "Cond B"),
+      MDS1 = c(-0.1, 0.1),
+      MDS2 = c(0.2, -0.2),
+      color = c("#4E79A7", "#E15759")
+    ),
+    scores = data.table::data.table(
+      k = 2L,
+      method_setup = "diff fp aggr | MultiVI",
+      theta_condition_separation_score = 0.5
+    )
+  )
+  out <- craftgrn:::.m3tb_write_review_pngs(score_result, root)
+  expect_equal(nrow(out), 1L)
+  expect_true(file.exists(file.path(root, "theta_phi_topic_distance_correlation_k2.png")))
+  expect_true(file.exists(file.path(root, "theta_group_mds_k2.png")))
 })

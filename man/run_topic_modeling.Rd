@@ -14,6 +14,8 @@ run_topic_modeling(
   k_grid = NULL,
   warplda_iterations = NULL,
   topic_link_output = NULL,
+  vae_device = NULL,
+  vae_batch_size = NULL,
   ...
 )
 }
@@ -44,6 +46,12 @@ read from `project_config` or use `2000`.}
 
 \item{topic_link_output}{Topic-link output mode. If `NULL`, read from
 `project_config` or use `"pass"`.}
+
+\item{vae_device}{VAE device, for example `"cpu"` or `"cuda"`. If `NULL`,
+read from `project_config` or use `"cpu"`.}
+
+\item{vae_batch_size}{VAE mini-batch size. If `NULL`, read from
+`project_config` or use `64`.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

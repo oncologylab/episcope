@@ -258,7 +258,7 @@ project YAML config. A standard run writes a flat single-method layout:
 and left disabled for normal package runs.
 
 ```yaml
-topic_method: condition_aggr_weight_lda
+topic_method: comparison_aggr_multivi
 topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass

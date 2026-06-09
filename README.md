@@ -161,7 +161,7 @@ For regular package runs, keep one selected Module 3 setup in `project.yaml`,
 for example:
 
 ```yaml
-topic_method: condition_aggr_weight_lda
+topic_method: comparison_aggr_multivi
 topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
