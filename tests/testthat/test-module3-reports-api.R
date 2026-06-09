@@ -30,11 +30,18 @@ test_that("Module 3 Enrichr helpers default to fast request scheduling", {
     formals(craftgrn:::plot_topic_pathway_enrichment_from_link_scores)$enrichr_cache_dir
   )
   expect_equal(
+    formals(craftgrn:::plot_topic_pathway_enrichment_from_link_scores)$enrichr_n_cores,
+    1L
+  )
+  expect_equal(
     formals(craftgrn:::run_tfdocs_report_from_topic_base)$pathway_enrichr_sleep_time,
     0
   )
   expect_null(
     formals(craftgrn:::run_tfdocs_report_from_topic_base)$pathway_enrichr_cache_dir
+  )
+  expect_null(
+    formals(craftgrn:::run_tfdocs_report_from_topic_base)$pathway_enrichr_n_cores
   )
   expect_equal(
     formals(craftgrn:::run_diff_grn_pathway_enrichment)$enrichr_sleep_time,
@@ -45,6 +52,7 @@ test_that("Module 3 Enrichr helpers default to fast request scheduling", {
   )
   expect_equal(craftgrn:::.normalize_enrichr_sleep_time(-1), 0)
   expect_equal(craftgrn:::.normalize_enrichr_sleep_time(0.25), 0.25)
+  expect_equal(craftgrn:::.normalize_enrichr_n_cores(1), 1)
   expect_equal(
     craftgrn:::.module3_default_enrichr_cache_dir(file.path("root", "topic_extraction", "K10", "model")),
     file.path("root", "topic_extraction", "cache", "enrichr")

@@ -4852,10 +4852,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   tf_theta_top_n = 50L,
                                                   tf_theta_min = NA_real_,
                                                   enrichr_sleep_time = 0,
-                                                  enrichr_cache_dir = NULL) {
+                                                  enrichr_cache_dir = NULL,
+                                                  enrichr_n_cores = 1L) {
   .assert_pkg("data.table")
   tf_link_mode <- match.arg(tf_link_mode)
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
+  enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(dirname(out_file), "cache", "enrichr")
   }
@@ -4948,12 +4950,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
 
   res_list <- vector("list", length(gene_sets))
   names(res_list) <- names(gene_sets)
-  for (nm in names(gene_sets)) {
+  run_one_enrichr <- function(nm) {
     genes <- gene_sets[[nm]]
     log_msg(sprintf("Topic %s gene count: %d", nm, length(genes)))
     if (length(genes) < as.integer(min_genes)) {
       log_msg(sprintf("Topic %s skipped: gene count < %d", nm, min_genes))
-      next
+      return(NULL)
     }
     enr <- tryCatch(
       .quiet_enrichr_call(.run_enrichr_cached(
@@ -4969,7 +4971,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     )
     if (is.null(enr)) {
       log_msg(sprintf("Topic %s enrichr returned NULL.", nm))
-      next
+      return(NULL)
     }
     rows <- lapply(names(enr), function(db) {
       df <- enr[[db]]
@@ -5002,9 +5004,23 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
         odds_ratio = as.numeric(odds_ratio)
       )
     })
-    res_list[[nm]] <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
-    n_hits <- nrow(res_list[[nm]])
+    out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+    n_hits <- nrow(out)
     log_msg(sprintf("Topic %s enriched pathways: %d (padj<=%s)", nm, n_hits, padj_cut))
+    out
+  }
+  set_names <- names(gene_sets)
+  if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
+    res_list <- parallel::mclapply(
+      set_names,
+      run_one_enrichr,
+      mc.cores = min(enrichr_n_cores, length(set_names))
+    )
+    names(res_list) <- set_names
+  } else {
+    for (nm in set_names) {
+      res_list[[nm]] <- run_one_enrichr(nm)
+    }
   }
 
   res_dt <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
@@ -5208,11 +5224,13 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            make_dotplot = TRUE,
                                                            enrichr_sleep_time = 0,
                                                            enrichr_cache_dir = NULL,
+                                                           enrichr_n_cores = 1L,
                                                            overwrite = FALSE,
                                                            doc_design = c("comparison", "condition")) {
   .assert_pkg("data.table")
   doc_design <- match.arg(doc_design)
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
+  enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(out_dir, "cache", "enrichr")
   }
@@ -5283,13 +5301,11 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
 
   .collect_enrichr <- function(gene_sets, log_fun = log_msg) {
     if (!length(gene_sets)) return(data.table::data.table())
-    res_list <- vector("list", length(gene_sets))
-    names(res_list) <- names(gene_sets)
-    for (nm in names(gene_sets)) {
+    run_one_enrichr <- function(nm) {
       genes <- gene_sets[[nm]]
       if (length(genes) < as.integer(min_genes)) {
         log_fun(sprintf("Topic %s skipped: gene count < %d", nm, min_genes))
-        next
+        return(NULL)
       }
       log_fun(sprintf("Topic %s gene count: %d", nm, length(genes)))
       enr <- tryCatch(
@@ -5304,9 +5320,25 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           NULL
         }
       )
-      if (is.null(enr)) next
-      res_list[[nm]] <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
-      log_fun(sprintf("Topic %s enriched pathways: %d finite adjusted p-values", nm, nrow(res_list[[nm]])))
+      if (is.null(enr)) return(NULL)
+      out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
+      log_fun(sprintf("Topic %s enriched pathways: %d finite adjusted p-values", nm, nrow(out)))
+      out
+    }
+    set_names <- names(gene_sets)
+    if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
+      res_list <- parallel::mclapply(
+        set_names,
+        run_one_enrichr,
+        mc.cores = min(enrichr_n_cores, length(set_names))
+      )
+      names(res_list) <- set_names
+    } else {
+      res_list <- vector("list", length(gene_sets))
+      names(res_list) <- set_names
+      for (nm in set_names) {
+        res_list[[nm]] <- run_one_enrichr(nm)
+      }
     }
     data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
   }
@@ -6158,6 +6190,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_split_direction = TRUE,
                                               pathway_enrichr_sleep_time = 0,
                                               pathway_enrichr_cache_dir = NULL,
+                                              pathway_enrichr_n_cores = NULL,
                                               run_link_topic_scores = FALSE,
                                               fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                               link_topic_gate_mode = "none",
@@ -6201,6 +6234,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   if (is.null(pathway_enrichr_cache_dir)) {
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
   }
+  pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
@@ -6430,6 +6464,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           make_dotplot = pathway_make_dotplot,
           enrichr_sleep_time = pathway_enrichr_sleep_time,
           enrichr_cache_dir = pathway_enrichr_cache_dir,
+          enrichr_n_cores = pathway_enrichr_n_cores,
           overwrite = pathway_overwrite,
           doc_design = doc_design
         )
@@ -6451,7 +6486,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         tf_theta_top_n = pathway_tf_top_n_docs,
         tf_theta_min = pathway_tf_min_theta,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
-        enrichr_cache_dir = pathway_enrichr_cache_dir
+        enrichr_cache_dir = pathway_enrichr_cache_dir,
+        enrichr_n_cores = pathway_enrichr_n_cores
       )
 
       if (isTRUE(run_pathway_gsea)) {
@@ -6573,6 +6609,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_split_direction = TRUE,
                                           pathway_enrichr_sleep_time = 0,
                                           pathway_enrichr_cache_dir = NULL,
+                                          pathway_enrichr_n_cores = NULL,
                                           run_link_topic_scores = FALSE,
                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                           link_topic_gate_mode = "none",
@@ -6609,6 +6646,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   if (is.null(pathway_enrichr_cache_dir)) {
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
   }
+  pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   link_topic_efdr_scope <- match.arg(link_topic_efdr_scope)
   link_topic_method <- match.arg(link_topic_method)
@@ -7008,6 +7046,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
         make_heatmap = pathway_make_heatmap,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
         enrichr_cache_dir = pathway_enrichr_cache_dir,
+        enrichr_n_cores = pathway_enrichr_n_cores,
         overwrite = pathway_overwrite
       )
     }
@@ -7027,7 +7066,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       tf_theta_top_n = pathway_tf_top_n_docs,
       tf_theta_min = pathway_tf_min_theta,
       enrichr_sleep_time = pathway_enrichr_sleep_time,
-      enrichr_cache_dir = pathway_enrichr_cache_dir
+      enrichr_cache_dir = pathway_enrichr_cache_dir,
+      enrichr_n_cores = pathway_enrichr_n_cores
     )
 
     if (isTRUE(run_pathway_gsea)) {
@@ -8008,6 +8048,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
                                                 split_direction = TRUE,
                                                 enrichr_sleep_time = 0,
                                                 enrichr_cache_dir = NULL,
+                                                enrichr_n_cores = NULL,
                                                 doc_mode = c("tf_cluster", "tf")) {
   out_dirs <- unique(c(topic_root, list.dirs(topic_root, recursive = FALSE, full.names = TRUE)))
   backend <- match.arg(backend)
@@ -8016,6 +8057,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- file.path(topic_root, "cache", "enrichr")
   }
+  enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   if (backend == "vae") {
     out_dirs <- out_dirs[grepl(paste0("_vae_joint_", doc_tag, "_docs_peak_delta_fp_gene_fc_expr_", vae_variant, "_"), basename(out_dirs))]
@@ -8046,6 +8088,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
         max_pathways = max_pathways,
         enrichr_sleep_time = enrichr_sleep_time,
         enrichr_cache_dir = enrichr_cache_dir,
+        enrichr_n_cores = enrichr_n_cores,
         overwrite = FALSE
       )
     }

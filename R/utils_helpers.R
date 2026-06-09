@@ -66,6 +66,16 @@ NULL
   file.path(parent, "cache", "enrichr")
 }
 
+.normalize_enrichr_n_cores <- function(n_cores = 1L) {
+  if (is.null(n_cores) || !length(n_cores) || is.na(n_cores[[1L]])) {
+    env <- Sys.getenv("CRAFTGRN_ENRICHR_MAX_CORES", unset = "")
+    n_cores <- if (nzchar(env)) suppressWarnings(as.integer(env)) else 1L
+  }
+  n_cores <- suppressWarnings(as.integer(n_cores[[1L]]))
+  if (!is.finite(n_cores) || n_cores < 1L) n_cores <- 1L
+  max(1L, min(n_cores, .available_cores(logical = TRUE)))
+}
+
 .run_enrichr_cached <- function(genes,
                                 dbs,
                                 sleep_time = 0,
