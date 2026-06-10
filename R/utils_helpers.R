@@ -79,8 +79,9 @@ NULL
   dbs <- sort(unique(as.character(dbs)))
   dbs <- dbs[!is.na(dbs) & nzchar(dbs)]
   backend <- .pathway_backend(backend)
+  backend_version <- if (identical(backend, "enrichly")) "enrichly_enrichr_standard_bg20000_v1" else "enrichr_api"
   digest::digest(
-    list(site = site, backend = backend, dbs = dbs, genes = genes),
+    list(site = site, backend = backend, backend_version = backend_version, dbs = dbs, genes = genes),
     algo = "xxhash64",
     serialize = TRUE
   )
@@ -171,7 +172,8 @@ NULL
     genes = genes,
     db = db,
     query_id = "query",
-    universe = universe
+    universe = universe,
+    background_size = 20000L
   )
   .enrichly_result_to_enrichr_list(res)
 }
