@@ -18,6 +18,13 @@ home:
   title: CraftGRN
   description: Integrative ATAC-RNA framework for condition-specific gene regulatory networks.
 
+footer:
+  structure:
+    left: developed_by
+    right: built_with
+  components:
+    developed_by: ""
+
 articles:
 - title: Get started
   navbar: ~
