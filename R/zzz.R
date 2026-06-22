@@ -91,3 +91,12 @@ utils::globalVariables(c(
   "topic_n_TFs", "topic_num", "topic_rank", "total", "value_diff",
   "up", "value_max", "value_min", "value_raw", "value_tol", "w", "weight_raw"
 ))
+
+utils::globalVariables(c(
+  "bar_group", "base_panel_label", "comparison_display",
+  "comparison_display_from_edges", "comparison_label_manifest", "count",
+  "count_basis", "design_display_label", "doc_design", "doc_display_label",
+  "doc_display_label_from_edges", "fraction", "gammafit_scope_label",
+  "k_label", "method_key", "method_label", "method_setup_label", "model_k",
+  "model_k_short", "n_items", "panel_label", "src", "status", "unit"
+))

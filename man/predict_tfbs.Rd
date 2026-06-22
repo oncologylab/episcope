@@ -6,7 +6,7 @@
 \usage{
 predict_tfbs(
   omics_data,
-  out_dir = "predict_tf_binding_sites",
+  out_dir = NULL,
   db = "JASPAR2024",
   label_col = NULL,
   r_cutoff = 0.3,
@@ -14,7 +14,7 @@ predict_tfbs(
   fdr_cutoff = NULL,
   filter_to_canonical_bound = TRUE,
   tf_subset = NULL,
-  write_outputs = TRUE,
+  write_outputs = FALSE,
   write_stats = FALSE,
   write_bed = FALSE,
   write_qc_report = TRUE,
@@ -31,7 +31,7 @@ predict_tfbs(
 \arguments{
 \item{omics_data}{CraftGRN multiomic object returned by `load_prep_multiomic_data()`.}
 
-\item{out_dir}{Output directory.}
+\item{out_dir}{Optional output directory. Required when `write_outputs = TRUE`.}
 
 \item{db}{Motif database label used in output metadata.}
 
@@ -53,7 +53,9 @@ all-expressed-TF prediction stage.}
 
 \item{tf_subset}{Optional TF subset.}
 
-\item{write_outputs}{Write Module 1 output files.}
+\item{write_outputs}{Write Module 1 output files. Defaults to `FALSE` so
+calls do not write into the working directory unless an output directory is
+explicitly supplied.}
 
 \item{write_stats}{Retain and write full FP-TF correlation statistics.}
 
@@ -82,8 +84,8 @@ If `NULL`, use available cores.}
 }
 \value{
 A list containing `omics_data`, `high_confidence_footprints`,
-  `motif_supported_correlations`, `prediction_stats`, `prediction_stats`, `reports`, and
-  `parameters`.
+  `motif_supported_correlations`, `prediction_stats`, `predicted_tfbs`,
+  `prediction_stats_manifest`, `reports`, and `parameters`.
 }
 \description{
 Run the Module 1 TFBS workflow as one user-facing operation. The function

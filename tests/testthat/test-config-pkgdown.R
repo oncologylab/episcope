@@ -32,6 +32,26 @@ test_that("pkgdown workflow fixes generated favicon markup and cleans stale page
   expect_match(workflow, "clean: true", fixed = TRUE)
 })
 
+test_that("pkgdown footer omits redundant developed-by line", {
+  path <- source_file("_pkgdown.yml")
+  testthat::skip_if_not(file.exists(path))
+  cfg <- yaml::read_yaml(path)
+
+  expect_identical(as.character(cfg$footer$structure$left), "developed_by")
+  expect_identical(as.character(cfg$footer$structure$right), "built_with")
+  expect_identical(as.character(cfg$footer$components$developed_by), "")
+
+  testthat::skip_if_not_installed("pkgdown")
+  pkg <- pkgdown::as_pkgdown(dirname(path))
+  footer <- pkgdown:::data_footer(pkg)
+  left <- paste(footer$left, collapse = " ")
+  right <- paste(footer$right, collapse = " ")
+
+  expect_false(grepl("Developed by", left, fixed = TRUE))
+  expect_false(grepl("Yaoxiang Li", left, fixed = TRUE))
+  expect_match(right, "pkgdown")
+})
+
 test_that("pkgdown reference uses publication-facing Module 1 and Module 2 names", {
   path <- source_file("_pkgdown.yml")
   testthat::skip_if_not(file.exists(path))

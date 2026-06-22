@@ -204,8 +204,18 @@ normalize_config_paths <- function(
 #' @param env Environment to populate. Defaults to the internal CraftGRN config state.
 #' @return (Invisibly) the parsed list.
 #' @examples
-#' \dontrun{
-#' load_config("craftgrn_grn.yaml")
+#' \donttest{
+#' config_path <- tempfile(fileext = ".yaml")
+#' writeLines(c(
+#'   "db: JASPAR2024",
+#'   "ref_genome: hg38",
+#'   "threshold_expr: 1",
+#'   "threshold_fp_score: 0",
+#'   "threshold_fp_tf_corr_r: 0.3",
+#'   "threshold_rna_gene_corr_r: 0.3",
+#'   "threshold_fp_gene_corr_r: 0.3"
+#' ), config_path)
+#' load_config(config_path)
 #' # Config values are now available to CraftGRN helper functions.
 #' }
 #' @export

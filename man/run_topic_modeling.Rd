@@ -14,9 +14,12 @@ run_topic_modeling(
   k_grid = NULL,
   warplda_iterations = NULL,
   topic_link_output = NULL,
+  count_method = NULL,
+  count_input = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
   pathway_backend = NULL,
+  extraction_topic_report_args = list(),
   ...
 )
 }
@@ -48,6 +51,12 @@ read from `project_config` or use `2000`.}
 \item{topic_link_output}{Topic-link output mode. If `NULL`, read from
 `project_config` or use `"pass"`.}
 
+\item{count_method}{Topic count conversion method. If `NULL`, read from
+`project_config` or use `"log"`.}
+
+\item{count_input}{Topic count column for model fitting. If `NULL`, inferred
+from `count_method`.}
+
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}
 
@@ -57,6 +66,9 @@ If `NULL`, read from `project_config` or use `"auto"`.}
 \item{pathway_backend}{Pathway enrichment backend. Use `"enrichly"` for
 local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 read from `project_config` or use `"enrichly"`.}
+
+\item{extraction_topic_report_args}{Optional named list of topic-extraction
+report argument overrides. Values here override project config values.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

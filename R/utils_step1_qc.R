@@ -130,10 +130,11 @@ plot_fp_norm_bound_qc <- function(
   if (!n_peaks) .log_abort("`fp_score_condition_qn` has zero rows.")
 
   keep_n <- min(as.integer(max_points), n_peaks)
-  seed_state <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) .Random.seed else NULL
-  set.seed(1L)
-  keep_idx <- sort(sample.int(n_peaks, keep_n))
-  if (!is.null(seed_state)) .Random.seed <<- seed_state
+  keep_idx <- if (keep_n >= n_peaks) {
+    seq_len(n_peaks)
+  } else {
+    unique(pmax(1L, pmin(n_peaks, round(seq(1, n_peaks, length.out = keep_n)))))
+  }
 
   fp_raw_sub <- fp_raw[keep_idx, , drop = FALSE]
   fp_qn_sub <- fp_qn[keep_idx, , drop = FALSE]
@@ -255,4 +256,3 @@ plot_gene_expr_qc <- function(
   if (isTRUE(verbose)) .log_inform("Gene expression QC saved: {pdf_path}")
   invisible(pdf_path)
 }
-

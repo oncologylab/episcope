@@ -51,6 +51,7 @@ function:
 
 ```{r demo-data-load, purl=FALSE}
 config <- "project.yaml"
+module1_dir <- file.path(tempdir(), "predict_tf_binding_sites")
 
 omics <- load_prep_multiomic_data(
   config = config,
@@ -65,8 +66,9 @@ To run Module 1:
 ```{r demo-data-module1, purl=FALSE}
 module1 <- predict_tfbs(
   omics_data = omics,
-  out_dir = "predict_tf_binding_sites",
+  out_dir = module1_dir,
   output_format = "auto",
+  write_outputs = TRUE,
   write_stats = FALSE,
   verbose = TRUE
 )
@@ -147,16 +149,18 @@ data_object <- load_prep_multiomic_data(
   genome = "hg38",
   gene_symbol_col = "HGNC"
 )
+module1_dir <- file.path(tempdir(), "predict_tf_binding_sites")
 
 module1 <- predict_tfbs(
   data_object,
-  out_dir = "predict_tf_binding_sites",
+  out_dir = module1_dir,
+  write_outputs = TRUE,
   output_format = "auto"
 )
 
 module1_qc <- build_module1_qc_report(
   module1,
-  output_dir = file.path("predict_tf_binding_sites", "reports"),
+  output_dir = file.path(module1_dir, "reports"),
   scan_predicted_tfbs = TRUE
 )
 ```
@@ -216,7 +220,7 @@ module2 <- predict_tf_targets(
   gene_tss = gene_tss,
   regulatory_prior = regulatory_prior,
   project_config = "project.yaml",
-  output_dir = "connect_tf_target_genes"
+  output_dir = file.path(tempdir(), "connect_tf_target_genes")
 )
 
 hnf4a_links <- query_predicted_links(module2, tf = "HNF4A")
@@ -224,7 +228,7 @@ hnf4a_links <- query_predicted_links(module2, tf = "HNF4A")
 module2_qc <- build_module2_qc_report(
   module2,
   multiomic_data = module1$omics_data,
-  output_dir = file.path("connect_tf_target_genes", "reports"),
+  output_dir = file.path(tempdir(), "connect_tf_target_genes", "reports"),
   scan_large_tables = TRUE,
   validate_integrity = TRUE
 )
@@ -302,7 +306,7 @@ you intentionally want the Enrichr web API backend.
 run_topic_modeling(
   filtered_dir = "differential_links",
   comparisons = "module3_comparisons.csv",
-  output_dir = "regulatory_topics",
+  output_dir = file.path(tempdir(), "regulatory_topics"),
   project_config = "project.yaml",
   run_training = TRUE,
   run_extraction = TRUE,
@@ -319,12 +323,12 @@ module3_prepare_differential_links(
   multiomic_data = module3_multiomic,
   compar = "module3_comparisons.csv",
   project_config = "project.yaml",
-  output_dir = "regulatory_topics/differential_links"
+  output_dir = file.path(tempdir(), "regulatory_topics", "differential_links")
 )
 
 module3_construct_docs(
-  filtered_dir = "regulatory_topics/differential_links",
-  output_dir = "regulatory_topics/topic_documents",
+  filtered_dir = file.path(tempdir(), "regulatory_topics", "differential_links"),
+  output_dir = file.path(tempdir(), "regulatory_topics", "topic_documents"),
   tf_cluster_map = NULL,
   doc_mode = "tf",
   doc_design = "comparison",
@@ -336,8 +340,8 @@ module3_construct_docs(
 
 module3_train_topic_models(
   k_grid = 10,
-  filtered_dir = "regulatory_topics/differential_links",
-  output_dir = "regulatory_topics/topic_models",
+  filtered_dir = file.path(tempdir(), "regulatory_topics", "differential_links"),
+  output_dir = file.path(tempdir(), "regulatory_topics", "topic_models"),
   flat_output = TRUE,
   tf_cluster_map = NULL,
   doc_mode = "tf",
@@ -353,9 +357,9 @@ module3_train_topic_models(
 
 module3_extract_topics(
   k = 10,
-  model_dir = "regulatory_topics/topic_models",
-  output_dir = "regulatory_topics/topic_extraction",
-  topic_input_dir = "regulatory_topics/topic_models",
+  model_dir = file.path(tempdir(), "regulatory_topics", "topic_models"),
+  output_dir = file.path(tempdir(), "regulatory_topics", "topic_extraction"),
+  topic_input_dir = file.path(tempdir(), "regulatory_topics", "topic_models"),
   backend = "vae",
   vae_variant = "multivi_encoder",
   doc_mode = "tf",
@@ -374,18 +378,18 @@ package tutorial.
 
 ```{r module-3-summaries, purl=FALSE}
 build_module3_qc_report(
-  topic_dir = "regulatory_topics",
+  topic_dir = file.path(tempdir(), "regulatory_topics"),
   differential_links_dir = "differential_links"
 )
 
 visualize_topic_modeling_results(
-  topic_dir = "regulatory_topics",
-  output_dir = "regulatory_topics/reports"
+  topic_dir = file.path(tempdir(), "regulatory_topics"),
+  output_dir = file.path(tempdir(), "regulatory_topics", "reports")
 )
 
 visualize_differential_grns(
   differential_links_dir = "differential_links",
-  output_dir = "regulatory_topics/reports",
+  output_dir = file.path(tempdir(), "regulatory_topics", "reports"),
   top_tf_n = 10,
   top_link_n = 300
 )

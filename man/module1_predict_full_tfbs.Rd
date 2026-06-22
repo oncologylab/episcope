@@ -7,13 +7,13 @@
 module1_predict_full_tfbs(
   module1_inputs,
   prediction_footprints,
-  out_dir = "predict_tf_binding_sites",
+  out_dir = NULL,
   r_cutoff = 0.3,
   p_cutoff = NULL,
   fdr_cutoff = NULL,
   min_non_na = 3L,
   cores = NULL,
-  write_outputs = TRUE,
+  write_outputs = FALSE,
   output_format = c("csv", "parquet", "auto"),
   return_prediction_stats = NULL,
   verbose = TRUE
@@ -24,7 +24,7 @@ module1_predict_full_tfbs(
 
 \item{prediction_footprints}{Footprint table from module1_filter_canonical_bound_tfbs.}
 
-\item{out_dir}{Output directory.}
+\item{out_dir}{Optional output directory. Required when `write_outputs = TRUE`.}
 
 \item{r_cutoff}{Minimum positive best correlation.}
 
@@ -36,7 +36,9 @@ module1_predict_full_tfbs(
 
 \item{cores}{Number of worker cores; NULL uses all available cores.}
 
-\item{write_outputs}{Write predicted TFBS outputs.}
+\item{write_outputs}{Write predicted TFBS outputs. Defaults to `FALSE` so
+calls do not write into the working directory unless an output directory is
+explicitly supplied.}
 
 \item{output_format}{One of csv, parquet, or auto.}
 

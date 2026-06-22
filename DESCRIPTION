@@ -1,11 +1,20 @@
 Package: craftgrn
 Title: Integrative Chromatin Accessibility and RNA Framework for Gene Regulatory Networks
-Version: 0.1.4
+Version: 0.1.7
 Authors@R: c(
     person("Yaoxiang", "Li", , "liyaoxiang@outlook.com", role = c("aut", "cre")),
     person("Chunling", "Yi", role = "aut")
   )
-Description: Provides a reproducible framework for constructing and comparing gene regulatory networks by integrating chromatin accessibility footprint scores with matched RNA expression data. It implements context-specific enhancer-gene linking, transcription factor focused network analysis, differential network analysis, and regulatory topic modeling workflows for systematic exploration of gene regulation across conditions.
+Description: Provides a reproducible framework for constructing and comparing
+    gene regulatory networks by integrating chromatin accessibility footprint
+    scores with matched RNA expression data. It implements context-specific
+    enhancer-gene linking, transcription factor focused network analysis,
+    differential network analysis, and regulatory topic modeling workflows for
+    systematic exploration of gene regulation across conditions. Methodological
+    background is described in Bentsen and others (2020)
+    <doi:10.1038/s41467-020-18035-1>, Blei, Ng and Jordan (2003)
+    <https://www.jmlr.org/papers/v3/blei03a.html>, and Chen, Li, Zhu and Chen
+    (2015) <doi:10.48550/arXiv.1510.08628>.
 License: GPL (>= 3)
 Depends:
     R (>= 4.1.0)
