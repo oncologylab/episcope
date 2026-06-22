@@ -6,7 +6,10 @@ ATAC
 autoencoder
 BEDPE
 benchmarking
+Bentsen
 binarization
+Blei
+Chen
 calc
 cellline
 centric
@@ -22,6 +25,7 @@ csv
 ctrl
 cutree
 diag
+doi
 dotplot
 dtm
 enrichments
@@ -64,6 +68,7 @@ JASPAR
 kb
 KEGG
 Lifecycle
+Li
 magrittr
 methylation
 MDS
@@ -97,9 +102,11 @@ README
 reclustering
 regulons
 Reactome
+resubmission
 saveRDS
 scalable
 sd
+shinyApp
 Snakemake
 subfolder
 subnet
@@ -118,6 +125,7 @@ TSS
 TSV
 vae
 VAE
+Zhu
 variational
 vec
 WarpLDA

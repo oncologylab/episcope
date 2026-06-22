@@ -3,6 +3,121 @@ test_that("public Module 3 topic-model defaults use native WarpLDA", {
   expect_identical(eval(formals(extract_regulatory_topics)$backend)[[1L]], "warplda")
 })
 
+test_that("WarpLDA training honors explicit topic count input", {
+  root <- withr::local_tempdir()
+  filtered_dir <- file.path(root, "filtered")
+  out_dir <- file.path(root, "models")
+  dir.create(filtered_dir, recursive = TRUE)
+
+  links <- data.table::data.table(
+    comparison_id = rep("CondA_vs_CondB", 6),
+    comparison_label = rep("CondA vs CondB", 6),
+    cond1_id = rep("CondA", 6),
+    cond2_id = rep("CondB", 6),
+    cond1_label = rep("CondA", 6),
+    cond2_label = rep("CondB", 6),
+    tf = rep(c("TF1", "TF2"), each = 3),
+    gene_key = paste0("G", 1:6),
+    peak_id = paste0("P", 1:6),
+    log2fc_gene = c(1.2, 1.4, 1.6, 1.1, 1.3, 1.5),
+    log2fc_fp = c(1.0, 1.1, 1.2, 1.0, 1.1, 1.2),
+    delta_fp_score = c(0.8, 0.9, 1.0, 0.8, 0.9, 1.0),
+    log2FC_fp_score = c(1.0, 1.1, 1.2, 1.0, 1.1, 1.2),
+    log2FC_gene_expr = c(1.2, 1.4, 1.6, 1.1, 1.3, 1.5),
+    tf_expr_cond1 = 20,
+    tf_expr_cond2 = 20,
+    gene_expr_cond1 = 20,
+    gene_expr_cond2 = 20,
+    fp_score_cond1 = 5,
+    fp_score_cond2 = 5
+  )
+  up_path <- file.path(filtered_dir, "CondA_vs_CondB_filtered_links_up.csv")
+  data.table::fwrite(links, up_path)
+  data.table::fwrite(
+    data.table::data.table(
+      comparison_id = "CondA_vs_CondB",
+      comparison_label = "CondA vs CondB",
+      up_path = up_path,
+      down_path = NA_character_
+    ),
+    file.path(filtered_dir, "filtered_links_manifest.csv")
+  )
+
+  train_topic_models(
+    Kgrid = 2L,
+    input_dir = filtered_dir,
+    output_dir = out_dir,
+    analysis_label = "count_input_test",
+    doc_mode = "tf",
+    doc_design = "comparison",
+    fp_term_mode = "unique",
+    gene_term_mode = "unique",
+    include_tf_terms = TRUE,
+    min_df = 1,
+    count_method = "bin",
+    count_input = "pseudo_count_log",
+    backend = "warplda",
+    warplda_iterations = 1L,
+    local_threads = 1L,
+    reuse_if_exists = FALSE,
+    abs_log2fc_fp_min = 0,
+    abs_log2fc_gene_min = 0,
+    abs_delta_fp_min = 0,
+    direction_consistency = "none",
+    require_fp_bound_either = FALSE,
+    require_tf_expr_either = FALSE,
+    require_gene_expr_either = FALSE,
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    threshold_tf_expr = 0,
+    save_full_doc_term_csv = FALSE,
+    flat_output = TRUE
+  )
+
+  doc_term <- readRDS(file.path(out_dir, "rds", "doc_term.rds"))
+  dtm <- readRDS(file.path(out_dir, "rds", "dtm.rds"))
+  metrics <- data.table::fread(file.path(out_dir, "model_metrics.csv"))
+  summary <- data.table::fread(file.path(out_dir, "topic_input_summary.csv"))
+
+  expect_equal(sum(dtm@x), sum(doc_term$pseudo_count_log))
+  expect_false(isTRUE(all.equal(sum(dtm@x), sum(doc_term$pseudo_count_bin))))
+  expect_equal(unique(summary$count_input_effective), "pseudo_count_log")
+  expect_equal(unique(metrics$count_input_effective), "pseudo_count_log")
+})
+
+test_that("Module 3 fresh training clears stale model artifacts", {
+  out_dir <- withr::local_tempdir()
+  stale_paths <- c(
+    file.path(out_dir, "model_metrics.csv"),
+    file.path(out_dir, "rds", "model_metrics.rds"),
+    file.path(out_dir, "rds", "theta_maximum_K2.rds"),
+    file.path(out_dir, "tmp_models", "fit_K2.rds"),
+    file.path(out_dir, "vae_models", "theta_K2.csv"),
+    file.path(out_dir, "vae_progress.tsv")
+  )
+  for (dir in unique(dirname(stale_paths))) {
+    dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  for (path in stale_paths) {
+    writeLines("stale", path)
+  }
+
+  expect_true(any(file.exists(stale_paths)))
+  craftgrn:::.reset_topic_model_artifacts(out_dir, backend = "warplda", reuse_if_exists = FALSE)
+  expect_false(file.exists(file.path(out_dir, "model_metrics.csv")))
+  expect_false(file.exists(file.path(out_dir, "rds", "model_metrics.rds")))
+  expect_false(file.exists(file.path(out_dir, "rds", "theta_maximum_K2.rds")))
+  expect_false(dir.exists(file.path(out_dir, "tmp_models")))
+  expect_false(dir.exists(file.path(out_dir, "vae_models")))
+  expect_false(file.exists(file.path(out_dir, "vae_progress.tsv")))
+
+  dir.create(file.path(out_dir, "tmp_models"), recursive = TRUE, showWarnings = FALSE)
+  keep_path <- file.path(out_dir, "tmp_models", "fit_K2.rds")
+  writeLines("keep", keep_path)
+  craftgrn:::.reset_topic_model_artifacts(out_dir, backend = "warplda", reuse_if_exists = TRUE)
+  expect_true(file.exists(keep_path))
+})
+
 test_that("condition doc_tf applies condition thresholds and TF self terms", {
   edges <- data.table::data.table(
     comparison_id = c("C1", "C1"),
@@ -513,6 +628,46 @@ test_that("topic link gammafit scope is passed through to gene-only links", {
   expect_equal(sort(topic_scope$topic_num), c(1L, 2L))
   expect_equal(global_scope$topic_num, 2L)
   expect_equal(unique(global_scope$gene_gamma_cutoff), 0.95)
+})
+
+test_that("gammafit topic link summary reports pre-filter scored rows", {
+  edges <- data.table::data.table(
+    doc_id = c("D1", "D1"),
+    tf = c("TF1", "TF1"),
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2")
+  )
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.8, 0.2,
+      0.2, 0.7, 0.1, 0.9
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2"))
+  )
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L),
+    term_id = c("PEAK:P1", "GENE:G1"),
+    in_topic = TRUE
+  )
+  out_dir <- tempfile("module3-gammafit-summary-")
+  dir.create(out_dir, recursive = TRUE)
+
+  compute_topic_links(
+    edges,
+    score_mat,
+    topic_terms = topic_terms,
+    binarize_method = "topn",
+    link_method = "gammafit",
+    pass_file = file.path(out_dir, "topic_links_pass.csv"),
+    output_mode = "pass",
+    overwrite = TRUE
+  )
+  summary <- data.table::fread(file.path(out_dir, "topic_link_summary.csv"))
+
+  expect_equal(summary$n_scored_rows, 4)
+  expect_equal(summary$n_pass_rows, 1)
 })
 
 test_that("TF document topic assignment data aligns document and term panels", {

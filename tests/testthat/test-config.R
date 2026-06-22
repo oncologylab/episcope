@@ -27,17 +27,18 @@ test_that("load_config resolves relative paths against the config directory", {
   env <- new.env(parent = emptyenv())
   load_config(config_path, env = env)
 
-  expect_equal(get("base_dir", envir = env), normalizePath(project_dir, winslash = "/", mustWork = FALSE))
+  project_dir_n <- normalizePath(project_dir, winslash = "/", mustWork = TRUE)
+  expect_equal(get("base_dir", envir = env), project_dir_n)
   expect_equal(
     get("sample_metadata", envir = env),
-    normalizePath(file.path(project_dir, "data/sample_metadata_strict.csv"), winslash = "/", mustWork = FALSE)
+    file.path(project_dir_n, "data/sample_metadata_strict.csv")
   )
   expect_equal(
     get("atac_master", envir = env),
-    normalizePath(file.path(project_dir, "data/atac_master.csv"), winslash = "/", mustWork = FALSE)
+    file.path(project_dir_n, "data/atac_master.csv")
   )
   expect_equal(
     get("rna_mapped", envir = env),
-    normalizePath(file.path(project_dir, "data/rna_strict.csv"), winslash = "/", mustWork = FALSE)
+    file.path(project_dir_n, "data/rna_strict.csv")
   )
 })

@@ -65,6 +65,7 @@ CraftGRN at a project-level YAML file:
 
 ```r
 config <- "project.yaml"
+module1_dir <- file.path(tempdir(), "predict_tf_binding_sites")
 
 omics <- craftgrn::load_prep_multiomic_data(
   config = config,
@@ -75,8 +76,9 @@ omics <- craftgrn::load_prep_multiomic_data(
 
 module1 <- craftgrn::predict_tfbs(
   omics_data = omics,
-  out_dir = "predict_tf_binding_sites",
+  out_dir = module1_dir,
   output_format = "auto",
+  write_outputs = TRUE,
   write_stats = FALSE,
   verbose = TRUE
 )

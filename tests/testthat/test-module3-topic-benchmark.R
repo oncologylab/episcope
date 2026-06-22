@@ -70,6 +70,17 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     pathway_rows,
     file.path(extraction_dir, "topic_pathway_enrichment_peak_and_gene_dotplot.csv")
   )
+  data.table::fwrite(
+    data.table::data.table(
+      link_method = "gene_prob",
+      output_mode = "pass",
+      n_scored_rows = 8L,
+      n_pass_rows = 4L,
+      full_file = NA_character_,
+      pass_file = "topic_links_pass.csv"
+    ),
+    file.path(extraction_dir, "topic_link_summary.csv")
+  )
   dir.create(file.path(model_dir, "rds"), recursive = TRUE)
   saveRDS(
     data.table::data.table(term_id = c("GENE:G1", "GENE:G2", "GENE:G3", "PEAK:P1")),
@@ -130,18 +141,30 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_false(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html")))
   expect_false(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report_global_term_group.html")))
 
+  pass_counts <- data.table::fread(file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
+  shared_counts <- data.table::fread(file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
+  expect_setequal(pass_counts$status, c("Pass", "Fail"))
+  expect_equal(sum(pass_counts[status == "Pass", count]), 4)
+  expect_equal(sum(pass_counts[status == "Fail", count]), 0)
+  expect_equal(unique(pass_counts$count_basis), "Standard TF-FP-gene links")
+  expect_true("Pathways" %in% shared_counts$unit)
+
   topic_html <- paste(readLines(file.path(html_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
   condition_html <- paste(readLines(file.path(html_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
   theta_html <- paste(readLines(file.path(html_dir, "theta_phi_and_group_mds.html"), warn = FALSE), collapse = "\n")
   expect_match(topic_html, "Topic Method/K Reports", fixed = TRUE)
   expect_match(topic_html, "Method <select", fixed = TRUE)
+  expect_match(topic_html, "K <select", fixed = TRUE)
   expect_match(topic_html, "topic_reports/", fixed = TRUE)
-  expect_match(topic_html, "frame.src=hit.src", fixed = TRUE)
+  expect_match(topic_html, "embedSrc(hit.src)", fixed = TRUE)
+  expect_match(topic_html, "embed=1", fixed = TRUE)
   expect_no_match(topic_html, "srcdoc", fixed = TRUE)
   expect_match(condition_html, "Topic Method/K Condition Reports", fixed = TRUE)
   expect_match(condition_html, "Method <select", fixed = TRUE)
+  expect_match(condition_html, "K <select", fixed = TRUE)
   expect_match(condition_html, "condition_topic_reports/", fixed = TRUE)
-  expect_match(condition_html, "frame.src=hit.src", fixed = TRUE)
+  expect_match(condition_html, "embedSrc(hit.src)", fixed = TRUE)
+  expect_match(condition_html, "embed=1", fixed = TRUE)
   expect_no_match(condition_html, "srcdoc", fixed = TRUE)
 
   topic_report_files <- list.files(
@@ -195,6 +218,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(topic_detail_html, "waterfallLayer", fixed = TRUE)
   expect_match(topic_detail_html, "pathLayer", fixed = TRUE)
   expect_match(topic_detail_html, "mdsTooltip", fixed = TRUE)
+  expect_match(topic_detail_html, "body.embed .top", fixed = TRUE)
   expect_match(topic_detail_html, "wfTooltip", fixed = TRUE)
   expect_match(topic_detail_html, "pathTooltip", fixed = TRUE)
   expect_match(topic_detail_html, "mdsStats", fixed = TRUE)
@@ -207,12 +231,16 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(condition_detail_html, "image/svg+xml", fixed = TRUE)
   expect_match(condition_detail_html, "XMLSerializer", fixed = TRUE)
   expect_match(condition_detail_html, "exportSvg", fixed = TRUE)
+  expect_no_match(condition_detail_html, "mdsImage", fixed = TRUE)
   expect_no_match(condition_detail_html, "document.documentElement.outerHTML", fixed = TRUE)
   expect_no_match(condition_detail_html, "type:'text/html'", fixed = TRUE)
-  expect_match(condition_detail_html, "mdsImage", fixed = TRUE)
-  expect_match(condition_detail_html, "mdsHotspotLayer", fixed = TRUE)
-  expect_match(condition_detail_html, "function drawMdsHotspots()", fixed = TRUE)
-  expect_match(condition_detail_html, "mdsHotspot", fixed = TRUE)
+  expect_match(condition_detail_html, "mdsSvg", fixed = TRUE)
+  expect_match(condition_detail_html, "mdsPointHit", fixed = TRUE)
+  expect_match(condition_detail_html, "body.embed .top", fixed = TRUE)
+  expect_match(condition_detail_html, "function drawMds()", fixed = TRUE)
+  expect_no_match(condition_detail_html, "rgba(255,255,255,0.84)", fixed = TRUE)
+  expect_no_match(condition_detail_html, "mdsHotspotLayer", fixed = TRUE)
+  expect_no_match(condition_detail_html, "function drawMdsHotspots()", fixed = TRUE)
   expect_match(condition_detail_html, "groupColor", fixed = TRUE)
   expect_match(condition_detail_html, "selectGroup", fixed = TRUE)
   expect_match(condition_detail_html, "pathLabelTopicSpecific", fixed = TRUE)
@@ -225,6 +253,10 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(condition_detail_html, "waterfallLayer", fixed = TRUE)
   expect_match(condition_detail_html, "waterfallStats", fixed = TRUE)
   expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
+
+  mds_points <- data.table::fread(file.path(csv_dir, "theta_group_mds_points.csv"))
+  expect_true("panel_label" %in% names(mds_points))
+  expect_true(any(nzchar(mds_points$panel_label)))
 
   condition_svg <- list.files(
     file.path(root, "review", "condition_topic_reports", "pages", "assets"),
@@ -242,6 +274,227 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
 
   pass_counts <- data.table::fread(file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
   expect_equal(unique(pass_counts$selected_k), 2L)
+})
+
+test_that("Module 3 review colors nutrient-stress labels by stress type", {
+  labels <- c(
+    "HPAFII 0 BCAA Ctrl",
+    "HPAFII 25 BCAA TGFb",
+    "HPAFII 0.05 Glc Ctrl",
+    "HPAFII 0 Gln.Arg Ctrl",
+    "HPAFII 12.5uM Met.Cys TGFb",
+    "HPAFII 0 Lys Ctrl",
+    "HPAFII 0 Trp TGFb",
+    "HPAFII 10 Arg Ctrl",
+    "HPAFII 5 Gln Ctrl",
+    "HPAFII 10 FBS Ctrl"
+  )
+
+  expect_equal(
+    .m3tb_color_family(labels),
+    c("BCAA", "BCAA", "Glc", "Gln.Arg", "Met.Cys", "Lys", "Trp", "Arg", "Gln", "Ctrl")
+  )
+  expect_gt(length(unique(.m3tb_group_color(labels))), 4L)
+})
+
+test_that("Module 3 benchmark infers nutrient-stress metric groups when repeated", {
+  comparisons <- data.table::data.table(
+    comparison_id = c(
+      "HPAFII_0_BCAA_Ctrl_vs_10_FBS_Ctrl",
+      "HPAFII_25_BCAA_Ctrl_vs_10_FBS_Ctrl",
+      "HPAFII_0_Glc_Ctrl_vs_10_FBS_Ctrl",
+      "HPAFII_0_FBS_Ctrl_vs_10_FBS_Ctrl",
+      "HPAFII_0p4_FBS_Ctrl_vs_10_FBS_Ctrl"
+    ),
+    cond1_label = c(
+      "HPAFII_0_BCAA_Ctrl",
+      "HPAFII_25_BCAA_Ctrl",
+      "HPAFII_0_Glc_Ctrl",
+      "HPAFII_0_FBS_Ctrl",
+      "HPAFII_0p4_FBS_Ctrl"
+    ),
+    cond2_label = rep("HPAFII_10_FBS_Ctrl", 5),
+    comparison_label = c(
+      "0_BCAA Ctrl vs 10_FBS Ctrl",
+      "25_BCAA Ctrl vs 10_FBS Ctrl",
+      "0_Glc Ctrl vs 10_FBS Ctrl",
+      "0_FBS Ctrl vs 10_FBS Ctrl",
+      "0.4_FBS Ctrl vs 10_FBS Ctrl"
+    )
+  )
+
+  design <- .m3tb_design_table(comparisons)
+
+  expect_true(any(design$context_type == "condition" & design$metric_group == "BCAA"))
+  expect_true(any(design$context_type == "condition" & design$metric_group == "Ctrl"))
+  expect_false(any(design$metric_group == "Full"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "BCAA::Target-Up"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "BCAA::Target-Down"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "FBS::Target-Up"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "FBS::Target-Down"))
+  expect_false(any(design$context_type == "comparison" & grepl("^Ctrl::", design$metric_group)))
+})
+
+test_that("Module 3 topic reports use overlap denominator for pathway universe size", {
+  topic_pathways <- data.table::data.table(
+    topic = 2L,
+    topic_num = 2L,
+    pathway = "GO:CC: Intracellular Organelle Lumen",
+    pathway_key = "GO:CC: Intracellular Organelle Lumen",
+    padj = 0.01,
+    overlap = "1/856",
+    gene_in = 1L,
+    gene_total = 856L,
+    genes = "F5"
+  )
+  universe <- data.table::data.table(
+    pathway = "GO:CC: Intracellular Organelle Lumen",
+    pathway_key = "GO:CC: Intracellular Organelle Lumen",
+    padj = 0.02,
+    overlap = "1/856",
+    overlap_hits = 1L,
+    genes = "F5"
+  )
+
+  out <- craftgrn:::.m3tb_apply_universe_pathway_counts(topic_pathways, universe)
+
+  expect_equal(out$gene_in, 1L)
+  expect_equal(out$gene_total, 856L)
+  expect_equal(out$gene_total_universe, 856L)
+  expect_equal(out$gene_out, 855L)
+})
+
+test_that("Module 3 theta separation score does not mark singleton groups as perfect", {
+  root <- tempfile("module3-theta-singleton-")
+  dir.create(root, recursive = TRUE)
+  theta <- matrix(
+    c(0.90, 0.10, 0.60, 0.40, 0.20, 0.80),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(c("CondA::TF1", "CondB::TF1", "CondC::TF1"), c("Topic1", "Topic2"))
+  )
+  row <- data.table::data.table(
+    method_order = 1L,
+    context_type = "condition",
+    setup = "condition_aggr_weight_lda",
+    setup_label = "cond fp aggr weight",
+    model_label = "LDA",
+    method_setup = "cond fp aggr weight | LDA",
+    selected_k = 2L,
+    fp_mode = "aggregate_weight"
+  )
+  design <- data.table::data.table(
+    context_type = "condition",
+    comparison_label = c("CondA", "CondB", "CondC"),
+    display_label = c("Cond A", "Cond B", "Cond C"),
+    metric_group = c("CondA", "CondB", "CondC")
+  )
+
+  scored <- craftgrn:::.m3tb_score_theta_one(theta, row, design, root)
+
+  expect_true(all(is.na(scored$per_label$theta_condition_label_score)))
+  expect_equal(scored$score$n_scored_labels, 0L)
+  expect_true(is.nan(scored$score$theta_condition_separation_score))
+})
+
+test_that("Module 3 shared-topic summary fills missing K values when cache is partial", {
+  root <- tempfile("module3-shared-cache-")
+  review <- file.path(root, "review")
+  dir.create(file.path(review, "tables"), recursive = TRUE)
+
+  make_topic_dir <- function(k) {
+    topic_dir <- file.path(root, "topic_extraction", paste0("K", k))
+    dir.create(topic_dir, recursive = TRUE)
+    rows <- data.table::data.table(
+      doc_id = c("CompA::Target-Up::TF1", "CompA::Target-Up::TF1"),
+      topic_num = c(1L, k),
+      tf = c("TF1", "TF1"),
+      peak_id = c("P1", "P2"),
+      gene_key = c("G1", "G2"),
+      link_pass = TRUE,
+      peak_pass = TRUE,
+      gene_pass = TRUE
+    )
+    data.table::fwrite(rows, file.path(topic_dir, "topic_links_pass.csv"))
+    data.table::fwrite(
+      data.table::data.table(
+        link_method = "gammafit",
+        output_mode = "pass",
+        n_scored_rows = 4L,
+        n_pass_rows = 2L,
+        pass_file = "topic_links_pass.csv"
+      ),
+      file.path(topic_dir, "topic_link_summary.csv")
+    )
+    file.path(topic_dir, "topic_links_pass.csv")
+  }
+
+  k2_path <- make_topic_dir(2L)
+  k3_path <- make_topic_dir(3L)
+  data.table::fwrite(
+    data.table::data.table(
+      n_topics = 1L,
+      n_items = 2L,
+      method_order = 1L,
+      method_setup = "diff fp aggr | LDA",
+      setup = "std_tf_diff_fp_aggr",
+      model_label = "LDA",
+      selected_k = 2L,
+      unit = "Links"
+    ),
+    file.path(review, "tables", "topic_setup_shared_topic_counts.csv")
+  )
+  rows <- data.table::data.table(
+    method_order = 1L,
+    method_setup = "diff fp aggr | LDA",
+    setup = "std_tf_diff_fp_aggr",
+    model_label = "LDA",
+    method = "comparison_aggr_lda",
+    selected_k = c(2L, 3L),
+    topic_extraction_dir = file.path(root, "topic_extraction"),
+    topic_links_path = c(k2_path, k3_path)
+  )
+
+  old <- getOption("craftgrn.topic_review.fast_summary")
+  options(craftgrn.topic_review.fast_summary = TRUE)
+  on.exit(options(craftgrn.topic_review.fast_summary = old), add = TRUE)
+  out <- craftgrn:::.m3tb_summarize_topic_links(root, rows, review_dir = review)
+
+  expect_true(any(out$shared$unit == "Links" & out$shared$selected_k == 2L))
+  expect_true(any(out$shared$unit == "Links" & out$shared$selected_k == 3L))
+  expect_true(any(out$shared$unit == "Genes" & out$shared$selected_k == 3L))
+  expect_true(any(out$shared$unit == "TFs" & out$shared$selected_k == 3L))
+  expect_true(any(out$pass$count_basis == "Topic-link rows" & out$pass$selected_k == 3L))
+})
+
+test_that("Module 3 combined MDS plot separates comparison methods and directions", {
+  mds <- data.table::data.table(
+    k = 10L,
+    method_order = rep(c(1L, 2L), each = 4L),
+    method_setup = rep(c("diff fp aggr | LDA", "diff fp uniq | MultiVI"), each = 4L),
+    panel_label = rep(c("diff fp aggr\nLDA", "diff fp uniq\nMultiVI"), each = 4L),
+    doc_design = "comparison",
+    group_label = paste0("G", seq_len(8L)),
+    comparison_label = paste0("C", seq_len(8L), rep(c("::Target-Up", "::Target-Down"), 4L)),
+    display_label = paste0("Condition ", seq_len(8L), rep(c(" Up", " Down"), 4L)),
+    MDS1 = c(-1, -0.8, 0.8, 1, -0.9, -0.7, 0.7, 0.9),
+    MDS2 = c(-0.2, 0.2, -0.2, 0.2, -0.3, 0.3, -0.3, 0.3),
+    color = rep(c("#4E79A7", "#E15759"), 4L),
+    shape_value = rep(c(16L, 25L), 4L)
+  )
+  p <- craftgrn:::.m3tb_condition_mds_plot(mds, title = "K10 condition/comparison MDS from theta")
+  built <- ggplot2::ggplot_build(p)
+  panels <- unique(as.character(built$layout$layout$split_panel_label))
+
+  expect_setequal(
+    panels,
+    c(
+      "diff fp aggr\nLDA\nUp",
+      "diff fp aggr\nLDA\nDown",
+      "diff fp uniq\nMultiVI\nUp",
+      "diff fp uniq\nMultiVI\nDown"
+    )
+  )
 })
 
 test_that("Module 3 topic benchmark uses a clean standard layout for one selected method", {
@@ -375,6 +628,8 @@ test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
   expect_match(condition_index, "condition_topic_reports/", fixed = TRUE)
   expect_match(topic_index, "Method <select", fixed = TRUE)
   expect_match(condition_index, "Method <select", fixed = TRUE)
+  expect_match(topic_index, "K <select", fixed = TRUE)
+  expect_match(condition_index, "K <select", fixed = TRUE)
 })
 
 test_that("Module 3 review HTML groups multiple K values inside one method report", {
@@ -890,6 +1145,8 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_k_grid = c(8L, 10L),
     warplda_iterations = 25L,
     topic_link_output = "none",
+    topic_count_method = "bin",
+    topic_count_input = "pseudo_count_bin",
     topic_vae_device = "cuda",
     topic_vae_batch_size = 512L,
     topic_benchmark_enabled = TRUE,
@@ -901,6 +1158,8 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$k_grid, c(8L, 10L))
   expect_equal(resolved$warplda_iterations, 25L)
   expect_equal(resolved$topic_link_output, "none")
+  expect_equal(resolved$count_method, "bin")
+  expect_equal(resolved$count_input, "pseudo_count_bin")
   expect_equal(resolved$vae_device, "cuda")
   expect_equal(resolved$vae_batch_size, 512L)
   expect_true(resolved$benchmark$enabled)
@@ -913,6 +1172,8 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     k_grid = 12L,
     warplda_iterations = 3L,
     topic_link_output = "pass",
+    count_method = "log",
+    count_input = "pseudo_count_log",
     vae_device = "cpu",
     vae_batch_size = 128L
   )
@@ -920,8 +1181,25 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(overridden$k_grid, 12L)
   expect_equal(overridden$warplda_iterations, 3L)
   expect_equal(overridden$topic_link_output, "pass")
+  expect_equal(overridden$count_method, "log")
+  expect_equal(overridden$count_input, "pseudo_count_log")
   expect_equal(overridden$vae_device, "cpu")
   expect_equal(overridden$vae_batch_size, 128L)
+})
+
+test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
+  resolved_default <- .module3_resolve_topic_run_config(project_config = list())
+  expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
+  expect_equal(resolved_default$extraction_args$link_topic_prob_cutoff, 0.3)
+
+  resolved_explicit <- .module3_resolve_topic_run_config(
+    project_config = list(
+      topic_link_method = "gene_prob",
+      topic_link_prob_cutoff = "max"
+    )
+  )
+  expect_equal(resolved_explicit$extraction_args$link_topic_method, "gene_prob")
+  expect_equal(resolved_explicit$extraction_args$link_topic_prob_cutoff, "max")
 })
 
 test_that("Module 3 VAE device supports explicit auto mode", {

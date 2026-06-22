@@ -1982,6 +1982,15 @@ plot_link_efdr_summary <- function(topic_links,
   )
 }
 
+.resolve_topic_count_input <- function(count_method = c("bin", "log"), count_input = NULL) {
+  count_method <- match.arg(count_method)
+  choices <- c("pseudo_count_bin", "pseudo_count_log", "weight")
+  if (is.null(count_input) || !length(count_input) || is.na(count_input[[1L]]) || !nzchar(as.character(count_input[[1L]]))) {
+    return(if (identical(count_method, "log")) "pseudo_count_log" else "pseudo_count_bin")
+  }
+  match.arg(as.character(count_input[[1L]]), choices)
+}
+
 .map_topic_gene_token <- function(x) {
   switch(
     as.character(x),
@@ -4354,10 +4363,15 @@ compute_topic_links <- function(edges_docs,
   }
   if (!is.null(out_file) || !is.null(pass_file)) {
     summary_file <- file.path(dirname(if (!is.null(pass_file)) pass_file else out_file), "topic_link_summary.csv")
+    n_scored_rows <- if (identical(link_method, "gammafit")) {
+      as.double(nrow(dt) * K)
+    } else {
+      as.double(nrow(out))
+    }
     summary_dt <- data.table::data.table(
       link_method = link_method,
       output_mode = output_mode,
-      n_scored_rows = as.double(nrow(out)),
+      n_scored_rows = n_scored_rows,
       n_pass_rows = as.double(nrow(pass_dt)),
       full_file = if (output_mode %in% c("full", "both") && !is.null(out_file)) basename(out_file) else NA_character_,
       pass_file = if (output_mode %in% c("pass", "both") && !is.null(pass_file)) basename(pass_file) else NA_character_
@@ -7248,6 +7262,40 @@ build_tf_cluster_map_from_motif <- function(motif_path) {
   variant
 }
 
+.reset_topic_model_artifacts <- function(out_dir, backend, reuse_if_exists) {
+  if (isTRUE(reuse_if_exists)) {
+    return(invisible(FALSE))
+  }
+  backend <- as.character(backend %||% "")
+  paths <- c(
+    file.path(out_dir, "model_metrics.csv"),
+    file.path(out_dir, "model_selection.pdf"),
+    file.path(out_dir, "vae_progress.tsv"),
+    file.path(out_dir, "vae_train.log"),
+    file.path(out_dir, "tmp_models"),
+    file.path(out_dir, "vae_models")
+  )
+  if (identical(backend, "vae")) {
+    paths <- c(paths, file.path(out_dir, "vae_models"))
+  }
+  rds_dir <- file.path(out_dir, "rds")
+  if (dir.exists(rds_dir)) {
+    paths <- c(
+      paths,
+      list.files(
+        rds_dir,
+        pattern = "^(model_metrics|model_selection|theta_|phi_|selected)",
+        full.names = TRUE
+      )
+    )
+  }
+  existing <- unique(paths[file.exists(paths) | dir.exists(paths)])
+  if (length(existing)) {
+    unlink(existing, recursive = TRUE, force = TRUE)
+  }
+  invisible(length(existing) > 0L)
+}
+
 run_vae_topic_report_py <- function(doc_term,
                                     edges_docs,
                                     out_dir,
@@ -7370,7 +7418,12 @@ run_vae_topic_report_py <- function(doc_term,
   }
 
   if (!file.exists(metrics_path)) .log_abort("VAE did not produce model_metrics.csv in {out_dir}")
-  metrics_tbl <- readr::read_csv(metrics_path, show_col_types = FALSE)
+  metrics_tbl <- data.table::as.data.table(readr::read_csv(metrics_path, show_col_types = FALSE))
+  metrics_tbl[, `:=`(
+    count_input_effective = count_input,
+    n_model_tokens = as.double(sum(.safe_num(doc_term[[count_col]]), na.rm = TRUE))
+  )]
+  data.table::fwrite(metrics_tbl, metrics_path)
   .save_all(out_dir, "model_metrics", metrics_tbl)
 
   title_prefix <- .topic_model_selection_title(out_dir, backend_label = paste("VAE", vae_variant), vae_variant = vae_variant)
@@ -8223,7 +8276,7 @@ train_topic_models <- function(Kgrid,
                                gene_term_mode = c("aggregate", "unique"),
                                fp_term_mode = c("aggregate", "unique", "aggregate_weight"),
                                include_tf_terms = FALSE,
-                               count_input = c("pseudo_count_bin", "pseudo_count_log", "weight"),
+                               count_input = NULL,
                                vae_variant = "multivi_encoder",
                                backend = c("warplda", "vae"),
                                vae_python = NULL,
@@ -8262,7 +8315,6 @@ train_topic_models <- function(Kgrid,
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   gene_term_mode <- match.arg(gene_term_mode)
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
-  count_input <- match.arg(count_input)
   backend <- match.arg(backend)
   warplda_iterations <- as.integer(warplda_iterations[[1L]])
   if (!is.finite(warplda_iterations) || warplda_iterations < 1L) .log_abort("`warplda_iterations` must be a positive integer.")
@@ -8271,6 +8323,8 @@ train_topic_models <- function(Kgrid,
   doc_design <- match.arg(doc_design)
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   weight_label <- if (identical(doc_design, "condition")) "peak_score_gene_expr" else "peak_log2fc_fp_gene_fc_expr"
+  count_input_requested <- if (is.null(count_input) || !length(count_input)) NA_character_ else as.character(count_input[[1L]])
+  count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
   delta_files <- .module3_filtered_link_files(input_dir)
   if (!length(delta_files)) {
     delta_files <- list.files(input_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
@@ -8432,23 +8486,37 @@ train_topic_models <- function(Kgrid,
       doc_design = doc_design,
       doc_mode = doc_mode,
       fp_term_mode = fp_term_mode,
+      count_method = count_method,
+      count_scale = as.numeric(count_scale),
+      count_input_requested = count_input_requested,
+      count_input_effective = count_input_effective,
       n_link_rows_after_filter = as.double(nrow(edges_filt)),
       n_document_edge_rows = as.double(nrow(edges_docs)),
       n_doc_term_rows = as.double(nrow(doc_term)),
       n_documents = as.double(data.table::uniqueN(doc_term$doc_id)),
       n_terms = as.double(data.table::uniqueN(doc_term$term_id)),
-      n_nonzero = as.double(sum(.safe_num(doc_term$pseudo_count) > 0, na.rm = TRUE))
+      n_nonzero = as.double(sum(.safe_num(doc_term[[count_input_effective]]) > 0, na.rm = TRUE)),
+      n_model_tokens = as.double(sum(.safe_num(doc_term[[count_input_effective]]), na.rm = TRUE))
     )
     data.table::fwrite(topic_input_summary, file.path(out_dir, "topic_input_summary.csv"))
     metrics_path <- file.path(out_dir, "model_metrics.csv")
     models_dir <- file.path(out_dir, "vae_models")
     required_k <- sort(unique(as.integer(Kgrid)))
     required_k <- required_k[is.finite(required_k)]
+    reset_done <- .reset_topic_model_artifacts(out_dir, backend, reuse_if_exists)
+    if (isTRUE(reset_done)) {
+      .log_inform("{analysis_id}: cleared existing topic model artifacts because reuse_if_exists = FALSE.")
+    }
     metrics_have_required_k <- FALSE
     if (file.exists(metrics_path)) {
       old_metrics <- tryCatch(data.table::fread(metrics_path), error = function(e) data.table::data.table())
       if (nrow(old_metrics) && "K" %in% names(old_metrics)) {
         metrics_have_required_k <- all(required_k %in% as.integer(old_metrics$K))
+        old_required <- old_metrics[as.integer(old_metrics$K) %in% required_k]
+        count_metadata_ok <- all(c("count_method", "count_input_effective") %in% names(old_required)) &&
+          all(as.character(old_required$count_method) == count_method) &&
+          all(as.character(old_required$count_input_effective) == count_input_effective)
+        metrics_have_required_k <- metrics_have_required_k && isTRUE(count_metadata_ok)
         if (identical(backend, "warplda")) {
           if ("sampler" %in% names(old_metrics)) {
             metrics_have_required_k <- metrics_have_required_k &&
@@ -8495,10 +8563,22 @@ train_topic_models <- function(Kgrid,
         vae_seed = vae_seed,
         vae_device = vae_device,
         do_report = FALSE,
-        count_input = count_input,
+        reuse_if_exists = reuse_if_exists,
+        count_input = count_input_effective,
         save_full_doc_term_csv = save_full_doc_term_csv,
         topic_report_args = local_topic_args
       )
+      if (file.exists(metrics_path)) {
+        metrics_tbl <- data.table::fread(metrics_path, showProgress = FALSE)
+        metrics_tbl[, `:=`(
+          count_method = count_method,
+          count_scale = as.numeric(count_scale),
+          count_input_requested = count_input_requested,
+          count_input_effective = count_input_effective
+        )]
+        data.table::fwrite(metrics_tbl, metrics_path)
+        .save_all(out_dir, "model_metrics", metrics_tbl)
+      }
       .log_inform("{analysis_id}: finished VAE training in {round(proc.time()[['elapsed']] - t_model, 1)} sec: {out_dir}.")
     } else {
       .log_inform("{analysis_id}: writing WarpLDA input caches in {out_dir}.")
@@ -8520,7 +8600,7 @@ train_topic_models <- function(Kgrid,
       .log_inform("{analysis_id}: WarpLDA input cache writing finished in {round(proc.time()[['elapsed']] - t_cache, 1)} sec.")
       .log_inform("{analysis_id}: building sparse DTM for WarpLDA.")
       t_dtm <- proc.time()[["elapsed"]]
-      dtm_obj <- build_sparse_dtm(doc_term, count_col = "pseudo_count")
+      dtm_obj <- build_sparse_dtm(doc_term, count_col = count_input_effective)
       dtm <- dtm_obj$dtm
       .save_all(out_dir, "dtm", dtm)
       .save_all(out_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
@@ -8543,7 +8623,13 @@ train_topic_models <- function(Kgrid,
         metrics_file = file.path(out_dir, "model_metrics.csv")
       )
       .log_inform("{analysis_id}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")
-      metrics_tbl <- fits_out$metrics
+      metrics_tbl <- data.table::as.data.table(fits_out$metrics)
+      metrics_tbl[, `:=`(
+        count_method = count_method,
+        count_scale = as.numeric(count_scale),
+        count_input_requested = count_input_requested,
+        count_input_effective = count_input_effective
+      )]
       data.table::fwrite(metrics_tbl, file.path(out_dir, "model_metrics.csv"))
       .save_all(out_dir, "model_metrics", metrics_tbl)
 

@@ -3,6 +3,9 @@
 #' @param ... arguments to pass to golem_opts.
 #' See `?golem::get_golem_options` for more details.
 #' @inheritParams shiny::shinyApp
+#' @return A Shiny application object returned by `shiny::shinyApp()`. Calling
+#'   this function is primarily useful for its side effect of launching the app
+#'   in interactive use.
 #'
 #' @export
 run_app <- function(

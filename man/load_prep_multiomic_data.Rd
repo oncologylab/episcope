@@ -115,13 +115,16 @@ returned object is the canonical input for downstream Step 1 TFBS
 correlation.
 }
 \examples{
-\dontrun{
-omics_data <- load_prep_multiomic_data(
-  config = "dev/config/pdac_nutrient_stress_strict_jaspar2024_demo.yaml",
-  genome = "hg38",
-  label_col = "strict_match_rna",
-  do_preprocess = FALSE,
-  verbose = TRUE
-)
+\donttest{
+config_path <- "dev/config/pdac_nutrient_stress_strict_jaspar2024_demo.yaml"
+if (file.exists(config_path)) {
+  omics_data <- load_prep_multiomic_data(
+    config = config_path,
+    genome = "hg38",
+    label_col = "strict_match_rna",
+    do_preprocess = FALSE,
+    verbose = TRUE
+  )
+}
 }
 }

@@ -43,6 +43,24 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
 })
 
+test_that("predict_tfbs defaults do not write to the working directory", {
+  expect_null(formals(predict_tfbs)$out_dir)
+  expect_false(formals(predict_tfbs)$write_outputs)
+  expect_null(formals(module1_predict_full_tfbs)$out_dir)
+  expect_false(formals(module1_predict_full_tfbs)$write_outputs)
+
+  fixture <- module1_tiny_fixture()
+  result <- predict_tfbs(
+    omics_data = craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE),
+    r_cutoff = 0.8,
+    verbose = FALSE
+  )
+
+  expect_s3_class(result$predicted_tfbs, "data.frame")
+  expect_equal(result$parameters$write_outputs, FALSE)
+  expect_length(result$reports, 0L)
+})
+
 test_that("predict_tfbs can retain all bound FPs after canonical-bound labeling", {
   fixture <- module1_tiny_fixture()
   strict <- predict_tfbs(

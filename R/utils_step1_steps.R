@@ -130,7 +130,7 @@ module1_filter_canonical_bound_tfbs <- function(module1_inputs, motif_supported_
 #'
 #' @param module1_inputs Output from module1_prepare_tfbs_inputs.
 #' @param prediction_footprints Footprint table from module1_filter_canonical_bound_tfbs.
-#' @param out_dir Output directory.
+#' @param out_dir Optional output directory. Required when `write_outputs = TRUE`.
 #' @param r_cutoff Minimum positive best correlation.
 #' @param p_cutoff Optional best-method p-value cutoff.
 #' @param fdr_cutoff Optional best-method FDR cutoff.
@@ -142,7 +142,11 @@ module1_filter_canonical_bound_tfbs <- function(module1_inputs, motif_supported_
 #' @param verbose Emit concise progress messages.
 #' @return A list with prediction statistics or manifests and predicted_tfbs.
 #' @noRd
-module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_footprints, out_dir = "predict_tf_binding_sites", r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = TRUE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
+module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_footprints, out_dir = NULL, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = FALSE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
+  stopifnot(is.logical(write_outputs), length(write_outputs) == 1L, !is.na(write_outputs))
+  if (isTRUE(write_outputs) && (is.null(out_dir) || !is.character(out_dir) || length(out_dir) != 1L || !nzchar(out_dir))) {
+    .log_abort("`out_dir` must be a non-empty path when `write_outputs = TRUE`.")
+  }
   output_format <- .module1_output_format(output_format)
   pair_count <- as.double(nrow(prediction_footprints)) * as.double(length(module1_inputs$expressed_tfs))
   keep_stats <- if (is.null(return_prediction_stats)) !isTRUE(write_outputs) || pair_count <= getOption("craftgrn.module1_prediction_return_limit", 5000000) else isTRUE(return_prediction_stats)
@@ -162,19 +166,21 @@ module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_fo
 #'
 #' @param module1_inputs Output from module1_prepare_tfbs_inputs.
 #' @param prediction_footprints Footprint table from module1_filter_canonical_bound_tfbs.
-#' @param out_dir Output directory.
+#' @param out_dir Optional output directory. Required when `write_outputs = TRUE`.
 #' @param r_cutoff Minimum positive best correlation.
 #' @param p_cutoff Optional best-method p-value cutoff.
 #' @param fdr_cutoff Optional best-method FDR cutoff.
 #' @param min_non_na Minimum finite condition pairs required.
 #' @param cores Number of worker cores; NULL uses all available cores.
-#' @param write_outputs Write predicted TFBS outputs.
+#' @param write_outputs Write predicted TFBS outputs. Defaults to `FALSE` so
+#'   calls do not write into the working directory unless an output directory is
+#'   explicitly supplied.
 #' @param output_format One of csv, parquet, or auto.
 #' @param return_prediction_stats Return full prediction statistics in memory.
 #' @param verbose Emit concise progress messages.
 #' @return A list with prediction statistics or manifests and predicted TFBS outputs.
 #' @export
-module1_predict_full_tfbs <- function(module1_inputs, prediction_footprints, out_dir = "predict_tf_binding_sites", r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = TRUE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
+module1_predict_full_tfbs <- function(module1_inputs, prediction_footprints, out_dir = NULL, r_cutoff = 0.3, p_cutoff = NULL, fdr_cutoff = NULL, min_non_na = 3L, cores = NULL, write_outputs = FALSE, output_format = c("csv", "parquet", "auto"), return_prediction_stats = NULL, verbose = TRUE) {
   module1_predict_tfbs_from_correlations(
     module1_inputs = module1_inputs,
     prediction_footprints = prediction_footprints,

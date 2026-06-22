@@ -824,7 +824,7 @@
 #' footprints, then predicts sparse FP-TF binding events for expressed TFs.
 #'
 #' @param omics_data CraftGRN multiomic object returned by `load_prep_multiomic_data()`.
-#' @param out_dir Output directory.
+#' @param out_dir Optional output directory. Required when `write_outputs = TRUE`.
 #' @param db Motif database label used in output metadata.
 #' @param label_col Metadata column used to build condition-level matrices when
 #'   missing from `omics_data`.
@@ -838,7 +838,9 @@
 #'   at least one motif-supported TF passing the cutoffs are used for the
 #'   all-expressed-TF prediction stage.
 #' @param tf_subset Optional TF subset.
-#' @param write_outputs Write Module 1 output files.
+#' @param write_outputs Write Module 1 output files. Defaults to `FALSE` so
+#'   calls do not write into the working directory unless an output directory is
+#'   explicitly supplied.
 #' @param write_stats Retain and write full FP-TF correlation statistics.
 #' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.
 #' @param write_qc_report Write a Module 1 HTML QC report when outputs are written.
@@ -855,11 +857,11 @@
 #' @param time_log Logical; if TRUE, emit elapsed-time messages.
 #'
 #' @return A list containing `omics_data`, `high_confidence_footprints`,
-#'   `motif_supported_correlations`, `prediction_stats`, `prediction_stats`, `reports`, and
-#'   `parameters`.
+#'   `motif_supported_correlations`, `prediction_stats`, `predicted_tfbs`,
+#'   `prediction_stats_manifest`, `reports`, and `parameters`.
 #' @export
 predict_tfbs <- function(omics_data,
-                         out_dir = "predict_tf_binding_sites",
+                         out_dir = NULL,
                          db = "JASPAR2024",
                          label_col = NULL,
                          r_cutoff = 0.3,
@@ -867,7 +869,7 @@ predict_tfbs <- function(omics_data,
                          fdr_cutoff = NULL,
                          filter_to_canonical_bound = TRUE,
                          tf_subset = NULL,
-                         write_outputs = TRUE,
+                         write_outputs = FALSE,
                          write_stats = FALSE,
                          write_bed = FALSE,
                          write_qc_report = TRUE,
@@ -880,8 +882,12 @@ predict_tfbs <- function(omics_data,
                          verbose = TRUE,
                          time_log = verbose) {
   if (!is.list(omics_data)) .log_abort("`omics_data` must be a prepared Module 1 list.")
-  if (!is.character(out_dir) || length(out_dir) != 1L || !nzchar(out_dir)) {
-    .log_abort("`out_dir` must be a non-empty path.")
+  stopifnot(is.logical(write_outputs), length(write_outputs) == 1L, !is.na(write_outputs))
+  if (isTRUE(write_outputs) && (is.null(out_dir) || !is.character(out_dir) || length(out_dir) != 1L || !nzchar(out_dir))) {
+    .log_abort("`out_dir` must be a non-empty path when `write_outputs = TRUE`.")
+  }
+  if (!is.null(out_dir) && (!is.character(out_dir) || length(out_dir) != 1L || !nzchar(out_dir))) {
+    .log_abort("`out_dir` must be NULL or a non-empty path.")
   }
   if (!is.character(db) || length(db) != 1L || !nzchar(db)) {
     .log_abort("`db` must be a non-empty string.")

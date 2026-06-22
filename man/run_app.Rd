@@ -36,6 +36,11 @@ expression in order for the match to be considered successful.}
 \item{...}{arguments to pass to golem_opts.
 See `?golem::get_golem_options` for more details.}
 }
+\value{
+A Shiny application object returned by `shiny::shinyApp()`. Calling
+  this function is primarily useful for its side effect of launching the app
+  in interactive use.
+}
 \description{
 Run the Shiny Application
 }
