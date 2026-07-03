@@ -1036,6 +1036,7 @@
   preferred <- file.path(
     topic_dir,
     c(
+      "topic_pathway_enrichment_topic_terms.csv",
       "topic_pathway_enrichment_peak_and_gene_dotplot.csv",
       "topic_pathway_enrichment_gene_only_dotplot.csv",
       "topic_pathway_enrichment_peak_and_gene_prob_dotplot.csv"
@@ -1057,6 +1058,8 @@
   }
   item_col <- if ("pathway_key" %in% names(dt)) {
     "pathway_key"
+  } else if ("pathway_norm_key" %in% names(dt)) {
+    "pathway_norm_key"
   } else if ("pathway" %in% names(dt)) {
     "pathway"
   } else {
@@ -1803,10 +1806,24 @@
   )
   if (is.na(extraction_dir) || !dir.exists(extraction_dir)) return(empty)
   if (isTRUE(per_group)) {
-    files <- list.files(extraction_dir, "_dotplot[.]csv$", recursive = TRUE, full.names = TRUE)
-    files <- files[grepl("per_comparison_pathway", files, fixed = TRUE)]
+    files <- file.path(
+      extraction_dir,
+      c(
+        "per_comparison_topic_pathway_enrichment.csv",
+        "topic_term_pathway_enrichment.csv"
+      )
+    )
+    files <- files[file.exists(files)]
+    if (!length(files)) {
+      files <- list.files(extraction_dir, "_dotplot[.]csv$", recursive = TRUE, full.names = TRUE)
+      files <- files[grepl("per_comparison_pathway", files, fixed = TRUE)]
+    }
   } else {
-    files <- list.files(extraction_dir, "^topic_pathway_enrichment_.*_dotplot[.]csv$", full.names = TRUE)
+    files <- file.path(extraction_dir, "topic_pathway_enrichment_topic_terms.csv")
+    files <- files[file.exists(files)]
+    if (!length(files)) {
+      files <- list.files(extraction_dir, "^topic_pathway_enrichment_.*_dotplot[.]csv$", full.names = TRUE)
+    }
   }
   if (!length(files)) return(empty)
   rows <- lapply(files, function(path) {
@@ -1817,17 +1834,26 @@
     if (!"topic" %in% names(dt) && "topic_num" %in% names(dt)) data.table::setnames(dt, "topic_num", "topic")
     if (!"overlap" %in% names(dt)) dt[, overlap := NA_character_]
     if (!"overlap_hits" %in% names(dt)) dt[, overlap_hits := .m3tb_parse_overlap_hits(overlap)]
+    if (!"pathway_key" %in% names(dt) && "pathway_norm_key" %in% names(dt)) {
+      data.table::setnames(dt, "pathway_norm_key", "pathway_key")
+    }
     if (!"pathway_key" %in% names(dt)) dt[, pathway_key := pathway]
     if (!"genes" %in% names(dt)) dt[, genes := NA_character_]
     if (isTRUE(per_group)) {
-      label <- sub("_dotplot[.]csv$", "", basename(path))
-      label <- sub("_All$", "", label)
-      label <- sub("_Target-Up$", "::Target-Up", label)
-      label <- sub("_Target-Down$", "::Target-Down", label)
-      label <- sub("_Up$", "::Target-Up", label)
-      label <- sub("_Down$", "::Target-Down", label)
-      dt[, comparison_label := label]
-      dt[, display_label := .m3tb_display_label(label)]
+      if ("comparison_id" %in% names(dt)) {
+        direction_col <- if ("direction_group" %in% names(dt)) "direction_group" else NA_character_
+        direction_val <- if (!is.na(direction_col)) as.character(dt[[direction_col]]) else "All"
+        dt[, comparison_label := paste(as.character(comparison_id), direction_val, sep = "::")]
+      } else {
+        label <- sub("_dotplot[.]csv$", "", basename(path))
+        label <- sub("_All$", "", label)
+        label <- sub("_Target-Up$", "::Target-Up", label)
+        label <- sub("_Target-Down$", "::Target-Down", label)
+        label <- sub("_Up$", "::Target-Up", label)
+        label <- sub("_Down$", "::Target-Down", label)
+        dt[, comparison_label := label]
+      }
+      dt[, display_label := .m3tb_display_label(comparison_label)]
     } else {
       dt[, comparison_label := NA_character_]
       dt[, display_label := NA_character_]

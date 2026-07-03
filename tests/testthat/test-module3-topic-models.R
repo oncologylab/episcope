@@ -1247,7 +1247,7 @@ test_that("per-comparison topic-term pathway wrapper retests overall pathway gen
     background_size = 20000L
   )
 
-  out <- data.table::fread(file.path(out_dir, "topic_term_pathway_enrichment.csv"))
+  out <- data.table::fread(file.path(out_dir, "per_comparison_topic_pathway_enrichment.csv"))
   expect_true(all(c("comparison_id", "direction_group", "topic", "pathway", "pval", "padj") %in% names(out)))
   up_path_a <- out[comparison_id == "CmpA" & direction_group == "Up" & topic == 1L & pathway == "Reactome: Path A"]
   expect_equal(up_path_a$query_size, 2L)
@@ -1318,7 +1318,7 @@ test_that("per-comparison pathway retest resolves formal human aliases", {
     background_size = 20000L
   )
 
-  out <- data.table::fread(file.path(out_dir, "topic_term_pathway_enrichment.csv"))
+  out <- data.table::fread(file.path(out_dir, "per_comparison_topic_pathway_enrichment.csv"))
   row <- out[comparison_id == "CmpAlias" & direction_group == "Up" & topic == 1L]
   expect_equal(row$query_size, 1L)
   expect_equal(row$overlap_hits, 1L)

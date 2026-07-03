@@ -220,7 +220,7 @@ Standard extraction folders are flat. For a selected K, review the K root for
 `topic_terms.csv`, `topic_links_pass.csv`, `topic_item_coverage_counts.csv`,
 `topic_terms_and_cutoffs_summary.pdf`, `topic_term_phi_score_heatmap_K*.pdf`,
 `topic_pathway_enrichment_dotplot.pdf`, and
-`topic_term_pathway_enrichment.csv`. Standard runs do not create LDAvis,
+`per_comparison_topic_pathway_enrichment.csv`. Standard runs do not create LDAvis,
 doc-topic heatmap, raw-theta document heatmap, topic pathway heatmap, standalone
 topic-term score heatmap, nested TF assignment, nested term assignment, or
 nested per-comparison pathway folders.

@@ -4612,7 +4612,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     "human_overlap_hits", "mouse_overlap_hits"
   ))
   data.table::setorder(res, comparison_id, direction_group, topic, padj, pval, -overlap_hits, pathway)
-  out_file <- file.path(out_dir_pc, "topic_term_pathway_enrichment.csv")
+  out_file <- file.path(out_dir_pc, "per_comparison_topic_pathway_enrichment.csv")
   data.table::fwrite(res, out_file)
   res[]
 }
@@ -6900,7 +6900,7 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
   }
   dir.create(out_dir_pc, recursive = TRUE, showWarnings = FALSE)
   if (is.null(title_prefix)) title_prefix <- basename(out_dir)
-  log_path <- file.path(out_dir_pc, "topic_term_pathway_debug.txt")
+  log_path <- file.path(out_dir_pc, "per_comparison_topic_pathway_debug.txt")
   log_msg <- function(msg) {
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
@@ -7248,7 +7248,7 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
   res_dt <- data.table::rbindlist(all_res, use.names = TRUE, fill = TRUE)
   if (nrow(res_dt)) {
     data.table::setorder(res_dt, comparison_id, direction_group, topic, padj)
-    data.table::fwrite(res_dt, file.path(out_dir_pc, "topic_term_pathway_enrichment.csv"))
+    data.table::fwrite(res_dt, file.path(out_dir_pc, "per_comparison_topic_pathway_enrichment.csv"))
   }
   invisible(TRUE)
 }
@@ -8564,7 +8564,18 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
             !identical(as.character(pathway_per_comparison_dir)[[1L]], ".")) {
           unlink(file.path(out_dir, pathway_per_comparison_dir), recursive = TRUE, force = TRUE)
         } else {
-          unlink(file.path(out_dir, c("topic_term_pathway_enrichment.csv", "topic_term_pathway_debug.txt")), force = TRUE)
+          unlink(
+            file.path(
+              out_dir,
+              c(
+                "per_comparison_topic_pathway_enrichment.csv",
+                "per_comparison_topic_pathway_debug.txt",
+                "topic_term_pathway_enrichment.csv",
+                "topic_term_pathway_debug.txt"
+              )
+            ),
+            force = TRUE
+          )
         }
         unlink(list.files(out_dir, pattern = paste0("^", .safe_filename(pathway_per_comparison_dir), "_"), full.names = TRUE), recursive = TRUE, force = TRUE)
       }
