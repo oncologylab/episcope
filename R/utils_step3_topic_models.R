@@ -2601,16 +2601,9 @@ make_topic_report_args_simple <- function(thrP,
   out[]
 }
 
-.plot_topic_term_score_heatmap <- function(score_mat,
-                                           topic_terms = NULL,
-                                           out_file,
-                                           assignment_file = NULL,
-                                           title_prefix = NULL,
-                                           cluster_topics = TRUE,
-                                           show_rownames = FALSE) {
-  if (!requireNamespace("pheatmap", quietly = TRUE)) {
-    return(invisible(NULL))
-  }
+.write_topic_term_primary_assignment <- function(score_mat,
+                                                 topic_terms = NULL,
+                                                 assignment_file) {
   .assert_pkg("data.table")
   score_mat <- as.matrix(score_mat)
   if (!nrow(score_mat) || !ncol(score_mat)) return(invisible(NULL))
@@ -2624,61 +2617,9 @@ make_topic_report_args_simple <- function(thrP,
   if (!nrow(assignment)) return(invisible(NULL))
   assignment[, topic_assignment := data.table::fifelse(in_any_topic, primary_topic, "Not assigned")]
   data.table::setorder(assignment, term_group, topic_assignment, -max_score, term_id)
-  term_order <- assignment$term_id
-  mat <- t(score_mat[, term_order, drop = FALSE])
-  mat[!is.finite(mat)] <- 0
-
-  ann <- data.frame(
-    Term_group = factor(assignment$term_group, levels = sort(unique(assignment$term_group))),
-    Topic_assignment = factor(assignment$topic_assignment, levels = sort(unique(assignment$topic_assignment))),
-    Max_score = assignment$max_score,
-    check.names = FALSE
-  )
-  rownames(ann) <- term_order
-  annotation_colors <- list(
-    Term_group = .topic_factor_palette(assignment$term_group),
-    Topic_assignment = .topic_factor_palette(assignment$topic_assignment)
-  )
-
-  if (!is.null(assignment_file) && nzchar(as.character(assignment_file)[[1L]])) {
-    dir.create(dirname(assignment_file), recursive = TRUE, showWarnings = FALSE)
-    data.table::fwrite(assignment, assignment_file)
-  }
-
-  k <- ncol(mat)
-  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    paste(title_prefix, sprintf("topic-term scores K%d", k), sep = " | ")
-  } else {
-    sprintf("Topic-term scores K%d", k)
-  }
-  width <- max(7.2, min(12.5, 4.8 + 0.38 * k))
-  height <- max(6.2, min(60, 3.8 + 0.03 * nrow(mat)))
-  fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
-  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
-  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
-  tryCatch(
-    {
-      pheatmap::pheatmap(
-        mat,
-        color = grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101),
-        breaks = seq(0, 1, length.out = 102),
-        cluster_rows = FALSE,
-        cluster_cols = isTRUE(cluster_topics) && ncol(mat) > 1L,
-        scale = "none",
-        border_color = NA,
-        annotation_row = ann,
-        annotation_colors = annotation_colors,
-        show_rownames = isTRUE(show_rownames),
-        show_colnames = TRUE,
-        fontsize = 9,
-        fontsize_col = fontsize_col,
-        main = title,
-        angle_col = 45
-      )
-    },
-    finally = grDevices::dev.off()
-  )
-  invisible(out_file)
+  dir.create(dirname(assignment_file), recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(assignment, assignment_file)
+  invisible(assignment_file)
 }
 
 .plot_topic_term_phi_score_comparison_heatmap <- function(phi,
@@ -6455,7 +6396,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   max_pathways = 200L,
                                                   title_prefix = NULL,
                                                   use_all_terms = FALSE,
-                                                  make_heatmap = TRUE,
+                                                  make_heatmap = FALSE,
                                                   make_dotplot = TRUE,
                                                   tf_link_mode = c("theta", "none"),
                                                   tf_theta_top_n = 50L,
@@ -6496,12 +6437,6 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
-  }
-  if (isTRUE(make_heatmap) && !requireNamespace("pheatmap", quietly = TRUE)) {
-    msg <- "Skipping pathway enrichment heatmap: pheatmap not installed."
-    .log_inform(msg)
-    log_msg(msg)
-    make_heatmap <- FALSE
   }
   if (identical(pathway_backend, "enrichr")) {
     .ensure_enrichr_ready(
@@ -6699,56 +6634,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   log_msg(sprintf("Total enriched pathways (unique): %d", length(unique(res_dt$pathway))))
   log_msg(sprintf("Debug log written to: %s", log_path))
 
-  main_title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    paste(title_prefix, "Pathway enrichment", sep = " | ")
-  } else {
-    "Pathway enrichment"
-  }
-
   if (isTRUE(make_heatmap)) {
-    mat_dt <- data.table::dcast(res_dt, pathway ~ topic, value.var = "logp", fill = 0)
-    mat <- as.matrix(mat_dt[, -1, with = FALSE])
-    rownames(mat) <- mat_dt$pathway
-    colnames(mat) <- paste0("Topic", colnames(mat))
-
-    n_topics <- ncol(mat)
-    width <- max(10, n_topics * 0.6)
-    height <- max(8, min(160, nrow(mat) * 0.25))
-    font_row <- if (nrow(mat) > 200) 4 else if (nrow(mat) > 120) 5 else 7
-    font_col <- if (n_topics > 60) 5 else if (n_topics > 40) 6 else if (n_topics > 25) 8 else 10
-
-    grDevices::pdf(out_file, width = width, height = height)
-    tryCatch(
-      {
-        ph <- suppressWarnings(pheatmap::pheatmap(
-          mat,
-          cluster_rows = nrow(mat) > 1L,
-          cluster_cols = ncol(mat) > 1L,
-          show_rownames = TRUE,
-          show_colnames = TRUE,
-          fontsize_row = font_row,
-          fontsize_col = font_col,
-          angle_col = 90,
-          main = main_title,
-          legend_labels = expression(-log[10]~"(adj.P)"),
-          border_color = NA,
-          silent = TRUE
-        ))
-        if (!is.null(ph$gtable)) {
-          idx <- which(ph$gtable$layout$name %in% c("row_names", "col_names", "main"))
-          for (i in idx) {
-            ph$gtable$grobs[[i]] <- .set_grob_fontface(ph$gtable$grobs[[i]], "bold")
-          }
-          grid::grid.newpage()
-          grid::grid.draw(ph$gtable)
-        } else {
-          pheatmap::pheatmap(mat, border_color = NA)
-        }
-      },
-      finally = grDevices::dev.off()
-    )
-  } else {
-    log_msg("Skipping pathway heatmap: make_heatmap = FALSE.")
+    log_msg("Skipping pathway heatmap: heatmap output has been removed from standard Module 3 reports.")
   }
 
   if (isTRUE(make_dotplot) && requireNamespace("ggplot2", quietly = TRUE)) {
@@ -7390,7 +7277,7 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            per_comparison_dir = "per_comparison_pathway",
                                                            per_comparison_flat = FALSE,
                                                            split_direction = TRUE,
-                                                           make_heatmap = TRUE,
+                                                           make_heatmap = FALSE,
                                                            make_dotplot = TRUE,
                                                            enrichr_sleep_time = 0,
                                                            enrichr_cache_dir = NULL,
@@ -7792,59 +7679,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   res_dt[, topic := as.integer(topic)]
   data.table::setorder(res_dt, topic)
 
-  main_title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    paste(title_prefix, "Pathway enrichment (link scores)", sep = " | ")
-  } else {
-    "Pathway enrichment (link scores)"
-  }
-
-  if (isTRUE(make_heatmap) && requireNamespace("pheatmap", quietly = TRUE)) {
-    mat_dt <- data.table::dcast(res_dt, pathway ~ topic, value.var = "logp", fill = 0)
-    mat <- as.matrix(mat_dt[, -1, with = FALSE])
-    rownames(mat) <- mat_dt$pathway
-    colnames(mat) <- paste0("Topic", colnames(mat))
-
-    n_topics <- ncol(mat)
-    width <- max(10, n_topics * 0.6)
-    height <- max(8, min(160, nrow(mat) * 0.25))
-    font_row <- if (nrow(mat) > 200) 4 else if (nrow(mat) > 120) 5 else 7
-    font_col <- if (n_topics > 60) 5 else if (n_topics > 40) 6 else if (n_topics > 25) 8 else 10
-
-    out_file <- file.path(out_dir, "topic_pathway_enrichment_heatmap.pdf")
-    grDevices::pdf(out_file, width = width, height = height)
-    tryCatch(
-      {
-        ph <- suppressWarnings(pheatmap::pheatmap(
-          mat,
-          cluster_rows = nrow(mat) > 1L,
-          cluster_cols = ncol(mat) > 1L,
-          show_rownames = TRUE,
-          show_colnames = TRUE,
-          fontsize_row = font_row,
-          fontsize_col = font_col,
-          angle_col = 90,
-          main = main_title,
-          legend_labels = expression(-log[10]~"(adj.P)"),
-          border_color = NA,
-          silent = TRUE
-        ))
-        if (!is.null(ph$gtable)) {
-          idx <- which(ph$gtable$layout$name %in% c("row_names", "col_names", "main"))
-          for (i in idx) {
-            ph$gtable$grobs[[i]] <- .set_grob_fontface(ph$gtable$grobs[[i]], "bold")
-          }
-          grid::grid.newpage()
-          grid::grid.draw(ph$gtable)
-        } else {
-          pheatmap::pheatmap(mat, border_color = NA)
-        }
-      },
-      finally = grDevices::dev.off()
-    )
-  } else if (isTRUE(make_heatmap)) {
-    log_msg("Skipping heatmap: pheatmap not installed.")
-  } else {
-    log_msg("Skipping heatmap: make_heatmap = FALSE.")
+  if (isTRUE(make_heatmap)) {
+    log_msg("Skipping heatmap: pathway heatmap output has been removed from standard Module 3 reports.")
   }
 
   if (isTRUE(make_dotplot)) {
@@ -8326,7 +8162,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               top_n_terms = 500L,
                                               in_topic_min_terms = 50L,
                                               pathway_use_all_terms = FALSE,
-                                              pathway_make_heatmap = TRUE,
+                                              pathway_make_heatmap = FALSE,
                                               pathway_make_dotplot = TRUE,
                                               pathway_overwrite = FALSE,
                                               top_n_per_topic = 20L,
@@ -8676,14 +8512,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     .record_step(
       "topic_term_heatmaps",
       {
-        term_heatmap_path <- file.path(out_dir, sprintf("topic_term_score_heatmap_K%d.pdf", nrow(score_mat)))
         term_compare_path <- file.path(out_dir, sprintf("topic_term_phi_score_heatmap_K%d.pdf", nrow(score_mat)))
-        .plot_topic_term_score_heatmap(
+        .write_topic_term_primary_assignment(
           score_mat = score_mat,
           topic_terms = topic_terms,
-          out_file = term_heatmap_path,
-          assignment_file = file.path(out_dir, "topic_term_primary_assignment.csv"),
-          title_prefix = title_prefix
+          assignment_file = file.path(out_dir, "topic_term_primary_assignment.csv")
         )
         .plot_topic_term_phi_score_comparison_heatmap(
           phi = phi,
@@ -8927,7 +8760,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           top_n_terms = 500L,
                                           in_topic_min_terms = 50L,
                                           pathway_use_all_terms = FALSE,
-                                          pathway_make_heatmap = TRUE,
+                                          pathway_make_heatmap = FALSE,
                                           pathway_make_dotplot = TRUE,
                                           top_n_per_topic = 20L,
                                           max_pathways = 200L,

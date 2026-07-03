@@ -1092,6 +1092,56 @@ test_that("overall topic pathway dotplot shows a readable expanded default", {
   expect_equal(formals(run_tfdocs_report_from_topic_base)$dot_top_n_per_topic, 25L)
 })
 
+test_that("overall topic pathway output no longer writes a heatmap PDF", {
+  testthat::skip_if_not_installed("pheatmap")
+
+  out_dir <- file.path(tempdir(), paste0("topic-pathway-no-heatmap-", sample.int(1e8, 1L)))
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  out_file <- file.path(out_dir, "topic_pathway_enrichment_heatmap.pdf")
+  topic_terms <- data.table::data.table(
+    topic = c("Topic1", "Topic1", "Topic1"),
+    topic_num = c(1L, 1L, 1L),
+    term_id = c("GENE:A", "GENE:B", "GENE:C"),
+    score = c(0.8, 0.7, 0.6),
+    in_topic = TRUE
+  )
+
+  with_mocked_bindings(
+    plot_topic_pathway_enrichment_heatmap(
+      topic_terms = topic_terms,
+      edges_docs = NULL,
+      option_label = "opt3_gene_fc_expr",
+      out_file = out_file,
+      dbs = "Toy_DB",
+      pathway_species = "human",
+      min_genes = 2L,
+      top_n_per_topic = Inf,
+      make_heatmap = TRUE,
+      make_dotplot = FALSE,
+      pathway_backend = "enrichly"
+    ),
+    .pathway_backend_available = function(pathway_backend) TRUE,
+    .run_enrichr_cached = function(...) {
+      list(Toy_DB = data.frame(
+        Term = "Term one",
+        Adjusted.P.value = 0.01,
+        P.value = 0.001,
+        Overlap = "2/10",
+        Genes = "A;B",
+        Combined.Score = 8,
+        Odds.Ratio = 2,
+        query_size = 3L,
+        term_size = 10L,
+        background_size = 20000L,
+        check.names = FALSE
+      ))
+    }
+  )
+
+  expect_true(file.exists(file.path(out_dir, "topic_pathway_enrichment_topic_terms.csv")))
+  expect_false(file.exists(out_file))
+})
+
 test_that("human mouse pathway best selector keeps one best species row per pathway", {
   dt <- data.table::data.table(
     topic = c(1L, 1L, 1L, 2L),
@@ -1450,7 +1500,7 @@ test_that("raw theta document heatmap hides dense row labels by default", {
   expect_false(formals(.plot_raw_theta_document_heatmap)$show_rownames)
 })
 
-test_that("topic-term score heatmap writes dense term-topic assignment outputs", {
+test_that("topic-term assignment writer keeps dense term-topic assignment outputs", {
   score_mat <- matrix(
     c(
       1.0, 0.1, 0.4,
@@ -1466,20 +1516,15 @@ test_that("topic-term score heatmap writes dense term-topic assignment outputs",
     score = c(1, 1),
     in_topic = TRUE
   )
-  out_file <- tempfile(fileext = ".pdf")
   out_csv <- tempfile(fileext = ".csv")
 
-  res <- .plot_topic_term_score_heatmap(
+  res <- .write_topic_term_primary_assignment(
     score_mat = score_mat,
     topic_terms = topic_terms,
-    out_file = out_file,
-    assignment_file = out_csv,
-    title_prefix = "topic term test"
+    assignment_file = out_csv
   )
 
-  expect_identical(res, out_file)
-  expect_false(formals(.plot_topic_term_score_heatmap)$show_rownames)
-  expect_gt(file.info(out_file)$size, 1000)
+  expect_identical(res, out_csv)
   expect_true(file.exists(out_csv))
   assignment <- data.table::fread(out_csv)
   expect_true(all(c("term_id", "term_group", "primary_topic", "in_any_topic", "max_score") %in% names(assignment)))
@@ -1572,7 +1617,7 @@ test_that("topic extraction standard output skips raw theta documents", {
     title_prefix = "condition aggr LDA"
   )
   expect_false(file.exists(file.path(out_enabled, "raw_theta_documents_K3.pdf")))
-  expect_true(file.exists(file.path(out_enabled, "topic_term_score_heatmap_K3.pdf")))
+  expect_false(file.exists(file.path(out_enabled, "topic_term_score_heatmap_K3.pdf")))
   expect_true(file.exists(file.path(out_enabled, "topic_term_phi_score_heatmap_K3.pdf")))
   expect_true(file.exists(file.path(out_enabled, "topic_term_primary_assignment.csv")))
   expect_false(dir.exists(file.path(out_enabled, "tf_topic_assignment")))
