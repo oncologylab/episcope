@@ -9,6 +9,7 @@ module3_extract_topics(
   model_dir,
   output_dir,
   flatten_single_output = TRUE,
+  topic_score_method = c("normtop_specificity", "rowmax_phi"),
   ...
 )
 }
@@ -22,6 +23,10 @@ module3_extract_topics(
 \item{flatten_single_output}{Whether to write a single selected model
 directly under `output_dir`. Defaults to `TRUE` for the public step API.}
 
+\item{topic_score_method}{Topic-term score method. `"normtop_specificity"`
+is the default for new extractions; `"rowmax_phi"` preserves the legacy
+row-maximum-scaled phi score.}
+
 \item{...}{Additional arguments passed to the internal extraction engine,
 such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.}
 }
@@ -30,5 +35,17 @@ Invisibly returns TRUE when extraction completes.
 }
 \description{
 Public step function for extracting regulatory topics, pathway summaries,
-topic-link tables, and review outputs from trained Module 3 topic models.
+topic-link tables, direction-specific TF-to-topic assignment tables, and
+review outputs from trained Module 3 topic models.
+}
+\details{
+Topic assignment uses unit-specific evidence. Terms are assigned from `phi`
+after the selected topic-term score method and GammaFit cutoffs. TFs are
+assigned from raw document-topic `theta` with the TF membership and primary
+margin cutoffs. Per-comparison pathway gene sets are built from model
+outputs only: documents with theta above the TF membership cutoff intersect
+genes represented by topic-assigned `GENE:<gene>` and aggregate
+`PEAK:<gene>` terms. Physical TF-peak-gene links are not used to define
+pathway topic membership at extraction time; they can be projected later
+onto selected comparison/topic/pathway genes for subnetworks.
 }

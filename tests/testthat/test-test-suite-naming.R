@@ -12,7 +12,7 @@ test_that("testthat files use approved kebab-case names", {
       x[[1L]]
     }
   }, character(1L))
-  allowed <- c("app", "benchmark", "config", "module1", "module2", "module3", "test-suite", "topic")
+  allowed <- c("app", "benchmark", "config", "gene", "module1", "module2", "module3", "test-suite", "topic")
   expect_true(all(area %in% allowed))
 })
 
@@ -70,7 +70,7 @@ test_that("Module 3 report packages install with the package", {
   desc <- as.list(utils::packageDescription("craftgrn"))
   imports <- desc$Imports %||% ""
   suggests <- desc$Suggests %||% ""
-  required_report_packages <- c("pheatmap", "enrichR", "LDAvis")
+  required_report_packages <- c("pheatmap", "enrichR")
 
   for (pkg in required_report_packages) {
     expect_true(grepl(pkg, imports, fixed = TRUE))

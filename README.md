@@ -151,8 +151,10 @@ Primary package functions:
   topic-number grid using the native `warp_omp` WarpLDA sampler by default.
   Use `warplda_sampler = "warp_ref"` only when you need a slower sequential
   fixed-seed reference run from the native backend.
-- `module3_extract_topics()` assigns links and terms to selected regulatory
-  topics.
+- `module3_extract_topics()` assigns topic terms from `phi`, TF-topic
+  membership from raw document `theta`, and regulatory links with the
+  recommended `theta_and_terms` interpretation: the TF document and target
+  gene/peak terms must support the same topic.
 - `build_module3_qc_report()` summarizes topic inputs, model outputs,
   differential links, and top differential TFs.
 - `visualize_topic_modeling_results()` exports topic-modeling review browsers,
@@ -168,16 +170,52 @@ topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
 pathway_backend: enrichly
+pathway_species: mouse
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
 topic_benchmark_k_grid: []
 ```
 
+Module 3 uses different evidence for different topic-assignment units:
+
+- Terms are assigned from the topic-term matrix `phi` after the default
+  `normtop_specificity` score and GammaFit topic-term cutoffs.
+- TFs are assigned from raw document-topic `theta`; a TF document belongs to a
+  topic when `theta >= topic_tf_membership_cutoff` and primary-topic ambiguity
+  is controlled by `topic_tf_primary_margin_cutoff`.
+- Genes are summarized from the topic terms observed in theta-selected
+  documents. For per-comparison pathway analysis, a comparison/direction/topic
+  gene set is the intersect of genes observed in documents with
+  `theta >= topic_tf_membership_cutoff` and genes represented by the topic's
+  assigned `GENE:<gene>` and aggregate `PEAK:<gene>` terms.
+- Physical TF-peak-gene links are not used to define pathway topic membership
+  at extraction time. They can be projected later onto selected
+  comparison/topic/pathway genes for subnetworks.
+
 `pathway_backend: enrichly` uses local cached pathway libraries when the
 optional `enrichly` package is installed; `pathway_backend: enrichr` keeps the
-web API backend. Benchmark grids are optional and should be enabled only for
-method-comparison experiments.
+web API backend. Set `pathway_species: human` or `pathway_species: mouse` to
+choose species-aware default databases; if omitted, Module 3 infers the species
+from `ref_genome` when possible. Benchmark grids are optional and should be
+enabled only for method-comparison experiments.
+
+Pathway gene matching uses formal species-specific gene-symbol resolution when
+the relevant Bioconductor organism package is installed: `org.Hs.eg.db` for
+human and `org.Mm.eg.db` for mouse. CraftGRN resolves official symbols,
+case-insensitive symbols, aliases, ENSEMBL IDs, and ENTREZ IDs before comparing
+pathway inputs and returned overlap genes. If no formal match is available, it
+keeps a deterministic case-normalized fallback so old all-uppercase versus
+titlecase differences still match where possible.
+
+Standard extraction folders are flat. For a selected K, review the K root for
+`topic_terms.csv`, `topic_links_pass.csv`, `topic_item_coverage_counts.csv`,
+`topic_terms_and_cutoffs_summary.pdf`, `topic_term_score_heatmap_K*.pdf`,
+`topic_term_phi_score_heatmap_K*.pdf`,
+`topic_pathway_enrichment_dotplot.pdf`, and
+`topic_term_pathway_enrichment.csv`. Standard runs do not create LDAvis,
+doc-topic heatmap, raw-theta document heatmap, nested TF assignment, nested
+term assignment, or nested per-comparison pathway folders.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_3.svg" alt="Module 3 workflow" width="800">
 

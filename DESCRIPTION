@@ -25,12 +25,12 @@ Imports:
     data.table,
     dplyr,
     digest,
+    enrichly,
     future,
     future.apply,
     ggplot2,
     enrichR,
     jsonlite,
-    LDAvis,
     methods,
     pheatmap,
     readr,
@@ -58,6 +58,8 @@ Suggests:
     progressr,
     RColorBrewer,
     knitr,
+    org.Hs.eg.db,
+    org.Mm.eg.db,
     rmarkdown,
     rstudioapi,
     scales,
@@ -75,4 +77,5 @@ Language: en-US
 RoxygenNote: 7.3.3
 URL: https://oncologylab.github.io/craftgrn/, https://github.com/oncologylab/craftgrn
 BugReports: https://github.com/oncologylab/craftgrn/issues
+Remotes: oncologylab/enrichly
 Config/Needs/website: r-lib/pkgdown, tidyverse/tidytemplate

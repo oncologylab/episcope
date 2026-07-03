@@ -36,13 +36,12 @@ if (!exists(".log_abort", mode = "function")) {
     "topic_links",
     "gammafit_summary",
     "link_efdr_summary",
-    "doc_topic_heatmaps",
-    "tf_topic_heatmaps",
+    "tf_topic_assignment",
+    "raw_theta_documents",
+    "topic_term_heatmap",
     "topic_by_comparison",
-    "topic_marker_heatmap",
     "pathway",
-    "intertopic_distance",
-    "ldavis"
+    "intertopic_distance"
   )
 }
 
@@ -59,24 +58,21 @@ if (!exists(".log_abort", mode = "function")) {
       "topic_terms",
       "topic_links",
       "gammafit_summary",
-      "doc_topic_heatmaps",
-      "tf_topic_heatmaps",
+      "tf_topic_assignment",
+      "topic_term_heatmap",
       "topic_by_comparison",
-      "topic_marker_heatmap",
       "pathway"
     ),
     core = c("topic_terms", "topic_links", "gammafit_summary"),
     plots = c(
       "gammafit_summary",
-      "doc_topic_heatmaps",
-      "tf_topic_heatmaps",
+      "tf_topic_assignment",
+      "topic_term_heatmap",
       "topic_by_comparison",
-      "topic_marker_heatmap",
-      "intertopic_distance",
-      "ldavis"
+      "intertopic_distance"
     ),
-    heatmaps = c("doc_topic_heatmaps", "tf_topic_heatmaps", "topic_by_comparison", "topic_marker_heatmap"),
-    reports = c("gammafit_summary", "doc_topic_heatmaps", "tf_topic_heatmaps", "topic_by_comparison", "topic_marker_heatmap", "pathway")
+    heatmaps = c("tf_topic_assignment", "topic_term_heatmap", "topic_by_comparison"),
+    reports = c("gammafit_summary", "tf_topic_assignment", "topic_term_heatmap", "topic_by_comparison", "pathway")
   )
   expanded <- unlist(lapply(steps, function(step) {
     if (step %in% names(aliases)) aliases[[step]] else step
@@ -1238,16 +1234,44 @@ plot_model_selection_cistopic <- function(metrics_tbl, out_pdf, title_prefix = N
   list(shape = shape, rate = rate)
 }
 
-score_terms_normtop <- function(phi) {
-  # cisTopic NormTop (practical proxy): normalize each topic by its max term prob -> [0,1]
+score_terms_normtop <- function(phi,
+                                method = c("normtop_specificity", "rowmax_phi")) {
+  method <- match.arg(method)
   phi <- as.matrix(phi)
+  rn <- rownames(phi)
+  cn <- colnames(phi)
   phi[!is.finite(phi) | phi < 0] <- 0
+  rs <- rowSums(phi)
+  rs[!is.finite(rs) | rs <= 0] <- 1
+  phi_prob <- phi / rs
+  phi_prob[!is.finite(phi_prob) | phi_prob < 0] <- 0
+
+  if (identical(method, "normtop_specificity")) {
+    eps <- 1e-12
+    log_phi <- log(phi_prob + eps)
+    mean_log_phi <- colMeans(log_phi, na.rm = TRUE)
+    sc <- phi_prob * sweep(log_phi, 2L, mean_log_phi, "-")
+    sc[!is.finite(sc) | sc < 0] <- 0
+    mx <- apply(sc, 1L, max, na.rm = TRUE)
+    mx[!is.finite(mx) | mx <= 0] <- 1
+    sc <- sc / mx
+    sc[!is.finite(sc)] <- 0
+    sc[sc < 0] <- 0
+    sc[sc > 1] <- 1
+    rownames(sc) <- rn
+    colnames(sc) <- cn
+    return(sc)
+  }
+
+  # Legacy behavior: normalize each topic by its largest term probability.
   mx <- apply(phi, 1, max, na.rm = TRUE)
   mx[!is.finite(mx) | mx <= 0] <- 1
   sc <- phi / mx
   sc[!is.finite(sc)] <- 0
   sc[sc < 0] <- 0
   sc[sc > 1] <- 1
+  rownames(sc) <- rn
+  colnames(sc) <- cn
   sc
 }
 
@@ -1348,6 +1372,151 @@ score_terms_normtop <- function(phi) {
   out
 }
 
+.gammafit_stats_for_scores <- function(sc) {
+  sc <- .safe_num(sc)
+  sc[!is.finite(sc)] <- 0
+  pos <- sc[is.finite(sc) & sc > 0]
+  fit <- .gamma_moments(sc)
+  list(
+    term_count = length(sc),
+    positive_count = length(pos),
+    zero_fraction = if (length(sc)) mean(sc <= 0 | !is.finite(sc)) else NA_real_,
+    gamma_shape = if (!is.null(fit)) fit$shape else NA_real_,
+    gamma_rate = if (!is.null(fit)) fit$rate else NA_real_
+  )
+}
+
+.gammafit_diagnostics_by_termclass <- function(score_mat,
+                                               topic_terms = NULL,
+                                               topic_score_method = c("normtop_specificity", "rowmax_phi"),
+                                               thrP = 0.975,
+                                               min_terms = 50L,
+                                               gammafit_scope = c("topic_term_group", "global_term_group")) {
+  topic_score_method <- match.arg(topic_score_method)
+  gammafit_scope <- match.arg(gammafit_scope)
+  score_mat <- as.matrix(score_mat)
+  K <- nrow(score_mat)
+  if (!K) return(data.table::data.table())
+  terms <- colnames(score_mat)
+  if (is.null(terms)) {
+    terms <- paste0("term_", seq_len(ncol(score_mat)))
+    colnames(score_mat) <- terms
+  }
+  min_terms <- as.integer(min_terms)
+  if (!is.finite(min_terms) || min_terms < 1L) min_terms <- 1L
+  term_grp <- .term_group(terms)
+  group_idx <- list(
+    PEAK = which(term_grp == "PEAK"),
+    GENE = which(term_grp == "GENE"),
+    OTHER = which(term_grp == "OTHER")
+  )
+  cut_tbl <- .gammafit_cutoffs_by_termclass(
+    score_mat,
+    thrP = thrP,
+    min_terms = min_terms,
+    gammafit_scope = gammafit_scope
+  )
+  selected_after <- data.table::data.table()
+  if (!is.null(topic_terms) && is.data.frame(topic_terms) && nrow(topic_terms)) {
+    selected_after <- data.table::as.data.table(topic_terms)
+    if (!"topic_num" %in% names(selected_after)) {
+      if ("topic" %in% names(selected_after)) {
+        selected_after[, topic_num := as.integer(gsub("^Topic", "", as.character(topic)))]
+      } else {
+        selected_after[, topic_num := NA_integer_]
+      }
+    }
+    if ("in_topic" %in% names(selected_after)) {
+      selected_after <- selected_after[.as_logical_flag(in_topic)]
+    }
+    selected_after[, term_group := .term_group(term_id)]
+    selected_after <- selected_after[
+      is.finite(topic_num),
+      .(selected_after_min_terms = .N),
+      by = .(topic_num, term_group)
+    ]
+  }
+
+  global_stats <- NULL
+  if (identical(gammafit_scope, "global_term_group")) {
+    global_stats <- lapply(group_idx, function(idx) {
+      if (!length(idx)) return(.gammafit_stats_for_scores(numeric()))
+      .gammafit_stats_for_scores(as.numeric(score_mat[, idx, drop = FALSE]))
+    })
+  }
+
+  out <- vector("list", K * length(group_idx))
+  pos <- 0L
+  for (k in seq_len(K)) {
+    sc <- as.numeric(score_mat[k, ])
+    sc[!is.finite(sc)] <- 0
+    for (grp_name in names(group_idx)) {
+      idx <- group_idx[[grp_name]]
+      pos <- pos + 1L
+      cutoff_col <- switch(
+        grp_name,
+        PEAK = "peaks_gamma_cutoff",
+        GENE = "gene_gamma_cutoff",
+        OTHER = "other_gamma_cutoff"
+      )
+      cutoff <- cut_tbl[[cutoff_col]][k]
+      local_stats <- if (identical(gammafit_scope, "global_term_group")) {
+        global_stats[[grp_name]]
+      } else if (length(idx)) {
+        .gammafit_stats_for_scores(sc[idx])
+      } else {
+        .gammafit_stats_for_scores(numeric())
+      }
+      selected_by_gamma <- if (length(idx) && is.finite(cutoff)) {
+        sum(sc[idx] >= cutoff & sc[idx] > 0, na.rm = TRUE)
+      } else {
+        0L
+      }
+      out[[pos]] <- data.table::data.table(
+        topic_score_method = topic_score_method,
+        gammafit_scope = gammafit_scope,
+        thrP = as.numeric(thrP),
+        min_terms = as.integer(min_terms),
+        topic_num = as.integer(k),
+        term_group = grp_name,
+        term_count = as.integer(local_stats$term_count),
+        positive_count = as.integer(local_stats$positive_count),
+        zero_fraction = as.numeric(local_stats$zero_fraction),
+        gamma_shape = as.numeric(local_stats$gamma_shape),
+        gamma_rate = as.numeric(local_stats$gamma_rate),
+        gamma_cutoff = as.numeric(cutoff),
+        selected_by_gamma = as.integer(selected_by_gamma),
+        selected_after_min_terms = NA_integer_,
+        forced_min_terms = FALSE
+      )
+    }
+  }
+  out <- data.table::rbindlist(out, use.names = TRUE, fill = TRUE)
+  if (nrow(selected_after)) {
+    out[, selected_after_min_terms := NULL]
+    out <- merge(
+      out,
+      selected_after,
+      by = c("topic_num", "term_group"),
+      all.x = TRUE,
+      sort = FALSE
+    )
+    out[is.na(selected_after_min_terms), selected_after_min_terms := 0L]
+  } else {
+    out[, selected_after_min_terms := 0L]
+  }
+  scope_is_topic <- identical(gammafit_scope, "topic_term_group")
+  out[, forced_min_terms := scope_is_topic &
+        selected_after_min_terms > selected_by_gamma]
+  data.table::setcolorder(out, c(
+    "topic_score_method", "gammafit_scope", "thrP", "min_terms",
+    "topic_num", "term_group", "term_count", "positive_count",
+    "zero_fraction", "gamma_shape", "gamma_rate", "gamma_cutoff",
+    "selected_by_gamma", "selected_after_min_terms", "forced_min_terms"
+  ))
+  out[]
+}
+
 binarize_topics <- function(score_mat,
                             method = c("gammafit", "topn"),
                             thrP = 0.975,
@@ -1443,6 +1612,8 @@ plot_gammafit_binarize <- function(score_mat,
                                    edges_docs = NULL,
                                    topic_terms = NULL,
                                    topic_links = NULL,
+                                   item_coverage = NULL,
+                                   show_peak_expanded_link_coverage = TRUE,
                                    show_gammafit_pages = TRUE,
                                    panels_per_row = 5L,
                                    panels_per_col = 2L,
@@ -1459,9 +1630,6 @@ plot_gammafit_binarize <- function(score_mat,
     terms <- paste0("term_", seq_len(ncol(score_mat)))
     colnames(score_mat) <- terms
   }
-  tf_list <- unique(as.character(tf_list))
-  tf_list <- tf_list[!is.na(tf_list) & nzchar(tf_list)]
-  tf_upper <- toupper(tf_list)
   show_gammafit_pages <- isTRUE(show_gammafit_pages)
   # Keep gammafit small multiples visually consistent across runs.
   gamma_cols <- 5L
@@ -1503,77 +1671,12 @@ plot_gammafit_binarize <- function(score_mat,
       n_selected_gene[k] <- sum(keep_gene, na.rm = TRUE)
     }
   }
-  cats <- c("PEAK", "Target", "TF")
-  topic_labels <- paste0("Topic", seq_len(K))
-  topic_labels_plot <- rev(topic_labels)
-  col_map <- c(PEAK = "#4C78A8", Target = "#54A24B", TF = "#F58518")
-
-  .empty_mat <- function() {
-    m <- matrix(0L, nrow = length(cats), ncol = K, dimnames = list(cats, topic_labels))
-    m
-  }
-
-  .count_terms <- function(tt) {
-    m <- .empty_mat()
-    if (is.null(tt) || !is.data.frame(tt) || !nrow(tt)) return(m)
-    dt <- data.table::as.data.table(tt)
-    if (!"in_topic" %in% names(dt) || !"term_id" %in% names(dt)) return(m)
-    if (!"topic_num" %in% names(dt)) {
-      if ("topic" %in% names(dt)) {
-        dt[, topic_num := as.integer(gsub("^Topic", "", as.character(topic)))]
-      } else {
-        return(m)
-      }
-    }
-    dt <- dt[.as_logical_flag(in_topic)]
-    dt <- dt[is.finite(topic_num) & topic_num >= 1L & topic_num <= K]
-    if (!nrow(dt)) return(m)
-    dt[, term_str := as.character(term_id)]
-    dt[, gene_name := sub("^GENE:", "", term_str)]
-    dt[, category := data.table::fifelse(
-      grepl("^PEAK:", term_str), "PEAK",
-      data.table::fifelse(grepl("^GENE:", term_str) & (gene_name %in% tf_list | toupper(gene_name) %in% tf_upper), "TF",
-              data.table::fifelse(grepl("^GENE:", term_str), "Target", NA_character_))
-    )]
-    dt <- dt[!is.na(category), .(topic_num, term_str, category)]
-    if (!nrow(dt)) return(m)
-    dt <- unique(dt, by = c("topic_num", "term_str", "category"))
-    cnt <- dt[, .N, by = .(topic_num, category)]
-    for (i in seq_len(nrow(cnt))) {
-      m[cnt$category[i], cnt$topic_num[i]] <- cnt$N[i]
-    }
-    m
-  }
-
-  .count_links <- function(tl, use_and = FALSE) {
-    m <- .empty_mat()
-    if (is.null(tl) || !is.data.frame(tl) || !nrow(tl)) return(m)
-    dt <- data.table::as.data.table(tl)
-    req <- c("topic_num", "peak_pass", "gene_pass", "peak_id", "gene_key")
-    if (!all(req %in% names(dt))) return(m)
-    dt <- dt[is.finite(topic_num) & topic_num >= 1L & topic_num <= K]
-    if (!nrow(dt)) return(m)
-    if (isTRUE(use_and)) {
-      dt <- dt[.as_logical_flag(peak_pass) & .as_logical_flag(gene_pass)]
-    } else {
-      dt <- dt[.as_logical_flag(peak_pass) | .as_logical_flag(gene_pass)]
-    }
-    if (!nrow(dt)) return(m)
-    peak_cnt <- unique(dt[!is.na(peak_id) & nzchar(peak_id), .(topic_num, id = as.character(peak_id))])[, .N, by = topic_num]
-    gene_cnt <- unique(dt[!is.na(gene_key) & nzchar(gene_key), .(topic_num, id = as.character(gene_key))])[, .N, by = topic_num]
-    tf_cnt <- data.table::data.table()
-    if ("tf" %in% names(dt)) {
-      tf_cnt <- unique(dt[!is.na(tf) & nzchar(tf), .(topic_num, id = as.character(tf))])[, .N, by = topic_num]
-    }
-    if (nrow(peak_cnt)) m["PEAK", peak_cnt$topic_num] <- peak_cnt$N
-    if (nrow(gene_cnt)) m["Target", gene_cnt$topic_num] <- gene_cnt$N
-    if (nrow(tf_cnt)) m["TF", tf_cnt$topic_num] <- tf_cnt$N
-    m
-  }
-
-  term_mat <- .count_terms(topic_terms)
-  link_or_mat <- .count_links(topic_links, use_and = FALSE)
-  link_and_mat <- .count_links(topic_links, use_and = TRUE)
+  coverage_tbl <- .topic_assignment_coverage_summary_table(
+    topic_terms,
+    score_mat,
+    item_coverage,
+    show_peak_expanded_link_coverage = show_peak_expanded_link_coverage
+  )
   .safe_hist_breaks <- function(x, n = 100L) {
     x <- x[is.finite(x)]
     if (!length(x)) return(c(0, 1))
@@ -1590,50 +1693,57 @@ plot_gammafit_binarize <- function(score_mat,
     br
   }
 
-  global_max <- max(
-    c(colSums(term_mat), colSums(link_or_mat), colSums(link_and_mat)),
-    na.rm = TRUE
-  )
-  if (!is.finite(global_max) || global_max <= 0) global_max <- 1
-  x_limit <- c(0, global_max * 1.05)
-
-  .plot_stack <- function(mat, main_title, add_legend = FALSE) {
-    mat_plot <- mat[, rev(seq_len(ncol(mat))), drop = FALSE]
-    graphics::barplot(
-      mat_plot,
-      horiz = TRUE,
-      beside = FALSE,
-      col = col_map[rownames(mat_plot)],
-      border = NA,
-      main = main_title,
-      xlab = "Count",
-      ylab = "",
-      names.arg = topic_labels_plot,
-      las = 1,
-      xlim = x_limit,
-      cex.main = 1.1,
-      font.main = 2,
-      font.lab = 2,
-      font.axis = 2
-    )
-    if (isTRUE(add_legend)) {
-      graphics::legend(
-        "topright",
-        legend = names(col_map),
-        fill = unname(col_map),
-        border = NA,
-        bty = "n",
-        cex = 0.9
-      )
-    }
-  }
-
   par_opts <- graphics::par(no.readonly = TRUE)
   grDevices::pdf(out_file, width = 15, height = 15)
   on.exit({
     grDevices::dev.off()
     suppressWarnings(graphics::par(par_opts))
   }, add = TRUE)
+
+  if (nrow(coverage_tbl)) {
+    graphics::par(mfrow = c(1, 1), mar = c(5, 10, 4, 2), oma = c(0, 0, 0, 0))
+    coverage_plot <- data.table::copy(rev(coverage_tbl))
+    coverage_plot[, plot_label := data.table::fcase(
+      label == "GENE terms", "Gene terms",
+      label == "PEAK terms", "Peak terms",
+      default = label
+    )]
+    pct <- pmax(0, pmin(100, coverage_plot$percent))
+    bar_cols <- c(
+      Terms = "#4C78A8",
+      "GENE terms" = "#54A24B",
+      "PEAK terms" = "#72B7B2",
+      Genes = "#59A14F",
+      Links = "#E15759",
+      TFs = "#F58518"
+    )
+    fill_cols <- unname(bar_cols[coverage_plot$label])
+    fill_cols[is.na(fill_cols)] <- "#4C78A8"
+    bp <- graphics::barplot(
+      pct,
+      names.arg = coverage_plot$plot_label,
+      horiz = TRUE,
+      las = 1,
+      xlim = c(0, 110),
+      col = fill_cols,
+      border = NA,
+      xlab = "Assigned to at least one topic (%)",
+      main = paste(c(title_prefix, "Topic Assignment Coverage"), collapse = " - "),
+      cex.main = 1.15,
+      cex.names = 0.95,
+      font.main = 2,
+      font.lab = 2,
+      font.axis = 2
+    )
+    graphics::text(
+      x = pmin(104, pct + 2),
+      y = bp,
+      labels = coverage_plot$label_text,
+      adj = c(0, 0.5),
+      cex = 0.9,
+      font = 2
+    )
+  }
 
   if (show_gammafit_pages) {
     total_panels <- K * 2L
@@ -1714,14 +1824,6 @@ plot_gammafit_binarize <- function(score_mat,
         )
       }
     }
-  }
-
-  graphics::par(mfrow = c(3, 1), mar = c(4.5, 8, 4, 1), oma = c(0, 0, 2.5, 0))
-  .plot_stack(term_mat, "Terms In Topic", add_legend = TRUE)
-  .plot_stack(link_or_mat, "Links In Topic: Peak or Gene Pass")
-  .plot_stack(link_and_mat, "Links In Topic: Peak and Gene Pass")
-  if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    graphics::mtext(title_prefix, outer = TRUE, cex = 1.1, font = 2, line = 1)
   }
 
   invisible(list(peaks_gamma_cutoff = peak_cutoffs, gene_gamma_cutoff = gene_cutoffs))
@@ -1919,7 +2021,7 @@ plot_link_efdr_summary <- function(topic_links,
 }
 
 # =============================================================================
-# 9) Plot helpers (heatmaps + intertopic distance + LDAvis)
+# 9) Plot helpers (heatmaps + intertopic distance)
 # =============================================================================
 
 .safe_filename <- function(x) {
@@ -2147,32 +2249,32 @@ make_topic_report_args_simple <- function(thrP,
                                           link_prob_cutoff,
                                           link_fdr_p,
                                           link_topic_method = "gammafit",
+                                          topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                           gammafit_scope = c("topic_term_group", "global_term_group"),
                                           modules = list(
                                             pathway = TRUE,
-                                            doc_topic_heatmaps = TRUE,
                                             topic_by_comparison = TRUE,
-                                            topic_marker_heatmap = TRUE,
-                                            intertopic_distance = TRUE,
-                                            ldavis = TRUE
+                                            intertopic_distance = TRUE
                                           ),
                                           overwrite = list(
                                             link_topic = TRUE,
                                             pathway = TRUE
                                           ),
                                           extraction_steps = NULL) {
+  topic_score_method <- match.arg(topic_score_method)
   gammafit_scope <- match.arg(gammafit_scope)
   extraction_steps <- .normalize_topic_extraction_steps(extraction_steps)
   list(
     extraction_steps = extraction_steps,
-    pathway_source = "link_scores",
+    pathway_source = "topic_terms",
+    topic_score_method = topic_score_method,
     thrP = thrP,
     gammafit_scope = gammafit_scope,
     pathway_make_heatmap = FALSE,
     pathway_make_dotplot = TRUE,
     pathway_overwrite = isTRUE(overwrite$pathway),
     pathway_per_comparison = TRUE,
-    pathway_per_comparison_dir = "per_comparison_pathway",
+    pathway_per_comparison_dir = ".",
     pathway_per_comparison_flat = TRUE,
     pathway_split_direction = TRUE,
     run_pathway_gsea = FALSE,
@@ -2196,16 +2298,13 @@ make_topic_report_args_simple <- function(thrP,
     pathway_link_tf_max_topics = Inf,
     pathway_link_tf_top_n_per_topic = NA_integer_,
     top_n_per_topic = Inf,
-    dot_top_n_per_topic = Inf,
+    dot_top_n_per_topic = 25L,
     max_pathways = Inf,
     run_pathway_enrichment = .topic_step_enabled(extraction_steps, "pathway", isTRUE(modules$pathway)),
-    run_doc_topic_heatmaps = .topic_step_enabled(extraction_steps, "doc_topic_heatmaps", isTRUE(modules$doc_topic_heatmaps)) ||
-      .topic_step_enabled(extraction_steps, "tf_topic_heatmaps", isTRUE(modules$doc_topic_heatmaps)),
-    run_tf_topic_heatmaps = .topic_step_enabled(extraction_steps, "tf_topic_heatmaps", isTRUE(modules$doc_topic_heatmaps)),
+    run_raw_theta_document_heatmap = .topic_step_enabled(extraction_steps, "raw_theta_documents", FALSE),
+    run_topic_term_heatmap = .topic_step_enabled(extraction_steps, "topic_term_heatmap", TRUE),
     run_topic_by_comparison_heatmaps = .topic_step_enabled(extraction_steps, "topic_by_comparison", isTRUE(modules$topic_by_comparison)),
-    run_topic_marker_heatmap = .topic_step_enabled(extraction_steps, "topic_marker_heatmap", isTRUE(modules$topic_marker_heatmap)),
-    run_intertopic_distance_map = .topic_step_enabled(extraction_steps, "intertopic_distance", isTRUE(modules$intertopic_distance)),
-    run_ldavis = .topic_step_enabled(extraction_steps, "ldavis", isTRUE(modules$ldavis))
+    run_intertopic_distance_map = .topic_step_enabled(extraction_steps, "intertopic_distance", isTRUE(modules$intertopic_distance))
   )
 }
 
@@ -2255,8 +2354,792 @@ make_topic_report_args_simple <- function(thrP,
   data.table::data.table(comparison_id = comparison_id, tf_doc = tf_doc, direction = direction)
 }
 
+.module3_tf_display_label <- function(tf) {
+  tf <- as.character(tf)
+  data.table::fifelse(tf == "Tbx21", "Tbet", tf)
+}
+
+.empty_tf_direction_topic_summary <- function() {
+  data.table::data.table(
+    comparison_id = character(),
+    tf = character(),
+    tf_display = character(),
+    up_primary_topic = character(),
+    up_primary_theta = numeric(),
+    up_margin = numeric(),
+    up_ambiguous = logical(),
+    down_primary_topic = character(),
+    down_primary_theta = numeric(),
+    down_margin = numeric(),
+    down_ambiguous = logical(),
+    direction_topic_status = character()
+  )
+}
+
+.build_tf_topic_assignment_tables <- function(theta,
+                                              doc_design = c("comparison", "condition"),
+                                              membership_cutoff = 0.3,
+                                              primary_margin_cutoff = 0.1) {
+  .assert_pkg("data.table")
+  doc_design <- match.arg(doc_design)
+  membership_cutoff <- suppressWarnings(as.numeric(membership_cutoff))
+  primary_margin_cutoff <- suppressWarnings(as.numeric(primary_margin_cutoff))
+  if (!is.finite(membership_cutoff) || membership_cutoff < 0 || membership_cutoff > 1) {
+    .log_abort("membership_cutoff must be a number between 0 and 1.")
+  }
+  if (!is.finite(primary_margin_cutoff) || primary_margin_cutoff < 0 || primary_margin_cutoff > 1) {
+    .log_abort("primary_margin_cutoff must be a number between 0 and 1.")
+  }
+
+  theta <- as.matrix(theta)
+  if (!nrow(theta) || !ncol(theta)) {
+    empty <- data.table::data.table()
+    return(list(membership = empty, pass = empty, primary = empty, direction_summary = empty))
+  }
+  doc_id <- rownames(theta)
+  if (is.null(doc_id) || anyNA(doc_id) || any(!nzchar(doc_id))) {
+    .log_abort("theta must have non-empty rownames containing document IDs.")
+  }
+  topic <- colnames(theta)
+  if (is.null(topic) || anyNA(topic) || any(!nzchar(topic))) {
+    topic <- paste0("Topic", seq_len(ncol(theta)))
+    colnames(theta) <- topic
+  }
+  topic_num <- suppressWarnings(as.integer(sub("^Topic", "", topic)))
+  bad_topic_num <- !is.finite(topic_num)
+  if (any(bad_topic_num)) topic_num[bad_topic_num] <- seq_along(topic)[bad_topic_num]
+
+  doc_info <- .parse_doc_id(doc_id, doc_design = doc_design)
+  doc_tbl <- data.table::data.table(doc_id = doc_id)
+  doc_tbl <- cbind(doc_tbl, doc_info)
+  doc_tbl[, tf := as.character(tf_doc)]
+  doc_tbl[, tf_display := .module3_tf_display_label(tf)]
+  doc_tbl <- doc_tbl[!is.na(tf) & nzchar(tf)]
+  if (!nrow(doc_tbl)) {
+    empty <- data.table::data.table()
+    return(list(membership = empty, pass = empty, primary = empty, direction_summary = empty))
+  }
+
+  theta_dt <- data.table::as.data.table(theta)
+  theta_dt[, doc_id := doc_id]
+  dt <- merge(doc_tbl, theta_dt, by = "doc_id", all.x = TRUE, sort = FALSE)
+  topic_cols <- intersect(topic, names(dt))
+  membership <- data.table::melt(
+    dt,
+    id.vars = c("doc_id", "comparison_id", "tf", "tf_display", "direction"),
+    measure.vars = topic_cols,
+    variable.name = "topic",
+    value.name = "theta"
+  )
+  membership[, theta := as.numeric(theta)]
+  membership <- membership[is.finite(theta)]
+  topic_lookup <- data.table::data.table(topic = topic, topic_num = topic_num)
+  membership <- merge(membership, topic_lookup, by = "topic", all.x = TRUE, sort = FALSE)
+  membership[, membership_pass := theta >= membership_cutoff]
+  data.table::setcolorder(
+    membership,
+    c("doc_id", "comparison_id", "tf", "tf_display", "direction", "topic", "topic_num", "theta", "membership_pass")
+  )
+  data.table::setorder(membership, comparison_id, tf_display, direction, topic_num)
+  pass <- membership[membership_pass == TRUE]
+
+  primary <- membership[, {
+    ord <- order(-theta, topic_num)
+    theta_ord <- theta[ord]
+    topic_ord <- topic[ord]
+    topic_num_ord <- topic_num[ord]
+    total <- sum(theta, na.rm = TRUE)
+    p <- if (is.finite(total) && total > 0) theta / total else rep(0, .N)
+    entropy <- -sum(p[p > 0] * log(p[p > 0]), na.rm = TRUE)
+    primary_theta <- theta_ord[[1L]]
+    second_theta <- if (length(theta_ord) >= 2L) theta_ord[[2L]] else NA_real_
+    margin <- primary_theta - ifelse(is.finite(second_theta), second_theta, 0)
+    .(
+      primary_topic = topic_ord[[1L]],
+      primary_topic_num = topic_num_ord[[1L]],
+      primary_theta = primary_theta,
+      second_topic = if (length(topic_ord) >= 2L) topic_ord[[2L]] else NA_character_,
+      second_topic_num = if (length(topic_num_ord) >= 2L) topic_num_ord[[2L]] else NA_integer_,
+      second_theta = second_theta,
+      margin = margin,
+      entropy = entropy,
+      effective_topics = exp(entropy),
+      n_pass_topics = sum(theta >= membership_cutoff, na.rm = TRUE),
+      ambiguous = !is.finite(primary_theta) ||
+        primary_theta < membership_cutoff ||
+        !is.finite(margin) ||
+        margin < primary_margin_cutoff
+    )
+  }, by = .(doc_id, comparison_id, tf, tf_display, direction)]
+  data.table::setorder(primary, comparison_id, tf_display, direction)
+
+  direction_summary <- .empty_tf_direction_topic_summary()
+  if (identical(doc_design, "comparison")) {
+    up <- primary[direction == "Target-Up", .(
+      comparison_id, tf, tf_display,
+      up_primary_topic = primary_topic,
+      up_primary_theta = primary_theta,
+      up_margin = margin,
+      up_ambiguous = ambiguous
+    )]
+    down <- primary[direction == "Target-Down", .(
+      comparison_id, tf, tf_display,
+      down_primary_topic = primary_topic,
+      down_primary_theta = primary_theta,
+      down_margin = margin,
+      down_ambiguous = ambiguous
+    )]
+    direction_summary <- merge(up, down, by = c("comparison_id", "tf", "tf_display"), all = TRUE, sort = FALSE)
+    if (nrow(direction_summary)) {
+      direction_summary[, direction_topic_status := data.table::fcase(
+        !is.na(up_primary_topic) & !is.na(down_primary_topic) &
+          (.as_logical_flag(up_ambiguous) | .as_logical_flag(down_ambiguous)),
+        "ambiguous",
+        !is.na(up_primary_topic) & !is.na(down_primary_topic) & up_primary_topic == down_primary_topic,
+        "same_topic",
+        !is.na(up_primary_topic) & !is.na(down_primary_topic) & up_primary_topic != down_primary_topic,
+        "different_topic",
+        !is.na(up_primary_topic) & is.na(down_primary_topic),
+        "up_only",
+        is.na(up_primary_topic) & !is.na(down_primary_topic),
+        "down_only",
+        default = "ambiguous"
+      )]
+      data.table::setorder(direction_summary, comparison_id, tf_display)
+    }
+  }
+
+  list(
+    membership = membership[],
+    pass = pass[],
+    primary = primary[],
+    direction_summary = direction_summary[]
+  )
+}
+
+.tf_topic_doc_label <- function(comparison_id, tf_display, direction = NA_character_) {
+  out <- paste(comparison_id, tf_display, sep = " | ")
+  has_dir <- !is.na(direction) & nzchar(direction)
+  out[has_dir] <- paste(out[has_dir], direction[has_dir], sep = " | ")
+  out
+}
+
+.raw_theta_document_label <- function(comparison_id, tf_display, direction = NA_character_) {
+  group <- as.character(comparison_id)
+  has_dir <- !is.na(direction) & nzchar(direction)
+  group[has_dir] <- paste(group[has_dir], direction[has_dir], sep = " | ")
+  paste(tf_display, group, sep = " | ")
+}
+
+.topic_factor_palette <- function(x) {
+  x <- sort(unique(as.character(x[!is.na(x) & nzchar(x)])))
+  if (!length(x)) return(character())
+  base_cols <- c(
+    "#3b5b92", "#b04a58", "#3f7f5f", "#8a6f2a", "#6a4c93",
+    "#2f7f9f", "#b66a2c", "#5f6f52", "#9a4f7a", "#4f6f8f",
+    "#7c5c3e", "#4b7f7a"
+  )
+  cols <- grDevices::colorRampPalette(base_cols)(length(x))
+  stats::setNames(cols, x)
+}
+
+.topic_term_assignment_table <- function(score_mat, topic_terms = NULL) {
+  .assert_pkg("data.table")
+  score_mat <- as.matrix(score_mat)
+  if (!nrow(score_mat) || !ncol(score_mat)) return(data.table::data.table())
+  if (is.null(rownames(score_mat))) rownames(score_mat) <- paste0("Topic", seq_len(nrow(score_mat)))
+  if (is.null(colnames(score_mat))) colnames(score_mat) <- paste0("term_", seq_len(ncol(score_mat)))
+  storage.mode(score_mat) <- "double"
+  score_mat[!is.finite(score_mat) | score_mat < 0] <- 0
+
+  terms <- colnames(score_mat)
+  topic_names <- rownames(score_mat)
+  max_idx <- max.col(t(score_mat), ties.method = "first")
+  max_score <- apply(score_mat, 2L, max, na.rm = TRUE)
+  max_score[!is.finite(max_score)] <- 0
+  out <- data.table::data.table(
+    term_id = terms,
+    term_group = .term_group(terms),
+    max_score = as.numeric(max_score),
+    max_score_topic = topic_names[max_idx],
+    in_any_topic = FALSE,
+    primary_topic = NA_character_,
+    assigned_topics = NA_character_
+  )
+
+  if (!is.null(topic_terms) && is.data.frame(topic_terms) && nrow(topic_terms)) {
+    tt <- data.table::as.data.table(topic_terms)
+    if (!"term_id" %in% names(tt)) return(out[])
+    if ("in_topic" %in% names(tt)) {
+      tt <- tt[.as_logical_flag(in_topic)]
+    }
+    if (!nrow(tt)) return(out[])
+    if (!"topic_num" %in% names(tt)) {
+      if ("topic" %in% names(tt)) {
+        topic_chr <- as.character(tt$topic)
+        tt[, topic_num := suppressWarnings(as.integer(gsub("^Topic", "", topic_chr)))]
+      } else {
+        tt[, topic_num := NA_integer_]
+      }
+    }
+    tt <- tt[term_id %in% terms & is.finite(topic_num) & topic_num >= 1L & topic_num <= length(topic_names)]
+    if (!nrow(tt)) return(out[])
+    tt[, topic_label := topic_names[as.integer(topic_num)]]
+    tt[, term_score := score_mat[cbind(match(topic_label, topic_names), match(term_id, terms))]]
+    tt[, term_score := .safe_num(term_score)]
+    data.table::setorder(tt, term_id, -term_score, topic_num)
+    primary <- tt[, .(
+      primary_topic = topic_label[[1L]],
+      assigned_topics = paste(unique(topic_label), collapse = ";")
+    ), by = term_id]
+    out[primary, `:=`(
+      in_any_topic = TRUE,
+      primary_topic = i.primary_topic,
+      assigned_topics = i.assigned_topics
+    ), on = "term_id"]
+  }
+  out[]
+}
+
+.plot_topic_term_score_heatmap <- function(score_mat,
+                                           topic_terms = NULL,
+                                           out_file,
+                                           assignment_file = NULL,
+                                           title_prefix = NULL,
+                                           cluster_topics = TRUE,
+                                           show_rownames = FALSE) {
+  if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  .assert_pkg("data.table")
+  score_mat <- as.matrix(score_mat)
+  if (!nrow(score_mat) || !ncol(score_mat)) return(invisible(NULL))
+  if (is.null(rownames(score_mat))) rownames(score_mat) <- paste0("Topic", seq_len(nrow(score_mat)))
+  if (is.null(colnames(score_mat))) colnames(score_mat) <- paste0("term_", seq_len(ncol(score_mat)))
+  storage.mode(score_mat) <- "double"
+  score_mat[!is.finite(score_mat) | score_mat < 0] <- 0
+  score_mat[score_mat > 1] <- 1
+
+  assignment <- .topic_term_assignment_table(score_mat, topic_terms = topic_terms)
+  if (!nrow(assignment)) return(invisible(NULL))
+  assignment[, topic_assignment := data.table::fifelse(in_any_topic, primary_topic, "Not assigned")]
+  data.table::setorder(assignment, term_group, topic_assignment, -max_score, term_id)
+  term_order <- assignment$term_id
+  mat <- t(score_mat[, term_order, drop = FALSE])
+  mat[!is.finite(mat)] <- 0
+
+  ann <- data.frame(
+    Term_group = factor(assignment$term_group, levels = sort(unique(assignment$term_group))),
+    Topic_assignment = factor(assignment$topic_assignment, levels = sort(unique(assignment$topic_assignment))),
+    Max_score = assignment$max_score,
+    check.names = FALSE
+  )
+  rownames(ann) <- term_order
+  annotation_colors <- list(
+    Term_group = .topic_factor_palette(assignment$term_group),
+    Topic_assignment = .topic_factor_palette(assignment$topic_assignment)
+  )
+
+  if (!is.null(assignment_file) && nzchar(as.character(assignment_file)[[1L]])) {
+    dir.create(dirname(assignment_file), recursive = TRUE, showWarnings = FALSE)
+    data.table::fwrite(assignment, assignment_file)
+  }
+
+  k <- ncol(mat)
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, sprintf("topic-term scores K%d", k), sep = " | ")
+  } else {
+    sprintf("Topic-term scores K%d", k)
+  }
+  width <- max(7.2, min(12.5, 4.8 + 0.38 * k))
+  height <- max(6.2, min(60, 3.8 + 0.03 * nrow(mat)))
+  fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
+  tryCatch(
+    {
+      pheatmap::pheatmap(
+        mat,
+        color = grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101),
+        breaks = seq(0, 1, length.out = 102),
+        cluster_rows = FALSE,
+        cluster_cols = isTRUE(cluster_topics) && ncol(mat) > 1L,
+        scale = "none",
+        border_color = NA,
+        annotation_row = ann,
+        annotation_colors = annotation_colors,
+        show_rownames = isTRUE(show_rownames),
+        show_colnames = TRUE,
+        fontsize = 9,
+        fontsize_col = fontsize_col,
+        main = title,
+        angle_col = 45
+      )
+    },
+    finally = grDevices::dev.off()
+  )
+  invisible(out_file)
+}
+
+.plot_topic_term_phi_score_comparison_heatmap <- function(phi,
+                                                          score_mat,
+                                                          topic_terms = NULL,
+                                                          out_file,
+                                                          topic_score_method = "normtop_specificity",
+                                                          title_prefix = NULL,
+                                                          cluster_topics = TRUE,
+                                                          show_rownames = FALSE) {
+  if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  .assert_pkg("data.table")
+  phi <- as.matrix(phi)
+  score_mat <- as.matrix(score_mat)
+  if (!nrow(phi) || !ncol(phi) || !nrow(score_mat) || !ncol(score_mat)) return(invisible(NULL))
+  if (is.null(rownames(phi))) rownames(phi) <- paste0("Topic", seq_len(nrow(phi)))
+  if (is.null(colnames(phi))) colnames(phi) <- paste0("term_", seq_len(ncol(phi)))
+  if (is.null(rownames(score_mat))) rownames(score_mat) <- rownames(phi)
+  if (is.null(colnames(score_mat))) colnames(score_mat) <- colnames(phi)
+
+  common_topics <- intersect(rownames(score_mat), rownames(phi))
+  common_terms <- intersect(colnames(score_mat), colnames(phi))
+  if (!length(common_topics) || !length(common_terms)) return(invisible(NULL))
+  phi <- phi[common_topics, common_terms, drop = FALSE]
+  score_mat <- score_mat[common_topics, common_terms, drop = FALSE]
+  storage.mode(phi) <- "double"
+  storage.mode(score_mat) <- "double"
+  phi[!is.finite(phi) | phi < 0] <- 0
+  score_mat[!is.finite(score_mat) | score_mat < 0] <- 0
+  phi[phi > 1] <- 1
+  score_mat[score_mat > 1] <- 1
+
+  assignment <- .topic_term_assignment_table(score_mat, topic_terms = topic_terms)
+  assignment <- assignment[term_id %in% common_terms]
+  if (!nrow(assignment)) return(invisible(NULL))
+  assignment[, topic_assignment := data.table::fifelse(in_any_topic, primary_topic, "Not assigned")]
+  data.table::setorder(assignment, term_group, topic_assignment, -max_score, term_id)
+  term_order <- assignment$term_id
+  topic_order <- common_topics
+  if (isTRUE(cluster_topics) && length(topic_order) > 1L) {
+    topic_dist <- try(stats::dist(score_mat[topic_order, term_order, drop = FALSE]), silent = TRUE)
+    if (!inherits(topic_dist, "try-error")) {
+      topic_hc <- try(stats::hclust(topic_dist), silent = TRUE)
+      if (!inherits(topic_hc, "try-error")) {
+        topic_order <- topic_hc$labels[topic_hc$order]
+      }
+    }
+  }
+
+  score_display <- t(score_mat[topic_order, term_order, drop = FALSE])
+  score_display[!is.finite(score_display)] <- 0
+
+  ann <- data.frame(
+    Term_group = factor(assignment$term_group, levels = sort(unique(assignment$term_group))),
+    Topic_assignment = factor(assignment$topic_assignment, levels = sort(unique(assignment$topic_assignment))),
+    Max_score = assignment$max_score,
+    check.names = FALSE
+  )
+  rownames(ann) <- term_order
+  annotation_colors <- list(
+    Term_group = .topic_factor_palette(assignment$term_group),
+    Topic_assignment = .topic_factor_palette(assignment$topic_assignment)
+  )
+
+  k <- ncol(score_display)
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, sprintf("%s term score K%d", topic_score_method, k), sep = " | ")
+  } else {
+    sprintf("%s term score K%d", topic_score_method, k)
+  }
+  width <- max(8, min(16, 5.8 + 0.46 * k))
+  height <- max(6.2, min(60, 3.8 + 0.03 * nrow(score_display)))
+  fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
+  heatmap_colors <- grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101)
+  heatmap_breaks <- seq(0, 1, length.out = 102)
+
+  ph_score <- pheatmap::pheatmap(
+    score_display,
+    color = heatmap_colors,
+    breaks = heatmap_breaks,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    scale = "none",
+    border_color = NA,
+    annotation_row = ann,
+    annotation_colors = annotation_colors,
+    show_rownames = isTRUE(show_rownames),
+    show_colnames = TRUE,
+    fontsize = 9,
+    fontsize_col = fontsize_col,
+    main = title,
+    angle_col = 45,
+    silent = TRUE
+  )
+
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
+  tryCatch(
+    {
+      grid::grid.newpage()
+      grid::grid.draw(ph_score$gtable)
+    },
+    finally = grDevices::dev.off()
+  )
+  invisible(out_file)
+}
+
+.plot_raw_theta_document_heatmap <- function(theta,
+                                             out_file,
+                                             doc_design = c("comparison", "condition"),
+                                             title_prefix = NULL,
+                                             cluster_topics = TRUE,
+                                             show_rownames = FALSE) {
+  if (!requireNamespace("pheatmap", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  .assert_pkg("data.table")
+  doc_design <- match.arg(doc_design)
+  theta <- as.matrix(theta)
+  if (!nrow(theta) || !ncol(theta)) return(invisible(NULL))
+  if (is.null(rownames(theta))) {
+    .log_abort("theta must have rownames containing document IDs.")
+  }
+  if (is.null(colnames(theta))) {
+    colnames(theta) <- paste0("Topic", seq_len(ncol(theta)))
+  }
+  storage.mode(theta) <- "double"
+  theta[!is.finite(theta)] <- 0
+
+  doc_info <- .parse_doc_id(rownames(theta), doc_design = doc_design)
+  meta <- data.table::data.table(doc_id = rownames(theta))
+  meta <- cbind(meta, doc_info)
+  meta[, tf := as.character(tf_doc)]
+  meta[, tf_display := .module3_tf_display_label(tf)]
+  meta <- meta[!is.na(tf_display) & nzchar(tf_display)]
+  if (!nrow(meta)) return(invisible(NULL))
+  theta <- theta[meta$doc_id, , drop = FALSE]
+  row_max <- apply(theta, 1L, max, na.rm = TRUE)
+  row_max[!is.finite(row_max)] <- 0
+  meta[, row_max_theta := as.numeric(row_max)]
+  meta[, group_label := as.character(comparison_id)]
+  if (identical(doc_design, "comparison")) {
+    has_dir <- !is.na(meta[["direction"]]) & nzchar(meta[["direction"]])
+    meta[has_dir, group_label := paste(comparison_id, direction, sep = " | ")]
+  }
+  meta[, row_label := .raw_theta_document_label(
+    comparison_id = meta[["comparison_id"]],
+    tf_display = meta[["tf_display"]],
+    direction = meta[["direction"]]
+  )]
+  meta[, row_label := make.unique(row_label, sep = " #")]
+  data.table::setorder(meta, tf_display, -row_max_theta, group_label, doc_id)
+
+  mat <- theta[meta$doc_id, , drop = FALSE]
+  rownames(mat) <- meta$row_label
+  gaps_row <- integer()
+  if (nrow(meta) > 1L) {
+    tf_runs <- rle(meta$tf_display)
+    gaps_row <- cumsum(tf_runs$lengths)
+    gaps_row <- gaps_row[gaps_row < nrow(meta)]
+  }
+  annotation_row <- data.frame(
+    Group = factor(meta$group_label, levels = sort(unique(meta$group_label))),
+    row_max_theta = meta$row_max_theta,
+    check.names = FALSE
+  )
+  rownames(annotation_row) <- meta$row_label
+  annotation_colors <- list(Group = .topic_factor_palette(meta$group_label))
+
+  k <- ncol(mat)
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, sprintf("raw theta documents K%d", k), sep = " | ")
+  } else {
+    sprintf("Raw theta documents K%d", k)
+  }
+  width <- max(7.2, min(12.5, 4.8 + 0.38 * k))
+  height <- max(6.2, min(60, 3.8 + 0.105 * nrow(mat)))
+  fontsize_row <- if (nrow(mat) > 500L) {
+    2.1
+  } else if (nrow(mat) > 250L) {
+    2.8
+  } else if (nrow(mat) > 120L) {
+    4.0
+  } else {
+    6.2
+  }
+  fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  pheatmap::pheatmap(
+    mat,
+    color = grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101),
+    breaks = seq(0, 1, length.out = 102),
+    cluster_rows = FALSE,
+    cluster_cols = isTRUE(cluster_topics) && ncol(mat) > 1L,
+    scale = "none",
+    border_color = NA,
+    gaps_row = gaps_row,
+    annotation_row = annotation_row,
+    annotation_colors = annotation_colors,
+    show_rownames = isTRUE(show_rownames),
+    show_colnames = TRUE,
+    fontsize = 9,
+    fontsize_row = fontsize_row,
+    fontsize_col = fontsize_col,
+    main = title,
+    angle_col = 45
+  )
+  invisible(out_file)
+}
+
+.select_tf_topic_primary_docs <- function(primary, max_docs = 120L) {
+  dt <- data.table::as.data.table(primary)
+  if (!nrow(dt)) return(character())
+  max_docs <- as.integer(max_docs)
+  if (!is.finite(max_docs) || max_docs <= 0L) max_docs <- 120L
+  topics <- sort(unique(dt$primary_topic_num[is.finite(dt$primary_topic_num)]))
+  if (!length(topics)) return(head(dt$doc_id, max_docs))
+  per_topic <- max(1L, ceiling(max_docs / length(topics)))
+  picked <- dt[order(primary_topic_num, -primary_theta, comparison_id, tf_display), head(.SD, per_topic), by = primary_topic_num]
+  if (nrow(picked) > max_docs) {
+    picked <- picked[order(primary_topic_num, -primary_theta, comparison_id, tf_display)][seq_len(max_docs)]
+  }
+  picked$doc_id
+}
+
+.plot_tf_topic_assignment_heatmap <- function(assign,
+                                              out_file,
+                                              title_prefix = NULL,
+                                              max_docs = 120L) {
+  if (!requireNamespace("ggplot2", quietly = TRUE) || !requireNamespace("scales", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  membership <- data.table::as.data.table(assign$membership)
+  primary <- data.table::as.data.table(assign$primary)
+  if (!nrow(membership) || !nrow(primary)) return(invisible(NULL))
+  keep_docs <- .select_tf_topic_primary_docs(primary, max_docs = max_docs)
+  plot_dt <- membership[doc_id %in% keep_docs]
+  plot_dt[, doc_label := .tf_topic_doc_label(comparison_id, tf_display, direction)]
+  doc_levels <- unique(primary[doc_id %in% keep_docs][order(primary_topic_num, -primary_theta, comparison_id, tf_display), .tf_topic_doc_label(comparison_id, tf_display, direction)])
+  plot_dt[, doc_label := factor(doc_label, levels = rev(doc_levels))]
+  plot_dt[, topic := factor(as.character(topic), levels = unique(as.character(topic[order(topic_num)])))]
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, "TF-topic assignment heatmap", sep = " | ")
+  } else {
+    "TF-topic assignment heatmap"
+  }
+  p <- ggplot2::ggplot(plot_dt, ggplot2::aes(x = topic, y = doc_label, fill = theta)) +
+    ggplot2::geom_tile(color = "grey88", linewidth = 0.08) +
+    ggplot2::geom_point(
+      data = plot_dt[membership_pass == TRUE],
+      ggplot2::aes(x = topic, y = doc_label),
+      inherit.aes = FALSE,
+      shape = 21,
+      size = 1.4,
+      stroke = 0.35,
+      fill = "black",
+      color = "black"
+    ) +
+    ggplot2::scale_fill_gradientn(colors = c("#f7fbff", "#9ecae1", "#08519c"), limits = c(0, 1), oob = scales::squish, name = "theta") +
+    ggplot2::labs(
+      title = title,
+      subtitle = paste0("Topic-balanced sample of ", length(keep_docs), " TF-direction documents. Dots mark theta >= cutoff."),
+      x = "Topic",
+      y = "TF direction document"
+    ) +
+    ggplot2::theme_minimal(base_size = 8.5, base_family = "Helvetica") +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold", color = "black"),
+      axis.text.y = ggplot2::element_text(size = 5.5, face = "bold", color = "black"),
+      axis.text.x = ggplot2::element_text(size = 7, face = "bold", color = "black", angle = 45, hjust = 1),
+      axis.title = ggplot2::element_text(face = "bold"),
+      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(face = "bold", hjust = 0.5),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(out_file, p, width = 9.8, height = max(6, min(16, length(keep_docs) * 0.12 + 2)), limitsize = FALSE)
+  invisible(out_file)
+}
+
+.plot_tf_primary_topic_dotplot <- function(primary,
+                                           out_file,
+                                           title_prefix = NULL,
+                                           max_docs = 120L) {
+  if (!requireNamespace("ggplot2", quietly = TRUE) || !requireNamespace("scales", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  dt <- data.table::as.data.table(primary)
+  if (!nrow(dt)) return(invisible(NULL))
+  max_docs <- as.integer(max_docs)
+  if (!is.finite(max_docs) || max_docs <= 0L) max_docs <- 120L
+  keep_docs <- .select_tf_topic_primary_docs(dt, max_docs = max_docs)
+  dt <- dt[doc_id %in% keep_docs]
+  dt <- dt[order(primary_topic_num, -primary_theta, comparison_id, tf_display)]
+  dt[, doc_label := .tf_topic_doc_label(comparison_id, tf_display, direction)]
+  dt[, doc_label := factor(doc_label, levels = rev(unique(doc_label)))]
+  dt[, primary_topic := factor(as.character(primary_topic), levels = unique(as.character(primary_topic[order(primary_topic_num)])))]
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, "primary TF-topic labels", sep = " | ")
+  } else {
+    "Primary TF-topic labels"
+  }
+  p <- ggplot2::ggplot(dt, ggplot2::aes(x = primary_topic, y = doc_label)) +
+    ggplot2::geom_point(ggplot2::aes(size = primary_theta, fill = direction, shape = ambiguous), color = "black", stroke = 0.28, alpha = 0.9) +
+    ggplot2::scale_size_continuous(range = c(1.2, 5.2), limits = c(0, 1), name = "Primary theta") +
+    ggplot2::scale_shape_manual(values = c(`FALSE` = 21, `TRUE` = 24), name = "Ambiguous") +
+    ggplot2::scale_fill_manual(values = c("Target-Up" = "#b2182b", "Target-Down" = "#2166ac", "FP-Up" = "#ef8a62", "FP-Down" = "#67a9cf"), na.value = "#636363", name = "Direction") +
+    ggplot2::labs(
+      title = title,
+      subtitle = "One primary topic is assigned per TF-direction document.",
+      x = "Primary topic",
+      y = "TF direction document"
+    ) +
+    ggplot2::theme_minimal(base_size = 8.5, base_family = "Helvetica") +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold", color = "black"),
+      axis.text.y = ggplot2::element_text(size = 5.5, face = "bold", color = "black"),
+      axis.text.x = ggplot2::element_text(size = 7, face = "bold", color = "black", angle = 45, hjust = 1),
+      axis.title = ggplot2::element_text(face = "bold"),
+      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(face = "bold", hjust = 0.5),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(out_file, p, width = 9.8, height = max(6, min(16, nrow(dt) * 0.12 + 2)), limitsize = FALSE)
+  invisible(out_file)
+}
+
+.plot_tf_direction_topic_map <- function(direction_summary,
+                                         out_file,
+                                         title_prefix = NULL,
+                                         max_pairs = 120L) {
+  if (!requireNamespace("ggplot2", quietly = TRUE) || !requireNamespace("scales", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  dt <- data.table::as.data.table(direction_summary)
+  if (!nrow(dt)) return(invisible(NULL))
+  max_pairs <- as.integer(max_pairs)
+  if (!is.finite(max_pairs) || max_pairs <= 0L) max_pairs <- 120L
+  dt[, max_theta := pmax(up_primary_theta, down_primary_theta, na.rm = TRUE)]
+  dt[!is.finite(max_theta), max_theta := 0]
+  dt <- dt[order(direction_topic_status != "different_topic", comparison_id, -max_theta, tf_display)]
+  per_status_comp <- 4L
+  dt <- dt[, head(.SD, per_status_comp), by = .(direction_topic_status, comparison_id)]
+  dt <- dt[order(direction_topic_status != "different_topic", comparison_id, -max_theta, tf_display)]
+  if (nrow(dt) > max_pairs) dt <- dt[seq_len(max_pairs)]
+  dt[, row_label := paste(comparison_id, tf_display, sep = " | ")]
+  dt[, row_label := factor(row_label, levels = rev(unique(row_label)))]
+  long <- data.table::rbindlist(list(
+    dt[, .(row_label, comparison_id, tf_display, side = "Target-Up", topic = up_primary_topic, theta = up_primary_theta, status = direction_topic_status)],
+    dt[, .(row_label, comparison_id, tf_display, side = "Target-Down", topic = down_primary_topic, theta = down_primary_theta, status = direction_topic_status)]
+  ), use.names = TRUE, fill = TRUE)
+  long <- long[!is.na(topic) & nzchar(topic)]
+  long[, side_x := ifelse(side == "Target-Up", 1, 2)]
+  title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, "Up/Down TF-topic map", sep = " | ")
+  } else {
+    "Up/Down TF-topic map"
+  }
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_segment(
+      data = dt[!is.na(up_primary_topic) & !is.na(down_primary_topic)],
+      ggplot2::aes(x = 1, xend = 2, y = row_label, yend = row_label, color = direction_topic_status),
+      linewidth = 0.38,
+      alpha = 0.75
+    ) +
+    ggplot2::geom_point(
+      data = long,
+      ggplot2::aes(x = side_x, y = row_label, size = theta, fill = topic),
+      shape = 21,
+      color = "black",
+      stroke = 0.28,
+      alpha = 0.92
+    ) +
+    ggplot2::scale_size_continuous(range = c(1.5, 5), limits = c(0, 1), name = "Primary theta") +
+    ggplot2::scale_color_manual(values = c(same_topic = "#4d9221", different_topic = "#762a83", up_only = "#b2182b", down_only = "#2166ac", ambiguous = "#636363"), name = "Status") +
+    ggplot2::scale_x_continuous(breaks = c(1, 2), labels = c("Target-Up", "Target-Down"), limits = c(0.75, 2.25)) +
+    ggplot2::labs(
+      title = title,
+      subtitle = "Each row keeps Target-Up and Target-Down as separate topic assignments.",
+      x = NULL,
+      y = "Comparison and TF"
+    ) +
+    ggplot2::theme_minimal(base_size = 8.5, base_family = "Helvetica") +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold", color = "black"),
+      axis.text.y = ggplot2::element_text(size = 5.5, face = "bold", color = "black"),
+      axis.text.x = ggplot2::element_text(size = 8, face = "bold", color = "black"),
+      axis.title = ggplot2::element_text(face = "bold"),
+      plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(face = "bold", hjust = 0.5),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(out_file, p, width = 10.2, height = max(6, min(16, nrow(dt) * 0.12 + 2)), limitsize = FALSE)
+  invisible(out_file)
+}
+
+.write_tf_topic_assignment_outputs <- function(theta,
+                                               out_dir,
+                                               doc_design = c("comparison", "condition"),
+                                               membership_cutoff = 0.3,
+                                               primary_margin_cutoff = 0.1) {
+  .assert_pkg("data.table")
+  doc_design <- match.arg(doc_design)
+  assign <- .build_tf_topic_assignment_tables(
+    theta = theta,
+    doc_design = doc_design,
+    membership_cutoff = membership_cutoff,
+    primary_margin_cutoff = primary_margin_cutoff
+  )
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(assign$pass, file.path(out_dir, "tf_topic_membership_pass.csv"))
+  data.table::fwrite(assign$primary, file.path(out_dir, "tf_topic_primary.csv"))
+  data.table::fwrite(assign$direction_summary, file.path(out_dir, "tf_direction_topic_summary.csv"))
+  tf_list <- unique(assign$primary[, .(tf, tf_display)])
+  data.table::setorder(tf_list, tf_display, tf)
+  data.table::fwrite(tf_list, file.path(out_dir, "tf_topic_tf_list.csv"))
+  assign_flat <- merge(
+    assign$pass,
+    assign$primary[, .(doc_id, tf, tf_display, primary_topic, primary_theta, margin, ambiguous)],
+    by = c("doc_id", "tf", "tf_display"),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  data.table::setorder(assign_flat, tf_display, doc_id, topic_num)
+  data.table::fwrite(assign_flat, file.path(out_dir, "tf_topic_assignments.csv"))
+  summary <- data.table::data.table(
+    metric = c(
+      "n_documents",
+      "n_tfs",
+      "n_membership_rows",
+      "n_pass_membership_rows",
+      "n_ambiguous_documents",
+      "membership_cutoff",
+      "primary_margin_cutoff"
+    ),
+    value = c(
+      data.table::uniqueN(assign$primary$doc_id),
+      data.table::uniqueN(assign$primary$tf_display),
+      nrow(assign$membership),
+      nrow(assign$pass),
+      sum(assign$primary$ambiguous, na.rm = TRUE),
+      membership_cutoff,
+      primary_margin_cutoff
+    )
+  )
+  data.table::fwrite(summary, file.path(out_dir, "tf_topic_assignment_summary.csv"))
+  invisible(assign)
+}
+
 .prepare_tf_doc_topic_assignment_heatmap_data <- function(theta,
                                                           phi,
+                                                          score_mat = NULL,
                                                           topic_terms = NULL,
                                                           doc_design = c("comparison", "condition"),
                                                           aggregate_fun = c("max", "mean")) {
@@ -2316,7 +3199,11 @@ make_topic_report_args_simple <- function(thrP,
     term_pass = FALSE
   )]
 
-  score_mat <- score_terms_normtop(phi)
+  if (is.null(score_mat)) {
+    score_mat <- score_terms_normtop(phi)
+  } else {
+    score_mat <- as.matrix(score_mat)
+  }
   if (!all(topic_cols %in% rownames(score_mat))) {
     keep_topics <- intersect(topic_cols, rownames(score_mat))
   } else {
@@ -2405,6 +3292,7 @@ make_topic_report_args_simple <- function(thrP,
 plot_tf_doc_topic_assignment_heatmaps <- function(theta,
                                                   phi,
                                                   out_file,
+                                                  score_mat = NULL,
                                                   topic_terms = NULL,
                                                   title_prefix = NULL,
                                                   doc_design = c("comparison", "condition"),
@@ -2419,6 +3307,7 @@ plot_tf_doc_topic_assignment_heatmaps <- function(theta,
   plot_dt <- .prepare_tf_doc_topic_assignment_heatmap_data(
     theta = theta,
     phi = phi,
+    score_mat = score_mat,
     topic_terms = topic_terms,
     doc_design = doc_design,
     aggregate_fun = aggregate_fun
@@ -2533,48 +3422,6 @@ plot_tf_doc_topic_assignment_heatmaps <- function(theta,
   mat <- t(scale(t(mat)))
   mat[!is.finite(mat)] <- 0
   mat
-}
-
-.ldavis_mds_safe <- function(phi, theta) {
-  phi <- as.matrix(phi)
-  if (nrow(phi) < 2L) {
-    return(data.frame(x = 0, y = 0))
-  }
-  phi[!is.finite(phi)] <- 0
-  rs <- rowSums(phi)
-  rs[!is.finite(rs) | rs == 0] <- 1
-  phi <- phi / rs
-  eps <- 1e-12
-  phi <- pmax(phi, eps)
-  phi <- phi / rowSums(phi)
-
-  kl_div <- function(p, q) {
-    idx <- (p > 0) & (q > 0)
-    sum(p[idx] * log(p[idx] / q[idx]))
-  }
-
-  K <- nrow(phi)
-  dmat <- matrix(0, nrow = K, ncol = K)
-  for (i in seq_len(K)) {
-    for (j in seq_len(K)) {
-      if (i >= j) next
-      p <- phi[i, ]
-      q <- phi[j, ]
-      m <- 0.5 * (p + q)
-      jsd <- 0.5 * kl_div(p, m) + 0.5 * kl_div(q, m)
-      if (!is.finite(jsd)) jsd <- 0
-      dmat[i, j] <- jsd
-      dmat[j, i] <- jsd
-    }
-  }
-  diag(dmat) <- 0
-  if (max(dmat, na.rm = TRUE) == 0) {
-    coords <- cbind(seq_len(K), rep(0, K))
-  } else {
-    coords <- stats::cmdscale(stats::as.dist(dmat), k = 2)
-  }
-  if (is.null(dim(coords))) coords <- cbind(coords, rep(0, length(coords)))
-  data.frame(x = coords[, 1], y = coords[, 2])
 }
 
 plot_doc_topic_heatmaps_by_comparison <- function(theta,
@@ -3201,232 +4048,6 @@ plot_topic_by_comparison_heatmaps <- function(theta,
   invisible(TRUE)
 }
 
-plot_topic_marker_heatmap <- function(phi,
-                                      out_file,
-                                      top_n = 20L,
-                                      title_prefix = NULL,
-                                      edges_docs = NULL,
-                                      option_label = NULL,
-                                      topic_terms = NULL) {
-  .assert_pkg("data.table")
-  if (!requireNamespace("pheatmap", quietly = TRUE)) {
-    .log_inform("Skipping topic marker heatmap: {.pkg pheatmap} not installed.")
-    return(invisible(NULL))
-  }
-  phi <- as.matrix(phi)
-  if (!nrow(phi) || !ncol(phi)) return(invisible(NULL))
-  if (is.null(colnames(phi))) {
-    .log_inform("Skipping topic marker heatmap: phi has no column names.")
-    return(invisible(NULL))
-  }
-  if (is.null(rownames(phi))) {
-    rownames(phi) <- paste0("Topic", seq_len(nrow(phi)))
-  }
-  K <- nrow(phi)
-  if (K < 2L) {
-    .log_inform("Skipping topic marker heatmap: need >= 2 topics.")
-    return(invisible(NULL))
-  }
-
-  phi[!is.finite(phi)] <- 0
-  rs <- rowSums(phi)
-  rs[!is.finite(rs) | rs == 0] <- 1
-  phi <- phi / rs
-
-  sum_all <- colSums(phi)
-  denom <- pmax(K - 1L, 1L)
-  mean_other <- (matrix(sum_all, nrow = K, ncol = ncol(phi), byrow = TRUE) - phi) / denom
-  eps <- 1e-12
-  log2fc <- log2(phi + eps) - log2(mean_other + eps)
-
-  term_names <- colnames(phi)
-  term_index <- stats::setNames(seq_along(term_names), term_names)
-  top_idx <- lapply(seq_len(K), function(k) {
-    vals <- log2fc[k, ]
-    o <- order(vals, decreasing = TRUE, na.last = NA)
-    head(o, min(as.integer(top_n), length(o)))
-  })
-
-  rows <- character()
-  row_owner <- integer()
-  for (k in seq_len(K)) {
-    terms <- term_names[top_idx[[k]]]
-    if (length(terms)) {
-      terms <- terms[!terms %in% rows]
-      if (length(terms)) {
-        rows <- c(rows, terms)
-        row_owner <- c(row_owner, rep.int(k, length(terms)))
-      }
-    }
-  }
-  rows <- rows[!is.na(rows) & nzchar(rows)]
-  if (!length(rows)) return(invisible(NULL))
-  row_owner <- row_owner[seq_along(rows)]
-
-  mat <- t(phi[, rows, drop = FALSE])
-  colnames(mat) <- rownames(phi)
-  # Use per-term row z-score (not global scaling) to avoid near-uniform dark maps.
-  mat_plot <- t(scale(t(mat)))
-  mat_plot[!is.finite(mat_plot)] <- 0
-  z_cap <- 2.5
-  mat_plot <- pmax(pmin(mat_plot, z_cap), -z_cap)
-  main_title <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
-    paste(title_prefix, "Topic markers (see topic_marker_features.csv)", sep = " | ")
-  } else {
-    "Topic markers (see topic_marker_features.csv)"
-  }
-
-  width <- max(7, ncol(mat) * 0.25)
-  height <- max(6, min(100, nrow(mat) * 0.02))
-  marker_colors <- grDevices::colorRampPalette(
-    c("#2166ac", "#67a9cf", "#f7f7f7", "#ef8a62", "#b2182b")
-  )(100)
-  breaks <- seq(-z_cap, z_cap, length.out = 101)
-
-  feature_path <- file.path(dirname(out_file), "topic_marker_features.csv")
-  marker_dt <- data.table::data.table(
-    owner_topic = as.integer(row_owner),
-    term_id = rows,
-    marker_row_order = seq_along(rows)
-  )
-  marker_dt <- unique(marker_dt, by = c("owner_topic", "term_id"))
-
-  feature_tbl <- NULL
-  if (!is.null(topic_terms) && nrow(topic_terms)) {
-    tt <- data.table::as.data.table(topic_terms)
-    if (all(c("topic", "term_id") %in% names(tt))) {
-      if ("in_topic" %in% names(tt)) {
-        tt <- tt[.as_logical_flag(in_topic)]
-      }
-      tt <- tt[!is.na(topic) & !is.na(term_id) & nzchar(term_id)]
-      tt[, topic := as.integer(topic)]
-      tt <- tt[is.finite(topic)]
-      if (nrow(tt)) {
-        if ("score" %in% names(tt)) {
-          tt[, score_num := .safe_num(score)]
-          data.table::setorder(tt, topic, -score_num, term_id)
-        } else {
-          data.table::setorder(tt, topic, term_id)
-        }
-        tt <- unique(tt[, .(owner_topic = topic, term_id)], by = c("owner_topic", "term_id"))
-        feature_tbl <- tt
-      }
-    }
-  }
-  if (is.null(feature_tbl) || !nrow(feature_tbl)) {
-    feature_tbl <- marker_dt[, .(owner_topic, term_id)]
-  }
-
-  owner_idx <- term_index[feature_tbl$term_id]
-  owner_idx[!is.finite(owner_idx)] <- NA_integer_
-  owner_log2fc <- rep(NA_real_, nrow(feature_tbl))
-  owner_prob <- rep(NA_real_, nrow(feature_tbl))
-  keep_eval <- !is.na(owner_idx) &
-    !is.na(feature_tbl$owner_topic) &
-    feature_tbl$owner_topic >= 1L & feature_tbl$owner_topic <= nrow(log2fc)
-  if (any(keep_eval)) {
-    owner_log2fc[keep_eval] <- log2fc[cbind(feature_tbl$owner_topic[keep_eval], owner_idx[keep_eval])]
-    owner_prob[keep_eval] <- phi[cbind(feature_tbl$owner_topic[keep_eval], owner_idx[keep_eval])]
-  }
-  feature_tbl[, term_base := gsub("^(GENE:|PEAK:)", "", term_id)]
-  feature_tbl[, term_prefix := ifelse(grepl("^GENE:", term_id), "GENE",
-                                      ifelse(grepl("^PEAK:", term_id), "PEAK", NA_character_))]
-  feature_tbl[, owner_log2fc := as.numeric(owner_log2fc)]
-  feature_tbl[, owner_prob := as.numeric(owner_prob)]
-  feature_tbl <- merge(
-    feature_tbl,
-    marker_dt,
-    by = c("owner_topic", "term_id"),
-    all.x = TRUE
-  )
-  feature_tbl[, in_marker_heatmap := is.finite(marker_row_order)]
-  data.table::setorder(feature_tbl, owner_topic, -in_marker_heatmap, marker_row_order, term_id)
-  feature_tbl[, row_order := seq_len(.N)]
-  data.table::setcolorder(
-    feature_tbl,
-    c("row_order", "term_id", "term_base", "term_prefix", "owner_topic",
-      "owner_log2fc", "owner_prob", "in_marker_heatmap", "marker_row_order")
-  )
-  if (!is.null(edges_docs) && !is.null(option_label)) {
-    ed <- data.table::as.data.table(edges_docs)
-    ed <- ed[!is.na(tf) & nzchar(tf)]
-    if (option_label == "opt3_gene_fc_expr") {
-      ed <- ed[!is.na(gene_key) & nzchar(gene_key) & !is.na(peak_id) & nzchar(peak_id)]
-      map_dt <- ed[, .(
-        tf_list = paste(sort(unique(tf)), collapse = ";"),
-        peak_list = paste(sort(unique(peak_id)), collapse = ";")
-      ), by = gene_key]
-      feature_tbl <- merge(
-        feature_tbl,
-        map_dt,
-        by.x = "term_base",
-        by.y = "gene_key",
-        all.x = TRUE
-      )
-    } else if (option_label == "joint") {
-      ed <- ed[!is.na(gene_key) & nzchar(gene_key) & !is.na(peak_id) & nzchar(peak_id)]
-      map_gene <- ed[, .(
-        tf_list = paste(sort(unique(tf)), collapse = ";"),
-        peak_list = paste(sort(unique(peak_id)), collapse = ";")
-      ), by = gene_key]
-      map_peak <- ed[, .(
-        tf_list = paste(sort(unique(tf)), collapse = ";"),
-        gene_list = paste(sort(unique(gene_key)), collapse = ";")
-      ), by = peak_id]
-      gene_tbl <- merge(
-        feature_tbl[term_prefix == "GENE"],
-        map_gene,
-        by.x = "term_base",
-        by.y = "gene_key",
-        all.x = TRUE
-      )
-      peak_tbl <- merge(
-        feature_tbl[term_prefix == "PEAK"],
-        map_peak,
-        by.x = "term_base",
-        by.y = "peak_id",
-        all.x = TRUE
-      )
-      other_tbl <- feature_tbl[is.na(term_prefix) | !term_prefix %in% c("GENE", "PEAK")]
-      feature_tbl <- data.table::rbindlist(list(gene_tbl, peak_tbl, other_tbl), use.names = TRUE, fill = TRUE)
-      data.table::setorder(feature_tbl, row_order)
-    } else {
-      ed <- ed[!is.na(peak_id) & nzchar(peak_id) & !is.na(gene_key) & nzchar(gene_key)]
-      map_dt <- ed[, .(
-        tf_list = paste(sort(unique(tf)), collapse = ";"),
-        gene_list = paste(sort(unique(gene_key)), collapse = ";")
-      ), by = peak_id]
-      feature_tbl <- merge(
-        feature_tbl,
-        map_dt,
-        by.x = "term_base",
-        by.y = "peak_id",
-        all.x = TRUE
-      )
-    }
-  }
-  data.table::fwrite(feature_tbl, feature_path)
-
-  grDevices::pdf(out_file, width = width, height = height)
-  tryCatch(
-    {
-      pheatmap::pheatmap(
-        mat_plot,
-        cluster_rows = FALSE,
-        cluster_cols = FALSE,
-        show_rownames = FALSE,
-        show_colnames = TRUE,
-        color = marker_colors,
-        breaks = breaks,
-        border_color = NA,
-        main = main_title
-      )
-    },
-    finally = grDevices::dev.off()
-  )
-  invisible(TRUE)
-}
-
 .tf_from_theta_by_topic <- function(theta,
                                     edges_docs,
                                     topics,
@@ -3552,6 +4173,462 @@ topic_gene_sets <- function(topic_terms,
   out <- split(genes_dt$gene, genes_dt$topic)
   out <- lapply(out, function(x) unique(x[!is.na(x) & nzchar(x)]))
   out[lengths(out) > 0]
+}
+
+topic_gene_sets_from_terms <- function(topic_terms,
+                                       edges_docs = NULL,
+                                       option_label = c("opt1_peak_delta_fp", "opt2_peak_fc_fp",
+                                                        "opt3_gene_fc_expr", "joint"),
+                                       use_all_terms = FALSE,
+                                       include_peak_terms = TRUE) {
+  .assert_pkg("data.table")
+  option_label <- match.arg(option_label)
+  tt <- data.table::as.data.table(topic_terms)
+  if (!nrow(tt) || !("term_id" %in% names(tt))) return(list())
+  if (!("topic_num" %in% names(tt))) {
+    if ("topic" %in% names(tt)) {
+      tt[, topic_num := as.integer(gsub("^Topic", "", as.character(topic)))]
+    } else {
+      .log_abort("topic_terms must contain topic_num or topic.")
+    }
+  }
+  if (!isTRUE(use_all_terms)) {
+    if (!("in_topic" %in% names(tt))) return(list())
+    tt <- tt[.as_logical_flag(in_topic)]
+  }
+  tt <- tt[is.finite(topic_num) & !is.na(term_id) & nzchar(term_id)]
+  if (!nrow(tt)) return(list())
+
+  gene_dt <- tt[grepl("^GENE:", term_id), .(
+    topic_num = as.integer(topic_num),
+    gene = sub("^GENE:", "", as.character(term_id))
+  )]
+
+  if (isTRUE(include_peak_terms) && !identical(option_label, "opt3_gene_fc_expr")) {
+    peak_dt <- tt[grepl("^PEAK:", term_id), .(
+      topic_num = as.integer(topic_num),
+      peak_or_gene = sub("^PEAK:", "", as.character(term_id))
+    )]
+    if (nrow(peak_dt)) {
+      peak_gene <- data.table::data.table()
+      if (!is.null(edges_docs)) {
+        ed <- data.table::as.data.table(edges_docs)
+        if (all(c("peak_id", "gene_key") %in% names(ed))) {
+          ed <- unique(ed[
+            !is.na(peak_id) & nzchar(peak_id) & !is.na(gene_key) & nzchar(gene_key),
+            .(peak_or_gene = as.character(peak_id), gene = as.character(gene_key))
+          ])
+          peak_gene <- merge(peak_dt, ed, by = "peak_or_gene", allow.cartesian = TRUE)
+          peak_gene <- peak_gene[, .(topic_num, gene)]
+        }
+      }
+      mapped <- if (nrow(peak_gene)) unique(ed$peak_or_gene) else character()
+      direct_peak_gene <- peak_dt[
+        !(peak_or_gene %in% mapped) & !is.na(peak_or_gene) & nzchar(peak_or_gene),
+        .(topic_num, gene = peak_or_gene)
+      ]
+      gene_dt <- data.table::rbindlist(
+        list(gene_dt, peak_gene, direct_peak_gene),
+        use.names = TRUE,
+        fill = TRUE
+      )
+    }
+  }
+
+  gene_dt <- gene_dt[!is.na(gene) & nzchar(gene)]
+  if (!nrow(gene_dt)) return(list())
+  gene_dt <- unique(gene_dt[, .(topic_num, gene)])
+  out <- split(gene_dt$gene, gene_dt$topic_num)
+  out <- lapply(out, function(x) unique(as.character(x)))
+  out[lengths(out) > 0]
+}
+
+topic_gene_sets_by_comparison_terms <- function(topic_terms,
+                                                edges_docs,
+                                                theta,
+                                                theta_min = 0.3,
+                                                include_peak_terms = TRUE,
+                                                use_all_terms = FALSE,
+                                                doc_design = c("comparison", "condition"),
+                                                split_direction = TRUE) {
+  .assert_pkg("data.table")
+  doc_design <- match.arg(doc_design)
+  tt <- data.table::as.data.table(topic_terms)
+  ed <- data.table::as.data.table(edges_docs)
+  theta <- as.matrix(theta)
+  if (!nrow(tt) || !nrow(ed) || !nrow(theta) || !ncol(theta)) {
+    return(data.table::data.table())
+  }
+  if (is.null(rownames(theta))) {
+    .log_abort("theta must have document row names for per-comparison topic-term pathway gene sets.")
+  }
+  if (!all(c("doc_id", "gene_key") %in% names(ed))) {
+    .log_abort("edges_docs must contain doc_id and gene_key.")
+  }
+  if (!("term_id" %in% names(tt))) {
+    .log_abort("topic_terms must contain term_id.")
+  }
+  if (!("topic_num" %in% names(tt))) {
+    if ("topic" %in% names(tt)) {
+      tt[, topic_num := as.integer(gsub("^Topic", "", as.character(topic)))]
+    } else {
+      .log_abort("topic_terms must contain topic_num or topic.")
+    }
+  }
+  if (!isTRUE(use_all_terms)) {
+    if (!("in_topic" %in% names(tt))) {
+      .log_abort("topic_terms must contain in_topic unless use_all_terms = TRUE.")
+    }
+    tt <- tt[.as_logical_flag(in_topic)]
+  }
+  tt <- tt[is.finite(topic_num) & !is.na(term_id) & nzchar(term_id)]
+  if (!nrow(tt)) return(data.table::data.table())
+
+  gene_terms <- tt[grepl("^GENE:", term_id), .(
+    topic = as.integer(topic_num),
+    gene = sub("^GENE:", "", as.character(term_id)),
+    term_source = "GENE"
+  )]
+  if (isTRUE(include_peak_terms)) {
+    peak_terms <- tt[grepl("^PEAK:", term_id), .(
+      topic = as.integer(topic_num),
+      gene = sub("^PEAK:", "", as.character(term_id)),
+      term_source = "PEAK"
+    )]
+    term_genes <- data.table::rbindlist(list(gene_terms, peak_terms), use.names = TRUE, fill = TRUE)
+  } else {
+    term_genes <- gene_terms
+  }
+  term_genes <- term_genes[!is.na(gene) & nzchar(gene)]
+  term_genes <- unique(term_genes, by = c("topic", "gene", "term_source"))
+  if (!nrow(term_genes)) return(data.table::data.table())
+
+  theta_min <- .safe_num(theta_min)
+  if (!is.finite(theta_min)) theta_min <- 0.3
+  theta_colnames <- colnames(theta)
+  topic_ids <- if (!is.null(theta_colnames) && all(grepl("^Topic\\d+$", theta_colnames))) {
+    as.integer(sub("^Topic", "", theta_colnames))
+  } else {
+    seq_len(ncol(theta))
+  }
+  theta_dt <- data.table::as.data.table(theta)
+  theta_dt[, doc_id := rownames(theta)]
+  theta_long <- data.table::melt(
+    theta_dt,
+    id.vars = "doc_id",
+    variable.name = "topic_col",
+    value.name = "theta"
+  )
+  theta_long[, topic_idx__ := match(as.character(topic_col), theta_colnames)]
+  theta_long[, topic := topic_ids[topic_idx__]]
+  theta_long[, theta := .safe_num(theta)]
+  theta_long <- theta_long[is.finite(topic) & is.finite(theta) & theta >= theta_min]
+  theta_long[, topic_idx__ := NULL]
+  if (!nrow(theta_long)) return(data.table::data.table())
+
+  info <- .parse_doc_id(theta_long$doc_id, doc_design = doc_design)
+  theta_long <- cbind(theta_long, info)
+  if (identical(doc_design, "comparison")) {
+    theta_long[, direction_group := if (isTRUE(split_direction)) .direction_group(direction) else "All"]
+  } else {
+    theta_long[, direction_group := "All"]
+  }
+  if (!"tf" %in% names(theta_long)) {
+    if ("tf_doc" %in% names(theta_long)) {
+      theta_long[, tf := tf_doc]
+    } else {
+      theta_long[, tf := NA_character_]
+    }
+  }
+  theta_long <- theta_long[!is.na(comparison_id) & nzchar(comparison_id)]
+  if (!nrow(theta_long)) return(data.table::data.table())
+
+  doc_genes <- unique(ed[
+    !is.na(doc_id) & nzchar(doc_id) & !is.na(gene_key) & nzchar(gene_key),
+    .(doc_id, gene = as.character(gene_key))
+  ])
+  doc_topic_genes <- merge(
+    theta_long[, .(doc_id, topic, theta, comparison_id, direction, direction_group, tf)],
+    doc_genes,
+    by = "doc_id",
+    allow.cartesian = TRUE
+  )
+  if (!nrow(doc_topic_genes)) return(data.table::data.table())
+
+  out <- merge(
+    doc_topic_genes,
+    term_genes,
+    by = c("topic", "gene"),
+    allow.cartesian = TRUE
+  )
+  if (!nrow(out)) return(data.table::data.table())
+  out <- out[, .(
+    n_docs = data.table::uniqueN(doc_id),
+    max_theta = max(theta, na.rm = TRUE),
+    term_source = paste(sort(unique(term_source)), collapse = ";")
+  ), by = .(comparison_id, direction_group, topic, gene)]
+  data.table::setorder(out, comparison_id, direction_group, topic, gene)
+  out[]
+}
+
+.split_pathway_gene_string <- function(x) {
+  x <- as.character(x %||% "")
+  if (!length(x) || is.na(x[[1L]]) || !nzchar(x[[1L]])) return(character())
+  out <- unlist(strsplit(x[[1L]], "[;,]", perl = TRUE), use.names = FALSE)
+  out <- trimws(out)
+  unique(out[!is.na(out) & nzchar(out)])
+}
+
+.topic_pathway_retest_from_overall <- function(topic_terms,
+                                               edges_docs,
+                                               out_dir,
+                                               option_label = c("opt1_peak_delta_fp", "opt2_peak_fc_fp",
+                                                                "opt3_gene_fc_expr", "joint"),
+                                               include_peak_terms = TRUE,
+                                               use_all_terms = FALSE,
+                                               per_comparison_dir = ".",
+                                               split_direction = TRUE,
+                                               background_size = 20000L,
+                                               overall_pathway_file = NULL,
+                                               pathway_species = NULL,
+                                               doc_design = c("comparison", "condition")) {
+  .assert_pkg("data.table")
+  option_label <- match.arg(option_label)
+  doc_design <- match.arg(doc_design)
+  out_dir_pc <- if (is.null(per_comparison_dir) || !nzchar(as.character(per_comparison_dir)[[1L]]) || identical(as.character(per_comparison_dir)[[1L]], ".")) {
+    out_dir
+  } else {
+    file.path(out_dir, per_comparison_dir)
+  }
+  dir.create(out_dir_pc, recursive = TRUE, showWarnings = FALSE)
+  if (is.null(overall_pathway_file)) {
+    overall_pathway_file <- file.path(out_dir, "topic_pathway_enrichment_topic_terms.csv")
+  }
+  if (is.null(overall_pathway_file) || !file.exists(overall_pathway_file)) {
+    .log_abort("Missing overall topic pathway table: {overall_pathway_file}. Run overall_topic_pathway first.")
+  }
+
+  topic_sets <- topic_gene_sets_from_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges_docs,
+    option_label = option_label,
+    use_all_terms = use_all_terms,
+    include_peak_terms = include_peak_terms
+  )
+  if (!length(topic_sets)) return(data.table::data.table())
+  topic_gene_dt <- data.table::rbindlist(
+    lapply(names(topic_sets), function(tp) {
+      data.table::data.table(topic = as.integer(tp), gene = unique(as.character(topic_sets[[tp]])))
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  topic_gene_dt <- topic_gene_dt[is.finite(topic) & !is.na(gene) & nzchar(gene)]
+  topic_gene_keys <- .gene_symbol_key_table(topic_gene_dt$gene, species = pathway_species)
+  topic_gene_dt[, `:=`(
+    gene_key__ = topic_gene_keys$gene_key__,
+    gene_canonical = topic_gene_keys$gene_canonical,
+    gene_match_type = topic_gene_keys$gene_match_type,
+    gene_matched = topic_gene_keys$gene_matched,
+    gene_ambiguous = topic_gene_keys$gene_ambiguous
+  )]
+  topic_gene_dt <- topic_gene_dt[!is.na(gene_key__) & nzchar(gene_key__)]
+  topic_gene_dt <- unique(topic_gene_dt)
+  if (!nrow(topic_gene_dt)) return(data.table::data.table())
+
+  ed <- data.table::as.data.table(edges_docs)
+  .assert_has_cols(ed, c("doc_id", "gene_key"), context = "per-comparison topic pathway retest")
+  ed <- ed[!is.na(doc_id) & nzchar(doc_id) & !is.na(gene_key) & nzchar(gene_key)]
+  if (!nrow(ed)) return(data.table::data.table())
+  doc_info <- .parse_doc_id(ed$doc_id, doc_design = doc_design)
+  ed <- cbind(ed, doc_info)
+  if (identical(doc_design, "comparison")) {
+    ed[, direction_group := if (isTRUE(split_direction)) .direction_group(direction) else "All"]
+  } else {
+    ed[, direction_group := "All"]
+  }
+  comp_genes <- unique(ed[
+    !is.na(comparison_id) & nzchar(comparison_id),
+    .(comparison_id, direction_group, gene = as.character(gene_key))
+  ])
+  comp_genes <- comp_genes[!is.na(gene) & nzchar(gene)]
+  comp_gene_keys <- .gene_symbol_key_table(comp_genes$gene, species = pathway_species)
+  comp_genes[, `:=`(
+    gene_key__ = comp_gene_keys$gene_key__,
+    gene_canonical = comp_gene_keys$gene_canonical,
+    gene_match_type = comp_gene_keys$gene_match_type,
+    gene_matched = comp_gene_keys$gene_matched,
+    gene_ambiguous = comp_gene_keys$gene_ambiguous
+  )]
+  comp_genes <- comp_genes[!is.na(gene_key__) & nzchar(gene_key__)]
+  if (!nrow(comp_genes)) return(data.table::data.table())
+
+  query_gene_dt <- merge(
+    comp_genes,
+    unique(topic_gene_dt[, .(topic, gene_key__)]),
+    by = "gene_key__",
+    allow.cartesian = TRUE,
+    sort = FALSE
+  )
+  if (!nrow(query_gene_dt)) return(data.table::data.table())
+  query_dt <- query_gene_dt[, .(
+    query_genes = list(sort(unique(gene))),
+    query_gene_symbols = list(sort(unique(gene_canonical[!is.na(gene_canonical) & nzchar(gene_canonical)]))),
+    query_gene_keys = list(sort(unique(gene_key__))),
+    query_size = data.table::uniqueN(gene_key__),
+    topic_gene_count = data.table::uniqueN(topic_gene_dt[topic == .BY$topic, gene_key__]),
+    gene_match_summary = .gene_symbol_match_summary(gene_match_type)
+  ), by = .(comparison_id, direction_group, topic)]
+  query_dt <- query_dt[query_size > 0]
+  if (!nrow(query_dt)) return(data.table::data.table())
+
+  overall <- data.table::fread(overall_pathway_file, showProgress = FALSE)
+  if (!nrow(overall)) return(data.table::data.table())
+  .assert_has_cols(overall, c("topic", "pathway", "genes", "overlap"), context = "overall topic pathway table")
+  overall[, topic := as.integer(topic)]
+  overall <- overall[is.finite(topic) & !is.na(pathway) & nzchar(pathway)]
+  if (!nrow(overall)) return(data.table::data.table())
+  if (!"database" %in% names(overall)) {
+    overall[, database := sub(":.*$", "", as.character(pathway))]
+  }
+  if (!"pval" %in% names(overall)) overall[, pval := NA_real_]
+  if (!"padj" %in% names(overall)) overall[, padj := NA_real_]
+  if (!"overlap_hits" %in% names(overall)) {
+    overall[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
+  }
+  overlap_term_size <- suppressWarnings(as.integer(sub("^.*/", "", as.character(overall$overlap))))
+  if (!"term_size" %in% names(overall)) {
+    overall[, term_size := overlap_term_size]
+  } else {
+    overall[, term_size := suppressWarnings(as.integer(term_size))]
+    overall[!is.finite(term_size) | is.na(term_size), term_size := overlap_term_size[.I]]
+  }
+  if (!"background_size" %in% names(overall)) {
+    overall[, background_size := NA_integer_]
+  }
+  bg_default <- suppressWarnings(as.integer(background_size[[1L]]))
+  if (!is.finite(bg_default) || bg_default < 1L) bg_default <- 20000L
+  overall[, background_size := suppressWarnings(as.integer(background_size))]
+  overall[!is.finite(background_size) | is.na(background_size), background_size := bg_default]
+  overall[, term_size := as.integer(term_size)]
+  overall[, background_size := as.integer(background_size)]
+  if (any(is.finite(overall$term_size) & overall$term_size > overall$background_size, na.rm = TRUE)) {
+    .log_abort("background_size must be at least as large as every pathway term.")
+  }
+  overall[, overall_overlap_genes_list := lapply(genes, .split_pathway_gene_string)]
+  overall_keys <- lapply(overall$overall_overlap_genes_list, function(x) {
+    .gene_symbol_key_table(x, species = pathway_species)
+  })
+  overall_gene_key_dt <- data.table::rbindlist(overall_keys, use.names = TRUE, fill = TRUE)
+  if (!all(c("gene", "gene_canonical", "gene_match_type", "gene_matched", "gene_ambiguous") %in% names(overall_gene_key_dt))) {
+    overall_gene_key_dt <- data.table::data.table(
+      gene = character(),
+      gene_canonical = character(),
+      gene_match_type = character(),
+      gene_matched = logical(),
+      gene_ambiguous = logical()
+    )
+  }
+  .write_gene_symbol_conversion_audit(
+    out_dir,
+    list(
+      topic_term_genes = unique(topic_gene_dt[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)]),
+      comparison_document_genes = unique(comp_genes[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)]),
+      overall_pathway_overlap_genes = unique(overall_gene_key_dt[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)])
+    )
+  )
+  overall[, overall_overlap_gene_keys_list := lapply(overall_keys, function(x) unique(x[!is.na(gene_key__) & nzchar(gene_key__), gene_key__]))]
+  overall[, overall_overlap_gene_symbols_list := lapply(overall_keys, function(x) unique(x[!is.na(gene_canonical) & nzchar(gene_canonical), gene_canonical]))]
+  overall[, overall_gene_match_summary := vapply(overall_keys, function(x) .gene_symbol_match_summary(x$gene_match_type), character(1))]
+  overall[, overall_overlap_genes := vapply(overall_overlap_genes_list, paste, character(1), collapse = ";")]
+  overall[, overall_overlap_gene_symbols := vapply(overall_overlap_gene_symbols_list, paste, character(1), collapse = ";")]
+  overall[, overall_overlap_hits := lengths(overall_overlap_gene_keys_list)]
+  overall_small <- overall[, .(
+    topic,
+    pathway,
+    database,
+    overall_pval = as.numeric(pval),
+    overall_padj = as.numeric(padj),
+    overall_overlap = as.character(overlap),
+    overall_overlap_hits = as.integer(overall_overlap_hits),
+    overall_overlap_genes,
+    overall_overlap_gene_symbols,
+    overall_gene_match_summary,
+    overall_overlap_genes_list,
+    overall_overlap_gene_keys_list,
+    overall_overlap_gene_symbols_list,
+    term_size = as.integer(term_size),
+    background_size = as.integer(background_size),
+    overall_cluster_size = if ("cluster_size" %in% names(overall)) as.integer(cluster_size) else NA_integer_,
+    overall_combined_score = if ("combined_score" %in% names(overall)) as.numeric(combined_score) else NA_real_,
+    overall_odds_ratio = if ("odds_ratio" %in% names(overall)) as.numeric(odds_ratio) else NA_real_
+  )]
+  overall_small <- overall_small[is.finite(term_size) & term_size > 0 & is.finite(background_size) & background_size > 0]
+  if (!nrow(overall_small)) return(data.table::data.table())
+
+  res <- merge(
+    query_dt,
+    overall_small,
+    by = "topic",
+    allow.cartesian = TRUE,
+    sort = FALSE
+  )
+  if (!nrow(res)) return(data.table::data.table())
+  res[, overlap_gene_key_list := Map(intersect, query_gene_keys, overall_overlap_gene_keys_list)]
+  res[, overlap_gene_list := Map(function(genes, keys, keep_keys) {
+    out <- genes[keys %in% keep_keys]
+    sort(unique(out[!is.na(out) & nzchar(out)]))
+  }, query_genes, query_gene_keys, overlap_gene_key_list)]
+  res[, overlap_gene_symbol_list := Map(function(genes, keys, keep_keys) {
+    out <- genes[keys %in% keep_keys]
+    sort(unique(out[!is.na(out) & nzchar(out)]))
+  }, query_gene_symbols, query_gene_keys, overlap_gene_key_list)]
+  res[, overlap_hits := lengths(overlap_gene_key_list)]
+  res[, overlap_genes := vapply(overlap_gene_list, paste, character(1), collapse = ";")]
+  res[, overlap_gene_symbols := vapply(overlap_gene_symbol_list, paste, character(1), collapse = ";")]
+  res[, pval := stats::phyper(
+    q = overlap_hits - 1,
+    m = term_size,
+    n = background_size - term_size,
+    k = query_size,
+    lower.tail = FALSE
+  )]
+  res[!is.finite(pval), pval := NA_real_]
+  res[, padj := stats::p.adjust(pval, method = "BH"), by = .(comparison_id, direction_group, topic, database)]
+  res[, odds_ratio := {
+    a <- as.numeric(overlap_hits)
+    b <- as.numeric(query_size) - a
+    c <- as.numeric(term_size) - a
+    d <- as.numeric(background_size) - as.numeric(term_size) - b
+    out <- (a * d) / (b * c)
+    out[!is.finite(out)] <- Inf
+    out
+  }]
+  res[, combined_score := odds_ratio * -log(pmax(pval, 1e-300))]
+  res[, logp := -log10(pmax(padj, .Machine$double.xmin))]
+  res[, overlap := paste0(overlap_hits, "/", term_size)]
+  res[, comparison_topic_genes := vapply(query_genes, paste, character(1), collapse = ";")]
+  res[, comparison_topic_gene_symbols := vapply(query_gene_symbols, paste, character(1), collapse = ";")]
+  res[, c(
+    "query_genes", "query_gene_symbols", "query_gene_keys", "overall_overlap_genes_list",
+    "overall_overlap_gene_keys_list", "overall_overlap_gene_symbols_list",
+    "overlap_gene_key_list", "overlap_gene_list", "overlap_gene_symbol_list"
+  ) := NULL]
+  data.table::setcolorder(res, c(
+    "comparison_id", "direction_group", "topic", "pathway", "database",
+    "pval", "padj", "logp", "overlap", "overlap_hits", "overlap_genes",
+    "overlap_gene_symbols",
+    "query_size", "term_size", "background_size", "odds_ratio", "combined_score",
+    "comparison_topic_genes", "comparison_topic_gene_symbols", "topic_gene_count",
+    "gene_match_summary", "overall_pval", "overall_padj",
+    "overall_overlap", "overall_overlap_hits", "overall_overlap_genes",
+    "overall_overlap_gene_symbols", "overall_gene_match_summary",
+    "overall_cluster_size", "overall_combined_score", "overall_odds_ratio"
+  ))
+  data.table::setorder(res, comparison_id, direction_group, topic, padj, pval, -overlap_hits, pathway)
+  out_file <- file.path(out_dir_pc, "topic_term_pathway_enrichment.csv")
+  data.table::fwrite(res, out_file)
+  res[]
 }
 
 topic_gene_ranks <- function(topic_terms,
@@ -3968,14 +5045,311 @@ compute_link_topic_scores <- function(edges_docs,
   list(p_emp = p_emp, q_emp = q_emp)
 }
 
+.topic_item_coverage_row <- function(unit, total, pass, count_basis) {
+  total <- as.numeric(total)
+  pass <- as.numeric(pass)
+  if (!is.finite(total) || total < 0) total <- 0
+  if (!is.finite(pass) || pass < 0) pass <- 0
+  pass <- min(pass, total)
+  fraction <- if (total > 0) c(pass / total, (total - pass) / total) else c(NA_real_, NA_real_)
+  data.table::data.table(
+    unit = unit,
+    status = c("Pass", "Fail"),
+    count = c(pass, total - pass),
+    total = total,
+    fraction = fraction,
+    percent = 100 * fraction,
+    count_basis = count_basis
+  )
+}
+
+.topic_item_coverage_from_terms <- function(topic_terms, score_mat = NULL) {
+  total_terms <- character()
+  pass_terms <- character()
+  if (!is.null(score_mat) && !is.null(colnames(score_mat))) {
+    total_terms <- unique(as.character(colnames(score_mat)))
+  }
+  if (!is.null(topic_terms)) {
+    tt <- data.table::as.data.table(topic_terms)
+    if (nrow(tt) && "term_id" %in% names(tt)) {
+      total_terms <- union(total_terms, unique(as.character(tt$term_id)))
+      if ("in_topic" %in% names(tt)) {
+        pass_terms <- unique(as.character(tt[.as_logical_flag(in_topic), term_id]))
+      }
+    }
+  }
+  total_terms <- total_terms[!is.na(total_terms) & nzchar(total_terms)]
+  pass_terms <- pass_terms[!is.na(pass_terms) & nzchar(pass_terms)]
+  .topic_item_coverage_row(
+    unit = "Terms",
+    total = length(total_terms),
+    pass = length(pass_terms),
+    count_basis = "Model terms assigned to at least one topic"
+  )
+}
+
+.topic_term_coverage_summary_lines <- function(topic_terms, score_mat = NULL) {
+  total_terms <- character()
+  pass_terms <- character()
+  if (!is.null(score_mat) && !is.null(colnames(score_mat))) {
+    total_terms <- unique(as.character(colnames(score_mat)))
+  }
+  if (!is.null(topic_terms)) {
+    tt <- data.table::as.data.table(topic_terms)
+    if (nrow(tt) && "term_id" %in% names(tt)) {
+      total_terms <- union(total_terms, unique(as.character(tt$term_id)))
+      if ("in_topic" %in% names(tt)) {
+        pass_terms <- unique(as.character(tt[.as_logical_flag(in_topic), term_id]))
+      }
+    }
+  }
+  total_terms <- total_terms[!is.na(total_terms) & nzchar(total_terms)]
+  pass_terms <- pass_terms[!is.na(pass_terms) & nzchar(pass_terms)]
+
+  .fmt_line <- function(label, total, pass) {
+    pct <- if (total > 0) 100 * pass / total else NA_real_
+    pct_txt <- if (is.finite(pct)) sprintf("%.2f", pct) else "NA"
+    sprintf("%s: %d / %d = %s%%", label, as.integer(pass), as.integer(total), pct_txt)
+  }
+
+  total_gene <- total_terms[grepl("^GENE:", total_terms)]
+  pass_gene <- intersect(pass_terms, total_gene)
+  total_peak <- total_terms[grepl("^PEAK:", total_terms)]
+  pass_peak <- intersect(pass_terms, total_peak)
+  c(
+    .fmt_line("Terms", length(total_terms), length(intersect(pass_terms, total_terms))),
+    .fmt_line("GENE terms", length(total_gene), length(pass_gene)),
+    .fmt_line("PEAK terms", length(total_peak), length(pass_peak))
+  )
+}
+
+.topic_assignment_coverage_summary_table <- function(topic_terms,
+                                                     score_mat = NULL,
+                                                     item_coverage = NULL,
+                                                     show_peak_expanded_link_coverage = TRUE) {
+  total_terms <- character()
+  pass_terms <- character()
+  if (!is.null(score_mat) && !is.null(colnames(score_mat))) {
+    total_terms <- unique(as.character(colnames(score_mat)))
+  }
+  if (!is.null(topic_terms)) {
+    tt <- data.table::as.data.table(topic_terms)
+    if (nrow(tt) && "term_id" %in% names(tt)) {
+      total_terms <- union(total_terms, unique(as.character(tt$term_id)))
+      if ("in_topic" %in% names(tt)) {
+        pass_terms <- unique(as.character(tt[.as_logical_flag(in_topic), term_id]))
+      }
+    }
+  }
+  total_terms <- total_terms[!is.na(total_terms) & nzchar(total_terms)]
+  pass_terms <- pass_terms[!is.na(pass_terms) & nzchar(pass_terms)]
+
+  make_row <- function(label, pass, total) {
+    pass <- as.numeric(pass)
+    total <- as.numeric(total)
+    if (!is.finite(pass) || pass < 0) pass <- 0
+    if (!is.finite(total) || total < 0) total <- 0
+    pass <- min(pass, total)
+    percent <- if (total > 0) 100 * pass / total else NA_real_
+    data.table::data.table(
+      label = label,
+      pass = pass,
+      total = total,
+      percent = percent,
+      label_text = sprintf(
+        "%d / %d = %s%%",
+        as.integer(pass),
+        as.integer(total),
+        if (is.finite(percent)) sprintf("%.2f", percent) else "NA"
+      )
+    )
+  }
+
+  total_gene_terms <- total_terms[grepl("^GENE:", total_terms)]
+  total_peak_terms <- total_terms[grepl("^PEAK:", total_terms)]
+  out <- list(
+    make_row("Terms", length(intersect(pass_terms, total_terms)), length(total_terms)),
+    make_row("GENE terms", length(intersect(pass_terms, total_gene_terms)), length(total_gene_terms)),
+    make_row("PEAK terms", length(intersect(pass_terms, total_peak_terms)), length(total_peak_terms))
+  )
+  if (!is.null(item_coverage)) {
+    cov <- data.table::as.data.table(item_coverage)
+    req <- c("unit", "status", "count", "total")
+    if (nrow(cov) && all(req %in% names(cov))) {
+      cov <- cov[status == "Pass" & unit %in% c("Genes", "TF-gene-doc links", "Links", "TFs")]
+      if ("count_basis" %in% names(cov)) {
+        cov <- cov[unit != "TFs" | grepl("raw theta", count_basis, ignore.case = TRUE)]
+      }
+      if (nrow(cov)) {
+        cov[, unit_order__ := match(unit, c("Genes", "TF-gene-doc links", "Links", "TFs"))]
+        data.table::setorder(cov, unit_order__)
+        cov[, unit_order__ := NULL]
+        for (i in seq_len(nrow(cov))) {
+          if (identical(cov$unit[[i]], "Links") && !isTRUE(show_peak_expanded_link_coverage)) {
+            next
+          }
+          label_i <- if (identical(cov$unit[[i]], "Links")) "TF-peak-gene links" else cov$unit[[i]]
+          out[[length(out) + 1L]] <- make_row(label_i, cov$count[[i]], cov$total[[i]])
+        }
+      }
+    }
+  }
+  data.table::rbindlist(out, use.names = TRUE, fill = TRUE)
+}
+
+.topic_item_coverage_from_links <- function(scored_links, pass_links) {
+  scored_links <- data.table::as.data.table(scored_links)
+  pass_links <- data.table::as.data.table(pass_links)
+  out <- list()
+  if ("gene_key" %in% names(scored_links)) {
+    total_genes <- unique(as.character(scored_links[!is.na(gene_key) & nzchar(gene_key), gene_key]))
+    pass_genes <- if ("gene_key" %in% names(pass_links)) {
+      unique(as.character(pass_links[!is.na(gene_key) & nzchar(gene_key), gene_key]))
+    } else {
+      character()
+    }
+    out[[length(out) + 1L]] <- .topic_item_coverage_row(
+      unit = "Genes",
+      total = length(total_genes),
+      pass = length(pass_genes),
+      count_basis = "Genes assigned to at least one topic"
+    )
+  }
+  link_key_cols <- intersect(c("doc_id", "tf", "peak_id", "gene_key"), names(scored_links))
+  if (length(link_key_cols) >= 3L) {
+    make_link_key <- function(x) {
+      x <- data.table::as.data.table(x)
+      if (!nrow(x) || !all(link_key_cols %in% names(x))) return(character())
+      key_dt <- unique(x[, ..link_key_cols])
+      for (cc in link_key_cols) {
+        key_dt[[cc]] <- as.character(key_dt[[cc]])
+        key_dt[[cc]][is.na(key_dt[[cc]])] <- ""
+      }
+      key <- do.call(paste, c(key_dt[, ..link_key_cols], sep = "\r"))
+      unique(key[nzchar(key)])
+    }
+    total_links <- make_link_key(scored_links)
+    pass_links_key <- make_link_key(pass_links)
+    out[[length(out) + 1L]] <- .topic_item_coverage_row(
+      unit = "Links",
+      total = length(total_links),
+      pass = length(intersect(pass_links_key, total_links)),
+      count_basis = "TF-peak-gene links assigned to at least one topic"
+    )
+  }
+  tf_gene_doc_cols <- intersect(c("doc_id", "tf", "gene_key"), names(scored_links))
+  if (length(tf_gene_doc_cols) >= 2L) {
+    make_tf_gene_doc_key <- function(x) {
+      x <- data.table::as.data.table(x)
+      if (!nrow(x) || !all(tf_gene_doc_cols %in% names(x))) return(character())
+      key_dt <- unique(x[, ..tf_gene_doc_cols])
+      for (cc in tf_gene_doc_cols) {
+        key_dt[[cc]] <- as.character(key_dt[[cc]])
+        key_dt[[cc]][is.na(key_dt[[cc]])] <- ""
+      }
+      key <- do.call(paste, c(key_dt[, ..tf_gene_doc_cols], sep = "\r"))
+      unique(key[nzchar(key)])
+    }
+    total_tf_gene_doc <- make_tf_gene_doc_key(scored_links)
+    pass_tf_gene_doc <- make_tf_gene_doc_key(pass_links)
+    out[[length(out) + 1L]] <- .topic_item_coverage_row(
+      unit = "TF-gene-doc links",
+      total = length(total_tf_gene_doc),
+      pass = length(intersect(pass_tf_gene_doc, total_tf_gene_doc)),
+      count_basis = "TF-gene-document links assigned to at least one topic"
+    )
+  }
+  if ("tf" %in% names(scored_links)) {
+    total_tfs <- unique(as.character(scored_links[!is.na(tf) & nzchar(tf), tf]))
+    pass_tfs <- if ("tf" %in% names(pass_links)) {
+      unique(as.character(pass_links[!is.na(tf) & nzchar(tf), tf]))
+    } else {
+      character()
+    }
+    out[[length(out) + 1L]] <- .topic_item_coverage_row(
+      unit = "TFs",
+      total = length(total_tfs),
+      pass = length(pass_tfs),
+      count_basis = "TFs represented in at least one passing topic link"
+    )
+  }
+  if (!length(out)) return(data.table::data.table())
+  data.table::rbindlist(out, use.names = TRUE, fill = TRUE)
+}
+
+.topic_item_coverage_from_tf_assignment <- function(assign) {
+  if (is.null(assign) || !is.list(assign)) return(data.table::data.table())
+  primary <- data.table::as.data.table(assign$primary %||% data.table::data.table())
+  pass <- data.table::as.data.table(assign$pass %||% data.table::data.table())
+  if (!nrow(primary) || !"tf" %in% names(primary)) {
+    return(data.table::data.table())
+  }
+  total_tfs <- unique(as.character(primary[!is.na(tf) & nzchar(tf), tf]))
+  pass_tfs <- if (nrow(pass) && "tf" %in% names(pass)) {
+    unique(as.character(pass[!is.na(tf) & nzchar(tf), tf]))
+  } else {
+    character()
+  }
+  .topic_item_coverage_row(
+    unit = "TFs",
+    total = length(total_tfs),
+    pass = length(pass_tfs),
+    count_basis = "TFs assigned to at least one topic from raw theta documents"
+  )
+}
+
+.replace_tf_item_coverage_with_assignment <- function(out_dir, assign) {
+  .assert_pkg("data.table")
+  tf_coverage <- .topic_item_coverage_from_tf_assignment(assign)
+  if (!nrow(tf_coverage)) return(invisible(FALSE))
+  coverage_path <- file.path(out_dir, "topic_item_coverage_counts.csv")
+  if (file.exists(coverage_path)) {
+    coverage <- data.table::fread(coverage_path, showProgress = FALSE)
+    coverage <- coverage[unit != "TFs"]
+  } else {
+    coverage <- data.table::data.table()
+  }
+  coverage <- data.table::rbindlist(
+    list(coverage, tf_coverage),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  unit_levels <- c("Terms", "Genes", "TF-gene-doc links", "Links", "TFs")
+  coverage[, unit_order__ := match(unit, unit_levels)]
+  coverage[is.na(unit_order__), unit_order__ := length(unit_levels) + seq_len(sum(is.na(unit_order__)))]
+  status_levels <- c("Pass", "Fail")
+  coverage[, status_order__ := match(status, status_levels)]
+  coverage[is.na(status_order__), status_order__ := length(status_levels) + seq_len(sum(is.na(status_order__)))]
+  data.table::setorder(coverage, unit_order__, status_order__)
+  coverage[, c("unit_order__", "status_order__") := NULL]
+  data.table::fwrite(coverage, coverage_path)
+  invisible(TRUE)
+}
+
+.topic_item_coverage_from_scored_objects <- function(scored_links,
+                                                     pass_links,
+                                                     topic_terms = NULL,
+                                                     score_mat = NULL) {
+  data.table::rbindlist(
+    list(
+      .topic_item_coverage_from_terms(topic_terms, score_mat),
+      .topic_item_coverage_from_links(scored_links, pass_links)
+    ),
+    use.names = TRUE,
+    fill = TRUE
+  )
+}
+
 compute_topic_links <- function(edges_docs,
                                 score_mat,
                                 raw_score_mat = NULL,
                                 topic_terms = NULL,
+                                theta = NULL,
+                                topic_tf_membership_cutoff = 0.3,
                                 fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                 binarize_method = c("gammafit", "topn"),
                                 gammafit_scope = c("topic_term_group", "global_term_group"),
-                                link_method = c("gammafit", "link_score_efdr", "link_score_prob", "gene_prob"),
+                                link_method = c("gammafit", "theta_and_terms", "link_score_efdr", "link_score_prob", "gene_prob"),
                                 link_prob_cutoff = 0.3,
                                 thrP = 0.975,
                                 min_terms = 50L,
@@ -4015,7 +5389,7 @@ compute_topic_links <- function(edges_docs,
     } else {
       link_prob_cutoff <- "max"
     }
-  } else {
+  } else if (!identical(link_method, "gammafit") && !identical(link_method, "theta_and_terms")) {
     use_p_cut <- is.finite(fdr_p) && fdr_p > 0 && fdr_p < 1
     use_q_cut <- is.finite(fdr_q) && fdr_q > 0 && fdr_q < 1
     if (!use_p_cut && !use_q_cut) {
@@ -4068,6 +5442,30 @@ compute_topic_links <- function(edges_docs,
     raw_score_mat <- score_mat
   } else {
     raw_score_mat <- raw_score_mat[, term_ids, drop = FALSE]
+  }
+  theta_gate <- NULL
+  theta_cutoff <- .safe_num(topic_tf_membership_cutoff)
+  if (identical(link_method, "theta_and_terms")) {
+    if (is.null(theta)) {
+      .log_abort("theta is required when link_method = 'theta_and_terms'.")
+    }
+    theta_gate <- as.matrix(theta)
+    if (is.null(rownames(theta_gate))) {
+      .log_abort("theta must have document row names when link_method = 'theta_and_terms'.")
+    }
+    if (ncol(theta_gate) != K) {
+      .log_abort("theta must have the same number of topic columns as score_mat rows.")
+    }
+    if (!is.null(colnames(theta_gate)) && !is.null(rownames(score_mat))) {
+      theta_match <- match(rownames(score_mat), colnames(theta_gate))
+      if (all(is.finite(theta_match))) {
+        theta_gate <- theta_gate[, theta_match, drop = FALSE]
+      }
+    }
+    theta_gate[!is.finite(theta_gate) | theta_gate < 0] <- 0
+    if (!is.finite(theta_cutoff) || theta_cutoff < 0 || theta_cutoff > 1) {
+      .log_abort("topic_tf_membership_cutoff must be between 0 and 1 for theta_and_terms.")
+    }
   }
 
   dt <- dt[!is.na(doc_id) & nzchar(doc_id)]
@@ -4141,6 +5539,18 @@ compute_topic_links <- function(edges_docs,
     gene_score_gate <- as.vector(gene_scores_gate)
     peaks_gamma_cutoff <- rep(gamma_cutoffs_peak, times = n)
     gene_gamma_cutoff <- rep(gamma_cutoffs_gene, times = n)
+    theta_value <- rep(NA_real_, length(rep_topic))
+    theta_pass <- rep(TRUE, length(rep_topic))
+    if (identical(link_method, "theta_and_terms")) {
+      theta_rows <- match(chunk_dt$doc_id, rownames(theta_gate))
+      theta_chunk <- matrix(NA_real_, nrow = n, ncol = K)
+      ok_theta <- !is.na(theta_rows)
+      if (any(ok_theta)) {
+        theta_chunk[ok_theta, ] <- theta_gate[theta_rows[ok_theta], , drop = FALSE]
+      }
+      theta_value <- as.vector(t(theta_chunk))
+      theta_pass <- is.finite(theta_value) & theta_value >= theta_cutoff
+    }
     if (binarize_method == "gammafit") {
       if (has_peak_terms) {
         peak_pass <- is.finite(peaks_gamma_cutoff) & peak_score_gate >= peaks_gamma_cutoff & peak_score_gate > 0
@@ -4189,6 +5599,27 @@ compute_topic_links <- function(edges_docs,
         link_pass = TRUE
       ))
     }
+    if (identical(link_method, "theta_and_terms")) {
+      keep <- peak_pass & gene_pass & theta_pass
+      if (!any(keep)) return(data.table::data.table())
+      return(data.table::data.table(
+        doc_id = rep_doc[keep],
+        tf = rep_tf[keep],
+        peak_id = rep_peak[keep],
+        gene_key = rep_gene[keep],
+        topic_num = rep_topic[keep],
+        peak_score = peak_score[keep],
+        gene_score = gene_score[keep],
+        peaks_gamma_cutoff = peaks_gamma_cutoff[keep],
+        gene_gamma_cutoff = gene_gamma_cutoff[keep],
+        peak_pass = peak_pass[keep],
+        gene_pass = gene_pass[keep],
+        theta = theta_value[keep],
+        theta_cutoff = theta_cutoff,
+        theta_pass = TRUE,
+        link_pass = TRUE
+      ))
+    }
     data.table::data.table(
       doc_id = rep_doc,
       tf = rep_tf,
@@ -4230,6 +5661,13 @@ compute_topic_links <- function(edges_docs,
     gammafit_label <- if (identical(fp_term_mode, "aggregate_weight")) "gene_only" else "peak_and_gene"
     .log_inform(
       "topic_links gammafit: {gammafit_label} pass {n_pass_gammafit}/{n_before_gammafit} rows."
+    )
+  } else if (identical(link_method, "theta_and_terms")) {
+    n_before_theta <- nrow(dt) * K
+    n_pass_theta <- nrow(out)
+    theta_label <- if (identical(fp_term_mode, "aggregate_weight")) "theta_and_gene" else "theta_peak_and_gene"
+    .log_inform(
+      "topic_links theta_and_terms: {theta_label} pass {n_pass_theta}/{n_before_theta} rows (theta>={theta_cutoff})."
     )
   } else if (identical(link_method, "link_score_prob")) {
     out[, link_score := peak_score * gene_score]
@@ -4344,7 +5782,7 @@ compute_topic_links <- function(edges_docs,
     }
   }
 
-  pass_dt <- if (identical(link_method, "gammafit")) {
+  pass_dt <- if (identical(link_method, "gammafit") || identical(link_method, "theta_and_terms")) {
     out[.as_logical_flag(link_pass)]
   } else if (identical(link_method, "gene_prob")) {
     out[.as_logical_flag(peak_pass) & .as_logical_flag(gene_prob_pass)]
@@ -4362,8 +5800,9 @@ compute_topic_links <- function(edges_docs,
     data.table::fwrite(pass_dt, pass_file)
   }
   if (!is.null(out_file) || !is.null(pass_file)) {
-    summary_file <- file.path(dirname(if (!is.null(pass_file)) pass_file else out_file), "topic_link_summary.csv")
-    n_scored_rows <- if (identical(link_method, "gammafit")) {
+    summary_dir <- dirname(if (!is.null(pass_file)) pass_file else out_file)
+    summary_file <- file.path(summary_dir, "topic_link_summary.csv")
+    n_scored_rows <- if (identical(link_method, "gammafit") || identical(link_method, "theta_and_terms")) {
       as.double(nrow(dt) * K)
     } else {
       as.double(nrow(out))
@@ -4377,8 +5816,15 @@ compute_topic_links <- function(edges_docs,
       pass_file = if (output_mode %in% c("pass", "both") && !is.null(pass_file)) basename(pass_file) else NA_character_
     )
     data.table::fwrite(summary_dt, summary_file)
+    coverage_dt <- .topic_item_coverage_from_scored_objects(
+      scored_links = dt,
+      pass_links = pass_dt,
+      topic_terms = topic_terms,
+      score_mat = score_mat
+    )
+    data.table::fwrite(coverage_dt, file.path(summary_dir, "topic_item_coverage_counts.csv"))
   }
-  if (identical(link_method, "gammafit")) {
+  if (identical(link_method, "gammafit") || identical(link_method, "theta_and_terms")) {
     out[.as_logical_flag(link_pass)]
   } else {
     out[]
@@ -4494,8 +5940,10 @@ link_scores_to_gene_sets <- function(link_scores,
     GO_Molecular_Function_2023 = "GO:MF",
     Reactome_2022 = "Reactome",
     WikiPathways_2024_Human = "WikiPathways",
+    WikiPathways_2024_Mouse = "WikiPathways",
     MSigDB_Hallmark_2020 = "Hallmark",
-    KEGG_2021_Human = "KEGG"
+    KEGG_2021_Human = "KEGG",
+    KEGG_2019_Mouse = "KEGG"
   )
   if (db %in% names(db_short)) db_short[[db]] else db
 }
@@ -4528,7 +5976,10 @@ link_scores_to_gene_sets <- function(link_scores,
       logp = -log10(df$Adjusted.P.value),
       combined_score = as.numeric(combined_score),
       odds_ratio = as.numeric(odds_ratio),
-      cluster_size = length(genes)
+      cluster_size = length(genes),
+      query_size = if ("query_size" %in% names(df)) as.integer(df$query_size) else length(genes),
+      term_size = if ("term_size" %in% names(df)) as.integer(df$term_size) else NA_integer_,
+      background_size = if ("background_size" %in% names(df)) as.integer(df$background_size) else NA_integer_
     )
   })
   data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
@@ -4845,18 +6296,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   option_label,
                                                   out_file,
                                                   theta = NULL,
-                                                  dbs = c(
-                                                    "GO_Biological_Process_2023",
-                                                    "GO_Cellular_Component_2023",
-                                                    "GO_Molecular_Function_2023",
-                                                    "Reactome_2022",
-                                                    "WikiPathways_2024_Human",
-                                                    "MSigDB_Hallmark_2020",
-                                                    "KEGG_2021_Human"
-                                                  ),
+                                                  dbs = NULL,
+                                                  pathway_species = NULL,
                                                   padj_cut = 0.05,
                                                   min_genes = 5L,
                                                   top_n_per_topic = 20L,
+                                                  dot_top_n_per_topic = 25L,
                                                   max_pathways = 200L,
                                                   title_prefix = NULL,
                                                   use_all_terms = FALSE,
@@ -4874,8 +6319,9 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
   if (is.null(enrichr_cache_dir)) {
-    enrichr_cache_dir <- file.path(dirname(out_file), "cache", "enrichr")
+    enrichr_cache_dir <- .module3_default_enrichr_cache_dir(dirname(out_file), backend = pathway_backend)
   }
   log_path <- file.path(dirname(out_file), "topic_pathway_enrichment_debug.txt")
   log_msg <- function(msg) {
@@ -4892,7 +6338,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   }
 
   if (!.pathway_backend_available(pathway_backend)) {
-    msg <- "Skipping pathway enrichment heatmap: neither enrichly nor enrichR is installed."
+    backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
+    msg <- sprintf("Skipping pathway enrichment heatmap: selected backend is not installed: %s.", backend_label)
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
@@ -4946,15 +6393,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     }
   }
 
-  gene_sets <- topic_gene_sets(
+  gene_sets <- topic_gene_sets_from_terms(
     topic_terms = topic_terms,
     edges_docs = edges_docs,
     option_label = option_label,
     use_all_terms = use_all_terms,
-    theta = theta,
-    tf_link_mode = tf_link_mode,
-    tf_theta_top_n = tf_theta_top_n,
-    tf_theta_min = tf_theta_min
+    include_peak_terms = !identical(option_label, "opt3_gene_fc_expr")
   )
   if (!length(gene_sets)) {
     msg <- "Skipping pathway enrichment heatmap: no topic gene sets after mapping."
@@ -4963,8 +6407,22 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     return(invisible(NULL))
   }
   log_msg(sprintf("Option: %s", option_label))
+  log_msg("Gene set source: assigned topic terms.")
   log_msg(sprintf("Topics with gene sets: %s", paste(names(gene_sets), collapse = ",")))
   log_msg(sprintf("DBs: %s", paste(dbs, collapse = ",")))
+  gene_set_dt <- data.table::rbindlist(
+    lapply(names(gene_sets), function(nm) {
+      data.table::data.table(topic = as.integer(nm), gene = gene_sets[[nm]])
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  if (nrow(gene_set_dt)) {
+    data.table::fwrite(
+      gene_set_dt,
+      file.path(dirname(out_file), "topic_pathway_gene_sets.csv")
+    )
+  }
 
   res_list <- vector("list", length(gene_sets))
   names(res_list) <- names(gene_sets)
@@ -4981,7 +6439,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
         dbs = dbs,
         sleep_time = enrichr_sleep_time,
         cache_dir = enrichr_cache_dir,
-        backend = pathway_backend
+        backend = pathway_backend,
+        pathway_species = pathway_species
       )),
       error = function(e) {
         log_msg(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
@@ -4992,38 +6451,8 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
       log_msg(sprintf("Topic %s enrichr returned NULL.", nm))
       return(NULL)
     }
-    rows <- lapply(names(enr), function(db) {
-      df <- enr[[db]]
-      if (is.null(df) || !nrow(df)) return(NULL)
-      if (!("Adjusted.P.value" %in% names(df)) || !("Term" %in% names(df))) return(NULL)
-      df <- df[is.finite(df$Adjusted.P.value) & df$Adjusted.P.value <= padj_cut, , drop = FALSE]
-      if (!nrow(df)) return(NULL)
-      db_short <- c(
-        GO_Biological_Process_2023 = "GO:BP",
-        GO_Cellular_Component_2023 = "GO:CC",
-        GO_Molecular_Function_2023 = "GO:MF",
-        Reactome_2022 = "Reactome",
-        WikiPathways_2024_Human = "WikiPathways",
-        MSigDB_Hallmark_2020 = "Hallmark",
-        KEGG_2021_Human = "KEGG"
-      )
-      db_label <- if (db %in% names(db_short)) db_short[[db]] else db
-      term_clean <- gsub("\\s*\\([^)]*\\)$", "", df$Term)
-      combined_score <- if ("Combined.Score" %in% names(df)) df$Combined.Score else NA_real_
-      odds_ratio <- if ("Odds.Ratio" %in% names(df)) df$Odds.Ratio else NA_real_
-      data.table::data.table(
-        topic = as.integer(nm),
-        pathway = paste(db_label, term_clean, sep = ": "),
-        padj = as.numeric(df$Adjusted.P.value),
-        pval = if ("P.value" %in% names(df)) as.numeric(df$P.value) else NA_real_,
-        overlap = if ("Overlap" %in% names(df)) as.character(df$Overlap) else NA_character_,
-        genes = if ("Genes" %in% names(df)) as.character(df$Genes) else NA_character_,
-        logp = -log10(df$Adjusted.P.value),
-        combined_score = as.numeric(combined_score),
-        odds_ratio = as.numeric(odds_ratio)
-      )
-    })
-    out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+    out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
+    out <- out[is.finite(padj) & padj <= as.numeric(padj_cut)]
     n_hits <- nrow(out)
     log_msg(sprintf("Topic %s enriched pathways: %d (padj<=%s)", nm, n_hits, padj_cut))
     out
@@ -5072,6 +6501,10 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   }
   res_dt[, topic := as.integer(topic)]
   data.table::setorder(res_dt, topic)
+  data.table::fwrite(
+    res_dt,
+    file.path(dirname(out_file), "topic_pathway_enrichment_topic_terms.csv")
+  )
   log_msg(sprintf("Total enriched pathways (unique): %d", length(unique(res_dt$pathway))))
   log_msg(sprintf("Debug log written to: %s", log_path))
 
@@ -5130,71 +6563,206 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   if (isTRUE(make_dotplot) && requireNamespace("ggplot2", quietly = TRUE)) {
     dot_path <- file.path(dirname(out_file), "topic_pathway_enrichment_dotplot.pdf")
     plot_dt <- data.table::copy(res_dt)
+    plot_dt <- plot_dt[is.finite(padj)]
     plot_dt[, topic_num := as.integer(topic)]
-    plot_dt[, topic := paste0("Topic", topic_num)]
-    plot_dt[, score_val := ifelse(is.finite(combined_score), combined_score, ifelse(is.finite(odds_ratio), odds_ratio, logp))]
-    plot_dt[, score_val := pmax(score_val, 0)]
-    plot_dt[, size_val := sqrt(score_val)]
-    path_order <- plot_dt[, .(
-      min_topic = min(topic_num, na.rm = TRUE),
-      max_score = max(score_val, na.rm = TRUE)
-    ), by = pathway]
-    path_order <- path_order[order(min_topic, -max_score)]
-    plot_dt[, pathway := factor(pathway, levels = rev(path_order$pathway))]
-    plot_dt[, topic := factor(topic, levels = paste0("Topic", sort(unique(topic_num))))]
-
-    n_topics_plot <- length(unique(plot_dt$topic))
-    n_paths_plot <- length(unique(plot_dt$pathway))
-    wrap_label <- function(x, width = 70) {
-      vapply(x, function(s) paste(strwrap(s, width = width), collapse = "\n"), character(1))
+    plot_dt <- plot_dt[is.finite(topic_num)]
+    if (!("overlap_hits" %in% names(plot_dt))) {
+      plot_dt[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
     }
-    size_range <- if (n_paths_plot > 80) c(0.6, 5) else c(1, 8)
+    plot_dt[is.na(overlap_hits), overlap_hits := 0L]
+    plot_dt[, pathway_key := pathway]
+    dot_n <- suppressWarnings(as.integer(dot_top_n_per_topic[[1L]]))
+    if (!is.finite(dot_n) || dot_n <= 0L) {
+      dot_n <- suppressWarnings(as.integer(top_n_per_topic[[1L]]))
+    }
+    if (!is.finite(dot_n) || dot_n <= 0L) dot_n <- 12L
+    top_dt <- if (nrow(plot_dt)) {
+      plot_dt[, {
+        ranked <- .SD[order(padj, -overlap_hits, pathway)]
+        sig <- ranked[padj <= as.numeric(padj_cut)]
+        if (nrow(sig)) head(sig, dot_n) else head(ranked, dot_n)
+      }, by = topic_num]
+    } else {
+      plot_dt
+    }
+    if (nrow(top_dt)) {
+      plot_dt <- plot_dt[pathway_key %in% unique(top_dt$pathway_key)]
+      sig_keys <- unique(plot_dt[padj <= as.numeric(padj_cut), pathway_key])
+      plot_dt <- plot_dt[pathway_key %in% sig_keys]
+    }
+    if (nrow(plot_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
+      path_rank <- plot_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway_key]
+      if (nrow(path_rank) > as.integer(max_pathways)) {
+        keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway_key]
+        plot_dt <- plot_dt[pathway_key %in% keep]
+      }
+    }
+    if (!nrow(plot_dt)) {
+      log_msg("Skipping pathway dot plot: no significant pathway terms.")
+      return(invisible(TRUE))
+    }
+    top_key <- unique(top_dt[, .(topic_num, pathway_key)])
+    top_key[, is_topic_top_pathway := TRUE]
+    plot_dt <- merge(plot_dt, top_key, by = c("topic_num", "pathway_key"), all.x = TRUE, sort = FALSE)
+    plot_dt[is.na(is_topic_top_pathway), is_topic_top_pathway := FALSE]
+    topic_levels <- sort(unique(plot_dt$topic_num))
+    row_levels <- character(0)
+    for (tp in topic_levels) {
+      owned <- plot_dt[topic_num == tp & is_topic_top_pathway == TRUE]
+      if (!nrow(owned)) next
+      data.table::setorder(owned, -logp, -overlap_hits, pathway)
+      for (key in owned$pathway_key) {
+        if (!(key %in% row_levels)) row_levels <- c(row_levels, key)
+      }
+    }
+    remaining <- setdiff(unique(plot_dt$pathway_key), row_levels)
+    if (length(remaining)) {
+      remain_rank <- plot_dt[pathway_key %in% remaining, .(
+        max_logp = max(logp, na.rm = TRUE),
+        max_overlap = max(overlap_hits, na.rm = TRUE)
+      ), by = pathway_key]
+      data.table::setorder(remain_rank, -max_logp, -max_overlap, pathway_key)
+      row_levels <- c(row_levels, remain_rank$pathway_key)
+    }
+    if (is.finite(max_pathways) && as.numeric(max_pathways) > 0 &&
+        length(row_levels) > as.integer(max_pathways)) {
+      row_levels <- row_levels[seq_len(as.integer(max_pathways))]
+      plot_dt <- plot_dt[pathway_key %in% row_levels]
+    }
+    plot_dt[, pathway_key := factor(pathway_key, levels = rev(row_levels))]
+    plot_dt[, topic_label := factor(paste0("Topic", topic_num), levels = paste0("Topic", topic_levels))]
+    plot_dt[, score_val := data.table::fifelse(is.finite(combined_score), combined_score, NA_real_)]
+    plot_dt[!is.finite(score_val) & is.finite(odds_ratio), score_val := odds_ratio]
+    plot_dt[!is.finite(score_val) & is.finite(logp), score_val := logp]
+    plot_dt[, score_val := pmax(score_val, 0)]
+    size_cap <- suppressWarnings(stats::quantile(plot_dt$score_val[is.finite(plot_dt$score_val)], probs = 0.95, na.rm = TRUE, names = FALSE))
+    if (is.finite(size_cap)) plot_dt[, score_val := pmin(score_val, size_cap)]
+    plot_dt[, is_sig := is.finite(logp) & logp >= 1.3]
+    dot_csv <- sub("\\.pdf$", ".csv", dot_path)
+    ord_dt <- plot_dt[order(
+      match(pathway_key, levels(pathway_key)),
+      match(topic_label, levels(topic_label))
+    )]
+    data.table::fwrite(ord_dt, dot_csv)
+
+    family <- if (exists(".diff_grn_pathway_font_family", mode = "function")) {
+      .diff_grn_pathway_font_family()
+    } else {
+      "sans"
+    }
+    n_topics_plot <- data.table::uniqueN(plot_dt$topic_label)
+    n_paths_plot <- data.table::uniqueN(plot_dt$pathway_key)
+    max_val <- max(plot_dt$logp[is.finite(plot_dt$logp)], 1.300001, na.rm = TRUE)
+    color_values <- if (exists(".diff_grn_pathway_rescale", mode = "function")) {
+      .diff_grn_pathway_rescale(c(0, 1.3, seq(1.3 + 1e-6, max_val, length.out = 6)))
+    } else {
+      color_breaks <- c(0, 1.3, seq(1.3 + 1e-6, max_val, length.out = 6))
+      color_rng <- range(color_breaks, finite = TRUE)
+      if (!all(is.finite(color_rng)) || diff(color_rng) == 0) {
+        rep(0, length(color_breaks))
+      } else {
+        (color_breaks - color_rng[1]) / diff(color_rng)
+      }
+    }
 
     p <- ggplot2::ggplot(
       plot_dt,
-      ggplot2::aes(x = topic, y = pathway, color = logp, size = size_val)
+      ggplot2::aes(x = topic_label, y = pathway_key, size = score_val)
     ) +
-      ggplot2::geom_point(alpha = 0.9) +
-      ggplot2::scale_color_gradient(
-        low = "#2c7bb6",
-        high = "#d7191c",
-        name = expression(-log[10]~"(adj.P)")
+      ggplot2::geom_point(ggplot2::aes(fill = logp), shape = 21, color = "transparent", alpha = 0.85) +
+      ggplot2::geom_point(
+        data = plot_dt[is_sig == TRUE],
+        ggplot2::aes(fill = logp, color = logp),
+        shape = 21,
+        stroke = 0.7,
+        alpha = 0.95
       ) +
-      ggplot2::scale_size_continuous(name = "Score", range = size_range) +
-      ggplot2::scale_y_discrete(labels = function(x) wrap_label(x, width = 70)) +
+      ggplot2::scale_fill_gradientn(
+        colors = c("grey85", "grey85", grDevices::hcl.colors(6, "Plasma")),
+        values = color_values,
+        limits = c(0, max_val),
+        oob = function(x, range = c(0, 1)) pmin(pmax(x, range[1]), range[2]),
+        name = "-log10 adjusted p-value"
+      ) +
+      ggplot2::scale_color_gradientn(
+        colors = c("grey85", "grey85", grDevices::hcl.colors(6, "Plasma")),
+        values = color_values,
+        limits = c(0, max_val),
+        oob = function(x, range = c(0, 1)) pmin(pmax(x, range[1]), range[2]),
+        guide = "none"
+      ) +
+      ggplot2::scale_size_continuous(name = "Combined score", range = c(0.8, 3.2)) +
+      ggplot2::scale_y_discrete(labels = function(x) {
+        y <- as.character(x)
+        y <- gsub("\\s+", " ", y)
+        too_long <- nchar(y) > 58L
+        y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
+        y
+      }) +
       ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
       ggplot2::labs(
         x = "Topic",
-        y = NULL,
+        y = "Pathway term",
         title = if (!is.null(title_prefix) && nzchar(title_prefix)) {
           paste(title_prefix, "Pathway dot plot", sep = " | ")
         } else {
           "Pathway dot plot"
+        },
+        caption = if (is.finite(dot_n) && as.numeric(dot_n) > 0) {
+          sprintf("Union of top %d pathways per topic; all occurrences shown.", as.integer(dot_n))
+        } else {
+          sprintf("All significant pathways per topic; adjusted p-value <= %s.", as.character(padj_cut))
         }
       ) +
-      ggplot2::theme_minimal(base_size = 11) +
+      ggplot2::theme_bw(base_size = 9, base_family = family) +
       ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", hjust = 0.5),
-        axis.text.y = ggplot2::element_text(size = if (n_paths_plot > 80) 6 else 8, face = "bold"),
-        axis.text.x = ggplot2::element_text(size = 9, face = "bold", angle = 90, vjust = 0.5, hjust = 1),
-        panel.grid.major = ggplot2::element_line(color = "#e6e6e6"),
-        plot.margin = ggplot2::margin(10, 30, 10, 10)
+        text = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        plot.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black", hjust = 0.5),
+        plot.caption = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        axis.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        axis.text.x = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black", angle = 90, vjust = 0.5, hjust = 1),
+        axis.text.y = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        legend.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        legend.text = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black")
       )
 
-    ggplot2::ggsave(
-      dot_path,
-      p,
-      width = max(8, n_topics_plot * 0.6),
-      height = min(50, max(8, n_paths_plot * 0.35)),
-      limitsize = FALSE
-    )
-    dot_csv <- sub("\\.pdf$", ".csv", dot_path)
-    ord_dt <- plot_dt[order(
-      match(pathway, levels(pathway)),
-      match(topic, levels(topic))
-    )]
+    if (exists(".diff_grn_pathway_save_fixed_panel_pdf", mode = "function")) {
+      .diff_grn_pathway_save_fixed_panel_pdf(
+        p,
+        dot_path,
+        panel_width = max(1.2, 0.11 * n_topics_plot),
+        panel_height = max(1.1, 0.17 * n_paths_plot),
+        family = family
+      )
+    } else {
+      ggplot2::ggsave(
+        dot_path,
+        p,
+        width = max(8, n_topics_plot * 0.25),
+        height = max(6, n_paths_plot * 0.2),
+        limitsize = FALSE
+      )
+    }
     data.table::fwrite(
-      ord_dt[, .(topic, pathway, logp, padj, pval, combined_score, odds_ratio, overlap, genes)],
+      ord_dt[, .(
+        topic = topic_num,
+        pathway_key,
+        pathway,
+        padj,
+        pval,
+        overlap,
+        overlap_hits,
+        genes,
+        logp,
+        combined_score,
+        odds_ratio,
+        cluster_size,
+        is_topic_top_pathway,
+        topic_num,
+        topic_label,
+        score_val,
+        is_sig
+      )],
       dot_csv
     )
     log_msg(sprintf("Dot plot table saved to: %s", dot_csv))
@@ -5208,19 +6776,408 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   invisible(TRUE)
 }
 
+plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
+                                                              edges_docs,
+                                                              theta,
+                                                              out_dir,
+                                                              title_prefix = NULL,
+                                                              dbs = NULL,
+                                                              pathway_species = NULL,
+                                                              padj_cut = 0.05,
+                                                              theta_min = 0.3,
+                                                              include_peak_terms = TRUE,
+                                                              use_all_terms = FALSE,
+                                                              per_comparison_dir = ".",
+                                                              per_comparison_flat = TRUE,
+                                                              split_direction = TRUE,
+                                                              min_genes = 5L,
+                                                              top_n_per_topic = 20L,
+                                                              dot_top_n_per_topic = Inf,
+                                                              max_pathways = 200L,
+                                                              make_dotplot = TRUE,
+                                                              enrichr_sleep_time = 0,
+                                                              enrichr_cache_dir = NULL,
+                                                              enrichr_n_cores = 1L,
+                                                              pathway_backend = NULL,
+                                                              background_size = 20000L,
+                                                              overall_pathway_file = NULL,
+                                                              overwrite = FALSE,
+                                                              doc_design = c("comparison", "condition")) {
+  .assert_pkg("data.table")
+  doc_design <- match.arg(doc_design)
+  enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
+  enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
+  pathway_backend <- .pathway_backend(pathway_backend)
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
+  if (is.null(enrichr_cache_dir)) {
+    enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
+  }
+  out_dir_pc <- if (is.null(per_comparison_dir) || !nzchar(as.character(per_comparison_dir)[[1L]]) || identical(as.character(per_comparison_dir)[[1L]], ".")) {
+    out_dir
+  } else {
+    file.path(out_dir, per_comparison_dir)
+  }
+  dir.create(out_dir_pc, recursive = TRUE, showWarnings = FALSE)
+  if (is.null(title_prefix)) title_prefix <- basename(out_dir)
+  log_path <- file.path(out_dir_pc, "topic_term_pathway_debug.txt")
+  log_msg <- function(msg) {
+    stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+    cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
+  }
+  retest <- .topic_pathway_retest_from_overall(
+    topic_terms = topic_terms,
+    edges_docs = edges_docs,
+    out_dir = out_dir,
+    option_label = "joint",
+    include_peak_terms = include_peak_terms,
+    use_all_terms = use_all_terms,
+    per_comparison_dir = per_comparison_dir,
+    split_direction = split_direction,
+    background_size = background_size,
+    overall_pathway_file = overall_pathway_file,
+    pathway_species = pathway_species,
+    doc_design = doc_design
+  )
+  log_msg(sprintf(
+    "Per-comparison pathway retest from overall table wrote %d row(s).",
+    nrow(retest)
+  ))
+  log_msg("No per-comparison Enrichr/enrichly calls were run in this step.")
+  return(invisible(retest))
+
+  .quiet_enrichr_call <- function(expr) {
+    val <- NULL
+    utils::capture.output(
+      val <- suppressMessages(eval.parent(substitute(expr))),
+      type = "output"
+    )
+    val
+  }
+  .select_topic_dotplot_terms <- function(res_dt) {
+    dt_sel <- data.table::copy(res_dt)
+    dt_sel <- dt_sel[is.finite(padj)]
+    if (!nrow(dt_sel)) return(dt_sel)
+    dt_sel[, topic := as.integer(topic)]
+    dt_sel <- dt_sel[is.finite(topic)]
+    if (!nrow(dt_sel)) return(dt_sel)
+    if (!("overlap_hits" %in% names(dt_sel))) {
+      dt_sel[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
+    }
+    dt_sel[is.na(overlap_hits), overlap_hits := 0L]
+    dt_sel[, logp := -log10(pmax(padj, 1e-300))]
+    dt_sel[, pathway_key := pathway]
+    if (is.finite(dot_top_n_per_topic) && as.numeric(dot_top_n_per_topic) > 0) {
+      top_n <- max(1L, as.integer(dot_top_n_per_topic))
+      top_dt <- dt_sel[, {
+        ranked <- .SD[order(padj, -overlap_hits, pathway)]
+        sig <- ranked[padj <= as.numeric(padj_cut)]
+        if (nrow(sig)) head(sig, top_n) else head(ranked, top_n)
+      }, by = topic]
+      if (!nrow(top_dt)) return(top_dt)
+      out <- dt_sel[pathway_key %in% unique(top_dt$pathway_key)]
+      sig_keys <- unique(out[padj <= as.numeric(padj_cut), pathway_key])
+      out <- out[pathway_key %in% sig_keys]
+    } else {
+      top_dt <- dt_sel[padj <= as.numeric(padj_cut)]
+      if (!nrow(top_dt)) return(top_dt)
+      out <- data.table::copy(top_dt)
+    }
+    if (!nrow(out)) return(out)
+    top_key <- unique(top_dt[, .(topic, pathway_key)])
+    top_key[, is_topic_top_pathway := TRUE]
+    out <- merge(out, top_key, by = c("topic", "pathway_key"), all.x = TRUE, sort = FALSE)
+    out[is.na(is_topic_top_pathway), is_topic_top_pathway := FALSE]
+    topic_levels <- sort(unique(out$topic))
+    row_levels <- character(0)
+    for (tp in topic_levels) {
+      owned <- out[topic == tp & is_topic_top_pathway == TRUE]
+      if (!nrow(owned)) next
+      data.table::setorder(owned, -logp, -overlap_hits, pathway)
+      for (key in owned$pathway_key) {
+        if (!(key %in% row_levels)) row_levels <- c(row_levels, key)
+      }
+    }
+    remaining <- setdiff(unique(out$pathway_key), row_levels)
+    if (length(remaining)) {
+      remain_rank <- out[pathway_key %in% remaining, .(
+        max_logp = max(logp, na.rm = TRUE),
+        max_overlap = max(overlap_hits, na.rm = TRUE)
+      ), by = pathway_key]
+      data.table::setorder(remain_rank, -max_logp, -max_overlap, pathway_key)
+      row_levels <- c(row_levels, remain_rank$pathway_key)
+    }
+    if (nrow(out) && is.finite(max_pathways) && as.numeric(max_pathways) > 0 && length(row_levels) > as.integer(max_pathways)) {
+      row_levels <- row_levels[seq_len(as.integer(max_pathways))]
+      out <- out[pathway_key %in% row_levels]
+    }
+    out[, pathway_key := factor(pathway_key, levels = rev(row_levels))]
+    data.table::setorder(out, topic, -is_topic_top_pathway, padj, -overlap_hits, pathway)
+    out[]
+  }
+  .write_dotplot <- function(res_dt, dot_prefix, plot_title) {
+    if (!requireNamespace("ggplot2", quietly = TRUE)) {
+      log_msg("Skipping dot plot: ggplot2 not installed.")
+      return(invisible(NULL))
+    }
+    plot_dt <- .select_topic_dotplot_terms(res_dt)
+    if (!nrow(plot_dt)) {
+      log_msg("Skipping dot plot: no significant pathway terms.")
+      return(invisible(NULL))
+    }
+    plot_dt[, topic_num := as.integer(topic)]
+    topic_levels <- sort(unique(plot_dt$topic_num))
+    plot_dt[, topic_label := factor(paste0("Topic", topic_num), levels = paste0("Topic", topic_levels))]
+    plot_dt[, score_val := data.table::fifelse(is.finite(combined_score), combined_score, NA_real_)]
+    plot_dt[!is.finite(score_val) & is.finite(odds_ratio), score_val := odds_ratio]
+    plot_dt[!is.finite(score_val) & is.finite(logp), score_val := logp]
+    plot_dt[, score_val := pmax(score_val, 0)]
+    size_cap <- suppressWarnings(stats::quantile(plot_dt$score_val[is.finite(plot_dt$score_val)], probs = 0.95, na.rm = TRUE, names = FALSE))
+    if (is.finite(size_cap)) plot_dt[, score_val := pmin(score_val, size_cap)]
+    plot_dt[, is_sig := is.finite(logp) & logp >= 1.3]
+    dot_path <- paste0(dot_prefix, ".pdf")
+    dot_csv <- paste0(dot_prefix, ".csv")
+    ord_dt <- plot_dt[order(
+      match(pathway_key, levels(pathway_key)),
+      match(topic_label, levels(topic_label))
+    )]
+    data.table::fwrite(ord_dt, dot_csv)
+
+    family <- if (exists(".diff_grn_pathway_font_family", mode = "function")) {
+      .diff_grn_pathway_font_family()
+    } else {
+      "sans"
+    }
+    n_topics_plot <- data.table::uniqueN(plot_dt$topic_label)
+    n_paths_plot <- data.table::uniqueN(plot_dt$pathway_key)
+    max_val <- max(plot_dt$logp[is.finite(plot_dt$logp)], 1.300001, na.rm = TRUE)
+    color_breaks <- c(0, 1.3, seq(1.3 + 1e-6, max_val, length.out = 6))
+    color_rng <- range(color_breaks, finite = TRUE)
+    color_values <- if (!all(is.finite(color_rng)) || diff(color_rng) == 0) {
+      rep(0, length(color_breaks))
+    } else {
+      (color_breaks - color_rng[1]) / diff(color_rng)
+    }
+    p <- ggplot2::ggplot(
+      plot_dt,
+      ggplot2::aes(x = topic_label, y = pathway_key, size = score_val)
+    ) +
+      ggplot2::geom_point(ggplot2::aes(fill = logp), shape = 21, color = "transparent", alpha = 0.85) +
+      ggplot2::geom_point(
+        data = plot_dt[is_sig == TRUE],
+        ggplot2::aes(fill = logp, color = logp),
+        shape = 21,
+        stroke = 0.7,
+        alpha = 0.95
+      ) +
+      ggplot2::scale_fill_gradientn(
+        colors = c("grey85", "grey85", grDevices::hcl.colors(6, "Plasma")),
+        values = color_values,
+        limits = c(0, max_val),
+        oob = function(x, range = c(0, 1)) pmin(pmax(x, range[1]), range[2]),
+        name = "-log10 adjusted p-value"
+      ) +
+      ggplot2::scale_color_gradientn(
+        colors = c("grey85", "grey85", grDevices::hcl.colors(6, "Plasma")),
+        values = color_values,
+        limits = c(0, max_val),
+        oob = function(x, range = c(0, 1)) pmin(pmax(x, range[1]), range[2]),
+        guide = "none"
+      ) +
+      ggplot2::scale_size_continuous(name = "Combined score", range = c(0.8, 3.2)) +
+      ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
+      ggplot2::scale_y_discrete(labels = function(x) {
+        y <- as.character(x)
+        y <- gsub("\\s+", " ", y)
+        too_long <- nchar(y) > 58L
+        y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
+        y
+      }) +
+      ggplot2::labs(
+        x = "Topic",
+        y = "Pathway term",
+        title = plot_title,
+        caption = if (is.finite(dot_top_n_per_topic) && as.numeric(dot_top_n_per_topic) > 0) {
+          sprintf("Union of top %d pathways per topic; all occurrences shown.", as.integer(dot_top_n_per_topic))
+        } else {
+          sprintf("All significant pathways per topic; adjusted p-value <= %s.", as.character(padj_cut))
+        }
+      ) +
+      ggplot2::theme_bw(base_size = 9, base_family = family) +
+      ggplot2::theme(
+        text = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        plot.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black", hjust = 0.5),
+        plot.caption = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        axis.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        axis.text.x = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black", angle = 90, vjust = 0.5, hjust = 1),
+        axis.text.y = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        legend.title = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black"),
+        legend.text = ggplot2::element_text(size = 9, face = "bold", family = family, color = "black")
+      )
+    tryCatch(
+      {
+        if (exists(".diff_grn_pathway_save_fixed_panel_pdf", mode = "function")) {
+          .diff_grn_pathway_save_fixed_panel_pdf(
+            p,
+            dot_path,
+            panel_width = max(1.2, 0.11 * n_topics_plot),
+            panel_height = max(1.1, 0.17 * n_paths_plot),
+            family = family
+          )
+        } else {
+          ggplot2::ggsave(dot_path, p, width = max(8, n_topics_plot * 0.25), height = max(6, n_paths_plot * 0.2), limitsize = FALSE)
+        }
+      },
+      error = function(e) log_msg(sprintf("Dot plot failed: %s", conditionMessage(e)))
+    )
+    log_msg(sprintf("Dot plot CSV saved: %s", dot_csv))
+    if (file.exists(dot_path)) log_msg(sprintf("Dot plot PDF saved: %s", dot_path))
+    invisible(TRUE)
+  }
+
+  gene_sets_dt <- topic_gene_sets_by_comparison_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges_docs,
+    theta = theta,
+    theta_min = theta_min,
+    include_peak_terms = include_peak_terms,
+    use_all_terms = use_all_terms,
+    doc_design = doc_design,
+    split_direction = split_direction
+  )
+  gene_set_file <- file.path(out_dir_pc, "topic_term_pathway_gene_sets.csv")
+  data.table::fwrite(gene_sets_dt, gene_set_file)
+  if (!nrow(gene_sets_dt)) {
+    log_msg("Skipping per-comparison topic-term pathway enrichment: no theta-term gene sets.")
+    return(invisible(NULL))
+  }
+  gene_set_summary <- gene_sets_dt[, .(
+    n_genes = data.table::uniqueN(gene),
+    n_gene_doc_pairs = sum(n_docs, na.rm = TRUE),
+    max_gene_docs = max(n_docs, na.rm = TRUE),
+    max_theta = max(max_theta, na.rm = TRUE)
+  ), by = .(comparison_id, direction_group, topic)]
+  data.table::setorder(gene_set_summary, comparison_id, direction_group, topic)
+  data.table::fwrite(gene_set_summary, file.path(out_dir_pc, "topic_term_pathway_gene_set_summary.csv"))
+
+  eligible <- gene_set_summary[n_genes >= as.integer(min_genes)]
+  if (!nrow(eligible)) {
+    log_msg(sprintf("Skipping enrichment: no comparison/direction/topic gene set has at least %d genes.", as.integer(min_genes)))
+    return(invisible(TRUE))
+  }
+  if (!.pathway_backend_available(pathway_backend)) {
+    backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
+    msg <- sprintf("Skipping per-comparison topic-term pathway enrichment: selected backend is not installed: %s.", backend_label)
+    .log_inform(msg)
+    log_msg(msg)
+    return(invisible(NULL))
+  }
+  if (identical(pathway_backend, "enrichr")) {
+    .ensure_enrichr_ready(site = "Enrichr", verbose = TRUE, log_fun = log_msg)
+  }
+
+  all_res <- list()
+  key_dt <- unique(eligible[, .(comparison_id, direction_group)])
+  for (i in seq_len(nrow(key_dt))) {
+    cmp <- key_dt$comparison_id[[i]]
+    dir_lab <- key_dt$direction_group[[i]]
+    cmp_dir <- if (isTRUE(per_comparison_flat)) {
+      out_dir_pc
+    } else {
+      file.path(out_dir_pc, .safe_filename(cmp))
+    }
+    dir.create(cmp_dir, recursive = TRUE, showWarnings = FALSE)
+    prefix <- file.path(cmp_dir, paste0(.safe_filename(cmp), "_", .safe_filename(dir_lab), "_topic_term_dotplot"))
+    enrich_csv <- paste0(prefix, "_enrichment.csv")
+    if (!isTRUE(overwrite) && file.exists(enrich_csv) && (!isTRUE(make_dotplot) || file.exists(paste0(prefix, ".pdf")))) {
+      log_msg(sprintf("%s | %s: existing outputs found; skipping.", cmp, dir_lab))
+      all_res[[length(all_res) + 1L]] <- data.table::fread(enrich_csv, showProgress = FALSE)
+      next
+    }
+    sub_summary <- eligible[comparison_id == cmp & direction_group == dir_lab]
+    sub_genes <- gene_sets_dt[comparison_id == cmp & direction_group == dir_lab]
+    gene_sets <- lapply(sub_summary$topic, function(tp) {
+      unique(sub_genes[topic == tp, gene])
+    })
+    names(gene_sets) <- as.character(sub_summary$topic)
+    run_one <- function(nm) {
+      genes <- gene_sets[[nm]]
+      log_msg(sprintf("%s | %s | Topic %s gene count: %d", cmp, dir_lab, nm, length(genes)))
+      enr <- tryCatch(
+        .quiet_enrichr_call(.run_enrichr_cached(
+          genes = genes,
+          dbs = dbs,
+          sleep_time = enrichr_sleep_time,
+          cache_dir = enrichr_cache_dir,
+          backend = pathway_backend,
+          pathway_species = pathway_species
+        )),
+        error = function(e) {
+          log_msg(sprintf("%s | %s | Topic %s enrichr error: %s", cmp, dir_lab, nm, conditionMessage(e)))
+          NULL
+        }
+      )
+      if (is.null(enr)) return(NULL)
+      .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
+    }
+    set_names <- names(gene_sets)
+    if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
+      res_list <- parallel::mclapply(
+        set_names,
+        run_one,
+        mc.cores = min(enrichr_n_cores, length(set_names))
+      )
+      names(res_list) <- set_names
+    } else {
+      res_list <- vector("list", length(gene_sets))
+      names(res_list) <- set_names
+      for (nm in set_names) res_list[[nm]] <- run_one(nm)
+    }
+    res_sub <- data.table::rbindlist(res_list, use.names = TRUE, fill = TRUE)
+    if (!nrow(res_sub)) {
+      log_msg(sprintf("%s | %s: no enriched pathways.", cmp, dir_lab))
+      next
+    }
+    res_sub <- res_sub[is.finite(logp) & logp > 0]
+    if (!nrow(res_sub)) next
+    if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+      res_sub <- res_sub[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
+    } else {
+      res_sub <- res_sub[order(topic, -logp)]
+    }
+    if (nrow(res_sub) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
+      path_rank <- res_sub[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
+      if (nrow(path_rank) > as.integer(max_pathways)) {
+        keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
+        res_sub <- res_sub[pathway %in% keep]
+      }
+    }
+    res_sub[, `:=`(
+      comparison_id = cmp,
+      direction_group = dir_lab,
+      pathway_source = "theta_topic_terms"
+    )]
+    data.table::setorder(res_sub, topic, padj)
+    data.table::fwrite(res_sub, enrich_csv)
+    all_res[[length(all_res) + 1L]] <- res_sub
+    if (isTRUE(make_dotplot)) {
+      plot_title <- paste(cmp, dir_lab, "Pathway enrichment (theta topic terms)", sep = " | ")
+      .write_dotplot(res_sub, dot_prefix = prefix, plot_title = plot_title)
+    }
+  }
+  res_dt <- data.table::rbindlist(all_res, use.names = TRUE, fill = TRUE)
+  if (nrow(res_dt)) {
+    data.table::setorder(res_dt, comparison_id, direction_group, topic, padj)
+    data.table::fwrite(res_dt, file.path(out_dir_pc, "topic_term_pathway_enrichment.csv"))
+  }
+  invisible(TRUE)
+}
+
 plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            out_dir,
                                                            title_prefix = NULL,
                                                            file_tag = NULL,
-                                                           dbs = c(
-                                                             "GO_Biological_Process_2023",
-                                                             "GO_Cellular_Component_2023",
-                                                             "GO_Molecular_Function_2023",
-                                                             "Reactome_2022",
-                                                             "WikiPathways_2024_Human",
-                                                             "MSigDB_Hallmark_2020",
-                                                             "KEGG_2021_Human"
-                                                           ),
+                                                           dbs = NULL,
+                                                           pathway_species = NULL,
                                                            padj_cut = 0.05,
                                                            min_genes = 5L,
                                                            top_n_per_topic = 20L,
@@ -5252,8 +7209,9 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
   if (is.null(enrichr_cache_dir)) {
-    enrichr_cache_dir <- file.path(out_dir, "cache", "enrichr")
+    enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
   overwrite <- isTRUE(overwrite)
   log_tag <- if (!is.null(file_tag) && nzchar(file_tag)) paste0("_", file_tag) else ""
@@ -5272,7 +7230,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   }
 
   if (!.pathway_backend_available(pathway_backend)) {
-    msg <- "Skipping link-score pathway enrichment: neither enrichly nor enrichR is installed."
+    backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
+    msg <- sprintf("Skipping link-score pathway enrichment: selected backend is not installed: %s.", backend_label)
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
@@ -5337,7 +7296,8 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
           dbs = dbs,
           sleep_time = enrichr_sleep_time,
           cache_dir = enrichr_cache_dir,
-          backend = pathway_backend
+          backend = pathway_backend,
+          pathway_species = pathway_species
         )),
         error = function(e) {
           log_fun(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
@@ -5850,6 +7810,13 @@ rerun_pathway_from_topic_links <- function(out_dir,
   }
   topic_links_file <- resolve_rel(topic_links_file, out_dir)
   if (is.null(topic_links_file) || !file.exists(topic_links_file)) {
+    fallback <- .topic_links_path(out_dir, prefer = "pass")
+    if (!is.null(fallback) && file.exists(fallback)) {
+      .log_inform("Topic-link pathway enrichment: using pass-only topic links at {fallback}.")
+      topic_links_file <- fallback
+    }
+  }
+  if (is.null(topic_links_file) || !file.exists(topic_links_file)) {
     if (isTRUE(allow_missing)) {
       .log_inform("Skipping topic-link pathway enrichment: topic_links_file not found.")
       return(invisible(NULL))
@@ -6119,54 +8086,6 @@ plot_intertopic_distance_map <- function(phi, topic_terms, out_file, option_labe
   invisible(TRUE)
 }
 
-save_ldavis_html <- function(theta, phi, dtm, out_dir) {
-  if (!requireNamespace("LDAvis", quietly = TRUE)) {
-    .log_inform("Skipping LDAvis HTML: {.pkg LDAvis} not installed.")
-    return(invisible(NULL))
-  }
-  if (is.null(rownames(theta)) || is.null(colnames(phi))) return(invisible(NULL))
-
-  theta <- as.matrix(theta)
-  phi <- as.matrix(phi)
-  theta[!is.finite(theta)] <- 0
-  phi[!is.finite(phi)] <- 0
-  eps <- 1e-12
-  theta <- theta + eps
-  phi <- phi + eps
-  rs_theta <- rowSums(theta)
-  rs_theta[!is.finite(rs_theta) | rs_theta == 0] <- 1
-  theta_prob <- theta / rs_theta
-  rs_phi <- rowSums(phi)
-  rs_phi[!is.finite(rs_phi) | rs_phi == 0] <- 1
-  phi_prob <- phi / rs_phi
-  theta_prob[!is.finite(theta_prob)] <- 0
-  phi_prob[!is.finite(phi_prob)] <- 0
-
-  doc_len <- as.numeric(Matrix::rowSums(dtm))
-  term_freq <- as.numeric(Matrix::colSums(dtm))
-  vocab <- colnames(dtm)
-
-  json <- suppressWarnings(LDAvis::createJSON(
-    phi = phi_prob,
-    theta = theta_prob,
-    doc.length = doc_len,
-    vocab = vocab,
-    term.frequency = term_freq,
-    mds.method = .ldavis_mds_safe
-  ))
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  src_dir <- system.file("htmljs", package = "LDAvis")
-  if (dir.exists(src_dir)) {
-    assets <- list.files(src_dir, full.names = TRUE)
-    file.copy(assets, out_dir, overwrite = TRUE, recursive = TRUE)
-  }
-  json_path <- file.path(out_dir, "lda.json")
-  con <- file(json_path, encoding = getOption("encoding"))
-  on.exit(close(con), add = TRUE)
-  cat(json, file = con)
-  invisible(TRUE)
-}
-
 # =============================================================================
 # 9) Report-only runner (use precomputed theta/phi)
 # =============================================================================
@@ -6178,6 +8097,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               option_label = c("opt1_peak_delta_fp", "opt2_peak_fc_fp",
                                                                "opt3_gene_fc_expr", "joint"),
                                               direction_by = c("gene", "fp", "none"),
+                                              topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                               binarize_method = c("gammafit", "topn"),
                                               gammafit_scope = c("topic_term_group", "global_term_group"),
                                               thrP = 0.975,
@@ -6188,7 +8108,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_make_dotplot = TRUE,
                                               pathway_overwrite = FALSE,
                                               top_n_per_topic = 20L,
-                                              dot_top_n_per_topic = Inf,
+                                              dot_top_n_per_topic = 25L,
                                               max_pathways = 200L,
                                               pathway_tf_link_mode = c("theta", "none"),
                                               pathway_tf_top_n_docs = 50L,
@@ -6209,13 +8129,14 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_link_tf_max_topics = Inf,
                                               pathway_link_tf_top_n_per_topic = NA_integer_,
                                               pathway_per_comparison = FALSE,
-                                              pathway_per_comparison_dir = "per_comparison_pathway",
-                                              pathway_per_comparison_flat = FALSE,
+                                              pathway_per_comparison_dir = ".",
+                                              pathway_per_comparison_flat = TRUE,
                                               pathway_split_direction = TRUE,
                                               pathway_enrichr_sleep_time = 0,
                                               pathway_enrichr_cache_dir = NULL,
                                               pathway_enrichr_n_cores = NULL,
                                               pathway_backend = NULL,
+                                              pathway_species = NULL,
                                               run_link_topic_scores = FALSE,
                                               fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                               link_topic_gate_mode = "none",
@@ -6225,7 +8146,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               link_topic_chunk_size = 5000L,
                                               link_topic_n_cores = 1L,
                                               link_topic_overwrite = FALSE,
-                                              link_topic_method = c("gammafit", "gene_prob", "link_score_prob", "link_score_efdr"),
+                                              link_topic_method = c("gammafit", "theta_and_terms", "gene_prob", "link_score_prob", "link_score_efdr"),
                                               link_topic_prob_cutoff = 0.3,
                                               link_topic_fdr_q = 0.2,
                                               link_topic_fdr_p = NA_real_,
@@ -6237,12 +8158,13 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               run_gammafit_summary = TRUE,
                                               run_link_efdr_summary = TRUE,
                                               run_pathway_enrichment = TRUE,
-                                              run_doc_topic_heatmaps = TRUE,
-                                              run_tf_topic_heatmaps = TRUE,
+                                              run_tf_topic_assignment = TRUE,
+                                              topic_tf_membership_cutoff = 0.3,
+                                              topic_tf_primary_margin_cutoff = 0.1,
+                                              run_raw_theta_document_heatmap = FALSE,
+                                              run_topic_term_heatmap = TRUE,
                                               run_topic_by_comparison_heatmaps = TRUE,
-                                              run_topic_marker_heatmap = TRUE,
                                               run_intertopic_distance_map = TRUE,
-                                              run_ldavis = TRUE,
                                               extraction_steps = NULL,
                                               topic_by_comparison_label_cleaner = NULL,
                                               doc_design = c("comparison", "condition"),
@@ -6250,17 +8172,25 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   option_label <- match.arg(option_label)
   doc_design <- match.arg(doc_design)
   direction_by <- match.arg(direction_by)
+  topic_score_method <- match.arg(topic_score_method)
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   pathway_tf_link_mode <- match.arg(pathway_tf_link_mode)
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
   pathway_source <- match.arg(pathway_source)
   pathway_enrichr_sleep_time <- .normalize_enrichr_sleep_time(pathway_enrichr_sleep_time)
-  if (is.null(pathway_enrichr_cache_dir)) {
-    pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
-  }
   pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
+  if (is.null(pathway_enrichr_cache_dir)) {
+    pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
+  }
+  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_dbs <- .default_pathway_databases(pathway_species)
+  pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
+  if (!is.finite(pathway_topic_term_theta_min)) {
+    pathway_topic_term_theta_min <- .safe_num(topic_tf_membership_cutoff)
+  }
+  if (!is.finite(pathway_topic_term_theta_min)) pathway_topic_term_theta_min <- 0.3
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
@@ -6273,12 +8203,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     run_gammafit_summary <- .topic_step_enabled(extraction_steps, "gammafit_summary", TRUE)
     run_link_efdr_summary <- .topic_step_enabled(extraction_steps, "link_efdr_summary", TRUE)
     run_pathway_enrichment <- .topic_step_enabled(extraction_steps, "pathway", TRUE)
-    run_doc_topic_heatmaps <- .topic_step_enabled(extraction_steps, "doc_topic_heatmaps", TRUE)
-    run_tf_topic_heatmaps <- .topic_step_enabled(extraction_steps, "tf_topic_heatmaps", TRUE)
+    run_tf_topic_assignment <- .topic_step_enabled(extraction_steps, "tf_topic_assignment", TRUE)
+    run_raw_theta_document_heatmap <- .topic_step_enabled(extraction_steps, "raw_theta_documents", FALSE)
+    run_topic_term_heatmap <- .topic_step_enabled(extraction_steps, "topic_term_heatmap", TRUE)
     run_topic_by_comparison_heatmaps <- .topic_step_enabled(extraction_steps, "topic_by_comparison", TRUE)
-    run_topic_marker_heatmap <- .topic_step_enabled(extraction_steps, "topic_marker_heatmap", TRUE)
     run_intertopic_distance_map <- .topic_step_enabled(extraction_steps, "intertopic_distance", TRUE)
-    run_ldavis <- .topic_step_enabled(extraction_steps, "ldavis", TRUE)
   }
   if (!all(link_topic_gate_mode %in% allowed_gate_modes)) {
     .log_abort("link_topic_gate_mode must be one of: {paste(allowed_gate_modes, collapse = ', ')}.")
@@ -6290,6 +8219,39 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (is.null(title_prefix)) title_prefix <- basename(out_dir)
+  step_timing <- list()
+  .record_step <- function(step, code) {
+    start_time <- Sys.time()
+    start_elapsed <- proc.time()[["elapsed"]]
+    status <- "ok"
+    error_message <- NA_character_
+    value <- tryCatch(
+      force(code),
+      error = function(e) {
+        status <<- "error"
+        error_message <<- conditionMessage(e)
+        stop(e)
+      },
+      finally = {
+        elapsed <- proc.time()[["elapsed"]] - start_elapsed
+        step_timing[[length(step_timing) + 1L]] <<- data.table::data.table(
+          step = step,
+          start_time = format(start_time, "%Y-%m-%d %H:%M:%S"),
+          elapsed_seconds = as.numeric(elapsed),
+          status = status,
+          error_message = error_message
+        )
+      }
+    )
+    value
+  }
+  .write_step_timing <- function() {
+    if (!length(step_timing)) return(invisible(NULL))
+    timing_dt <- data.table::rbindlist(step_timing, use.names = TRUE, fill = TRUE)
+    data.table::fwrite(timing_dt, file.path(out_dir, "topic_extraction_step_timing.csv"))
+    invisible(timing_dt)
+  }
+  on.exit(.write_step_timing(), add = TRUE)
 
   theta <- .validate_topic_probability_matrix(topic_base$theta, "theta")
   phi <- .validate_topic_probability_matrix(topic_base$phi, "phi")
@@ -6304,61 +8266,91 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   topic_base$theta <- theta
   topic_base$phi <- phi
 
-  score_mat <- score_terms_normtop(phi)
-  topic_terms <- binarize_topics(
-    score_mat,
-    method = binarize_method,
-    thrP = thrP,
-    top_n_terms = top_n_terms,
-    min_terms = in_topic_min_terms,
-    gammafit_scope = gammafit_scope
+  score_mat <- .record_step(
+    "score_terms",
+    score_terms_normtop(phi, method = topic_score_method)
+  )
+  topic_terms <- .record_step(
+    "binarize_topics",
+    binarize_topics(
+      score_mat,
+      method = binarize_method,
+      thrP = thrP,
+      top_n_terms = top_n_terms,
+      min_terms = in_topic_min_terms,
+      gammafit_scope = gammafit_scope
+    )
   )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
   .save_all(out_dir, "topic_term_scores_normtop", score_mat)
-
-  topic_links_tbl <- NULL
-  if (isTRUE(run_link_topic_scores)) {
-    gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
+  .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
+  writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
+  if (identical(binarize_method, "gammafit")) {
+    gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
       score_mat,
+      topic_terms = topic_terms,
+      topic_score_method = topic_score_method,
       thrP = thrP,
       min_terms = in_topic_min_terms,
       gammafit_scope = gammafit_scope
     )
     data.table::fwrite(
-      gamma_cutoffs_tbl,
-      file.path(out_dir, "topic_gamma_cutoffs.csv")
+      gamma_diagnostics_tbl,
+      file.path(out_dir, "topic_gammafit_diagnostics.csv")
     )
-    topic_links_tbl <- compute_topic_links(
-      edges_docs = edges_docs,
-      score_mat = score_mat,
-      raw_score_mat = topic_base$phi,
-      topic_terms = topic_terms,
-      fp_term_mode = fp_term_mode,
-      binarize_method = binarize_method,
-      gammafit_scope = gammafit_scope,
-      link_method = link_topic_method,
-      link_prob_cutoff = link_topic_prob_cutoff,
-      thrP = thrP,
-      min_terms = in_topic_min_terms,
-      fdr_q = link_topic_fdr_q,
-      fdr_p = link_topic_fdr_p,
-      efdr_scope = link_topic_efdr_scope,
-      efdr_B = link_topic_efdr_B,
-      efdr_seed = link_topic_efdr_seed,
-      out_file = file.path(out_dir, "topic_links.csv"),
-      output_mode = link_topic_output,
-      pass_file = file.path(out_dir, "topic_links_pass.csv"),
-      chunk_size = link_topic_chunk_size,
-      n_cores = link_topic_n_cores,
-      overwrite = link_topic_overwrite
-    )
-    if (!is.data.frame(topic_links_tbl)) {
-      topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
-      if (file.exists(topic_links_path)) {
-        topic_links_tbl <- data.table::fread(topic_links_path)
+  }
+
+  topic_links_tbl <- NULL
+  if (isTRUE(run_link_topic_scores)) {
+    topic_links_tbl <- .record_step(
+      "topic_links",
+      {
+        gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
+          score_mat,
+          thrP = thrP,
+          min_terms = in_topic_min_terms,
+          gammafit_scope = gammafit_scope
+        )
+        data.table::fwrite(
+          gamma_cutoffs_tbl,
+          file.path(out_dir, "topic_gamma_cutoffs.csv")
+        )
+        link_tbl <- compute_topic_links(
+          edges_docs = edges_docs,
+          score_mat = score_mat,
+          raw_score_mat = topic_base$phi,
+          topic_terms = topic_terms,
+          theta = topic_base$theta,
+          topic_tf_membership_cutoff = topic_tf_membership_cutoff,
+          fp_term_mode = fp_term_mode,
+          binarize_method = binarize_method,
+          gammafit_scope = gammafit_scope,
+          link_method = link_topic_method,
+          link_prob_cutoff = link_topic_prob_cutoff,
+          thrP = thrP,
+          min_terms = in_topic_min_terms,
+          fdr_q = link_topic_fdr_q,
+          fdr_p = link_topic_fdr_p,
+          efdr_scope = link_topic_efdr_scope,
+          efdr_B = link_topic_efdr_B,
+          efdr_seed = link_topic_efdr_seed,
+          out_file = file.path(out_dir, "topic_links.csv"),
+          output_mode = link_topic_output,
+          pass_file = file.path(out_dir, "topic_links_pass.csv"),
+          chunk_size = link_topic_chunk_size,
+          n_cores = link_topic_n_cores,
+          overwrite = link_topic_overwrite
+        )
+        if (!is.data.frame(link_tbl)) {
+          topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
+          if (file.exists(topic_links_path)) {
+            link_tbl <- data.table::fread(topic_links_path)
+          }
+        }
+        link_tbl
       }
-    }
+    )
   } else {
     topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
     if (file.exists(topic_links_path)) {
@@ -6367,19 +8359,31 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
 
   if (binarize_method == "gammafit" && isTRUE(run_gammafit_summary)) {
-    tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
-    topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
-    plot_gammafit_binarize(
-      score_mat,
-      out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
-      thrP = thrP,
-      min_terms = in_topic_min_terms,
-      gammafit_scope = gammafit_scope,
-      title_prefix = title_prefix,
-      tf_list = tf_terms,
-      edges_docs = edges_docs,
-      topic_terms = topic_terms_tbl,
-      topic_links = topic_links_tbl
+    .record_step(
+      "gammafit_summary",
+      {
+        tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
+        topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
+        item_coverage_tbl <- if (file.exists(file.path(out_dir, "topic_item_coverage_counts.csv"))) {
+          data.table::fread(file.path(out_dir, "topic_item_coverage_counts.csv"))
+        } else {
+          NULL
+        }
+        plot_gammafit_binarize(
+          score_mat,
+          out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
+          thrP = thrP,
+          min_terms = in_topic_min_terms,
+          gammafit_scope = gammafit_scope,
+          title_prefix = title_prefix,
+          tf_list = tf_terms,
+          edges_docs = edges_docs,
+          topic_terms = topic_terms_tbl,
+          topic_links = topic_links_tbl,
+          item_coverage = item_coverage_tbl,
+          show_peak_expanded_link_coverage = identical(fp_term_mode, "unique")
+        )
+      }
     )
   }
   if (isTRUE(run_link_efdr_summary) && identical(link_topic_method, "link_score_efdr") && is.data.frame(topic_links_tbl) && nrow(topic_links_tbl)) {
@@ -6391,29 +8395,85 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     )
   }
 
-  if (isTRUE(run_doc_topic_heatmaps)) {
-    unlink(file.path(out_dir, "doc_topic_heatmaps"), recursive = TRUE, force = TRUE)
-    plot_doc_topic_heatmaps_by_comparison(
-      theta = topic_base$theta,
-      out_dir = file.path(out_dir, "doc_topic_heatmaps"),
-      edges_docs = edges_docs,
-      title_prefix = title_prefix,
-      option_label = option_label,
-      doc_design = doc_design
+  if (isTRUE(run_tf_topic_assignment)) {
+    tf_topic_assign <- .record_step(
+      "tf_topic_assignment",
+      .write_tf_topic_assignment_outputs(
+        theta = topic_base$theta,
+        out_dir = out_dir,
+        doc_design = doc_design,
+        membership_cutoff = topic_tf_membership_cutoff,
+        primary_margin_cutoff = topic_tf_primary_margin_cutoff
+      )
+    )
+    .replace_tf_item_coverage_with_assignment(out_dir, tf_topic_assign)
+    if (binarize_method == "gammafit" && isTRUE(run_gammafit_summary)) {
+      .record_step(
+        "gammafit_summary_after_tf_assignment",
+        {
+          tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
+          topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
+          item_coverage_tbl <- if (file.exists(file.path(out_dir, "topic_item_coverage_counts.csv"))) {
+            data.table::fread(file.path(out_dir, "topic_item_coverage_counts.csv"))
+          } else {
+            NULL
+          }
+          plot_gammafit_binarize(
+            score_mat,
+            out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
+            thrP = thrP,
+            min_terms = in_topic_min_terms,
+            gammafit_scope = gammafit_scope,
+            title_prefix = title_prefix,
+            tf_list = tf_terms,
+            edges_docs = edges_docs,
+            topic_terms = topic_terms_tbl,
+            topic_links = topic_links_tbl,
+            item_coverage = item_coverage_tbl,
+            show_peak_expanded_link_coverage = identical(fp_term_mode, "unique")
+          )
+        }
+      )
+    }
+  }
+  if (isTRUE(run_raw_theta_document_heatmap)) {
+    .record_step(
+      "raw_theta_document_heatmap",
+      {
+        raw_theta_path <- file.path(out_dir, sprintf("raw_theta_documents_K%d.pdf", ncol(topic_base$theta)))
+        .plot_raw_theta_document_heatmap(
+          theta = topic_base$theta,
+          out_file = raw_theta_path,
+          doc_design = doc_design,
+          title_prefix = title_prefix
+        )
+      }
     )
   }
-  if (isTRUE(run_tf_topic_heatmaps)) {
-    plot_tf_doc_topic_assignment_heatmaps(
-      theta = topic_base$theta,
-      phi = topic_base$phi,
-      out_file = file.path(out_dir, "tf_topic_assignment_heatmaps.pdf"),
-      topic_terms = topic_terms,
-      title_prefix = title_prefix,
-      doc_design = doc_design,
-      aggregate_fun = "max"
+  if (isTRUE(run_topic_term_heatmap)) {
+    .record_step(
+      "topic_term_heatmaps",
+      {
+        term_heatmap_path <- file.path(out_dir, sprintf("topic_term_score_heatmap_K%d.pdf", nrow(score_mat)))
+        term_compare_path <- file.path(out_dir, sprintf("topic_term_phi_score_heatmap_K%d.pdf", nrow(score_mat)))
+        .plot_topic_term_score_heatmap(
+          score_mat = score_mat,
+          topic_terms = topic_terms,
+          out_file = term_heatmap_path,
+          assignment_file = file.path(out_dir, "topic_term_primary_assignment.csv"),
+          title_prefix = title_prefix
+        )
+        .plot_topic_term_phi_score_comparison_heatmap(
+          phi = phi,
+          score_mat = score_mat,
+          topic_terms = topic_terms,
+          out_file = term_compare_path,
+          topic_score_method = topic_score_method,
+          title_prefix = title_prefix
+        )
+      }
     )
   }
-
   direction_mode <- if (option_label == "opt3_gene_fc_expr") {
     "gene"
   } else if (option_label == "joint") {
@@ -6423,38 +8483,43 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
 
   if (isTRUE(run_topic_by_comparison_heatmaps)) {
-    plot_topic_by_comparison_heatmaps(
-      theta = topic_base$theta,
-      out_dir = out_dir,
-      edges_docs = edges_docs,
-      direction_mode = direction_mode,
-      title_prefix = title_prefix,
-      label_cleaner = topic_by_comparison_label_cleaner,
-      topic_links = topic_links_tbl,
-      annotate_unique_genes = TRUE,
-      doc_design = doc_design
-    )
-  }
-
-  if (isTRUE(run_topic_marker_heatmap)) {
-    plot_topic_marker_heatmap(
-      phi = topic_base$phi,
-      out_file = file.path(out_dir, "topic_marker_term_heatmap.pdf"),
-      top_n = 20L,
-      title_prefix = title_prefix,
-      edges_docs = edges_docs,
-      option_label = option_label,
-      topic_terms = topic_terms
+    .record_step(
+      "topic_by_comparison_heatmaps",
+      plot_topic_by_comparison_heatmaps(
+        theta = topic_base$theta,
+        out_dir = out_dir,
+        edges_docs = edges_docs,
+        direction_mode = direction_mode,
+        title_prefix = title_prefix,
+        label_cleaner = topic_by_comparison_label_cleaner,
+        topic_links = topic_links_tbl,
+        annotate_unique_genes = TRUE,
+        doc_design = doc_design
+      )
     )
   }
 
   if (isTRUE(run_pathway_enrichment) && isTRUE(pathway_overwrite)) {
-    unlink(list.files(out_dir, pattern = "^topic_pathway_enrichment", full.names = TRUE), recursive = TRUE, force = TRUE)
-    unlink(file.path(out_dir, pathway_per_comparison_dir), recursive = TRUE, force = TRUE)
-    unlink(list.files(out_dir, pattern = paste0("^", .safe_filename(pathway_per_comparison_dir), "_"), full.names = TRUE), recursive = TRUE, force = TRUE)
+    .record_step(
+      "pathway_cleanup",
+      {
+        unlink(list.files(out_dir, pattern = "^topic_pathway_enrichment", full.names = TRUE), recursive = TRUE, force = TRUE)
+        if (!is.null(pathway_per_comparison_dir) &&
+            nzchar(as.character(pathway_per_comparison_dir)[[1L]]) &&
+            !identical(as.character(pathway_per_comparison_dir)[[1L]], ".")) {
+          unlink(file.path(out_dir, pathway_per_comparison_dir), recursive = TRUE, force = TRUE)
+        } else {
+          unlink(file.path(out_dir, c("topic_term_pathway_enrichment.csv", "topic_term_pathway_debug.txt")), force = TRUE)
+        }
+        unlink(list.files(out_dir, pattern = paste0("^", .safe_filename(pathway_per_comparison_dir), "_"), full.names = TRUE), recursive = TRUE, force = TRUE)
+      }
+    )
   }
 
   if (isTRUE(run_pathway_enrichment)) {
+    .record_step(
+      "pathway_enrichment",
+      {
     if (pathway_source == "link_scores") {
       method_secondary <- if (identical(link_topic_method, "gene_prob")) "peak_and_gene_prob" else link_topic_method
       report_methods <- unique(c("peak_and_gene", method_secondary))
@@ -6491,6 +8556,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           enrichr_sleep_time = pathway_enrichr_sleep_time,
           enrichr_cache_dir = pathway_enrichr_cache_dir,
           enrichr_n_cores = pathway_enrichr_n_cores,
+          dbs = pathway_dbs,
+          pathway_species = pathway_species,
           pathway_backend = pathway_backend,
           overwrite = pathway_overwrite,
           doc_design = doc_design
@@ -6507,6 +8574,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         make_heatmap = pathway_make_heatmap,
         make_dotplot = pathway_make_dotplot,
         top_n_per_topic = top_n_per_topic,
+        dot_top_n_per_topic = dot_top_n_per_topic,
         max_pathways = max_pathways,
         theta = topic_base$theta,
         tf_link_mode = pathway_tf_link_mode,
@@ -6515,8 +8583,39 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
         enrichr_cache_dir = pathway_enrichr_cache_dir,
         enrichr_n_cores = pathway_enrichr_n_cores,
+        dbs = pathway_dbs,
+        pathway_species = pathway_species,
         pathway_backend = pathway_backend
       )
+
+      if (isTRUE(pathway_per_comparison)) {
+        plot_topic_pathway_enrichment_by_comparison_terms(
+          topic_terms = topic_terms,
+          edges_docs = edges_docs,
+          theta = topic_base$theta,
+          out_dir = out_dir,
+          title_prefix = title_prefix,
+          theta_min = pathway_topic_term_theta_min,
+          include_peak_terms = !identical(option_label, "opt3_gene_fc_expr"),
+          use_all_terms = pathway_use_all_terms,
+          per_comparison_dir = pathway_per_comparison_dir,
+          per_comparison_flat = pathway_per_comparison_flat,
+          split_direction = pathway_split_direction,
+          min_genes = 5L,
+          top_n_per_topic = top_n_per_topic,
+          dot_top_n_per_topic = dot_top_n_per_topic,
+          max_pathways = max_pathways,
+          make_dotplot = pathway_make_dotplot,
+          enrichr_sleep_time = pathway_enrichr_sleep_time,
+          enrichr_cache_dir = pathway_enrichr_cache_dir,
+          enrichr_n_cores = pathway_enrichr_n_cores,
+          dbs = pathway_dbs,
+          pathway_species = pathway_species,
+          pathway_backend = pathway_backend,
+          overwrite = pathway_overwrite,
+          doc_design = doc_design
+        )
+      }
 
       if (isTRUE(run_pathway_gsea)) {
         plot_topic_pathway_enrichment_gsea(
@@ -6540,26 +8639,22 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         )
       }
     }
+      }
+    )
   }
 
   if (isTRUE(run_intertopic_distance_map)) {
-    plot_intertopic_distance_map(
-      phi = topic_base$phi,
-      topic_terms = topic_terms,
-      out_file = file.path(out_dir, "intertopic_distance_map.pdf"),
-      option_label = option_label,
-      title_prefix = title_prefix
+    .record_step(
+      "intertopic_distance_map",
+      plot_intertopic_distance_map(
+        phi = topic_base$phi,
+        topic_terms = topic_terms,
+        out_file = file.path(out_dir, "intertopic_distance_map.pdf"),
+        option_label = option_label,
+        title_prefix = title_prefix
+      )
     )
   }
-  if (isTRUE(run_ldavis)) {
-    save_ldavis_html(
-      theta = topic_base$theta,
-      phi = topic_base$phi,
-      dtm = dtm,
-      out_dir = file.path(out_dir, "ldavis")
-    )
-  }
-
   list(
     out_dir = out_dir,
     edges_docs = edges_docs,
@@ -6603,6 +8698,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                           seed = 123,
                                           # topic definition
+                                          topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                           binarize_method = c("gammafit", "topn"),
                                           gammafit_scope = c("topic_term_group", "global_term_group"),
                                           thrP = 0.975,
@@ -6616,6 +8712,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_tf_link_mode = c("theta", "none"),
                                           pathway_tf_top_n_docs = 50L,
                                           pathway_tf_min_theta = NA_real_,
+                                          topic_tf_membership_cutoff = 0.3,
                                           run_pathway_gsea = FALSE,
                                           gsea_species = "Homo sapiens",
                                           gsea_nperm = 1000L,
@@ -6632,14 +8729,15 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_link_tf_max_topics = Inf,
                                           pathway_link_tf_top_n_per_topic = NA_integer_,
                                           pathway_per_comparison = FALSE,
-                                          pathway_per_comparison_dir = "per_comparison_pathway",
-                                          pathway_per_comparison_flat = FALSE,
+                                          pathway_per_comparison_dir = ".",
+                                          pathway_per_comparison_flat = TRUE,
                                           pathway_split_direction = TRUE,
                                           pathway_overwrite = FALSE,
                                           pathway_enrichr_sleep_time = 0,
                                           pathway_enrichr_cache_dir = NULL,
                                           pathway_enrichr_n_cores = NULL,
                                           pathway_backend = NULL,
+                                          pathway_species = NULL,
                                           run_link_topic_scores = FALSE,
                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                           link_topic_gate_mode = "none",
@@ -6649,7 +8747,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           link_topic_chunk_size = 5000L,
                                           link_topic_n_cores = 1L,
                                           link_topic_overwrite = FALSE,
-                                          link_topic_method = c("gammafit", "gene_prob", "link_score_prob", "link_score_efdr"),
+                                          link_topic_method = c("gammafit", "theta_and_terms", "gene_prob", "link_score_prob", "link_score_efdr"),
                                           link_topic_prob_cutoff = 0.3,
                                           link_topic_fdr_q = 0.2,
                                           link_topic_fdr_p = NA_real_,
@@ -6667,17 +8765,25 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   joint_weight_gene <- match.arg(joint_weight_gene)
   joint_balance <- match.arg(joint_balance)
   sampler <- match.arg(sampler)
+  topic_score_method <- match.arg(topic_score_method)
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
   pathway_tf_link_mode <- match.arg(pathway_tf_link_mode)
   pathway_source <- match.arg(pathway_source)
   pathway_enrichr_sleep_time <- .normalize_enrichr_sleep_time(pathway_enrichr_sleep_time)
-  if (is.null(pathway_enrichr_cache_dir)) {
-    pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir)
-  }
   pathway_enrichr_n_cores <- .normalize_enrichr_n_cores(pathway_enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
+  if (is.null(pathway_enrichr_cache_dir)) {
+    pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
+  }
+  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_dbs <- .default_pathway_databases(pathway_species)
+  pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
+  if (!is.finite(pathway_topic_term_theta_min)) {
+    pathway_topic_term_theta_min <- .safe_num(topic_tf_membership_cutoff)
+  }
+  if (!is.finite(pathway_topic_term_theta_min)) pathway_topic_term_theta_min <- 0.3
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   link_topic_efdr_scope <- match.arg(link_topic_efdr_scope)
   link_topic_method <- match.arg(link_topic_method)
@@ -6724,6 +8830,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     ),
     topic_definition = list(
       NormTop = TRUE,
+      topic_score_method = topic_score_method,
       binarize_method = binarize_method,
       gammafit_scope = gammafit_scope,
       thrP = as.numeric(thrP),
@@ -6922,7 +9029,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   if (is.null(topic_base)) .log_abort("No selected model available to define topics; check metrics/selection.")
   phi <- topic_base$phi
 
-  score_mat <- score_terms_normtop(phi)
+  score_mat <- score_terms_normtop(phi, method = topic_score_method)
   topic_terms <- binarize_topics(
     score_mat,
     method = binarize_method,
@@ -6933,6 +9040,22 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
+  .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
+  writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
+  if (identical(binarize_method, "gammafit")) {
+    gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
+      score_mat,
+      topic_terms = topic_terms,
+      topic_score_method = topic_score_method,
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      gammafit_scope = gammafit_scope
+    )
+    data.table::fwrite(
+      gamma_diagnostics_tbl,
+      file.path(out_dir, "topic_gammafit_diagnostics.csv")
+    )
+  }
 
   topic_links_tbl <- NULL
   if (isTRUE(run_link_topic_scores)) {
@@ -6951,6 +9074,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       score_mat = score_mat,
       raw_score_mat = phi,
       topic_terms = topic_terms,
+      theta = topic_base$theta,
+      topic_tf_membership_cutoff = topic_tf_membership_cutoff,
       fp_term_mode = fp_term_mode,
       binarize_method = binarize_method,
       gammafit_scope = gammafit_scope,
@@ -6985,6 +9110,11 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   if (binarize_method == "gammafit") {
     tf_terms <- if (is.data.frame(edges_docs) && "tf" %in% names(edges_docs)) unique(edges_docs$tf) else NULL
     topic_terms_tbl <- data.table::fread(file.path(out_dir, "topic_terms.csv"))
+    item_coverage_tbl <- if (file.exists(file.path(out_dir, "topic_item_coverage_counts.csv"))) {
+      data.table::fread(file.path(out_dir, "topic_item_coverage_counts.csv"))
+    } else {
+      NULL
+    }
     plot_gammafit_binarize(
       score_mat,
       out_file = file.path(out_dir, "topic_terms_and_cutoffs_summary.pdf"),
@@ -6995,7 +9125,9 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       tf_list = tf_terms,
       edges_docs = edges_docs,
       topic_terms = topic_terms_tbl,
-      topic_links = topic_links_tbl
+      topic_links = topic_links_tbl,
+      item_coverage = item_coverage_tbl,
+      show_peak_expanded_link_coverage = identical(fp_term_mode, "unique")
     )
   }
   if (identical(link_topic_method, "link_score_efdr") && is.data.frame(topic_links_tbl) && nrow(topic_links_tbl)) {
@@ -7010,13 +9142,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   # Also save full score matrix (can be large)
   .save_all(out_dir, "topic_term_scores_normtop", score_mat)
 
-  plot_doc_topic_heatmaps_by_comparison(
-    theta = topic_base$theta,
-    out_dir = file.path(out_dir, "doc_topic_heatmaps"),
-    edges_docs = edges_docs,
-    title_prefix = title_prefix,
-    option_label = option_label
-  )
   direction_mode <- if (option_label == "opt3_gene_fc_expr") {
     "gene"
   } else if (option_label == "joint") {
@@ -7033,15 +9158,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     label_cleaner = topic_by_comparison_label_cleaner,
     topic_links = topic_links_tbl,
     annotate_unique_genes = TRUE
-  )
-  plot_topic_marker_heatmap(
-    phi = topic_base$phi,
-    out_file = file.path(out_dir, "topic_marker_term_heatmap.pdf"),
-    top_n = 20L,
-    title_prefix = title_prefix,
-    edges_docs = edges_docs,
-    option_label = option_label,
-    topic_terms = topic_terms
   )
   if (pathway_source == "link_scores") {
     method_secondary <- if (identical(link_topic_method, "gene_prob")) "peak_and_gene_prob" else link_topic_method
@@ -7078,6 +9194,8 @@ run_tfdocs_warplda_one_option <- function(edges_all,
         enrichr_sleep_time = pathway_enrichr_sleep_time,
         enrichr_cache_dir = pathway_enrichr_cache_dir,
         enrichr_n_cores = pathway_enrichr_n_cores,
+        dbs = pathway_dbs,
+        pathway_species = pathway_species,
         pathway_backend = pathway_backend,
         overwrite = pathway_overwrite
       )
@@ -7092,6 +9210,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       use_all_terms = pathway_use_all_terms,
       make_heatmap = pathway_make_heatmap,
       top_n_per_topic = top_n_per_topic,
+      dot_top_n_per_topic = dot_top_n_per_topic,
       max_pathways = max_pathways,
       theta = topic_base$theta,
       tf_link_mode = pathway_tf_link_mode,
@@ -7100,8 +9219,39 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       enrichr_sleep_time = pathway_enrichr_sleep_time,
       enrichr_cache_dir = pathway_enrichr_cache_dir,
       enrichr_n_cores = pathway_enrichr_n_cores,
+      dbs = pathway_dbs,
+      pathway_species = pathway_species,
       pathway_backend = pathway_backend
     )
+
+    if (isTRUE(pathway_per_comparison)) {
+      plot_topic_pathway_enrichment_by_comparison_terms(
+        topic_terms = topic_terms,
+        edges_docs = edges_docs,
+        theta = topic_base$theta,
+        out_dir = out_dir,
+        title_prefix = title_prefix,
+        theta_min = pathway_topic_term_theta_min,
+        include_peak_terms = !identical(option_label, "opt3_gene_fc_expr"),
+        use_all_terms = pathway_use_all_terms,
+        per_comparison_dir = pathway_per_comparison_dir,
+        per_comparison_flat = pathway_per_comparison_flat,
+        split_direction = pathway_split_direction,
+        min_genes = 5L,
+        top_n_per_topic = top_n_per_topic,
+        dot_top_n_per_topic = dot_top_n_per_topic,
+        max_pathways = max_pathways,
+        make_dotplot = pathway_make_dotplot,
+        enrichr_sleep_time = pathway_enrichr_sleep_time,
+        enrichr_cache_dir = pathway_enrichr_cache_dir,
+        enrichr_n_cores = pathway_enrichr_n_cores,
+        dbs = pathway_dbs,
+        pathway_species = pathway_species,
+        pathway_backend = pathway_backend,
+        overwrite = pathway_overwrite,
+        doc_design = "comparison"
+      )
+    }
 
     if (isTRUE(run_pathway_gsea)) {
       plot_topic_pathway_enrichment_gsea(
@@ -7132,13 +9282,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     option_label = option_label,
     title_prefix = title_prefix
   )
-  save_ldavis_html(
-    theta = topic_base$theta,
-    phi = topic_base$phi,
-    dtm = dtm,
-    out_dir = file.path(out_dir, "ldavis")
-  )
-
   list(
     out_dir = out_dir,
     calc_params = calc_params,
@@ -7155,7 +9298,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
 }
 
 # =============================================================================
-# 12) VAE helpers (nutrient pipeline)
+# 12) VAE helpers for regulatory topic modeling
 # =============================================================================
 
 #' Build a TF cluster map from motif metadata
@@ -7372,20 +9515,43 @@ run_vae_topic_report_py <- function(doc_term,
   .log_inform("VAE sparse DTM cache writing finished in {round(proc.time()[['elapsed']] - t_dtm, 1)} sec for {out_dir}.")
 
   if (is.null(k_grid) || !length(k_grid)) .log_abort("k_grid required for VAE.")
-  k_grid <- unique(as.integer(k_grid))
+  k_grid <- sort(unique(as.integer(k_grid)))
   k_grid <- k_grid[is.finite(k_grid)]
-  k_grid_txt <- paste(k_grid, collapse = ",")
+  if (!length(k_grid)) .log_abort("k_grid must contain at least one finite K value.")
   vae_python_variant <- .normalize_vae_python_variant(vae_variant)
 
   metrics_path <- file.path(out_dir, "model_metrics.csv")
-  reuse_ok <- isTRUE(reuse_if_exists) &&
-    file.exists(metrics_path) &&
-    dir.exists(file.path(out_dir, "vae_models"))
+  manifest_path <- file.path(out_dir, "vae_model_manifest.csv")
+  models_dir <- file.path(out_dir, "vae_models")
+  complete_k <- integer()
+  old_metrics <- data.table::data.table()
+  old_manifest <- data.table::data.table()
+  if (file.exists(metrics_path)) {
+    old_metrics <- tryCatch(data.table::fread(metrics_path, showProgress = FALSE), error = function(e) data.table::data.table())
+  }
+  if (file.exists(manifest_path)) {
+    old_manifest <- tryCatch(data.table::fread(manifest_path, showProgress = FALSE), error = function(e) data.table::data.table())
+  }
+  if (nrow(old_metrics) && "K" %in% names(old_metrics) && dir.exists(models_dir)) {
+    metrics_k <- unique(as.integer(old_metrics$K))
+    file_k <- k_grid[
+      file.exists(file.path(models_dir, sprintf("theta_K%d.csv", k_grid))) &
+        file.exists(file.path(models_dir, sprintf("phi_K%d.csv", k_grid))) &
+        file.exists(file.path(models_dir, sprintf("model_K%d.pt", k_grid)))
+    ]
+    complete_k <- intersect(metrics_k, file_k)
+  }
+  run_k_grid <- if (isTRUE(reuse_if_exists)) setdiff(k_grid, complete_k) else k_grid
+  reuse_ok <- isTRUE(reuse_if_exists) && !length(run_k_grid)
 
   if (!reuse_ok) {
     doc_term_input <- if (isTRUE(cache_plan$write_arrow)) cache_paths$arrow else cache_paths$csv
     if (!is.character(doc_term_input) || !length(doc_term_input) || is.na(doc_term_input) || !file.exists(doc_term_input)) {
       .log_abort("Missing doc-term cache for VAE: {doc_term_input}")
+    }
+    k_grid_txt <- paste(run_k_grid, collapse = ",")
+    if (isTRUE(reuse_if_exists) && length(complete_k)) {
+      .log_inform("Reusing VAE outputs for K={paste(sort(complete_k), collapse = ',')}; training missing K={k_grid_txt}.")
     }
     py_args <- c(
       vae_script,
@@ -7413,8 +9579,32 @@ run_vae_topic_report_py <- function(doc_term,
     if (!is.null(status) && is.finite(status) && status != 0) {
       .log_abort(c("VAE python exited with non-zero status.", i = paste0("status=", status)))
     }
+    if (isTRUE(reuse_if_exists) && length(complete_k)) {
+      new_metrics <- if (file.exists(metrics_path)) {
+        data.table::fread(metrics_path, showProgress = FALSE)
+      } else {
+        data.table::data.table()
+      }
+      if (nrow(old_metrics) && nrow(new_metrics) && "K" %in% names(old_metrics) && "K" %in% names(new_metrics)) {
+        old_metrics <- old_metrics[!as.integer(K) %in% as.integer(new_metrics$K)]
+        merged_metrics <- data.table::rbindlist(list(old_metrics, new_metrics), use.names = TRUE, fill = TRUE)
+        data.table::setorder(merged_metrics, K)
+        data.table::fwrite(merged_metrics, metrics_path)
+      }
+      new_manifest <- if (file.exists(manifest_path)) {
+        data.table::fread(manifest_path, showProgress = FALSE)
+      } else {
+        data.table::data.table()
+      }
+      if (nrow(old_manifest) && nrow(new_manifest) && "K" %in% names(old_manifest) && "K" %in% names(new_manifest)) {
+        old_manifest <- old_manifest[!as.integer(K) %in% as.integer(new_manifest$K)]
+        merged_manifest <- data.table::rbindlist(list(old_manifest, new_manifest), use.names = TRUE, fill = TRUE)
+        data.table::setorder(merged_manifest, K)
+        data.table::fwrite(merged_manifest, manifest_path)
+      }
+    }
   } else {
-    .log_inform("Reusing existing VAE outputs; skipping training for {out_dir}")
+    .log_inform("Reusing existing VAE outputs for K={paste(k_grid, collapse = ',')}; skipping training for {out_dir}")
   }
 
   if (!file.exists(metrics_path)) .log_abort("VAE did not produce model_metrics.csv in {out_dir}")
@@ -7463,6 +9653,7 @@ run_vae_topic_report_py <- function(doc_term,
 
   defaults <- list(
     binarize_method = "gammafit",
+    topic_score_method = "normtop_specificity",
     thrP = 0.9,
     top_n_terms = 500L,
     in_topic_min_terms = 1L,
@@ -7478,7 +9669,7 @@ run_vae_topic_report_py <- function(doc_term,
     gsea_species = "Homo sapiens",
     gsea_nperm = 1000L,
     gsea_peak_gene_agg = "max",
-    pathway_source = "link_scores",
+    pathway_source = "topic_terms",
     pathway_link_scores_file = NULL,
     pathway_link_scores_file_tf = NULL,
     pathway_link_gene_terms_file = NULL,
@@ -7490,7 +9681,7 @@ run_vae_topic_report_py <- function(doc_term,
     pathway_link_tf_max_topics = 5L,
     pathway_link_tf_top_n_per_topic = 30L,
     pathway_per_comparison = TRUE,
-    pathway_per_comparison_dir = "per_comparison_pathway",
+    pathway_per_comparison_dir = ".",
     pathway_per_comparison_flat = TRUE,
     pathway_split_direction = TRUE,
     run_link_topic_scores = TRUE,
@@ -8728,6 +10919,7 @@ extract_regulatory_topics <- function(k,
                                       doc_mode = c("tf_cluster", "tf"),
                                       weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr", "peak_score_gene_expr"),
                                       flatten_single_output = FALSE,
+                                      topic_score_method = NULL,
                                       topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("readr")
@@ -8737,6 +10929,12 @@ extract_regulatory_topics <- function(k,
   backend <- match.arg(backend)
   doc_mode <- match.arg(doc_mode)
   weight_label <- match.arg(weight_label)
+  if (!is.null(topic_score_method)) {
+    topic_report_args$topic_score_method <- match.arg(
+      topic_score_method,
+      choices = c("normtop_specificity", "rowmax_phi")
+    )
+  }
   report_doc_design <- if (identical(weight_label, "peak_score_gene_expr")) "condition" else "comparison"
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -8767,6 +10965,7 @@ extract_regulatory_topics <- function(k,
       if (!file.exists(edges_docs_path) && file.exists(shared_edges_docs_path)) edges_docs_path <- shared_edges_docs_path
     }
     metrics_path <- file.path(d, "model_metrics.csv")
+    topic_input_summary_path <- file.path(d, "topic_input_summary.csv")
     theta_path <- file.path(d, "vae_models", sprintf("theta_K%d.csv", k))
     phi_path <- file.path(d, "vae_models", sprintf("phi_K%d.csv", k))
     if (!file.exists(dtm_path) || !file.exists(edges_docs_path)) {
@@ -8806,6 +11005,7 @@ extract_regulatory_topics <- function(k,
 
   defaults <- list(
       binarize_method = "gammafit",
+      topic_score_method = "normtop_specificity",
       thrP = 0.9,
       top_n_terms = 500L,
       in_topic_min_terms = 1L,
@@ -8821,7 +11021,7 @@ extract_regulatory_topics <- function(k,
       gsea_species = "Homo sapiens",
       gsea_nperm = 1000L,
       gsea_peak_gene_agg = "max",
-      pathway_source = "link_scores",
+      pathway_source = "topic_terms",
       pathway_link_scores_file = NULL,
       pathway_link_scores_file_tf = NULL,
       pathway_link_gene_terms_file = NULL,
@@ -8833,8 +11033,8 @@ extract_regulatory_topics <- function(k,
       pathway_link_tf_max_topics = 5L,
       pathway_link_tf_top_n_per_topic = 30L,
       pathway_per_comparison = FALSE,
-      pathway_per_comparison_dir = "per_comparison_pathway",
-      pathway_per_comparison_flat = FALSE,
+      pathway_per_comparison_dir = ".",
+      pathway_per_comparison_flat = TRUE,
       pathway_split_direction = TRUE,
       run_link_topic_scores = TRUE,
       link_topic_gate_mode = "none",
@@ -8855,14 +11055,26 @@ extract_regulatory_topics <- function(k,
       run_gammafit_summary = TRUE,
       run_link_efdr_summary = TRUE,
       run_pathway_enrichment = FALSE,
-      run_doc_topic_heatmaps = TRUE,
-      run_tf_topic_heatmaps = TRUE,
+      run_raw_theta_document_heatmap = FALSE,
       run_topic_by_comparison_heatmaps = TRUE,
-      run_topic_marker_heatmap = TRUE,
       run_intertopic_distance_map = TRUE,
-      run_ldavis = TRUE,
       topic_by_comparison_label_cleaner = wrap_comp_label
     )
+    if (is.null(topic_report_args$fp_term_mode) && file.exists(topic_input_summary_path)) {
+      topic_input_summary <- tryCatch(
+        data.table::fread(topic_input_summary_path, nrows = 1L),
+        error = function(e) data.table::data.table()
+      )
+      if (nrow(topic_input_summary) && "fp_term_mode" %in% names(topic_input_summary)) {
+        inferred_fp_term_mode <- as.character(topic_input_summary$fp_term_mode[[1L]])
+        if (nzchar(inferred_fp_term_mode)) {
+          topic_report_args$fp_term_mode <- inferred_fp_term_mode
+          .log_inform(
+            "Using fp_term_mode={inferred_fp_term_mode} from topic input summary for topic extraction."
+          )
+        }
+      }
+    }
     args <- modifyList(defaults, topic_report_args)
     combo_tag <- basename(dirname(d))
     model_label <- if (backend == "vae") paste("VAE", vae_variant) else "WarpLDA"
@@ -8892,13 +11104,27 @@ extract_regulatory_topics <- function(k,
 #' Extract Module 3 regulatory topics
 #'
 #' Public step function for extracting regulatory topics, pathway summaries,
-#' topic-link tables, and review outputs from trained Module 3 topic models.
+#' topic-link tables, direction-specific TF-to-topic assignment tables, and
+#' review outputs from trained Module 3 topic models.
+#'
+#' Topic assignment uses unit-specific evidence. Terms are assigned from `phi`
+#' after the selected topic-term score method and GammaFit cutoffs. TFs are
+#' assigned from raw document-topic `theta` with the TF membership and primary
+#' margin cutoffs. Per-comparison pathway gene sets are built from model
+#' outputs only: documents with theta above the TF membership cutoff intersect
+#' genes represented by topic-assigned `GENE:<gene>` and aggregate
+#' `PEAK:<gene>` terms. Physical TF-peak-gene links are not used to define
+#' pathway topic membership at extraction time; they can be projected later
+#' onto selected comparison/topic/pathway genes for subnetworks.
 #'
 #' @param k Integer K selected for extraction.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write extracted topic outputs.
 #' @param flatten_single_output Whether to write a single selected model
 #'   directly under `output_dir`. Defaults to `TRUE` for the public step API.
+#' @param topic_score_method Topic-term score method. `"normtop_specificity"`
+#'   is the default for new extractions; `"rowmax_phi"` preserves the legacy
+#'   row-maximum-scaled phi score.
 #' @param ... Additional arguments passed to the internal extraction engine,
 #'   such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.
 #'
@@ -8908,12 +11134,14 @@ module3_extract_topics <- function(k,
                                    model_dir,
                                    output_dir,
                                    flatten_single_output = TRUE,
+                                   topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                    ...) {
   extract_regulatory_topics(
     k = k,
     model_dir = model_dir,
     output_dir = output_dir,
     flatten_single_output = flatten_single_output,
+    topic_score_method = match.arg(topic_score_method),
     ...
   )
 }

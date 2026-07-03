@@ -55,8 +55,14 @@ test_that("Module 3 Enrichr helpers default to fast request scheduling", {
   expect_equal(craftgrn:::.normalize_enrichr_n_cores(1), 1)
   expect_equal(
     craftgrn:::.module3_default_enrichr_cache_dir(file.path("root", "topic_extraction", "K10", "model")),
-    file.path("root", "topic_extraction", "cache", "enrichr")
+    file.path("root", "topic_extraction", "K10", "cache", "enrichly")
   )
+  expect_equal(
+    craftgrn:::.module3_default_enrichr_cache_dir(file.path("root", "topic_extraction", "K10", "model"), backend = "enrichr"),
+    file.path("root", "topic_extraction", "K10", "cache", "enrichr")
+  )
+  expect_false("doc_topic_heatmaps" %in% craftgrn:::.topic_extraction_step_names())
+  expect_false("ldavis" %in% craftgrn:::.topic_extraction_step_names())
   expect_match(craftgrn:::.enrichr_cache_key(c("B", "A", "A"), c("DB2", "DB1")), "^[a-f0-9]+$")
 })
 
@@ -96,10 +102,78 @@ test_that("Module 3 pathway backend supports local enrichly enrichment", {
   expect_equal(res$Toy_DB$Term[[1L]], "Term one")
   expect_equal(res$Toy_DB$Genes[[1L]], "A;B")
 
+  res_case <- craftgrn:::.run_enrichr_cached(
+    genes = c("a", "b"),
+    dbs = "Toy_DB",
+    cache_dir = tempfile("enrich-cache-case-"),
+    backend = "enrichly"
+  )
+  expect_equal(res_case$Toy_DB$Term[[1L]], "Term one")
+  expect_equal(res_case$Toy_DB$Genes[[1L]], "A;B")
+
   cfg <- tempfile("module3-pathway-backend-", fileext = ".yaml")
   writeLines(c("pathway_backend: enrichr", "topic_k: 3"), cfg)
   resolved <- craftgrn:::.module3_resolve_topic_run_config(project_config = cfg)
   expect_equal(resolved$pathway_backend, "enrichr")
+})
+
+test_that("Module 3 pathway database defaults are species aware", {
+  human <- craftgrn:::.default_pathway_databases("human")
+  mouse <- craftgrn:::.default_pathway_databases("mm10")
+
+  expect_true("WikiPathways_2024_Human" %in% human)
+  expect_true("KEGG_2021_Human" %in% human)
+  expect_true("WikiPathways_2024_Mouse" %in% mouse)
+  expect_true("KEGG_2019_Mouse" %in% mouse)
+  expect_false("WikiPathways_2024_Human" %in% mouse)
+  expect_false("KEGG_2021_Human" %in% mouse)
+  expect_equal(craftgrn:::.pathway_species_from_ref_genome("hg38"), "human")
+  expect_equal(craftgrn:::.pathway_species_from_ref_genome("mm10"), "mouse")
+})
+
+test_that("Module 3 enrichly availability does not fall back to enrichR implicitly", {
+  expect_false(with_mocked_bindings(
+    craftgrn:::.pathway_backend_available("enrichly"),
+    .optional_namespace_available = function(pkg) FALSE
+  ))
+})
+
+test_that("Module 3 pathway rerun resolves pass-only topic links", {
+  out_dir <- tempfile("module3-pathway-pass-only-")
+  dir.create(out_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(
+      doc_id = c("CompA::Target-Up::TF1", "CompA::Target-Up::TF2"),
+      tf = c("TF1", "TF2"),
+      peak_id = c("Peak1", "Peak2"),
+      gene_key = c("Gene1", "Gene2"),
+      topic_num = c(1L, 1L),
+      peak_score = c(1.2, 0.8),
+      gene_score = c(0.7, 0.9),
+      peak_pass = TRUE,
+      gene_pass = TRUE
+    ),
+    file.path(out_dir, "topic_links_pass.csv")
+  )
+
+  captured <- new.env(parent = emptyenv())
+  with_mocked_bindings(
+    rerun_pathway_from_topic_links(
+      out_dir = out_dir,
+      topic_links_file = "topic_links.csv",
+      method = "peak_and_gene",
+      allow_missing = FALSE
+    ),
+    plot_topic_pathway_enrichment_from_link_scores = function(link_scores, out_dir, ...) {
+      captured$link_scores <- data.table::copy(data.table::as.data.table(link_scores))
+      captured$out_dir <- out_dir
+      invisible(file.path(out_dir, "mock_pathway.csv"))
+    }
+  )
+
+  expect_equal(captured$out_dir, out_dir)
+  expect_equal(nrow(captured$link_scores), 2L)
+  expect_true(all(c("Gene1", "Gene2") %in% captured$link_scores$gene_key))
 })
 
 test_that("Module 3 QC report writes differential TF summaries", {

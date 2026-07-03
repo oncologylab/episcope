@@ -292,6 +292,7 @@ topic_link_output: pass
 topic_vae_device: auto
 topic_vae_batch_size: 512
 pathway_backend: enrichly
+pathway_species: mouse
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
@@ -300,7 +301,27 @@ topic_benchmark_k_grid: []
 
 Use `pathway_backend: enrichly` for local cached pathway enrichment when the
 optional `enrichly` package is installed. Use `pathway_backend: enrichr` when
-you intentionally want the Enrichr web API backend.
+you intentionally want the Enrichr web API backend. Use
+`pathway_species: human` or `pathway_species: mouse` to choose species-aware
+default databases; if omitted, Module 3 infers the species from `ref_genome`
+when possible.
+
+Pathway gene matching uses formal species-specific gene-symbol resolution when
+the relevant Bioconductor organism package is installed: `org.Hs.eg.db` for
+human and `org.Mm.eg.db` for mouse. CraftGRN resolves official symbols,
+case-insensitive symbols, aliases, ENSEMBL IDs, and ENTREZ IDs before comparing
+pathway inputs and returned overlap genes. If no formal match is available, it
+keeps a deterministic case-normalized fallback so old all-uppercase versus
+titlecase differences still match where possible.
+
+Standard extraction folders are flat. For a selected K, review the K root for
+`topic_terms.csv`, `topic_links_pass.csv`, `topic_item_coverage_counts.csv`,
+`topic_terms_and_cutoffs_summary.pdf`, `topic_term_score_heatmap_K*.pdf`,
+`topic_term_phi_score_heatmap_K*.pdf`,
+`topic_pathway_enrichment_dotplot.pdf`, and
+`topic_term_pathway_enrichment.csv`. Standard runs do not create LDAvis,
+doc-topic heatmap, raw-theta document heatmap, nested TF assignment, nested
+term assignment, or nested per-comparison pathway folders.
 
 ```{r module-3-regulatory-topics, purl=FALSE}
 run_topic_modeling(
@@ -369,6 +390,32 @@ module3_extract_topics(
 )
 ```
 
+### Topic assignment interpretation
+
+Module 3 uses different evidence for terms, TFs, genes, and links.
+
+- Terms are assigned from the topic-term matrix `phi`. The default
+  `topic_score_method = "normtop_specificity"` applies a cisTopic-like
+  specificity adjustment that downweights common non-specific terms before
+  GammaFit topic-term cutoffs are applied.
+- TFs are assigned from raw document-topic `theta`, not from topic links.
+  A TF document such as `comparison::TF::Target-Up` belongs to a topic when
+  `theta >= topic_tf_membership_cutoff`; the primary topic is the maximum-theta
+  topic and ambiguity is controlled by `topic_tf_primary_margin_cutoff`.
+- Genes are summarized from the topic terms observed in theta-selected
+  documents. For per-comparison pathway analysis, a comparison/direction/topic
+  gene set is the intersect of genes observed in documents with
+  `theta >= topic_tf_membership_cutoff` and genes represented by the topic's
+  assigned `GENE:<gene>` and aggregate `PEAK:<gene>` terms.
+- Physical TF-peak-gene links are not used to define pathway topic membership
+  at extraction time. They can be projected later onto selected
+  comparison/topic/pathway genes for subnetworks.
+
+The standard coverage table `topic_item_coverage_counts.csv` reports Pass and
+Fail counts, fractions, and percentages for terms, genes, and TFs. TF coverage
+is document-theta based, so it does not change when only the topic-term
+GammaFit threshold changes.
+
 When `k_grid` contains more than one value, the standard Module 3 output keeps
 the K-review tables and topic-model diagnostics for the selected method. Broad
 multi-method benchmarks are developer workflows and are not part of the normal
@@ -404,7 +451,9 @@ Module 3 creates:
   link controls.
 - Model selection metrics across topic-number choices.
 - Topic-term and topic-link probability tables.
-- Topic assignments for regulatory links.
+- Flat topic assignment tables, raw-theta document heatmaps, term-score
+  heatmaps, overall pathway dotplots, and one per-comparison pathway retest
+  table at the extraction root.
 - Standard topic review tables and HTML reports under `review/`.
 - Optional benchmark review tables and HTML reports under a separate benchmark
   output directory when `topic_benchmark_enabled: true`.

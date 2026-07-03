@@ -12,16 +12,60 @@
 # - The standard input is a diff_links_filtered directory containing
 #   *_filtered_links_up.csv and *_filtered_links_down.csv files.
 
-.default_pathway_databases <- function() {
-  c(
+.normalize_pathway_species <- function(species = NULL) {
+  if (is.null(species) || !length(species) || is.na(species[[1L]]) || !nzchar(as.character(species)[[1L]])) {
+    opt <- getOption("craftgrn.pathway_species", NULL)
+    env <- Sys.getenv("CRAFTGRN_PATHWAY_SPECIES", unset = "")
+    species <- if (!is.null(opt) && length(opt) && nzchar(as.character(opt)[[1L]])) opt else env
+  }
+  if (is.null(species) || !length(species) || is.na(species[[1L]]) || !nzchar(as.character(species)[[1L]])) {
+    species <- "human"
+  }
+  species <- tolower(as.character(species)[[1L]])
+  species <- gsub("[^a-z0-9]+", "_", species)
+  if (species %in% c("mouse", "mus_musculus", "mm10", "grcm38")) {
+    "mouse"
+  } else if (species %in% c("human", "homo_sapiens", "hg38", "grch38")) {
+    "human"
+  } else {
+    .log_abort("`pathway_species` must be 'human' or 'mouse'.")
+  }
+}
+
+.pathway_species_from_ref_genome <- function(ref_genome = NULL) {
+  if (is.null(ref_genome) || !length(ref_genome) || is.na(ref_genome[[1L]]) || !nzchar(as.character(ref_genome)[[1L]])) {
+    return(NULL)
+  }
+  ref_genome <- tolower(as.character(ref_genome)[[1L]])
+  ref_genome <- gsub("[^a-z0-9]+", "_", ref_genome)
+  if (ref_genome %in% c("mm10", "grcm38", "mouse", "mus_musculus")) return("mouse")
+  if (ref_genome %in% c("hg38", "grch38", "human", "homo_sapiens")) return("human")
+  NULL
+}
+
+.default_pathway_databases <- function(species = NULL) {
+  species <- .normalize_pathway_species(species)
+  shared <- c(
     "GO_Biological_Process_2023",
     "GO_Cellular_Component_2023",
     "GO_Molecular_Function_2023",
-    "Reactome_2022",
-    "WikiPathways_2024_Human",
-    "MSigDB_Hallmark_2020",
-    "KEGG_2021_Human"
+    "Reactome_2022"
   )
+  hallmark <- "MSigDB_Hallmark_2020"
+  if (.optional_namespace_available("enrichly")) {
+    default_dbs <- tryCatch(
+      getExportedValue("enrichly", "enrichly_default_databases")(species),
+      error = function(e) NULL
+    )
+    if (is.character(default_dbs) && length(default_dbs)) {
+      return(default_dbs)
+    }
+  }
+  if (identical(species, "mouse")) {
+    c(shared, "WikiPathways_2024_Mouse", hallmark, "KEGG_2019_Mouse")
+  } else {
+    c(shared, "WikiPathways_2024_Human", hallmark, "KEGG_2021_Human")
+  }
 }
 
 #' Report differential pathway enrichment
@@ -178,7 +222,7 @@ report_differential_pathways <- function(filtered_dir,
 #' @noRd
 run_diff_grn_pathway_enrichment <- function(filtered_dir,
                                             out_dir,
-                                            dbs = .default_pathway_databases(),
+                                            dbs = NULL,
                                             gene_col = "gene_key",
                                             padj_cut = 0.05,
                                             min_genes = 5L,
@@ -186,11 +230,15 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
                                             enrichr_sleep_time = 0,
                                             enrichr_cache_dir = NULL,
                                             pathway_backend = NULL,
+                                            pathway_species = NULL,
                                             verbose = TRUE) {
   if (!dir.exists(filtered_dir)) .log_abort("`filtered_dir` not found: {filtered_dir}")
   pathway_backend <- .pathway_backend(pathway_backend)
+  pathway_species <- .normalize_pathway_species(pathway_species)
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
   if (!.pathway_backend_available(pathway_backend)) {
-    .log_warn("Skipping pathway enrichment because neither enrichly nor enrichR is installed.")
+    backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
+    .log_warn("Skipping pathway enrichment because the selected backend is not installed: {backend_label}.")
     return(invisible(character(0)))
   }
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
@@ -249,7 +297,8 @@ run_diff_grn_pathway_enrichment <- function(filtered_dir,
         dbs = dbs,
         sleep_time = enrichr_sleep_time,
         cache_dir = enrichr_cache_dir,
-        backend = pathway_backend
+        backend = pathway_backend,
+        pathway_species = pathway_species
       ),
       error = function(e) e
     )
@@ -796,7 +845,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
                                           tag = "diff_grn",
                                           overwrite = FALSE,
                                           make_dotplot = TRUE,
-                                          dbs = .default_pathway_databases(),
+                                          dbs = NULL,
                                           gene_col = "gene_key",
                                           padj_cut = 0.05,
                                           min_genes = 5L,
@@ -804,6 +853,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
                                           enrichr_sleep_time = 0,
                                           enrichr_cache_dir = NULL,
                                           pathway_backend = NULL,
+                                          pathway_species = NULL,
                                           top_n = 5L,
                                           padj_display_cut = 0.05,
                                           condition_order = NULL,
@@ -828,6 +878,7 @@ run_diff_grn_pathway_analysis <- function(filtered_dir,
     enrichr_sleep_time = enrichr_sleep_time,
     enrichr_cache_dir = enrichr_cache_dir,
     pathway_backend = pathway_backend,
+    pathway_species = pathway_species,
     verbose = verbose
   )
   enrich_dt <- read_diff_grn_pathway_enrichment(

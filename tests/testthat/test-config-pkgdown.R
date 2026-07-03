@@ -42,8 +42,8 @@ test_that("pkgdown footer omits redundant developed-by line", {
   expect_identical(as.character(cfg$footer$components$developed_by), "")
 
   testthat::skip_if_not_installed("pkgdown")
-  pkg <- pkgdown::as_pkgdown(dirname(path))
-  footer <- pkgdown:::data_footer(pkg)
+  pkg <- get("as_pkgdown", asNamespace("pkgdown"))(dirname(path))
+  footer <- get("data_footer", asNamespace("pkgdown"))(pkg)
   left <- paste(footer$left, collapse = " ")
   right <- paste(footer$right, collapse = " ")
 

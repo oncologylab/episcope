@@ -300,12 +300,81 @@
   file.path(root, paste0("K", k_grid))
 }
 
+.m3tb_flat_output_for_layout <- function(output_layout) {
+  !identical(as.character(output_layout)[[1L]], "legacy")
+}
+
 .m3tb_review_dir <- function(output_dir, output_layout) {
   if (identical(output_layout, "legacy")) {
     file.path(output_dir, "review_topic_experiments")
   } else {
     file.path(output_dir, "review")
   }
+}
+
+.m3tb_check_path_lengths <- function(root,
+                                     max_chars = 240L,
+                                     path_alias = NULL,
+                                     out_file = NULL,
+                                     verbose = TRUE,
+                                     top_n = 25L) {
+  .assert_pkg("data.table")
+  if (is.null(root) || !nzchar(as.character(root)[[1L]]) || !dir.exists(root)) {
+    return(list(n_paths = 0L, n_over_limit = 0L, max_length = 0L, report = data.table::data.table()))
+  }
+  max_chars <- suppressWarnings(as.integer(max_chars[[1L]]))
+  if (!is.finite(max_chars) || max_chars < 1L) max_chars <- 240L
+  top_n <- suppressWarnings(as.integer(top_n[[1L]]))
+  if (!is.finite(top_n) || top_n < 1L) top_n <- 25L
+  if (is.null(path_alias) || !nzchar(as.character(path_alias)[[1L]])) {
+    env_alias <- Sys.getenv("CRAFTGRN_PATH_LENGTH_ALIAS", unset = "")
+    path_alias <- if (nzchar(env_alias)) env_alias else NULL
+  }
+
+  root_norm <- normalizePath(root, winslash = "/", mustWork = TRUE)
+  paths <- c(
+    root_norm,
+    list.files(root_norm, all.files = TRUE, no.. = TRUE, recursive = TRUE, full.names = TRUE, include.dirs = TRUE)
+  )
+  paths <- unique(normalizePath(paths, winslash = "/", mustWork = FALSE))
+  display_path <- paths
+  if (!is.null(path_alias) && nzchar(as.character(path_alias)[[1L]])) {
+    alias <- sub("/+$", "", gsub("\\\\", "/", as.character(path_alias)[[1L]]))
+    rel <- substr(paths, nchar(root_norm) + 1L, nchar(paths))
+    rel[rel == ""] <- ""
+    display_path <- paste0(alias, rel)
+  }
+
+  report <- data.table::data.table(
+    path = paths,
+    display_path = display_path,
+    n_char = nchar(display_path, type = "chars", allowNA = FALSE, keepNA = FALSE)
+  )
+  report[, over_limit := n_char > max_chars]
+  data.table::setorder(report, -n_char, display_path)
+  over <- report[over_limit == TRUE]
+  if (!is.null(out_file) && nzchar(as.character(out_file)[[1L]])) {
+    dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+    data.table::fwrite(over, out_file)
+  }
+  n_over <- nrow(over)
+  max_len <- if (nrow(report)) max(report$n_char, na.rm = TRUE) else 0L
+  if (isTRUE(verbose) && n_over > 0L) {
+    shown <- head(over$display_path, top_n)
+    .log_warn(c(
+      "Module 3 path length sanity check found {n_over} path(s) longer than {max_chars} characters.",
+      i = "Long paths may fail to open through Windows/Samba clients.",
+      i = "Longest path length: {max_len} characters.",
+      i = "Examples:",
+      paste0("  - ", shown)
+    ))
+  }
+  list(
+    n_paths = nrow(report),
+    n_over_limit = n_over,
+    max_length = max_len,
+    report = over
+  )
 }
 
 .m3tb_clean_stale_review_layout <- function(review_dir) {
@@ -388,71 +457,27 @@
 }
 
 .m3tb_color_family <- function(x) {
-  x <- as.character(x)
-  is_ctrl_fbs <- grepl(
-    "(^|[^0-9A-Za-z.])10[ _]?FBS($|[^0-9A-Za-z.])|Full",
-    x,
-    ignore.case = TRUE,
-    perl = TRUE
-  )
-  data.table::fcase(
-    grepl("Met[.]Cys|Met/Cys|Met Cys", x, ignore.case = TRUE), "Met.Cys",
-    grepl("Gln[.]Arg|Gln/Arg|Gln Arg", x, ignore.case = TRUE), "Gln.Arg",
-    grepl("BCAA", x, ignore.case = TRUE), "BCAA",
-    grepl("Glc", x, ignore.case = TRUE), "Glc",
-    grepl("Lys", x, ignore.case = TRUE), "Lys",
-    grepl("Trp", x, ignore.case = TRUE), "Trp",
-    grepl("Arg", x, ignore.case = TRUE), "Arg",
-    grepl("Gln", x, ignore.case = TRUE), "Gln",
-    is_ctrl_fbs, "Ctrl",
-    grepl("FBS", x, ignore.case = TRUE), "FBS",
-    grepl("BATF", x, ignore.case = TRUE), "BATF",
-    grepl("IRF4", x, ignore.case = TRUE), "IRF4",
-    grepl("RUNX3|Runx3", x, ignore.case = TRUE), "RUNX3",
-    grepl("TBET|Tbet|Tbx21", x, ignore.case = TRUE), "Tbet",
-    grepl("Naive", x, ignore.case = TRUE), "Naive",
-    grepl("Restimulated", x, ignore.case = TRUE), "Restimulated",
-    grepl("Resting", x, ignore.case = TRUE), "Resting",
-    grepl("Dox|NoTF", x, ignore.case = TRUE), "Fibroblast",
-    default = "Other"
-  )
+  out <- as.character(x)
+  out[is.na(out) | !nzchar(trimws(out))] <- "Other"
+  out
 }
 
 .m3tb_group_color <- function(x) {
   fam <- .m3tb_color_family(x)
-  x_chr <- as.character(x)
-  is_high <- grepl("(^|[^0-9])25([^0-9]|$)|(^|[^0-9])10([^0-9]|$)|12[.]5|Full", x_chr, ignore.case = TRUE)
   pal <- c(
-    Met.Cys = "#DE782C",
-    Gln.Arg = "#2D8049",
-    BCAA = "#3C4682",
-    Glc = "#5A8EBC",
-    Lys = "#D81B60",
-    Trp = "#9C5AA6",
-    Arg = "#4DAF4A",
-    Gln = "#1B9E77",
-    Ctrl = "#717171",
-    FBS = "#A5A5A5",
-    BATF = "#D55E00",
-    IRF4 = "#0072B2",
-    RUNX3 = "#009E73",
-    Tbet = "#CC79A7",
-    Naive = "#666666",
-    Restimulated = "#E69F00",
-    Resting = "#56B4E9",
-    Fibroblast = "#8A5FBF",
-    Other = "#2A9D8F"
+    "#4E79A7", "#E15759", "#59A14F", "#F28E2B", "#B07AA1", "#76B7B2",
+    "#EDC948", "#FF9DA7", "#9C755F", "#BAB0AC", "#1B9E77", "#D95F02",
+    "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "#666666",
+    "#8DD3C7", "#FB8072", "#80B1D3", "#B3DE69", "#FDB462", "#BC80BD"
   )
-  out <- unname(pal[fam])
-  out[fam == "Met.Cys" & !is_high] <- "#F29550"
-  out[fam == "Gln.Arg" & !is_high] <- "#72AF87"
-  out[fam == "BCAA" & !is_high] <- "#7E85B1"
-  out
+  keys <- sort(unique(fam))
+  map <- pal[((seq_along(keys) - 1L) %% length(pal)) + 1L]
+  unname(map[match(fam, keys)])
 }
 
 .m3tb_metric_group_from_label <- function(label, direction = NULL) {
-  fam <- .m3tb_color_family(label)
-  out <- data.table::fifelse(!is.na(fam) & nzchar(fam) & fam != "Other", fam, as.character(label))
+  out <- as.character(label)
+  out[is.na(out) | !nzchar(trimws(out))] <- "Other"
   if (!is.null(direction)) {
     direction <- as.character(direction)
     out <- paste(out, direction, sep = "::")
@@ -529,11 +554,19 @@
   ctrl_rep[, direction := "Target-Down"]
   comparison <- data.table::rbindlist(list(case_rep, ctrl_rep), use.names = TRUE, fill = TRUE)
   comparison_label <- paste0(comparison$comparison_id, "__", comparison$direction_condition_label, "::", comparison$direction)
+  comparison_metric_base <- if ("comparison_group" %in% names(comparison)) {
+    as.character(comparison$comparison_group)
+  } else {
+    as.character(comparison$comparison_id)
+  }
+  comparison_metric_base[is.na(comparison_metric_base) | !nzchar(trimws(comparison_metric_base))] <- comparison$comparison_id[
+    is.na(comparison_metric_base) | !nzchar(trimws(comparison_metric_base))
+  ]
   comparison[, `:=`(
     context_type = "comparison",
     comparison_label = comparison_label,
     display_label = .m3tb_display_label(comparison_label),
-    metric_group = paste(comparison$comparison_id, comparison$direction, sep = "::")
+    metric_group = paste(comparison_metric_base, comparison$direction, sep = "::")
   )]
   comparison <- unique(comparison[, .(context_type, comparison_label, display_label, metric_group)])
   data.table::rbindlist(list(condition, comparison), use.names = TRUE)
@@ -579,15 +612,11 @@
   }
   if (all(c("cond1_label", "cond2_label") %in% names(dt))) {
     conds <- unique(c(as.character(dt$cond1_label), as.character(dt$cond2_label)))
-    cond_metric_group <- .m3tb_metric_group_from_label(.m3tb_display_label(conds))
-    if (!.m3tb_use_inferred_metric_groups(cond_metric_group)) {
-      cond_metric_group <- conds
-    }
     condition <- data.table::data.table(
       context_type = "condition",
       comparison_label = conds,
       display_label = .m3tb_display_label(conds),
-      metric_group = cond_metric_group
+      metric_group = conds
     )
     if (!"comparison_id" %in% names(dt)) {
       dt[, comparison_id := paste(as.character(cond1_label), as.character(cond2_label), sep = "_vs_")]
@@ -604,7 +633,9 @@
     display_base[is.na(display_base) | !nzchar(trimws(display_base))] <- dt$comparison_id[
       is.na(display_base) | !nzchar(trimws(display_base))
     ]
-    metric_base <- if ("cond1_display" %in% names(dt)) {
+    metric_base <- if ("comparison_group" %in% names(dt)) {
+      as.character(dt$comparison_group)
+    } else if ("cond1_display" %in% names(dt)) {
       as.character(dt$cond1_display)
     } else {
       as.character(dt$cond1_label)
@@ -614,7 +645,7 @@
     ]
     up_metric_group <- .m3tb_metric_group_from_label(metric_base, "Target-Up")
     down_metric_group <- .m3tb_metric_group_from_label(metric_base, "Target-Down")
-    if (!.m3tb_use_inferred_metric_groups(c(up_metric_group, down_metric_group))) {
+    if (!"comparison_group" %in% names(dt) && !.m3tb_use_inferred_metric_groups(c(up_metric_group, down_metric_group))) {
       up_metric_group <- paste(dt$comparison_id, "Target-Up", sep = "::")
       down_metric_group <- paste(dt$comparison_id, "Target-Down", sep = "::")
     }
@@ -894,7 +925,25 @@
     model_label = character(),
     selected_k = integer(),
     status = character(),
-    count = integer()
+    count = integer(),
+    count_basis = character()
+  )
+}
+
+.m3tb_empty_item_coverage_counts <- function() {
+  data.table::data.table(
+    method_order = integer(),
+    method_setup = character(),
+    setup = character(),
+    model_label = character(),
+    selected_k = integer(),
+    unit = character(),
+    status = character(),
+    count = numeric(),
+    total = numeric(),
+    fraction = numeric(),
+    percent = numeric(),
+    count_basis = character()
   )
 }
 
@@ -938,6 +987,49 @@
     pass = sum(as.numeric(dt$n_pass_rows), na.rm = TRUE),
     output_mode = paste(unique(as.character(dt$output_mode %||% NA_character_)), collapse = ",")
   )
+}
+
+.m3tb_attach_topic_row_meta <- function(dt, row) {
+  if (!nrow(dt)) return(dt)
+  dt[, `:=`(
+    method_order = row$method_order[[1L]],
+    method_setup = row$method_setup[[1L]],
+    setup = row$setup[[1L]],
+    model_label = row$model_label[[1L]],
+    selected_k = as.integer(row$selected_k[[1L]])
+  )]
+  dt
+}
+
+.m3tb_read_topic_item_coverage_counts <- function(topic_dir, row) {
+  path <- file.path(topic_dir, "topic_item_coverage_counts.csv")
+  if (!file.exists(path)) return(data.table::data.table())
+  dt <- data.table::fread(path, showProgress = FALSE)
+  need <- c("unit", "status", "count")
+  if (!all(need %in% names(dt))) return(data.table::data.table())
+  if (!"total" %in% names(dt)) {
+    totals <- dt[, .(total = sum(as.numeric(count), na.rm = TRUE)), by = unit]
+    dt <- merge(dt, totals, by = "unit", all.x = TRUE, sort = FALSE)
+  }
+  if (!"fraction" %in% names(dt)) {
+    dt[, fraction := data.table::fifelse(total > 0, as.numeric(count) / total, NA_real_)]
+  }
+  if (!"percent" %in% names(dt)) {
+    dt[, percent := 100 * as.numeric(fraction)]
+  }
+  if (!"count_basis" %in% names(dt)) {
+    dt[, count_basis := paste0(unit, " assigned to at least one topic")]
+  }
+  .m3tb_attach_topic_row_meta(dt, row)
+}
+
+.m3tb_read_topic_term_coverage_counts <- function(topic_dir, row) {
+  path <- file.path(topic_dir, "topic_terms.csv")
+  if (!file.exists(path)) return(data.table::data.table())
+  tt <- data.table::fread(path, showProgress = FALSE)
+  if (!nrow(tt) || !"term_id" %in% names(tt)) return(data.table::data.table())
+  coverage <- .topic_item_coverage_from_terms(tt, score_mat = NULL)
+  .m3tb_attach_topic_row_meta(coverage, row)
 }
 
 .m3tb_read_pathway_shared_counts <- function(topic_dir) {
@@ -1059,7 +1151,8 @@
 }
 
 .m3tb_summarize_topic_links <- function(output_dir, model_rows, review_dir = NULL) {
-  pass_rows <- list()
+  link_assignment_rows <- list()
+  item_coverage_rows <- list()
   shared_rows <- list()
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
   existing_shared <- .m3tb_existing_shared_cache(review_dir)
@@ -1075,6 +1168,13 @@
       assign(key, TRUE, envir = seen)
       topic_dir <- dirname(path)
       summary_counts <- .m3tb_read_topic_link_summary(topic_dir)
+      item_coverage <- .m3tb_read_topic_item_coverage_counts(topic_dir, row)
+      if (!nrow(item_coverage)) {
+        item_coverage <- .m3tb_read_topic_term_coverage_counts(topic_dir, row)
+      }
+      if (nrow(item_coverage)) {
+        item_coverage_rows[[length(item_coverage_rows) + 1L]] <- item_coverage
+      }
       cached_shared <- .m3tb_cached_shared_for_row(existing_shared, row)
       if (nrow(cached_shared)) {
         shared_rows[[length(shared_rows) + 1L]] <- cached_shared
@@ -1085,7 +1185,7 @@
         pass_count = .m3tb_unique_link_pass_from_shared(cached_shared)
       )
       if (!is.null(summary_pass)) {
-        pass_rows[[length(pass_rows) + 1L]] <- summary_pass
+        link_assignment_rows[[length(link_assignment_rows) + 1L]] <- summary_pass
       }
       pathway_shared <- .m3tb_read_pathway_shared_counts(topic_dir)
       if (nrow(pathway_shared)) {
@@ -1106,7 +1206,7 @@
       if (isTRUE(fast_summary) && !nrow(cached_shared)) {
         topic_row_pass <- .m3tb_pass_counts_from_topic_rows(summary_counts, row)
         if (!is.null(topic_row_pass)) {
-          pass_rows[[length(pass_rows) + 1L]] <- topic_row_pass
+          link_assignment_rows[[length(link_assignment_rows) + 1L]] <- topic_row_pass
           fast_pass_added <- TRUE
         }
       }
@@ -1142,7 +1242,7 @@
         }
       }
       if (is.null(summary_pass) && !isTRUE(fast_pass_added)) {
-        pass_rows[[length(pass_rows) + 1L]] <- data.table::data.table(
+        link_assignment_rows[[length(link_assignment_rows) + 1L]] <- data.table::data.table(
           method_order = row$method_order[[1L]],
           method_setup = row$method_setup[[1L]],
           setup = row$setup[[1L]],
@@ -1154,6 +1254,13 @@
         )
       }
       keep <- dt[link_pass | (peak_pass & gene_pass)]
+      if (!nrow(item_coverage) || !all(c("Genes", "TFs") %in% unique(as.character(item_coverage$unit)))) {
+        link_coverage <- .topic_item_coverage_from_links(dt, keep)
+        if (nrow(link_coverage)) {
+          link_coverage <- .m3tb_attach_topic_row_meta(link_coverage, row)
+          item_coverage_rows[[length(item_coverage_rows) + 1L]] <- link_coverage
+        }
+      }
       unit_map <- data.table::data.table(unit_label = c("Links", "Genes", "TFs"), unit_col = c("link_id", "gene_key", "tf"))
       for (u in seq_len(nrow(unit_map))) {
         unit_col <- unit_map$unit_col[[u]]
@@ -1172,11 +1279,22 @@
       }
     }
   }
-  pass <- if (length(pass_rows)) {
-    data.table::rbindlist(pass_rows, use.names = TRUE, fill = TRUE)
+  link_assignment <- if (length(link_assignment_rows)) {
+    data.table::rbindlist(link_assignment_rows, use.names = TRUE, fill = TRUE)
   } else {
     .m3tb_empty_pass_counts()
   }
+  item_coverage <- if (length(item_coverage_rows)) {
+    data.table::rbindlist(item_coverage_rows, use.names = TRUE, fill = TRUE)
+  } else {
+    .m3tb_empty_item_coverage_counts()
+  }
+  if (nrow(item_coverage)) {
+    item_coverage[, count := as.numeric(count)]
+    item_coverage[, total := as.numeric(total)]
+    item_coverage[, fraction := data.table::fifelse(total > 0, count / total, NA_real_)]
+  }
+  pass <- if (nrow(item_coverage)) item_coverage else link_assignment
   shared <- if (length(shared_rows)) {
     data.table::rbindlist(shared_rows, use.names = TRUE, fill = TRUE)
   } else {
@@ -1184,11 +1302,15 @@
   }
   csv_dir <- .m3tb_review_tables_dir(review_dir)
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(item_coverage, file.path(csv_dir, "topic_setup_item_coverage_counts.csv"))
+  data.table::fwrite(link_assignment, file.path(csv_dir, "topic_setup_link_assignment_counts.csv"))
   data.table::fwrite(pass, file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
   data.table::fwrite(shared, file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
+  data.table::fwrite(item_coverage, file.path(csv_dir, "tf_std_six_setups_item_coverage_counts.csv"))
+  data.table::fwrite(link_assignment, file.path(csv_dir, "tf_std_six_setups_link_assignment_counts.csv"))
   data.table::fwrite(pass, file.path(csv_dir, "tf_std_six_setups_pass_state_counts.csv"))
   data.table::fwrite(shared, file.path(csv_dir, "tf_std_six_setups_shared_topic_counts.csv"))
-  list(pass = pass, shared = shared)
+  list(pass = pass, shared = shared, item_coverage = item_coverage, link_assignment = link_assignment)
 }
 
 .m3tb_plot_count_pdf <- function(dt, out_file, title, x_col = "method_setup") {
@@ -1244,10 +1366,12 @@
   dt <- data.table::copy(data.table::as.data.table(pass_dt))
   if (!nrow(dt)) return(dt)
   if (!"count_basis" %in% names(dt)) dt[, count_basis := "Unique links"]
+  if (!"unit" %in% names(dt)) dt[, unit := "Links"]
   dt[, `:=`(
     gammafit_scope_label = "All topic links",
     setup_label = .m3tb_setup_label(method_setup),
     method_label = .m3tb_method_label(model_label),
+    unit_label = as.character(unit),
     status = factor(as.character(status), levels = c("Pass", "Fail")),
     selected_k = as.integer(selected_k),
     count = as.numeric(count)
@@ -1258,8 +1382,13 @@
   dt[, setup_label := factor(setup_label, levels = unique(setup_label[order(method_order, setup_label)]))]
   dt[, method_setup_label := factor(as.character(method_setup), levels = unique(as.character(method_setup[order(method_order)])))]
   dt[, k_label := factor(paste0("K", selected_k), levels = paste0("K", sort(unique(selected_k))))]
-  totals <- dt[, .(total = sum(count, na.rm = TRUE)), by = .(gammafit_scope_label, setup_label, model_k_short)]
-  dt <- merge(dt, totals, by = c("gammafit_scope_label", "setup_label", "model_k_short"), all.x = TRUE, sort = FALSE)
+  unit_levels <- c("Terms", "Genes", "TFs", "Links", "Pathways")
+  unit_levels <- c(unit_levels[unit_levels %in% unique(dt$unit_label)], setdiff(unique(dt$unit_label), unit_levels))
+  dt[, unit_label := factor(unit_label, levels = unit_levels)]
+  drop_cols <- intersect(c("total", "fraction"), names(dt))
+  if (length(drop_cols)) dt[, (drop_cols) := NULL]
+  totals <- dt[, .(total = sum(count, na.rm = TRUE)), by = .(gammafit_scope_label, setup_label, model_k_short, unit_label)]
+  dt <- merge(dt, totals, by = c("gammafit_scope_label", "setup_label", "model_k_short", "unit_label"), all.x = TRUE, sort = FALSE)
   dt[, fraction := data.table::fifelse(total > 0, count / total, NA_real_)]
   dt[]
 }
@@ -1271,14 +1400,14 @@
   basis_text <- paste(unique(as.character(dt$count_basis)), collapse = "; ")
   ggplot2::ggplot(dt, ggplot2::aes(k_label, fraction, fill = status)) +
     ggplot2::geom_col(width = 0.78, na.rm = TRUE, position = ggplot2::position_stack(reverse = TRUE)) +
-    ggplot2::facet_grid(method_setup_label ~ ., drop = TRUE) +
+    ggplot2::facet_grid(unit_label + method_setup_label ~ ., drop = TRUE) +
     ggplot2::scale_fill_manual(values = c(Pass = "#2c7fb8", Fail = "#bdbdbd"), drop = FALSE) +
     ggplot2::scale_y_continuous(labels = scales::label_percent(accuracy = 1), limits = c(0, 1), expand = c(0, 0.01)) +
     ggplot2::labs(
-      title = "TF standard six setups - pass/fail fraction by method and K",
-      subtitle = paste0("Bars are normalized within setup x method x K. Count basis: ", basis_text, "."),
+      title = "TF standard six setups - item topic coverage by method and K",
+      subtitle = paste0("Pass: item assigned to at least one topic. Bars are normalized within item type x setup x method x K. Count basis: ", basis_text, "."),
       x = "K",
-      y = "Fraction of standard TF-FP-gene links",
+      y = "Fraction of items",
       fill = "Status"
     ) +
     .m3tb_review_theme(8.5) +
@@ -1557,6 +1686,7 @@
 .m3tb_read_or_compute_universe_pathways <- function(model_dir,
                                                     extraction_dir,
                                                     compute_if_missing = TRUE,
+                                                    pathway_species = NULL,
                                                     verbose = FALSE) {
   cache_file <- .m3tb_universe_pathway_cache_file(model_dir, extraction_dir)
   if (file.exists(cache_file)) {
@@ -1566,8 +1696,10 @@
   genes <- .m3tb_doc_term_gene_universe(.m3tb_find_doc_term_file(model_dir))
   if (!length(genes)) return(data.table::data.table())
   pathway_backend <- .pathway_backend(NULL)
+  pathway_species <- .normalize_pathway_species(pathway_species)
   if (!.pathway_backend_available(pathway_backend)) {
-    .log_abort("Computing Module 3 pathway universe totals requires either enrichly or enrichR.")
+    backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
+    .log_abort("Computing Module 3 pathway universe totals requires the selected backend: {backend_label}.")
   }
   if (identical(pathway_backend, "enrichr") && !isTRUE(.ensure_enrichr_ready(verbose = FALSE))) {
     .log_abort("Enrichr is not reachable; cannot compute Module 3 pathway universe totals.")
@@ -1581,7 +1713,8 @@
       dbs = .default_pathway_databases(),
       sleep_time = 0,
       cache_dir = file.path(extraction_dir, "cache", "enrichr"),
-      backend = pathway_backend
+      backend = pathway_backend,
+      pathway_species = pathway_species
     ),
     error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
   )
@@ -1719,6 +1852,27 @@
   out[]
 }
 
+.m3tb_read_condition_pathway_tables <- function(extraction_dir,
+                                                model_dir = NULL,
+                                                compute_universe = TRUE,
+                                                verbose = FALSE) {
+  pathways <- .m3tb_read_pathway_tables(
+    extraction_dir,
+    per_group = TRUE,
+    model_dir = model_dir,
+    compute_universe = compute_universe,
+    verbose = verbose
+  )
+  if (nrow(pathways)) return(pathways)
+  .m3tb_read_pathway_tables(
+    extraction_dir,
+    per_group = FALSE,
+    model_dir = model_dir,
+    compute_universe = compute_universe,
+    verbose = verbose
+  )
+}
+
 .m3tb_topic_report_html <- function(title, topic_mds, waterfall, pathways, out_html) {
   topic_json <- .m3tb_json_for_html(topic_mds)
   waterfall_json <- .m3tb_json_for_html(waterfall)
@@ -1834,7 +1988,6 @@
       }, numeric(1L))
     }
   }, by = split_panel_label]
-  dt[!is_comparison & grepl("BCAA$", plot_label) & nearest_scaled_dist >= 0.18, label_mode := "center"]
   max_panel_n <- max(data.table::frank(dt$split_panel_label, ties.method = "dense"), 1L)
   max_panel_n <- max(dt[, .N, by = split_panel_label]$N, na.rm = TRUE)
   dense_labels <- !is_comparison && is.finite(max_panel_n) && max_panel_n > 12L
@@ -2082,9 +2235,10 @@
     "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#FF9DA7','#9C755F','#BAB0AC','#1F77B4','#D62728'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),mdsSvg=document.getElementById('mdsSvg'),mdsExportSvg=null,waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg'),mdsLayer=document.getElementById('mdsLayer'),waterfallLayer=document.getElementById('waterfallLayer'),pathLayer=document.getElementById('pathLayer'),mdsTooltip=document.getElementById('mdsTooltip'),wfTooltip=document.getElementById('wfTooltip'),pathTooltip=document.getElementById('pathTooltip');function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function tooltip(tt,ev,text){tt.innerHTML=esc(text).replace(/\\n/g,'<br/>');tt.style.display='block';tt.style.left=(ev.offsetX+12)+'px';tt.style.top=(ev.offsetY+12)+'px'}function svgFontSize(svg,targetPx){if(!svg)return String(targetPx);const m=svg.getScreenCTM();const s=m?Math.sqrt(Math.abs(m.a*m.d)):1;return Math.max(1,targetPx/Math.max(s,0.001)).toFixed(2)}function color(i){return PAL[i%PAL.length]}function groupColor(d,i){const c=String(d.color||'');return /^#[0-9A-Fa-f]{6}$/.test(c)?c:color(i)}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}function isDownGroup(d){const s=String(d.comparison_label||'')+' '+String(d.display_label||'')+' '+String(d.group_label||'');return Number(d.shape_value)===25||/Target-Down|\\bDown\\b/i.test(s)}",
     "function selectGroup(id){groupSelect.value=id;fillTopics();draw()}",
     "function selectedGroupRows(){return GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>Number(b.theta_mean)-Number(a.theta_mean)||Number(a.topic_num)-Number(b.topic_num))}",
+    "function topicHasPathwayForGroup(topic,grp){const tn=topicNum(topic),hasGroupPath=PATHWAYS.some(d=>String(d.comparison_label||'')!=='');return PATHWAYS.some(d=>(+d.topic_num===tn||+d.topic===tn)&&(!hasGroupPath||String(d.comparison_label||'')===grp))}",
     "function exportStyle(){return 'text{font-family:Arial,Helvetica,sans-serif;font-weight:700}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#555;stroke-width:1.1;opacity:.65}'}function exportSvgTitle(root,text,x,y,size){const t=el('text',{x:x,y:y,'font-size':size,'font-weight':700,fill:'#111'});t.textContent=text;root.appendChild(t)}function addExportPanel(root,src,title,x,y,w,h){exportSvgTitle(root,title,x,y+22,24);if(src&&src.tagName&&src.tagName.toLowerCase()==='svg'){const clone=src.cloneNode(true);clone.setAttribute('x',x);clone.setAttribute('y',y+38);clone.setAttribute('width',w);clone.setAttribute('height',h-38);clone.setAttribute('preserveAspectRatio','xMidYMid meet');clone.removeAttribute('style');root.appendChild(clone);return}if(src&&src.getAttribute){const img=el('image',{x:x,y:y+38,width:w,height:h-38,preserveAspectRatio:'xMidYMid meet'});img.setAttributeNS('http://www.w3.org/1999/xlink','href',src.getAttribute('src')||'');img.setAttribute('href',src.getAttribute('src')||'');root.appendChild(img)}}function exportSvg(){draw();const root=el('svg',{xmlns:'http://www.w3.org/2000/svg',viewBox:'0 0 2480 1400',width:2480,height:1400});const style=el('style',{});style.textContent=exportStyle();root.appendChild(style);root.appendChild(el('rect',{x:0,y:0,width:2480,height:1400,fill:'#fff'}));exportSvgTitle(root,document.title||'Condition topic report',30,42,28);addExportPanel(root,mdsExportSvg||mdsSvg,'Condition/Comparison MDS',30,74,760,590);addExportPanel(root,waterfallSvg,'Topic Waterfall',30,720,760,620);addExportPanel(root,pathSvg,'Pathways',830,74,1600,1266);const text=new XMLSerializer().serializeToString(root),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'condition_topic_report').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
     "function init(){GROUP_MDS.forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});if(GROUP_MDS.length)groupSelect.value=GROUP_MDS[0].comparison_label;groupSelect.addEventListener('change',()=>selectGroup(groupSelect.value));topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',exportSvg);fillTopics();draw()}",
-    "function fillTopics(){const rows=selectedGroupRows();topicSelect.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic)+' ('+(+d.theta_mean||0).toFixed(3)+')';topicSelect.appendChild(o)})}",
+    "function fillTopics(){const rows=selectedGroupRows(),grp=groupSelect.value;topicSelect.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic)+' ('+(+d.theta_mean||0).toFixed(3)+')';topicSelect.appendChild(o)});const firstWithPath=rows.find(d=>topicHasPathwayForGroup(d.topic,grp));if(firstWithPath)topicSelect.value=firstWithPath.topic}",
     "function mdsLabelText(d){return String(d.mds_label||d.display_label||d.comparison_label||'').replace(/_/g,' ')}function drawTextBox(g,text,x,y,anchor,fontSize,fill){const t=el('text',{x:x,y:y,'text-anchor':anchor||'middle','font-size':fontSize||13,'font-weight':700,fill:fill||'#111',class:'mdsLabel'});t.textContent=text;g.appendChild(t);return{t:t}}function layoutLabels(items,panel){const fs=13,labels=items.map((p,i)=>{const txt=mdsLabelText(p.d);let dx=p.x-(panel.x0+panel.x1)/2,dy=p.y-(panel.y0+panel.y1)/2,len=Math.hypot(dx,dy);if(len<1){const a=(i+1)*2.399963;dx=Math.cos(a);dy=Math.sin(a);len=1}const w=Math.max(54,Math.min(148,txt.length*fs*.62+16)),h=fs+10,gap=30+(i%3)*7;return{p,txt,x:p.x+dx/len*gap,y:p.y+dy/len*gap,w,h}});function clamp(a){a.x=Math.max(panel.x0+a.w/2+4,Math.min(panel.x1-a.w/2-4,a.x));a.y=Math.max(panel.y0+a.h/2+4,Math.min(panel.y1-a.h/2-4,a.y))}labels.forEach(clamp);for(let iter=0;iter<120;iter++){for(let i=0;i<labels.length;i++)for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j],ox=(a.w+b.w)/2+7-Math.abs(a.x-b.x),oy=(a.h+b.h)/2+7-Math.abs(a.y-b.y);if(ox>0&&oy>0){let dx=a.x-b.x,dy=a.y-b.y;if(Math.abs(dx)+Math.abs(dy)<.1){dx=i<j?-1:1;dy=(i+j)%2?-1:1}const len=Math.max(.1,Math.hypot(dx,dy)),push=Math.min(ox,oy)*.22;a.x+=dx/len*push;a.y+=dy/len*push;b.x-=dx/len*push;b.y-=dy/len*push;clamp(a);clamp(b)}}}return labels}function drawMarker(g,p,selected){const d=p.d,c=groupColor(d,p.i),shape=isDownGroup(d)?'down':'circle';if(shape==='down'){const s=12,pts=[[p.x,p.y+s],[p.x-s,p.y-s],[p.x+s,p.y-s]].map(v=>v.join(',')).join(' ');g.appendChild(el('polygon',{points:pts,fill:c,opacity:.86,stroke:selected?'#111':'#fff','stroke-width':selected?3:1.2}))}else{g.appendChild(el('circle',{cx:p.x,cy:p.y,r:selected?8.5:7.2,fill:c,opacity:.9,stroke:selected?'#111':'#fff','stroke-width':selected?3:1.2}))}const hit=el('circle',{cx:p.x,cy:p.y,r:26,class:'mdsPointHit'});hit.addEventListener('click',()=>selectGroup(d.comparison_label));hit.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(d.display_label||d.comparison_label)+'\\ndocs: '+d.n_docs));hit.addEventListener('mouseout',()=>mdsTooltip.style.display='none');g.appendChild(hit)}function drawMds(){if(!mdsLayer)return;mdsLayer.replaceChildren();const W=980,H=680,isComparison=GROUP_MDS.some(d=>String(d.doc_design||'')==='comparison'||isDownGroup(d)),panels=isComparison?[{name:'Up',rows:GROUP_MDS.filter(d=>!isDownGroup(d)),x0:38,x1:484,y0:82,y1:582},{name:'Down',rows:GROUP_MDS.filter(d=>isDownGroup(d)),x0:496,x1:960,y0:82,y1:582}]:[{name:'Condition',rows:GROUP_MDS,x0:50,x1:940,y0:72,y1:590}];panels.forEach(panel=>{if(!panel.rows.length)return;mdsLayer.appendChild(el('rect',{x:panel.x0,y:36,width:panel.x1-panel.x0,height:28,fill:'#f0f0ee',stroke:'#ddd'}));const strip=el('text',{x:(panel.x0+panel.x1)/2,y:56,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#222'});strip.textContent=panel.name;mdsLayer.appendChild(strip);mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y1,x2:panel.x1,y2:panel.y1,stroke:'#111','stroke-width':1.1}));mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y0,x2:panel.x0,y2:panel.y1,stroke:'#111','stroke-width':1.1}));const sx=sc(panel.rows.map(d=>+d.MDS1),panel.x0+42,panel.x1-42),sy=sc(panel.rows.map(d=>+d.MDS2),panel.y1-42,panel.y0+42),pts=panel.rows.map((d,i)=>({d,i,x:sx(+d.MDS1),y:sy(+d.MDS2)}));pts.forEach(p=>drawMarker(mdsLayer,p,p.d.comparison_label===groupSelect.value));const labels=layoutLabels(pts,panel);labels.forEach(a=>{mdsLayer.appendChild(el('line',{x1:a.p.x,y1:a.p.y,x2:a.x,y2:a.y,class:'mdsLeader'}));const lab=drawTextBox(mdsLayer,a.txt.length>24?a.txt.slice(0,22)+'..':a.txt,a.x,a.y+4,'middle',12.5,groupColor(a.p.d,a.p.i));[lab.t].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>selectGroup(a.p.d.comparison_label));node.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(a.p.d.display_label||a.p.d.comparison_label)+'\\ndocs: '+a.p.d.n_docs));node.addEventListener('mouseout',()=>mdsTooltip.style.display='none')})});const xl=el('text',{x:(panel.x0+panel.x1)/2,y:H-22,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'#111'});xl.textContent='MDS1';mdsLayer.appendChild(xl);const yl=el('text',{x:18,y:(panel.y0+panel.y1)/2,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'#111',transform:'rotate(-90 18 '+((panel.y0+panel.y1)/2)+')'});if(!isComparison||panel.name==='Up')yl.textContent='MDS2';mdsLayer.appendChild(yl)});document.getElementById('mdsStats').textContent=GROUP_MDS.length+' groups'}",
     "function drawWaterfall(){waterfallLayer.replaceChildren();const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)),w=980,h=760,left=170,right=46,top=96,axisY=62,labelY=52,titleY=28,labelSize=svgFontSize(waterfallSvg,17),smallSize=svgFontSize(waterfallSvg,14),maxVal=Math.max(...GROUP_TOPIC.map(d=>Number(d.theta_mean)).filter(Number.isFinite),.001),ticks=niceTicks(maxVal,5),axisMax=Math.max(...ticks,maxVal),plotW=w-left-right,rowH=Math.max(18,Math.min(42,(h-58-top-10)/Math.max(1,rows.length))),x=v=>left+Math.max(0,Number(v||0))/axisMax*plotW,sel=topicSelect.value;ticks.forEach(t=>{const xx=x(t);waterfallLayer.appendChild(el('line',{x1:xx,y1:top-6,x2:xx,y2:h-58,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32}));waterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=Number(t).toFixed(2).replace(/\\.?0+$/,'')});waterfallLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,stroke:'#111','stroke-width':1.8}));waterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='Document-to-topic probability';rows.forEach((d,i)=>{const y=top+i*rowH,val=Number(d.theta_mean),bw=x(val)-left,isSel=d.topic===sel;waterfallLayer.appendChild(el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:isSel?'#111':'#333'})).textContent='Topic '+String(d.topic).replace(/^Topic/,'');const r=el('rect',{x:left,y:y+4,width:Math.max(1,bw),height:Math.max(5,rowH-9),fill:color(topicNum(d.topic)),opacity:isSel?.95:.72,stroke:isSel?'#111':'none','stroke-width':isSel?4:0,style:'cursor:pointer'});r.addEventListener('click',()=>{topicSelect.value=d.topic;draw()});r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,'Topic '+String(d.topic).replace(/^Topic/,'')+'\\ndocument-to-topic probability: '+val.toFixed(4)));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');waterfallLayer.appendChild(r);waterfallLayer.appendChild(el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155'})).textContent=val.toFixed(3)});document.getElementById('waterfallStats').textContent=rows.length+' topics'}",
     "function niceTicks(maxVal,n){const out=[];if(!Number.isFinite(maxVal)||maxVal<=0)return[0,1];const raw=maxVal/Math.max(1,n),pow=Math.pow(10,Math.floor(Math.log10(raw))),step=([1,2,5,10].map(v=>v*pow).find(v=>raw<=v)||10*pow);for(let x=0;x<=maxVal+step*.5;x+=step)out.push(x);return out}",
@@ -2326,9 +2480,8 @@
       theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
       group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
       extraction_dir <- .m3tb_find_extraction_subdir(row)
-      pathways <- .m3tb_read_pathway_tables(
+      pathways <- .m3tb_read_condition_pathway_tables(
         extraction_dir,
-        per_group = TRUE,
         model_dir = row$model_dir[[1L]],
         compute_universe = TRUE
       )
@@ -2855,6 +3008,12 @@
 #' @param run_training Train topic models before reporting.
 #' @param run_extraction Run topic extraction before reporting.
 #' @param run_reports Build score tables and review reports.
+#' @param path_length_check Whether to scan output paths and warn when any are
+#'   longer than `path_length_limit`.
+#' @param path_length_limit Maximum displayed path length before warning. The
+#'   default is conservative for Windows/Samba clients.
+#' @param path_length_alias Optional replacement root used only for path-length
+#'   display and counting, for example `"Z:/episcope_test/project"`.
 #' @param verbose Emit concise progress messages.
 #'
 #' @return A list with method plan, discovered model rows, score results, and
@@ -2886,6 +3045,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         run_training = TRUE,
                                         run_extraction = TRUE,
                                         run_reports = TRUE,
+                                        path_length_check = TRUE,
+                                        path_length_limit = 240L,
+                                        path_length_alias = NULL,
                                         verbose = TRUE) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   k_grid <- sort(unique(as.integer(k_grid)))
@@ -2965,7 +3127,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         vae_seed = vae_seed,
         vae_device = vae_device,
         save_full_doc_term_csv = FALSE,
-        flat_output = identical(output_layout, "standard"),
+        flat_output = .m3tb_flat_output_for_layout(output_layout),
         topic_report_args = list()
       )
     }
@@ -3002,7 +3164,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
           vae_variant = row$vae_variant[[1L]],
           doc_mode = "tf",
           weight_label = row$weight_label[[1L]],
-          flatten_single_output = identical(output_layout, "standard"),
+          flatten_single_output = .m3tb_flat_output_for_layout(output_layout),
           topic_report_args = modifyList(
             list(
               fp_term_mode = row$fp_mode[[1L]],
@@ -3046,6 +3208,16 @@ run_module3_topic_benchmark <- function(filtered_dir,
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
   }
+  path_length_summary <- NULL
+  if (isTRUE(path_length_check)) {
+    path_length_summary <- .m3tb_check_path_lengths(
+      root = output_dir,
+      max_chars = path_length_limit,
+      path_alias = path_length_alias,
+      out_file = file.path(review_dir, "tables", "path_length_sanity_check.csv"),
+      verbose = verbose
+    )
+  }
   invisible(list(
     method_plan = method_plan,
     model_rows = model_rows,
@@ -3054,6 +3226,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
     html = html,
     output_layout = output_layout,
     review_dir = review_dir,
+    path_length_summary = path_length_summary,
     replicate_documents = isTRUE(replicate_documents),
     multiomic_data_provided = !is.null(multiomic_data)
   ))
@@ -3722,9 +3895,11 @@ run_regulatory_topics <- function(filtered_dir,
                                              topic_link_output = NULL,
                                              count_method = NULL,
                                              count_input = NULL,
+                                             topic_score_method = NULL,
                                              vae_device = NULL,
                                              vae_batch_size = NULL,
-                                             pathway_backend = NULL) {
+                                             pathway_backend = NULL,
+                                             pathway_species = NULL) {
   cfg <- .module3_read_project_config(project_config)
   method <- if (is.null(method)) {
     as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "comparison_aggr_multivi"))[[1L]]
@@ -3778,6 +3953,17 @@ run_regulatory_topics <- function(filtered_dir,
     as.character(pathway_backend)[[1L]]
   }
   pathway_backend <- .pathway_backend(pathway_backend)
+  pathway_species <- if (is.null(pathway_species)) {
+    explicit_species <- .module3_cfg_value(cfg, c("pathway_species", "module3_pathway_species", "pathway_organism", "module3_pathway_organism"), NULL)
+    if (!is.null(explicit_species)) {
+      explicit_species
+    } else {
+      .pathway_species_from_ref_genome(.module3_cfg_value(cfg, c("ref_genome", "genome", "reference_genome"), NULL))
+    }
+  } else {
+    pathway_species
+  }
+  pathway_species <- .normalize_pathway_species(pathway_species)
   gammafit_scope_raw <- .module3_cfg_value(
     cfg,
     c("topic_gammafit_scope", "module3_topic_gammafit_scope", "topic_gammafit_scopes", "module3_topic_gammafit_scopes"),
@@ -3803,12 +3989,24 @@ run_regulatory_topics <- function(filtered_dir,
   if (!is.finite(gammafit_min_terms) || gammafit_min_terms < 1L) {
     gammafit_min_terms <- 50L
   }
+  topic_score_method <- if (is.null(topic_score_method)) {
+    as.character(.module3_cfg_value(
+      cfg,
+      c("topic_score_method", "module3_topic_score_method"),
+      "normtop_specificity"
+    ))[[1L]]
+  } else {
+    as.character(topic_score_method)[[1L]]
+  }
+  if (!topic_score_method %in% c("normtop_specificity", "rowmax_phi")) {
+    topic_score_method <- "normtop_specificity"
+  }
   topic_link_method <- as.character(.module3_cfg_value(
     cfg,
     c("topic_link_method", "module3_topic_link_method"),
     "gammafit"
   ))[[1L]]
-  if (!topic_link_method %in% c("gammafit", "gene_prob", "link_score_prob", "link_score_efdr")) {
+  if (!topic_link_method %in% c("gammafit", "theta_and_terms", "gene_prob", "link_score_prob", "link_score_efdr")) {
     topic_link_method <- "gammafit"
   }
   topic_link_prob_cutoff <- .module3_cfg_value(
@@ -3816,6 +4014,32 @@ run_regulatory_topics <- function(filtered_dir,
     c("topic_link_prob_cutoff", "module3_topic_link_prob_cutoff"),
     0.3
   )
+  topic_tf_membership_cutoff <- suppressWarnings(as.numeric(.module3_cfg_value(
+    cfg,
+    c("topic_tf_membership_cutoff", "module3_topic_tf_membership_cutoff"),
+    0.3
+  )[[1L]]))
+  if (!is.finite(topic_tf_membership_cutoff) || topic_tf_membership_cutoff < 0 || topic_tf_membership_cutoff > 1) {
+    topic_tf_membership_cutoff <- 0.3
+  }
+  topic_tf_primary_margin_cutoff <- suppressWarnings(as.numeric(.module3_cfg_value(
+    cfg,
+    c("topic_tf_primary_margin_cutoff", "module3_topic_tf_primary_margin_cutoff"),
+    0.1
+  )[[1L]]))
+  if (!is.finite(topic_tf_primary_margin_cutoff) || topic_tf_primary_margin_cutoff < 0 || topic_tf_primary_margin_cutoff > 1) {
+    topic_tf_primary_margin_cutoff <- 0.1
+  }
+  run_raw_theta_document_heatmap <- .module3_cfg_value(
+    cfg,
+    c(
+      "topic_raw_theta_document_heatmap",
+      "module3_topic_raw_theta_document_heatmap",
+      "run_raw_theta_document_heatmap"
+    ),
+    TRUE
+  )
+  run_raw_theta_document_heatmap <- .as_logical_flag(run_raw_theta_document_heatmap[[1L]])
   list(
     method = method,
     k_grid = k_grid,
@@ -3828,11 +4052,16 @@ run_regulatory_topics <- function(filtered_dir,
     pathway_backend = pathway_backend,
     extraction_args = list(
       binarize_method = "gammafit",
+      topic_score_method = topic_score_method,
       gammafit_scope = gammafit_scope,
       thrP = gammafit_thrP,
       in_topic_min_terms = gammafit_min_terms,
       link_topic_method = topic_link_method,
-      link_topic_prob_cutoff = topic_link_prob_cutoff
+      link_topic_prob_cutoff = topic_link_prob_cutoff,
+      topic_tf_membership_cutoff = topic_tf_membership_cutoff,
+      topic_tf_primary_margin_cutoff = topic_tf_primary_margin_cutoff,
+      pathway_species = pathway_species,
+      run_raw_theta_document_heatmap = run_raw_theta_document_heatmap
     ),
     benchmark = list(
       enabled = isTRUE(.module3_cfg_value(cfg, c("topic_benchmark_enabled", "module3_topic_benchmark_enabled"), FALSE)),
@@ -3856,8 +4085,10 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param output_dir Topic output directory.
 #' @param project_config Optional project YAML path or config list. When
 #'   supplied, `topic_method`, `topic_k` or `topic_k_grid`,
-#'   `warplda_iterations`, and `topic_link_output` are used for arguments that
-#'   are left as `NULL`.
+#'   `warplda_iterations`, `topic_link_output`, `topic_score_method`,
+#'   `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
+#'   `topic_raw_theta_document_heatmap` are used for arguments that are left as
+#'   `NULL` or as default extraction settings.
 #' @param method Single Module 3 method ID. If `NULL`, read from
 #'   `project_config` or use the package default.
 #' @param k_grid Integer topic numbers. If `NULL`, read from `project_config`
@@ -3870,6 +4101,8 @@ run_regulatory_topics <- function(filtered_dir,
 #'   `project_config` or use `"log"`.
 #' @param count_input Topic count column for model fitting. If `NULL`, inferred
 #'   from `count_method`.
+#' @param topic_score_method Topic-term score method for extraction. If `NULL`,
+#'   read from `project_config` or use `"normtop_specificity"`.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
@@ -3877,8 +4110,12 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param pathway_backend Pathway enrichment backend. Use `"enrichly"` for
 #'   local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 #'   read from `project_config` or use `"enrichly"`.
+#' @param pathway_species Species used to choose default pathway databases.
+#'   Supported values include `"human"` and `"mouse"`. If `NULL`, read from
+#'   `project_config` or infer from `ref_genome`.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
-#'   report argument overrides. Values here override project config values.
+#'   report argument overrides. Values here override project config values,
+#'   including TF-to-topic assignment cutoffs.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -3896,9 +4133,11 @@ run_topic_modeling <- function(filtered_dir,
                                topic_link_output = NULL,
                                count_method = NULL,
                                count_input = NULL,
+                               topic_score_method = NULL,
                                vae_device = NULL,
                                vae_batch_size = NULL,
                                pathway_backend = NULL,
+                               pathway_species = NULL,
                                extraction_topic_report_args = list(),
                                ...) {
   resolved <- .module3_resolve_topic_run_config(
@@ -3909,9 +4148,11 @@ run_topic_modeling <- function(filtered_dir,
     topic_link_output = topic_link_output,
     count_method = count_method,
     count_input = count_input,
+    topic_score_method = topic_score_method,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
-    pathway_backend = pathway_backend
+    pathway_backend = pathway_backend,
+    pathway_species = pathway_species
   )
   run_regulatory_topics(
     filtered_dir = filtered_dir,

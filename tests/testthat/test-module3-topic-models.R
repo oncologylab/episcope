@@ -118,6 +118,82 @@ test_that("Module 3 fresh training clears stale model artifacts", {
   expect_true(file.exists(keep_path))
 })
 
+test_that("VAE training reuses complete K values and trains missing K values", {
+  out_dir <- withr::local_tempdir()
+  models_dir <- file.path(out_dir, "vae_models")
+  dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
+
+  data.table::fwrite(
+    data.table::data.table(K = 2L, perplexity = 10, loglik = -10),
+    file.path(out_dir, "model_metrics.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(K = 2L),
+    file.path(out_dir, "vae_model_manifest.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(doc_id = c("D1", "D2"), Topic1 = c(0.7, 0.3), Topic2 = c(0.3, 0.7)),
+    file.path(models_dir, "theta_K2.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(term_id = c("T1", "T2"), Topic1 = c(0.8, 0.2), Topic2 = c(0.2, 0.8)),
+    file.path(models_dir, "phi_K2.csv")
+  )
+  writeLines("old model", file.path(models_dir, "model_K2.pt"))
+
+  fake_trainer <- file.path(out_dir, "fake_vae.R")
+  writeLines(c(
+    "args <- commandArgs(trailingOnly = TRUE)",
+    "val <- function(flag) args[match(flag, args) + 1L]",
+    "out_dir <- val('--out-dir')",
+    "ks <- as.integer(strsplit(val('--k-grid'), ',', fixed = TRUE)[[1]])",
+    "dir.create(file.path(out_dir, 'vae_models'), recursive = TRUE, showWarnings = FALSE)",
+    "metrics <- data.frame(K = ks, perplexity = 100 + ks, loglik = -100 - ks)",
+    "write.csv(metrics, file.path(out_dir, 'model_metrics.csv'), row.names = FALSE)",
+    "write.csv(data.frame(K = ks), file.path(out_dir, 'vae_model_manifest.csv'), row.names = FALSE)",
+    "for (k in ks) {",
+    "  theta <- data.frame(doc_id = c('D1', 'D2'))",
+    "  phi <- data.frame(term_id = c('T1', 'T2'))",
+    "  for (i in seq_len(k)) { theta[[paste0('Topic', i)]] <- 1 / k; phi[[paste0('Topic', i)]] <- 1 / k }",
+    "  write.csv(theta, file.path(out_dir, 'vae_models', paste0('theta_K', k, '.csv')), row.names = FALSE)",
+    "  write.csv(phi, file.path(out_dir, 'vae_models', paste0('phi_K', k, '.csv')), row.names = FALSE)",
+    "  writeLines('model', file.path(out_dir, 'vae_models', paste0('model_K', k, '.pt')))",
+    "}"
+  ), fake_trainer)
+
+  doc_term <- data.table::data.table(
+    doc_id = rep(c("D1", "D2"), each = 2),
+    term_id = rep(c("T1", "T2"), 2),
+    pseudo_count_bin = c(1, 1, 1, 1),
+    pseudo_count_log = c(1, 1, 1, 1),
+    weight = c(1, 1, 1, 1)
+  )
+
+  craftgrn:::run_vae_topic_report_py(
+    doc_term = doc_term,
+    edges_docs = data.table::data.table(),
+    out_dir = out_dir,
+    option_label = "joint",
+    direction_by = "gene",
+    vae_script = fake_trainer,
+    k_grid = c(2L, 3L),
+    vae_python = file.path(R.home("bin"), "Rscript"),
+    reuse_if_exists = TRUE,
+    do_report = FALSE,
+    count_input = "pseudo_count_bin"
+  )
+
+  metrics <- data.table::fread(file.path(out_dir, "model_metrics.csv"))
+  manifest <- data.table::fread(file.path(out_dir, "vae_model_manifest.csv"))
+
+  expect_equal(sort(metrics$K), c(2L, 3L))
+  expect_equal(sort(manifest$K), c(2L, 3L))
+  expect_true(file.exists(file.path(models_dir, "theta_K2.csv")))
+  expect_true(file.exists(file.path(models_dir, "theta_K3.csv")))
+  expect_equal(metrics[K == 2L, perplexity], 10)
+  expect_equal(metrics[K == 3L, perplexity], 103)
+})
+
 test_that("condition doc_tf applies condition thresholds and TF self terms", {
   edges <- data.table::data.table(
     comparison_id = c("C1", "C1"),
@@ -555,6 +631,78 @@ test_that("gammafit topic-term scope preserves existing topic-group behavior", {
   expect_true(default_terms[default_terms$topic == 2L & default_terms$term_id == "GENE:G1", "in_topic"])
 })
 
+test_that("topic score methods expose specificity and legacy rowmax scores", {
+  phi <- matrix(
+    c(
+      0.6, 0.3, 0.1,
+      0.6, 0.05, 0.35
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:Common", "GENE:T1", "GENE:T2"))
+  )
+
+  rowmax <- score_terms_normtop(phi, method = "rowmax_phi")
+  expect_equal(rowmax, phi / apply(phi, 1, max), tolerance = 1e-12)
+
+  specificity <- score_terms_normtop(phi, method = "normtop_specificity")
+  expect_equal(dim(specificity), dim(phi))
+  expect_equal(rownames(specificity), rownames(phi))
+  expect_equal(colnames(specificity), colnames(phi))
+  expect_equal(specificity["Topic1", "GENE:T1"], 1, tolerance = 1e-8)
+  expect_equal(specificity["Topic2", "GENE:T2"], 1, tolerance = 1e-8)
+  expect_equal(specificity["Topic1", "GENE:Common"], 0, tolerance = 1e-8)
+  expect_equal(specificity["Topic2", "GENE:Common"], 0, tolerance = 1e-8)
+  expect_lt(specificity["Topic1", "GENE:Common"], rowmax["Topic1", "GENE:Common"])
+  expect_lt(specificity["Topic2", "GENE:Common"], rowmax["Topic2", "GENE:Common"])
+})
+
+test_that("gammafit diagnostics report score method and minimum term forcing", {
+  score_mat <- matrix(
+    c(
+      seq(0.01, 0.12, length.out = 12),
+      seq(0.12, 0.01, length.out = 12)
+    ),
+    nrow = 2,
+    byrow = TRUE
+  )
+  rownames(score_mat) <- c("Topic1", "Topic2")
+  colnames(score_mat) <- paste0("GENE:G", seq_len(12))
+  topic_terms <- binarize_topics(
+    score_mat,
+    method = "gammafit",
+    thrP = 0.9999,
+    min_terms = 3L,
+    gammafit_scope = "topic_term_group"
+  )
+
+  diagnostics <- .gammafit_diagnostics_by_termclass(
+    score_mat,
+    topic_terms = topic_terms,
+    topic_score_method = "normtop_specificity",
+    thrP = 0.9999,
+    min_terms = 3L,
+    gammafit_scope = "topic_term_group"
+  )
+
+  expect_s3_class(diagnostics, "data.table")
+  expect_true(all(c(
+    "topic_score_method", "gammafit_scope", "topic_num", "term_group",
+    "positive_count", "zero_fraction", "gamma_shape", "gamma_rate",
+    "gamma_cutoff", "selected_by_gamma", "selected_after_min_terms",
+    "forced_min_terms"
+  ) %in% names(diagnostics)))
+  gene_rows <- diagnostics[term_group == "GENE"]
+  expect_equal(nrow(gene_rows), 2L)
+  expect_true(all(gene_rows$topic_score_method == "normtop_specificity"))
+  expect_true(all(gene_rows$positive_count == 12L))
+  expect_true(all(is.finite(gene_rows$zero_fraction)))
+  expect_true(all(is.finite(gene_rows$gamma_shape)))
+  expect_true(all(is.finite(gene_rows$gamma_rate)))
+  expect_true(all(gene_rows$selected_after_min_terms >= 3L))
+  expect_true(any(gene_rows$forced_min_terms))
+})
+
 test_that("gammafit global term-group scope pools scores across topics", {
   score_mat <- matrix(
     c(
@@ -665,9 +813,162 @@ test_that("gammafit topic link summary reports pre-filter scored rows", {
     overwrite = TRUE
   )
   summary <- data.table::fread(file.path(out_dir, "topic_link_summary.csv"))
+  coverage <- data.table::fread(file.path(out_dir, "topic_item_coverage_counts.csv"))
 
   expect_equal(summary$n_scored_rows, 4)
   expect_equal(summary$n_pass_rows, 1)
+  expect_setequal(coverage$unit, c("Terms", "Genes", "TF-gene-doc links", "Links", "TFs"))
+  expect_equal(coverage[unit == "Terms" & status == "Pass", count], 2)
+  expect_equal(coverage[unit == "Terms" & status == "Fail", count], 2)
+  expect_equal(coverage[unit == "Terms" & status == "Pass", fraction], 0.5)
+  expect_equal(coverage[unit == "Terms" & status == "Pass", percent], 50)
+  expect_equal(coverage[unit == "Genes" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "Genes" & status == "Fail", count], 1)
+  expect_equal(coverage[unit == "Genes" & status == "Pass", percent], 50)
+  expect_equal(coverage[unit == "Links" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "Links" & status == "Fail", count], 1)
+  expect_equal(coverage[unit == "Links" & status == "Pass", percent], 50)
+  expect_equal(coverage[unit == "TF-gene-doc links" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "TF-gene-doc links" & status == "Fail", count], 1)
+  expect_equal(coverage[unit == "TF-gene-doc links" & status == "Pass", percent], 50)
+  expect_equal(coverage[unit == "TFs" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "TFs" & status == "Fail", count], 0)
+  expect_equal(coverage[unit == "TFs" & status == "Pass", percent], 100)
+})
+
+test_that("term coverage summary lines report model and term-group percentages", {
+  score_mat <- matrix(
+    c(
+      0.9, 0.8, 0.7, 0.1,
+      0.2, 0.1, 0.3, 0.4
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("Topic1", "Topic2"),
+      c("GENE:G1", "GENE:G2", "PEAK:P1", "PEAK:P2")
+    )
+  )
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 1L),
+    term_id = c("GENE:G1", "PEAK:P1", "PEAK:P2"),
+    in_topic = TRUE
+  )
+
+  lines <- .topic_term_coverage_summary_lines(topic_terms, score_mat)
+
+  expect_equal(
+    lines,
+    c(
+      "Terms: 3 / 4 = 75.00%",
+      "GENE terms: 1 / 2 = 50.00%",
+      "PEAK terms: 2 / 2 = 100.00%"
+    )
+  )
+})
+
+test_that("assignment coverage summary table includes term groups and item coverage", {
+  score_mat <- matrix(
+    c(
+      0.9, 0.8, 0.7, 0.1,
+      0.2, 0.1, 0.3, 0.4
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("Topic1", "Topic2"),
+      c("GENE:G1", "GENE:G2", "PEAK:P1", "PEAK:P2")
+    )
+  )
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 1L),
+    term_id = c("GENE:G1", "PEAK:P1", "PEAK:P2"),
+    in_topic = TRUE
+  )
+  item_coverage <- data.table::data.table(
+    unit = c("Genes", "Genes", "TF-gene-doc links", "TF-gene-doc links", "Links", "Links", "TFs", "TFs"),
+    status = rep(c("Pass", "Fail"), 4),
+    count = c(4L, 6L, 5L, 5L, 12L, 8L, 3L, 1L),
+    total = c(10L, 10L, 10L, 10L, 20L, 20L, 4L, 4L),
+    percent = c(40, 60, 50, 50, 60, 40, 75, 25)
+  )
+
+  tbl <- .topic_assignment_coverage_summary_table(topic_terms, score_mat, item_coverage)
+  tbl_no_peak_expanded <- .topic_assignment_coverage_summary_table(
+    topic_terms,
+    score_mat,
+    item_coverage,
+    show_peak_expanded_link_coverage = FALSE
+  )
+
+  expect_equal(tbl[label == "Terms", label_text], "3 / 4 = 75.00%")
+  expect_equal(tbl[label == "GENE terms", label_text], "1 / 2 = 50.00%")
+  expect_equal(tbl[label == "PEAK terms", label_text], "2 / 2 = 100.00%")
+  expect_equal(tbl[label == "Genes", label_text], "4 / 10 = 40.00%")
+  expect_equal(tbl[label == "TF-gene-doc links", label_text], "5 / 10 = 50.00%")
+  expect_equal(tbl[label == "TF-peak-gene links", label_text], "12 / 20 = 60.00%")
+  expect_equal(tbl[label == "TFs", label_text], "3 / 4 = 75.00%")
+  expect_false("TF-peak-gene links" %in% tbl_no_peak_expanded$label)
+  expect_true("TF-gene-doc links" %in% tbl_no_peak_expanded$label)
+})
+
+test_that("theta_and_terms requires both document theta and topic terms", {
+  edges <- data.table::data.table(
+    doc_id = c("D1", "D2"),
+    tf = c("TF1", "TF2"),
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2")
+  )
+  score_mat <- matrix(
+    c(
+      0.9, 0.8, 0.7, 0.6,
+      0.1, 0.2, 0.3, 0.4
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("Topic1", "Topic2"),
+      c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2")
+    )
+  )
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 1L, 1L),
+    term_id = c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2"),
+    in_topic = TRUE
+  )
+  theta <- matrix(
+    c(0.5, 0.5, 0.1, 0.9),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("D1", "D2"), c("Topic1", "Topic2"))
+  )
+  out_dir <- tempfile("module3-theta-and-terms-")
+  dir.create(out_dir, recursive = TRUE)
+
+  res <- compute_topic_links(
+    edges,
+    score_mat,
+    topic_terms = topic_terms,
+    theta = theta,
+    topic_tf_membership_cutoff = 0.3,
+    binarize_method = "topn",
+    link_method = "theta_and_terms",
+    pass_file = file.path(out_dir, "topic_links_pass.csv"),
+    output_mode = "pass",
+    overwrite = TRUE
+  )
+
+  pass <- data.table::fread(file.path(out_dir, "topic_links_pass.csv"))
+  coverage <- data.table::fread(file.path(out_dir, "topic_item_coverage_counts.csv"))
+  expect_equal(nrow(res), 1L)
+  expect_equal(nrow(pass), 1L)
+  expect_equal(pass$doc_id, "D1")
+  expect_equal(pass$topic_num, 1L)
+  expect_equal(pass$theta, 0.5)
+  expect_equal(pass$theta_cutoff, 0.3)
+  expect_true(pass$theta_pass)
+  expect_equal(coverage[unit == "Links" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "Links" & status == "Fail", count], 1)
 })
 
 test_that("TF document topic assignment data aligns document and term panels", {
@@ -709,6 +1010,636 @@ test_that("TF document topic assignment data aligns document and term panels", {
     unique(plot_dt[page_label == "CondA" & panel == "TF doc score", as.character(topic)]),
     unique(plot_dt[page_label == "CondA" & panel == "TF term score", as.character(topic)])
   )
+})
+
+test_that("per-comparison pathway gene sets use theta documents and topic terms", {
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 1L, 2L),
+    term_id = c("GENE:G1", "GENE:G2", "PEAK:G3", "GENE:G4"),
+    in_topic = c(TRUE, TRUE, TRUE, TRUE)
+  )
+  theta <- matrix(
+    c(
+      0.8, 0.2,
+      0.1, 0.9,
+      0.7, 0.3
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c(
+        "CmpA::TF1::Target-Up",
+        "CmpA::TF2::Target-Down",
+        "CmpB::TF1::Target-Up"
+      ),
+      c("Topic1", "Topic2")
+    )
+  )
+  edges <- data.table::data.table(
+    doc_id = c(
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF2::Target-Down",
+      "CmpB::TF1::Target-Up"
+    ),
+    tf = c("TF1", "TF1", "TF1", "TF2", "TF1"),
+    peak_id = paste0("P", 1:5),
+    gene_key = c("G1", "G3", "G_not_topic", "G4", "G2")
+  )
+
+  out <- topic_gene_sets_by_comparison_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges,
+    theta = theta,
+    theta_min = 0.3,
+    include_peak_terms = TRUE,
+    doc_design = "comparison"
+  )
+
+  expect_setequal(out[comparison_id == "CmpA" & direction_group == "Up" & topic == 1L, gene], c("G1", "G3"))
+  expect_equal(out[comparison_id == "CmpA" & direction_group == "Down" & topic == 2L, gene], "G4")
+  expect_equal(out[comparison_id == "CmpB" & direction_group == "Up" & topic == 1L, gene], "G2")
+  expect_false("G_not_topic" %in% out$gene)
+})
+
+test_that("overall pathway gene sets use assigned topic terms before link projection", {
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 1L, 1L, 2L, 2L),
+    term_id = c("GENE:G1", "PEAK:G3", "PEAK:P4", "GENE:G4", "GENE:G_fail"),
+    in_topic = c(TRUE, TRUE, TRUE, TRUE, FALSE)
+  )
+  edges <- data.table::data.table(
+    peak_id = c("P4", "P5"),
+    gene_key = c("G5", "G_not_topic")
+  )
+  gene_sets <- topic_gene_sets_from_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges,
+    option_label = "joint",
+    use_all_terms = FALSE,
+    include_peak_terms = TRUE
+  )
+
+  expect_setequal(gene_sets[["1"]], c("G1", "G3", "G5"))
+  expect_equal(gene_sets[["2"]], "G4")
+  expect_false("G_fail" %in% unlist(gene_sets, use.names = FALSE))
+  expect_false("G_not_topic" %in% unlist(gene_sets, use.names = FALSE))
+})
+
+test_that("overall topic pathway dotplot shows a readable expanded default", {
+  expect_equal(formals(plot_topic_pathway_enrichment_heatmap)$dot_top_n_per_topic, 25L)
+  expect_equal(formals(run_tfdocs_report_from_topic_base)$dot_top_n_per_topic, 25L)
+})
+
+test_that("per-comparison topic-term pathway wrapper retests overall pathway genes", {
+  topic_terms <- data.table::data.table(
+    topic = c("Topic1", "Topic1", "Topic1", "Topic2"),
+    topic_num = c(1L, 1L, 1L, 2L),
+    term_id = c("GENE:Atp2b4", "GENE:Selplg", "GENE:G4", "GENE:G5"),
+    in_topic = TRUE
+  )
+  theta <- matrix(
+    c(
+      0.72, 0.28,
+      0.25, 0.75
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("CmpA::TF1::Target-Up", "CmpA::TF2::Target-Down"),
+      c("Topic1", "Topic2")
+    )
+  )
+  edges <- data.table::data.table(
+    doc_id = c(
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF1::Target-Up",
+      "CmpA::TF2::Target-Down"
+    ),
+    tf = c("TF1", "TF1", "TF1", "TF2"),
+    peak_id = paste0("P", 1:4),
+    gene_key = c("Atp2b4", "Selplg", "G_not_topic", "G5")
+  )
+  out_dir <- file.path(tempdir(), paste0("topic-term-pathway-", sample.int(1e8, 1L)))
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      topic = c(1L, 1L, 2L),
+      pathway = c("Reactome: Path A", "Reactome: Path B", "Reactome: Path C"),
+      padj = c(0.01, 0.02, 0.03),
+      pval = c(0.001, 0.002, 0.003),
+      overlap = c("3/10", "1/8", "1/9"),
+      overlap_hits = c(3L, 1L, 1L),
+      genes = c("ATP2B4;SELPLG;G3", "G4", "G5"),
+      logp = -log10(c(0.01, 0.02, 0.03)),
+      combined_score = c(10, 5, 3),
+      odds_ratio = c(2, 1.5, 1.2),
+      cluster_size = c(4L, 4L, 1L),
+      term_size = NA,
+      background_size = NA
+    ),
+    file.path(out_dir, "topic_pathway_enrichment_topic_terms.csv")
+  )
+
+  plot_topic_pathway_enrichment_by_comparison_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges,
+    theta = theta,
+    out_dir = out_dir,
+    pathway_backend = "enrichly",
+    background_size = 20000L
+  )
+
+  out <- data.table::fread(file.path(out_dir, "topic_term_pathway_enrichment.csv"))
+  expect_true(all(c("comparison_id", "direction_group", "topic", "pathway", "pval", "padj") %in% names(out)))
+  up_path_a <- out[comparison_id == "CmpA" & direction_group == "Up" & topic == 1L & pathway == "Reactome: Path A"]
+  expect_equal(up_path_a$query_size, 2L)
+  expect_equal(up_path_a$overlap_hits, 2L)
+  expect_equal(up_path_a$overlap_genes, "Atp2b4;Selplg")
+  expect_equal(
+    up_path_a$pval,
+    stats::phyper(2 - 1, 10, 20000 - 10, 2, lower.tail = FALSE),
+    tolerance = 1e-12
+  )
+  down_path_c <- out[comparison_id == "CmpA" & direction_group == "Down" & topic == 2L & pathway == "Reactome: Path C"]
+  expect_equal(down_path_c$query_size, 1L)
+  expect_equal(down_path_c$overlap_hits, 1L)
+  expect_false(file.exists(file.path(out_dir, "per_comparison_pathway_topic_terms")))
+  expect_false(file.exists(file.path(out_dir, "CmpA_Up_topic_term_dotplot.pdf")))
+})
+
+test_that("per-comparison pathway retest resolves formal human aliases", {
+  testthat::skip_if_not_installed("AnnotationDbi")
+  testthat::skip_if_not_installed("org.Hs.eg.db")
+
+  topic_terms <- data.table::data.table(
+    topic = "Topic1",
+    topic_num = 1L,
+    term_id = "GENE:P53",
+    in_topic = TRUE,
+    score = 0.9
+  )
+  theta <- matrix(
+    0.9,
+    nrow = 1,
+    dimnames = list("CmpAlias::TF1::Target-Up", "Topic1")
+  )
+  edges <- data.table::data.table(
+    doc_id = "CmpAlias::TF1::Target-Up",
+    tf = "TF1",
+    peak_id = "peak1",
+    gene_key = "P53"
+  )
+  out_dir <- file.path(tempdir(), paste0("topic-term-pathway-alias-", sample.int(1e8, 1L)))
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      topic = 1L,
+      pathway = "Reactome: TP53 Pathway",
+      padj = 0.01,
+      pval = 0.001,
+      overlap = "1/20",
+      overlap_hits = 1L,
+      genes = "TP53",
+      logp = 2,
+      combined_score = 10,
+      odds_ratio = 2,
+      cluster_size = 1L,
+      term_size = NA,
+      background_size = NA
+    ),
+    file.path(out_dir, "topic_pathway_enrichment_topic_terms.csv")
+  )
+
+  plot_topic_pathway_enrichment_by_comparison_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges,
+    theta = theta,
+    out_dir = out_dir,
+    pathway_backend = "enrichly",
+    pathway_species = "human",
+    background_size = 20000L
+  )
+
+  out <- data.table::fread(file.path(out_dir, "topic_term_pathway_enrichment.csv"))
+  row <- out[comparison_id == "CmpAlias" & direction_group == "Up" & topic == 1L]
+  expect_equal(row$query_size, 1L)
+  expect_equal(row$overlap_hits, 1L)
+  expect_equal(row$overlap_genes, "P53")
+  expect_equal(row$overlap_gene_symbols, "TP53")
+  expect_match(row$gene_match_summary, "alias=1", fixed = TRUE)
+})
+
+test_that("TF topic assignment keeps direction-specific theta memberships", {
+  theta <- matrix(
+    c(
+      0.62, 0.31, 0.07,
+      0.12, 0.76, 0.12,
+      0.34, 0.33, 0.33,
+      0.20, 0.18, 0.62
+    ),
+    nrow = 4,
+    byrow = TRUE,
+    dimnames = list(
+      c(
+        "CompA::KLF5::Target-Up",
+        "CompA::KLF5::Target-Down",
+        "CompA::SOX9::Target-Up",
+        "CompB::Tbx21::Target-Up"
+      ),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+
+  res <- .build_tf_topic_assignment_tables(
+    theta = theta,
+    doc_design = "comparison",
+    membership_cutoff = 0.3,
+    primary_margin_cutoff = 0.1
+  )
+
+  expect_equal(nrow(res$membership), 12L)
+  expect_true(all(c("membership", "primary", "pass", "direction_summary") %in% names(res)))
+
+  klf_up <- res$primary[doc_id == "CompA::KLF5::Target-Up"]
+  klf_down <- res$primary[doc_id == "CompA::KLF5::Target-Down"]
+  expect_equal(klf_up$primary_topic, "Topic1")
+  expect_equal(klf_down$primary_topic, "Topic2")
+  expect_false(klf_up$ambiguous)
+  expect_false(klf_down$ambiguous)
+
+  sox9 <- res$primary[doc_id == "CompA::SOX9::Target-Up"]
+  expect_true(sox9$ambiguous)
+  expect_equal(res$pass[doc_id == "CompA::SOX9::Target-Up", .N], 3L)
+
+  summary <- res$direction_summary[comparison_id == "CompA" & tf == "KLF5"]
+  expect_equal(summary$direction_topic_status, "different_topic")
+  expect_equal(summary$up_primary_topic, "Topic1")
+  expect_equal(summary$down_primary_topic, "Topic2")
+
+  expect_equal(res$primary[tf == "Tbx21", tf_display], "Tbet")
+})
+
+test_that("TF topic assignment supports condition TF documents", {
+  theta <- matrix(
+    c(
+      0.70, 0.20, 0.10,
+      0.15, 0.75, 0.10,
+      0.20, 0.25, 0.55
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::KLF5", "CondB::KLF5", "CondB::Tbx21"),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+
+  res <- .build_tf_topic_assignment_tables(
+    theta = theta,
+    doc_design = "condition",
+    membership_cutoff = 0.3,
+    primary_margin_cutoff = 0.1
+  )
+
+  expect_equal(nrow(res$membership), 9L)
+  expect_equal(nrow(res$direction_summary), 0L)
+  expect_equal(res$primary[doc_id == "CondA::KLF5", comparison_id], "CondA")
+  expect_equal(res$primary[doc_id == "CondA::KLF5", primary_topic], "Topic1")
+  expect_equal(res$primary[doc_id == "CondB::KLF5", primary_topic], "Topic2")
+  expect_equal(res$primary[doc_id == "CondB::Tbx21", tf_display], "Tbet")
+  expect_true(all(is.na(res$primary$direction)))
+})
+
+test_that("TF coverage is counted from document theta assignment", {
+  theta <- matrix(
+    c(
+      0.70, 0.20, 0.10,
+      0.20, 0.25, 0.55,
+      0.25, 0.25, 0.25
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::KLF5", "CondB::KLF5", "CondA::SOX9"),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+  assign <- .build_tf_topic_assignment_tables(
+    theta = theta,
+    doc_design = "condition",
+    membership_cutoff = 0.3,
+    primary_margin_cutoff = 0.1
+  )
+
+  coverage <- .topic_item_coverage_from_tf_assignment(assign)
+
+  expect_equal(coverage[unit == "TFs" & status == "Pass", count], 1)
+  expect_equal(coverage[unit == "TFs" & status == "Fail", count], 1)
+  expect_equal(coverage[unit == "TFs" & status == "Pass", total], 2)
+  expect_equal(coverage[unit == "TFs" & status == "Pass", percent], 50)
+  expect_equal(
+    coverage[unit == "TFs" & status == "Pass", count_basis],
+    "TFs assigned to at least one topic from raw theta documents"
+  )
+})
+
+test_that("raw theta document heatmap writes comparison and condition PDF files", {
+  theta_cmp <- matrix(
+    c(
+      0.60, 0.30, 0.10,
+      0.10, 0.82, 0.08,
+      0.24, 0.16, 0.60,
+      0.55, 0.20, 0.25
+    ),
+    nrow = 4,
+    byrow = TRUE,
+    dimnames = list(
+      c(
+        "CompA::KLF5::Target-Up",
+        "CompA::KLF5::Target-Down",
+        "CompB::SOX9::Target-Up",
+        "CompA::SOX9::Target-Down"
+      ),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+  theta_cond <- matrix(
+    c(
+      0.70, 0.20, 0.10,
+      0.20, 0.65, 0.15,
+      0.25, 0.15, 0.60
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::KLF5", "CondB::KLF5", "CondB::SOX9"),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+  out_cmp <- tempfile(fileext = ".pdf")
+  out_cond <- tempfile(fileext = ".pdf")
+
+  cmp_path <- .plot_raw_theta_document_heatmap(
+    theta = theta_cmp,
+    out_file = out_cmp,
+    doc_design = "comparison",
+    title_prefix = "comparison aggr MultiVI"
+  )
+  cond_path <- .plot_raw_theta_document_heatmap(
+    theta = theta_cond,
+    out_file = out_cond,
+    doc_design = "condition",
+    title_prefix = "condition aggr LDA"
+  )
+
+  expect_identical(cmp_path, out_cmp)
+  expect_identical(cond_path, out_cond)
+  expect_gt(file.info(out_cmp)$size, 1000)
+  expect_gt(file.info(out_cond)$size, 1000)
+})
+
+test_that("raw theta document heatmap hides dense row labels by default", {
+  expect_false(formals(.plot_raw_theta_document_heatmap)$show_rownames)
+})
+
+test_that("topic-term score heatmap writes dense term-topic assignment outputs", {
+  score_mat <- matrix(
+    c(
+      1.0, 0.1, 0.4,
+      0.2, 1.0, 0.5
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:G1", "GENE:G2", "PEAK:P1"))
+  )
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 2L),
+    term_id = c("GENE:G1", "GENE:G2"),
+    score = c(1, 1),
+    in_topic = TRUE
+  )
+  out_file <- tempfile(fileext = ".pdf")
+  out_csv <- tempfile(fileext = ".csv")
+
+  res <- .plot_topic_term_score_heatmap(
+    score_mat = score_mat,
+    topic_terms = topic_terms,
+    out_file = out_file,
+    assignment_file = out_csv,
+    title_prefix = "topic term test"
+  )
+
+  expect_identical(res, out_file)
+  expect_false(formals(.plot_topic_term_score_heatmap)$show_rownames)
+  expect_gt(file.info(out_file)$size, 1000)
+  expect_true(file.exists(out_csv))
+  assignment <- data.table::fread(out_csv)
+  expect_true(all(c("term_id", "term_group", "primary_topic", "in_any_topic", "max_score") %in% names(assignment)))
+  expect_equal(assignment[term_id == "GENE:G1", primary_topic], "Topic1")
+  expect_equal(assignment[term_id == "GENE:G2", primary_topic], "Topic2")
+})
+
+test_that("topic-term score heatmap writes derived score diagnostic", {
+  phi <- matrix(
+    c(
+      0.60, 0.20, 0.20,
+      0.20, 0.60, 0.20
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:G1", "GENE:G2", "GENE:COMMON"))
+  )
+  score_mat <- score_terms_normtop(phi, method = "normtop_specificity")
+  topic_terms <- data.table::data.table(
+    topic = c(1L, 2L),
+    term_id = c("GENE:G1", "GENE:G2"),
+    score = c(1, 1),
+    in_topic = TRUE
+  )
+  out_file <- tempfile(fileext = ".pdf")
+
+  res <- .plot_topic_term_phi_score_comparison_heatmap(
+    phi = phi,
+    score_mat = score_mat,
+    topic_terms = topic_terms,
+    out_file = out_file,
+    topic_score_method = "normtop_specificity",
+    title_prefix = "topic term test"
+  )
+
+  expect_identical(res, out_file)
+  expect_gt(file.info(out_file)$size, 1000)
+  expect_lt(score_mat["Topic1", "GENE:COMMON"], score_mat["Topic1", "GENE:G1"])
+  expect_lt(score_mat["Topic2", "GENE:COMMON"], score_mat["Topic2", "GENE:G2"])
+})
+
+test_that("topic extraction standard output skips raw theta documents", {
+  theta <- matrix(
+    c(
+      0.70, 0.20, 0.10,
+      0.20, 0.65, 0.15,
+      0.25, 0.15, 0.60
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::KLF5", "CondB::KLF5", "CondB::SOX9"),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+  phi <- matrix(
+    c(
+      0.6, 0.3, 0.1,
+      0.2, 0.7, 0.1,
+      0.1, 0.2, 0.7
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2", "Topic3"), c("GENE:G1", "GENE:G2", "PEAK:P1"))
+  )
+  dtm <- Matrix::Matrix(
+    matrix(c(4, 1, 0, 1, 4, 0, 0, 1, 4), nrow = 3, byrow = TRUE),
+    sparse = TRUE
+  )
+  rownames(dtm) <- rownames(theta)
+  colnames(dtm) <- colnames(phi)
+  edges_docs <- data.table::data.table(
+    doc_id = rownames(theta),
+    tf = c("KLF5", "KLF5", "SOX9"),
+    gene_key = c("G1", "G2", "G1"),
+    peak_id = c("P1", "P1", "P1")
+  )
+  topic_base <- list(theta = theta, phi = phi)
+
+  out_enabled <- withr::local_tempdir()
+  run_tfdocs_report_from_topic_base(
+    topic_base = topic_base,
+    dtm = dtm,
+    edges_docs = edges_docs,
+    out_dir = out_enabled,
+    doc_design = "condition",
+    in_topic_min_terms = 1L,
+    top_n_terms = 3L,
+    extraction_steps = c("tf_topic_assignment", "topic_term_heatmap"),
+    title_prefix = "condition aggr LDA"
+  )
+  expect_false(file.exists(file.path(out_enabled, "raw_theta_documents_K3.pdf")))
+  expect_true(file.exists(file.path(out_enabled, "topic_term_score_heatmap_K3.pdf")))
+  expect_true(file.exists(file.path(out_enabled, "topic_term_phi_score_heatmap_K3.pdf")))
+  expect_true(file.exists(file.path(out_enabled, "topic_term_primary_assignment.csv")))
+  expect_false(dir.exists(file.path(out_enabled, "tf_topic_assignment")))
+  expect_false(dir.exists(file.path(out_enabled, "topic_term_assignment")))
+  expect_false(dir.exists(file.path(out_enabled, "doc_topic_heatmaps")))
+  expect_false(dir.exists(file.path(out_enabled, "ldavis")))
+  expect_false(file.exists(file.path(out_enabled, "tf_topic_membership.csv")))
+  expect_true(file.exists(file.path(out_enabled, "tf_topic_membership_pass.csv")))
+  expect_true(file.exists(file.path(out_enabled, "tf_topic_primary.csv")))
+  expect_true(file.exists(file.path(out_enabled, "tf_direction_topic_summary.csv")))
+  expect_false(file.exists(file.path(out_enabled, "tf_topic_assignment_heatmap.pdf")))
+  expect_false(file.exists(file.path(out_enabled, "tf_topic_assignment_heatmaps.pdf")))
+  expect_false(file.exists(file.path(out_enabled, "tf_primary_topic_dotplot.pdf")))
+  expect_false(file.exists(file.path(out_enabled, "tf_direction_topic_map.pdf")))
+  expect_false(file.exists(file.path(out_enabled, "tf_topic_assignment_browser.html")))
+
+  out_disabled <- withr::local_tempdir()
+  run_tfdocs_report_from_topic_base(
+    topic_base = topic_base,
+    dtm = dtm,
+    edges_docs = edges_docs,
+    out_dir = out_disabled,
+    doc_design = "condition",
+    in_topic_min_terms = 1L,
+    top_n_terms = 3L,
+    extraction_steps = "tf_topic_assignment",
+    title_prefix = "condition aggr LDA"
+  )
+  expect_false(file.exists(file.path(out_disabled, "raw_theta_documents_K3.pdf")))
+})
+
+test_that("topic extraction defaults keep per-comparison pathway outputs flat", {
+  expect_true(isTRUE(formals(run_tfdocs_report_from_topic_base)$pathway_per_comparison_flat))
+})
+
+test_that("topic extraction skips removed marker feature outputs", {
+  expect_false("topic_marker_heatmap" %in% .topic_extraction_step_names())
+
+  theta <- matrix(
+    c(0.80, 0.20, 0.25, 0.75),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("CondA::KLF5", "CondB::SOX9"), c("Topic1", "Topic2"))
+  )
+  phi <- matrix(
+    c(0.70, 0.20, 0.10, 0.10, 0.25, 0.65),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:G1", "GENE:G2", "PEAK:P1"))
+  )
+  dtm <- Matrix::Matrix(matrix(c(3, 1, 0, 1, 2, 3), nrow = 2, byrow = TRUE), sparse = TRUE)
+  rownames(dtm) <- rownames(theta)
+  colnames(dtm) <- colnames(phi)
+  edges_docs <- data.table::data.table(
+    doc_id = rownames(theta),
+    tf = c("KLF5", "SOX9"),
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P1")
+  )
+  out_dir <- withr::local_tempdir()
+
+  run_tfdocs_report_from_topic_base(
+    topic_base = list(theta = theta, phi = phi),
+    dtm = dtm,
+    edges_docs = edges_docs,
+    out_dir = out_dir,
+    doc_design = "condition",
+    in_topic_min_terms = 1L,
+    top_n_terms = 3L,
+    extraction_steps = c("topic_terms"),
+    title_prefix = "condition aggr LDA"
+  )
+
+  expect_false(file.exists(file.path(out_dir, "topic_marker_features.csv")))
+  expect_false(file.exists(file.path(out_dir, "topic_marker_term_heatmap.pdf")))
+})
+
+test_that("TF topic assignment writer creates reusable CSV outputs without browser artifacts", {
+  theta <- matrix(
+    c(0.7, 0.2, 0.1, 0.1, 0.8, 0.1),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("CompA::Batf::Target-Up", "CompA::Batf::Target-Down"),
+      c("Topic1", "Topic2", "Topic3")
+    )
+  )
+  out_dir <- withr::local_tempdir()
+
+  .write_tf_topic_assignment_outputs(
+    theta = theta,
+    out_dir = out_dir,
+    doc_design = "comparison",
+    membership_cutoff = 0.3,
+    primary_margin_cutoff = 0.1
+  )
+
+  expect_false(dir.exists(file.path(out_dir, "tf_topic_assignment")))
+  expect_false(file.exists(file.path(out_dir, "tf_topic_membership.csv")))
+  expect_true(file.exists(file.path(out_dir, "tf_topic_membership_pass.csv")))
+  expect_true(file.exists(file.path(out_dir, "tf_topic_primary.csv")))
+  expect_true(file.exists(file.path(out_dir, "tf_direction_topic_summary.csv")))
+  expect_true(file.exists(file.path(out_dir, "tf_topic_tf_list.csv")))
+  expect_true(file.exists(file.path(out_dir, "tf_topic_assignment_summary.csv")))
+  expect_false(file.exists(file.path(out_dir, "tf_topic_assignment_browser.html")))
+
+  primary <- data.table::fread(file.path(out_dir, "tf_topic_primary.csv"))
+  expect_equal(primary[doc_id == "CompA::Batf::Target-Up", primary_topic], "Topic1")
+  expect_equal(primary[doc_id == "CompA::Batf::Target-Down", primary_topic], "Topic2")
+  tf_list <- data.table::fread(file.path(out_dir, "tf_topic_tf_list.csv"))
+  expect_equal(tf_list$tf, "Batf")
+  expect_equal(tf_list$tf_display, "Batf")
 })
 
 test_that("comparison FP term modes build aggregated peak and weighted gene terms", {

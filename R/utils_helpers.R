@@ -58,8 +58,8 @@ NULL
 
 .pathway_backend_available <- function(backend = NULL) {
   backend <- .pathway_backend(backend)
-  if (identical(backend, "enrichly") && .optional_namespace_available("enrichly")) {
-    return(TRUE)
+  if (identical(backend, "enrichly")) {
+    return(.optional_namespace_available("enrichly"))
   }
   requireNamespace("enrichR", quietly = TRUE)
 }
@@ -94,13 +94,18 @@ NULL
   file.path(as.character(cache_dir)[[1L]], paste0(.enrichr_cache_key(genes, dbs, site = site, backend = backend), ".rds"))
 }
 
-.module3_default_enrichr_cache_dir <- function(out_dir) {
+.module3_default_enrichr_cache_dir <- function(out_dir, backend = NULL) {
   out_dir <- as.character(out_dir)[[1L]]
+  backend <- .pathway_backend(backend)
+  cache_name <- if (identical(backend, "enrichly")) "enrichly" else "enrichr"
+  if (grepl("^K[0-9]+$", basename(out_dir))) {
+    return(file.path(out_dir, "cache", cache_name))
+  }
   parent <- dirname(out_dir)
   if (grepl("^K[0-9]+$", basename(parent))) {
-    return(file.path(dirname(parent), "cache", "enrichr"))
+    return(file.path(parent, "cache", cache_name))
   }
-  file.path(parent, "cache", "enrichr")
+  file.path(out_dir, "cache", cache_name)
 }
 
 .normalize_enrichr_n_cores <- function(n_cores = 1L) {
@@ -153,10 +158,25 @@ NULL
   out[sort(names(out))]
 }
 
-.run_enrichly_local <- function(genes, dbs, cache_dir = NULL, universe = NULL) {
+.canonicalize_pathway_genes <- function(genes, pathway_species = NULL) {
+  genes <- unique(as.character(genes))
+  genes <- genes[!is.na(genes) & nzchar(genes)]
+  if (!length(genes)) return(character())
+  resolved <- resolve_gene_symbols(
+    genes,
+    species = pathway_species,
+    allow_heuristic = TRUE
+  )
+  out <- resolved[resolved$matched & !is.na(resolved$canonical_symbol) & nzchar(resolved$canonical_symbol), canonical_symbol]
+  unique(as.character(out))
+}
+
+.run_enrichly_local <- function(genes, dbs, cache_dir = NULL, universe = NULL, pathway_species = NULL) {
   if (!.optional_namespace_available("enrichly")) {
     return(NULL)
   }
+  genes <- .canonicalize_pathway_genes(genes, pathway_species = pathway_species)
+  universe <- if (is.null(universe)) NULL else .canonicalize_pathway_genes(universe, pathway_species = pathway_species)
   db_cache_dir <- .enrichly_db_cache_dir(cache_dir)
   enrichly_download <- getExportedValue("enrichly", "enrichly_download")
   enrichly_load <- getExportedValue("enrichly", "enrichly_load")
@@ -168,13 +188,30 @@ NULL
     verbose = FALSE
   )
   db <- enrichly_load(manifest$path, databases = dbs)
-  res <- enrichly_enrich(
-    genes = genes,
-    db = db,
-    query_id = "query",
-    universe = universe,
-    background_size = 20000L
-  )
+  run_once <- function(query_genes) {
+    enrichly_enrich(
+      genes = query_genes,
+      db = db,
+      query_id = "query",
+      universe = universe,
+      background_size = 20000L
+    )
+  }
+  res <- tryCatch(run_once(genes), error = function(e) e)
+  if (inherits(res, "error")) {
+    upper_genes <- unique(toupper(genes))
+    upper_universe <- if (is.null(universe)) NULL else unique(toupper(as.character(universe)))
+    can_retry_upper <- length(upper_genes) && !identical(upper_genes, genes)
+    if (isTRUE(can_retry_upper) && grepl("No query genes remain|intersecting with", conditionMessage(res), ignore.case = TRUE)) {
+      old_universe <- universe
+      universe <- upper_universe
+      res <- tryCatch(run_once(upper_genes), error = function(e) e)
+      universe <- old_universe
+    }
+  }
+  if (inherits(res, "error")) {
+    stop(res)
+  }
   .enrichly_result_to_enrichr_list(res)
 }
 
@@ -184,9 +221,12 @@ NULL
                                 cache_dir = NULL,
                                 site = "Enrichr",
                                 backend = NULL,
-                                universe = NULL) {
+                                universe = NULL,
+                                pathway_species = NULL) {
   sleep_time <- .normalize_enrichr_sleep_time(sleep_time)
   backend <- .pathway_backend(backend)
+  genes <- .canonicalize_pathway_genes(genes, pathway_species = pathway_species)
+  universe <- if (is.null(universe)) NULL else .canonicalize_pathway_genes(universe, pathway_species = pathway_species)
   cache_path <- .enrichr_cache_path(cache_dir, genes, dbs, site = site, backend = backend)
   if (!is.null(cache_path) && file.exists(cache_path)) {
     cached <- tryCatch(readRDS(cache_path), error = function(e) NULL)
@@ -194,10 +234,24 @@ NULL
   }
   res <- NULL
   if (identical(backend, "enrichly")) {
+    enrichly_error <- NULL
     res <- tryCatch(
-      .run_enrichly_local(genes = genes, dbs = dbs, cache_dir = cache_dir, universe = universe),
-      error = function(e) NULL
+      .run_enrichly_local(
+        genes = genes,
+        dbs = dbs,
+        cache_dir = cache_dir,
+        universe = universe,
+        pathway_species = pathway_species
+      ),
+      error = function(e) {
+        enrichly_error <<- e
+        NULL
+      }
     )
+    if (!is.list(res)) {
+      detail <- if (is.null(enrichly_error)) "" else paste0(" Detail: ", conditionMessage(enrichly_error))
+      .log_abort("Local pathway enrichment with {.pkg enrichly} failed.{detail} Install or update {.pkg enrichly}, or set `pathway_backend = 'enrichr'` to explicitly use the web API.")
+    }
   }
   if (!is.list(res)) {
     if (!requireNamespace("enrichR", quietly = TRUE)) {

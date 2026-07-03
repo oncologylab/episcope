@@ -16,9 +16,11 @@ run_topic_modeling(
   topic_link_output = NULL,
   count_method = NULL,
   count_input = NULL,
+  topic_score_method = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
   pathway_backend = NULL,
+  pathway_species = NULL,
   extraction_topic_report_args = list(),
   ...
 )
@@ -36,8 +38,10 @@ files.}
 
 \item{project_config}{Optional project YAML path or config list. When
 supplied, `topic_method`, `topic_k` or `topic_k_grid`,
-`warplda_iterations`, and `topic_link_output` are used for arguments that
-are left as `NULL`.}
+`warplda_iterations`, `topic_link_output`, `topic_score_method`,
+`topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
+`topic_raw_theta_document_heatmap` are used for arguments that are left as
+`NULL` or as default extraction settings.}
 
 \item{method}{Single Module 3 method ID. If `NULL`, read from
 `project_config` or use the package default.}
@@ -57,6 +61,9 @@ read from `project_config` or use `2000`.}
 \item{count_input}{Topic count column for model fitting. If `NULL`, inferred
 from `count_method`.}
 
+\item{topic_score_method}{Topic-term score method for extraction. If `NULL`,
+read from `project_config` or use `"normtop_specificity"`.}
+
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}
 
@@ -67,8 +74,13 @@ If `NULL`, read from `project_config` or use `"auto"`.}
 local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 read from `project_config` or use `"enrichly"`.}
 
+\item{pathway_species}{Species used to choose default pathway databases.
+Supported values include `"human"` and `"mouse"`. If `NULL`, read from
+`project_config` or infer from `ref_genome`.}
+
 \item{extraction_topic_report_args}{Optional named list of topic-extraction
-report argument overrides. Values here override project config values.}
+report argument overrides. Values here override project config values,
+including TF-to-topic assignment cutoffs.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

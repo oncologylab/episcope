@@ -58,6 +58,15 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     link_pass = TRUE
   )
   data.table::fwrite(topic_links, file.path(extraction_dir, "topic_links.csv"))
+  data.table::fwrite(
+    data.table::data.table(
+      topic = c(1L, 1L, 2L, 2L),
+      term_id = c("GENE:G1", "GENE:G2", "GENE:G3", "PEAK:P1"),
+      score = c(0.9, 0.8, 0.01, 0.02),
+      in_topic = c(TRUE, TRUE, FALSE, FALSE)
+    ),
+    file.path(extraction_dir, "topic_terms.csv")
+  )
   pathway_rows <- data.table::data.table(
     topic = c(1L, 1L, 2L),
     pathway = c("Hallmark: Signal A", "Reactome: Signal B", "Hallmark: Signal A"),
@@ -131,6 +140,8 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv")))
   expect_true(file.exists(file.path(csv_dir, "theta_condition_separation_score_long.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_pass_state_counts.csv")))
+  expect_true(file.exists(file.path(csv_dir, "topic_setup_item_coverage_counts.csv")))
+  expect_true(file.exists(file.path(csv_dir, "topic_setup_link_assignment_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_shared_topic_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "theta_group_mds_points.csv")))
   expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_pass_state_counts.pdf")))
@@ -142,11 +153,30 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_false(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report_global_term_group.html")))
 
   pass_counts <- data.table::fread(file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
+  item_counts <- data.table::fread(file.path(csv_dir, "topic_setup_item_coverage_counts.csv"))
+  link_counts <- data.table::fread(file.path(csv_dir, "topic_setup_link_assignment_counts.csv"))
   shared_counts <- data.table::fread(file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
   expect_setequal(pass_counts$status, c("Pass", "Fail"))
-  expect_equal(sum(pass_counts[status == "Pass", count]), 4)
-  expect_equal(sum(pass_counts[status == "Fail", count]), 0)
-  expect_equal(unique(pass_counts$count_basis), "Standard TF-FP-gene links")
+  expect_setequal(pass_counts$unit, c("Terms", "Genes", "TF-gene-doc links", "Links", "TFs"))
+  expect_equal(pass_counts[unit == "Terms" & status == "Pass", count], 2)
+  expect_equal(pass_counts[unit == "Terms" & status == "Fail", count], 2)
+  expect_equal(pass_counts[unit == "Terms" & status == "Pass", percent], 50)
+  expect_equal(pass_counts[unit == "Genes" & status == "Pass", count], 4)
+  expect_equal(pass_counts[unit == "Genes" & status == "Fail", count], 0)
+  expect_equal(pass_counts[unit == "Genes" & status == "Pass", percent], 100)
+  expect_equal(pass_counts[unit == "Links" & status == "Pass", count], 4)
+  expect_equal(pass_counts[unit == "Links" & status == "Fail", count], 0)
+  expect_equal(pass_counts[unit == "Links" & status == "Pass", percent], 100)
+  expect_equal(pass_counts[unit == "TF-gene-doc links" & status == "Pass", count], 4)
+  expect_equal(pass_counts[unit == "TF-gene-doc links" & status == "Fail", count], 0)
+  expect_equal(pass_counts[unit == "TF-gene-doc links" & status == "Pass", percent], 100)
+  expect_equal(pass_counts[unit == "TFs" & status == "Pass", count], 2)
+  expect_equal(pass_counts[unit == "TFs" & status == "Fail", count], 0)
+  expect_equal(pass_counts[unit == "TFs" & status == "Pass", percent], 100)
+  expect_equal(item_counts, pass_counts, ignore_attr = TRUE)
+  expect_equal(sum(link_counts[status == "Pass", count]), 4)
+  expect_equal(sum(link_counts[status == "Fail", count]), 0)
+  expect_equal(unique(link_counts$count_basis), "Standard TF-FP-gene links")
   expect_true("Pathways" %in% shared_counts$unit)
 
   topic_html <- paste(readLines(file.path(html_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
@@ -276,63 +306,50 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_equal(unique(pass_counts$selected_k), 2L)
 })
 
-test_that("Module 3 review colors nutrient-stress labels by stress type", {
-  labels <- c(
-    "HPAFII 0 BCAA Ctrl",
-    "HPAFII 25 BCAA TGFb",
-    "HPAFII 0.05 Glc Ctrl",
-    "HPAFII 0 Gln.Arg Ctrl",
-    "HPAFII 12.5uM Met.Cys TGFb",
-    "HPAFII 0 Lys Ctrl",
-    "HPAFII 0 Trp TGFb",
-    "HPAFII 10 Arg Ctrl",
-    "HPAFII 5 Gln Ctrl",
-    "HPAFII 10 FBS Ctrl"
-  )
-
-  expect_equal(
-    .m3tb_color_family(labels),
-    c("BCAA", "BCAA", "Glc", "Gln.Arg", "Met.Cys", "Lys", "Trp", "Arg", "Gln", "Ctrl")
-  )
-  expect_gt(length(unique(.m3tb_group_color(labels))), 4L)
-})
-
-test_that("Module 3 benchmark infers nutrient-stress metric groups when repeated", {
+test_that("Module 3 review uses explicit comparison groups instead of label substring rules", {
   comparisons <- data.table::data.table(
     comparison_id = c(
-      "HPAFII_0_BCAA_Ctrl_vs_10_FBS_Ctrl",
-      "HPAFII_25_BCAA_Ctrl_vs_10_FBS_Ctrl",
-      "HPAFII_0_Glc_Ctrl_vs_10_FBS_Ctrl",
-      "HPAFII_0_FBS_Ctrl_vs_10_FBS_Ctrl",
-      "HPAFII_0p4_FBS_Ctrl_vs_10_FBS_Ctrl"
+      "TCell_Resting_vs_Naive",
+      "TCell_Restimulated_vs_Naive",
+      "Fib_BATF_IRF4_vs_NoTF"
     ),
     cond1_label = c(
-      "HPAFII_0_BCAA_Ctrl",
-      "HPAFII_25_BCAA_Ctrl",
-      "HPAFII_0_Glc_Ctrl",
-      "HPAFII_0_FBS_Ctrl",
-      "HPAFII_0p4_FBS_Ctrl"
+      "WT_D6_Resting",
+      "WT_D6_Restimulated",
+      "Dox72h_BATF_IRF4"
     ),
-    cond2_label = rep("HPAFII_10_FBS_Ctrl", 5),
+    cond2_label = c("Naive_Flox", "Naive_Flox", "Dox72h_NoTFs"),
+    comparison_group = c(
+      "TCell_D6_resting_reference",
+      "TCell_D6_restimulated_reference",
+      "Fib_Combo_OE"
+    ),
     comparison_label = c(
-      "0_BCAA Ctrl vs 10_FBS Ctrl",
-      "25_BCAA Ctrl vs 10_FBS Ctrl",
-      "0_Glc Ctrl vs 10_FBS Ctrl",
-      "0_FBS Ctrl vs 10_FBS Ctrl",
-      "0.4_FBS Ctrl vs 10_FBS Ctrl"
+      "WT D6 Resting vs Naive Flox",
+      "WT D6 Restimulated vs Naive Flox",
+      "Dox72h BATF IRF4 vs Dox72h NoTFs"
     )
   )
 
   design <- .m3tb_design_table(comparisons)
 
-  expect_true(any(design$context_type == "condition" & design$metric_group == "BCAA"))
-  expect_true(any(design$context_type == "condition" & design$metric_group == "Ctrl"))
-  expect_false(any(design$metric_group == "Full"))
-  expect_true(any(design$context_type == "comparison" & design$metric_group == "BCAA::Target-Up"))
-  expect_true(any(design$context_type == "comparison" & design$metric_group == "BCAA::Target-Down"))
-  expect_true(any(design$context_type == "comparison" & design$metric_group == "FBS::Target-Up"))
-  expect_true(any(design$context_type == "comparison" & design$metric_group == "FBS::Target-Down"))
-  expect_false(any(design$context_type == "comparison" & grepl("^Ctrl::", design$metric_group)))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "TCell_D6_resting_reference::Target-Up"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "TCell_D6_resting_reference::Target-Down"))
+  expect_true(any(design$context_type == "comparison" & design$metric_group == "Fib_Combo_OE::Target-Up"))
+  expect_false(any(design$metric_group == "Arg"))
+  expect_false(any(grepl("^Arg::", design$metric_group)))
+})
+
+test_that("Module 3 review colors are generic and do not classify Target as Arg", {
+  groups <- c(
+    "TCell_D6_resting_reference::Target-Up",
+    "TCell_D6_resting_reference::Target-Down",
+    "Fib_Combo_OE::Target-Up",
+    "Fib_Combo_OE::Target-Down"
+  )
+
+  expect_equal(.m3tb_color_family(groups), groups)
+  expect_equal(length(unique(.m3tb_group_color(groups))), length(groups))
 })
 
 test_that("Module 3 topic reports use overlap denominator for pathway universe size", {
@@ -362,6 +379,34 @@ test_that("Module 3 topic reports use overlap denominator for pathway universe s
   expect_equal(out$gene_total, 856L)
   expect_equal(out$gene_total_universe, 856L)
   expect_equal(out$gene_out, 855L)
+})
+
+test_that("Module 3 condition reports fall back to topic-level pathways", {
+  root <- tempfile("module3-condition-pathway-fallback-")
+  extraction_dir <- file.path(root, "topic_extraction", "K2")
+  dir.create(extraction_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(
+      topic = c(1L, 2L),
+      pathway = c("Reactome: Signal A", "GO:BP: Signal B"),
+      pathway_key = c("Reactome: Signal A", "GO:BP: Signal B"),
+      padj = c(0.01, 0.02),
+      overlap = c("6/30", "7/40"),
+      overlap_hits = c(6L, 7L),
+      genes = c("G1;G2;G3;G4;G5;G6", "G7;G8;G9;G10;G11;G12;G13")
+    ),
+    file.path(extraction_dir, "topic_pathway_enrichment_peak_and_gene_dotplot.csv")
+  )
+
+  pathways <- craftgrn:::.m3tb_read_condition_pathway_tables(
+    extraction_dir,
+    model_dir = NULL,
+    compute_universe = FALSE
+  )
+
+  expect_equal(nrow(pathways), 2L)
+  expect_true(all(is.na(pathways$comparison_label)))
+  expect_setequal(pathways$pathway, c("Reactome: Signal A", "GO:BP: Signal B"))
 })
 
 test_that("Module 3 theta separation score does not mark singleton groups as perfect", {
@@ -464,7 +509,7 @@ test_that("Module 3 shared-topic summary fills missing K values when cache is pa
   expect_true(any(out$shared$unit == "Links" & out$shared$selected_k == 3L))
   expect_true(any(out$shared$unit == "Genes" & out$shared$selected_k == 3L))
   expect_true(any(out$shared$unit == "TFs" & out$shared$selected_k == 3L))
-  expect_true(any(out$pass$count_basis == "Topic-link rows" & out$pass$selected_k == 3L))
+  expect_true(any(out$link_assignment$count_basis == "Topic-link rows" & out$link_assignment$selected_k == 3L))
 })
 
 test_that("Module 3 combined MDS plot separates comparison methods and directions", {
@@ -758,6 +803,7 @@ test_that("Module 3 topic benchmark exposes project-agnostic sample subsetting",
   expect_true(isTRUE(formals(module3_train_topic_models)$flat_output))
   expect_true("flatten_single_output" %in% names(formals(module3_extract_topics)))
   expect_true(isTRUE(formals(module3_extract_topics)$flatten_single_output))
+  expect_true("topic_score_method" %in% names(formals(module3_extract_topics)))
 })
 
 test_that("Module 3 topic benchmark uses shallow run folders for method grids", {
@@ -788,6 +834,107 @@ test_that("Module 3 topic benchmark uses shallow run folders for method grids", 
   expect_equal(res$method_plan$topic_models_dir, file.path(res$method_plan$run_dir, "topic_models"))
   expect_equal(res$method_plan$topic_extraction_dir, file.path(res$method_plan$run_dir, "topic_extraction"))
   expect_true(file.exists(file.path(root, "runs.csv")))
+})
+
+test_that("Module 3 topic benchmark flattens model and extraction roots outside legacy layout", {
+  expect_true(.m3tb_flat_output_for_layout("standard"))
+  expect_true(.m3tb_flat_output_for_layout("benchmark"))
+  expect_false(.m3tb_flat_output_for_layout("legacy"))
+})
+
+test_that("Module 3 benchmark extraction writes directly into each K folder", {
+  root <- tempfile("module3-topic-benchmark-flat-extract-")
+  dir.create(root, recursive = TRUE)
+
+  setup <- .module3_topic_method_plan("comparison_aggr_multivi", k_grid = 10L)
+  plan <- .m3tb_apply_output_layout(setup, root, "benchmark")
+  model_name <- paste0(
+    "GSE192390_vae_joint_tf_docs_",
+    plan$weight_label[[1L]],
+    "_multivi_encoder_Kgrid"
+  )
+  model_dir <- file.path(plan$topic_models_dir[[1L]], model_name)
+  dir.create(file.path(model_dir, "vae_models"), recursive = TRUE)
+  dir.create(file.path(model_dir, "rds"), recursive = TRUE)
+
+  theta <- data.table::data.table(
+    doc_id = c("CompA::KLF5::Target-Up", "CompA::KLF5::Target-Down"),
+    Topic1 = c(0.8, 0.2),
+    Topic2 = c(0.2, 0.8)
+  )
+  phi <- data.table::data.table(
+    topic = c("Topic1", "Topic2"),
+    `GENE:G1` = c(0.8, 0.2),
+    `GENE:G2` = c(0.2, 0.8)
+  )
+  data.table::fwrite(theta, file.path(model_dir, "vae_models", "theta_K10.csv"))
+  data.table::fwrite(phi, file.path(model_dir, "vae_models", "phi_K10.csv"))
+  dtm <- Matrix::Matrix(matrix(c(2, 1, 1, 2), nrow = 2, byrow = TRUE), sparse = TRUE)
+  rownames(dtm) <- theta$doc_id
+  colnames(dtm) <- c("GENE:G1", "GENE:G2")
+  edges_docs <- data.table::data.table(
+    doc_id = theta$doc_id,
+    tf = "KLF5",
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P2")
+  )
+  saveRDS(dtm, file.path(model_dir, "rds", "dtm.rds"))
+  saveRDS(edges_docs, file.path(model_dir, "rds", "edges_docs.rds"))
+
+  run_module3_topic_benchmark(
+    filtered_dir = tempfile("unused-filtered-"),
+    output_dir = root,
+    comparisons = data.table::data.table(
+      comparison_id = "CompA",
+      comparison_display = "CompA",
+      cond1_label = "Cond1",
+      cond2_label = "Cond2"
+    ),
+    methods = "comparison_aggr_multivi",
+    k_grid = 10L,
+    output_layout = "benchmark",
+    run_training = FALSE,
+    run_extraction = TRUE,
+    run_reports = FALSE,
+    extraction_topic_report_args = list(
+      extraction_steps = c("topic_terms", "tf_topic_assignment"),
+      run_link_topic_scores = FALSE,
+      run_pathway_enrichment = FALSE
+    ),
+    verbose = FALSE
+  )
+
+  k_dir <- file.path(plan$topic_extraction_dir[[1L]], "K10")
+  expect_true(file.exists(file.path(k_dir, "topic_terms.csv")))
+  expect_false(file.exists(file.path(k_dir, "raw_theta_documents_K2.pdf")))
+  expect_false(dir.exists(file.path(k_dir, "tf_topic_assignment")))
+  expect_false(dir.exists(file.path(k_dir, model_name)))
+})
+
+test_that("Module 3 path-length sanity check reports Windows-alias paths", {
+  root <- tempfile("module3-path-length-")
+  long_dir <- file.path(root, paste(rep("deepfolder", 4), collapse = .Platform$file.sep))
+  dir.create(long_dir, recursive = TRUE)
+  long_file <- file.path(long_dir, paste0(paste(rep("longname", 6), collapse = "_"), ".csv"))
+  writeLines("x", long_file)
+
+  report_file <- file.path(root, "path_length_sanity_check.csv")
+  expect_warning(
+    summary <- .m3tb_check_path_lengths(
+      root = root,
+      max_chars = 60L,
+      path_alias = "Z:/project",
+      out_file = report_file,
+      verbose = TRUE
+    ),
+    "path length"
+  )
+
+  expect_true(file.exists(report_file))
+  report <- data.table::fread(report_file)
+  expect_true(any(report$over_limit))
+  expect_true(any(grepl("^Z:/project", report$display_path)))
+  expect_gt(summary$n_over_limit, 0L)
 })
 
 test_that("Module 3 topic benchmark applies readable comparison labels", {
@@ -874,7 +1021,7 @@ test_that("Module 3 topic benchmark writes typed empty topic-link summaries", {
 
   expect_named(
     res$topic_link_summary$pass,
-    c("method_order", "method_setup", "setup", "model_label", "selected_k", "status", "count")
+    c("method_order", "method_setup", "setup", "model_label", "selected_k", "status", "count", "count_basis")
   )
   expect_equal(nrow(res$topic_link_summary$pass), 0L)
   expect_equal(nrow(res$topic_link_summary$shared), 0L)
@@ -1123,6 +1270,7 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("build_module3_qc_report" %in% getNamespaceExports("craftgrn"))
   expect_true("project_config" %in% names(formals(run_topic_modeling)))
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
+  expect_true("topic_score_method" %in% names(formals(run_topic_modeling)))
   expect_true("vae_device" %in% names(formals(run_topic_modeling)))
   expect_true("vae_device" %in% names(formals(train_topic_models)))
   expect_true("vae_batch_size" %in% names(formals(train_topic_models)))
@@ -1145,6 +1293,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_k_grid = c(8L, 10L),
     warplda_iterations = 25L,
     topic_link_output = "none",
+    topic_score_method = "rowmax_phi",
     topic_count_method = "bin",
     topic_count_input = "pseudo_count_bin",
     topic_vae_device = "cuda",
@@ -1158,6 +1307,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$k_grid, c(8L, 10L))
   expect_equal(resolved$warplda_iterations, 25L)
   expect_equal(resolved$topic_link_output, "none")
+  expect_equal(resolved$extraction_args$topic_score_method, "rowmax_phi")
   expect_equal(resolved$count_method, "bin")
   expect_equal(resolved$count_input, "pseudo_count_bin")
   expect_equal(resolved$vae_device, "cuda")
@@ -1172,6 +1322,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     k_grid = 12L,
     warplda_iterations = 3L,
     topic_link_output = "pass",
+    topic_score_method = "normtop_specificity",
     count_method = "log",
     count_input = "pseudo_count_log",
     vae_device = "cpu",
@@ -1181,6 +1332,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(overridden$k_grid, 12L)
   expect_equal(overridden$warplda_iterations, 3L)
   expect_equal(overridden$topic_link_output, "pass")
+  expect_equal(overridden$extraction_args$topic_score_method, "normtop_specificity")
   expect_equal(overridden$count_method, "log")
   expect_equal(overridden$count_input, "pseudo_count_log")
   expect_equal(overridden$vae_device, "cpu")
@@ -1190,16 +1342,30 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
 test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   resolved_default <- .module3_resolve_topic_run_config(project_config = list())
   expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
+  expect_equal(resolved_default$extraction_args$topic_score_method, "normtop_specificity")
   expect_equal(resolved_default$extraction_args$link_topic_prob_cutoff, 0.3)
+  expect_equal(resolved_default$extraction_args$topic_tf_membership_cutoff, 0.3)
+  expect_equal(resolved_default$extraction_args$topic_tf_primary_margin_cutoff, 0.1)
+  expect_false("topic_tf_assignment_browser" %in% names(resolved_default$extraction_args))
 
   resolved_explicit <- .module3_resolve_topic_run_config(
     project_config = list(
       topic_link_method = "gene_prob",
-      topic_link_prob_cutoff = "max"
+      topic_link_prob_cutoff = "max",
+      topic_tf_membership_cutoff = 0.25,
+      topic_tf_primary_margin_cutoff = 0.05
     )
   )
   expect_equal(resolved_explicit$extraction_args$link_topic_method, "gene_prob")
   expect_equal(resolved_explicit$extraction_args$link_topic_prob_cutoff, "max")
+  expect_equal(resolved_explicit$extraction_args$topic_tf_membership_cutoff, 0.25)
+  expect_equal(resolved_explicit$extraction_args$topic_tf_primary_margin_cutoff, 0.05)
+  expect_false("topic_tf_assignment_browser" %in% names(resolved_explicit$extraction_args))
+
+  resolved_theta_terms <- .module3_resolve_topic_run_config(
+    project_config = list(topic_link_method = "theta_and_terms")
+  )
+  expect_equal(resolved_theta_terms$extraction_args$link_topic_method, "theta_and_terms")
 })
 
 test_that("Module 3 VAE device supports explicit auto mode", {
@@ -1219,6 +1385,18 @@ test_that("Module 3 VAE device supports explicit auto mode", {
   expect_match(py, "resolved_device", fixed = TRUE)
 })
 
+test_that("Module 3 topic run config resolves pathway species", {
+  resolved_mouse <- .module3_resolve_topic_run_config(
+    project_config = list(ref_genome = "mm10")
+  )
+  expect_equal(resolved_mouse$extraction_args$pathway_species, "mouse")
+
+  resolved_human <- .module3_resolve_topic_run_config(
+    project_config = list(ref_genome = "mm10", pathway_species = "human")
+  )
+  expect_equal(resolved_human$extraction_args$pathway_species, "human")
+})
+
 test_that("Module 3 high-throughput topic input skips repeated-value diagnostics by default", {
   expect_false(formals(train_topic_models)$check_repeated_values)
   expect_false(formals(module3_construct_docs)$check_repeated_values)
@@ -1233,6 +1411,16 @@ test_that("Module 3 standard extraction keeps per-comparison pathway reports opt
   )
   expect_match(model_defaults, "pathway_per_comparison = FALSE", fixed = TRUE)
   expect_match(model_defaults, "run_pathway_enrichment = FALSE", fixed = TRUE)
+})
+
+test_that("Module 3 extraction inherits FP term mode from topic input summary", {
+  model_defaults <- paste(
+    deparse(body(extract_regulatory_topics)),
+    collapse = "\n"
+  )
+  expect_match(model_defaults, "topic_input_summary_path", fixed = TRUE)
+  expect_match(model_defaults, "topic_report_args$fp_term_mode", fixed = TRUE)
+  expect_match(model_defaults, "Using fp_term_mode=", fixed = TRUE)
 })
 
 test_that("Module 3 theta review PNG writer is headless safe", {

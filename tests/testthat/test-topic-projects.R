@@ -22,7 +22,6 @@ test_that("gene-only topic extractions still require pathway outputs", {
   file.create(file.path(sub_dir, c(
     "topic_links.csv",
     "topic_terms.csv",
-    "topic_marker_term_heatmap.pdf",
     "HPAFII_topic_by_comparison.pdf",
     "report_doc_design.txt"
   )))
