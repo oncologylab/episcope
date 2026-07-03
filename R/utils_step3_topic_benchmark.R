@@ -1696,7 +1696,8 @@
   genes <- .m3tb_doc_term_gene_universe(.m3tb_find_doc_term_file(model_dir))
   if (!length(genes)) return(data.table::data.table())
   pathway_backend <- .pathway_backend(NULL)
-  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_species <- .normalize_pathway_species_mode(pathway_species)
+  human_mouse_best <- identical(pathway_species, "human_mouse_best")
   if (!.pathway_backend_available(pathway_backend)) {
     backend_label <- if (identical(pathway_backend, "enrichly")) "enrichly" else "enrichR"
     .log_abort("Computing Module 3 pathway universe totals requires the selected backend: {backend_label}.")
@@ -1707,18 +1708,30 @@
   if (isTRUE(verbose)) {
     .log_inform("Computing Module 3 pathway universe totals for {length(genes)} document genes.")
   }
-  enr <- tryCatch(
-    .run_enrichr_cached(
-      genes = genes,
-      dbs = .default_pathway_databases(),
-      sleep_time = 0,
-      cache_dir = file.path(extraction_dir, "cache", "enrichr"),
-      backend = pathway_backend,
-      pathway_species = pathway_species
-    ),
-    error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
-  )
-  out <- .topic_enrichr_result_to_table(enr, topic_name = 0L, genes = genes)
+  run_one_species <- function(species) {
+    enr <- tryCatch(
+      .run_enrichr_cached(
+        genes = genes,
+        dbs = .default_pathway_databases(species),
+        sleep_time = 0,
+        cache_dir = file.path(extraction_dir, "cache", pathway_backend, species),
+        backend = pathway_backend,
+        pathway_species = species
+      ),
+      error = function(e) .log_abort("Module 3 pathway universe enrichment failed: {conditionMessage(e)}")
+    )
+    .topic_enrichr_result_to_table(enr, topic_name = 0L, genes = genes, pathway_species = species)
+  }
+  out <- if (human_mouse_best) {
+    all_out <- data.table::rbindlist(
+      lapply(c("human", "mouse"), run_one_species),
+      use.names = TRUE,
+      fill = TRUE
+    )
+    .select_best_human_mouse_pathways(all_out)
+  } else {
+    run_one_species(pathway_species)
+  }
   if (nrow(out)) {
     dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
     data.table::fwrite(out, cache_file)
@@ -3963,7 +3976,7 @@ run_regulatory_topics <- function(filtered_dir,
   } else {
     pathway_species
   }
-  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_species <- .normalize_pathway_species_mode(pathway_species)
   gammafit_scope_raw <- .module3_cfg_value(
     cfg,
     c("topic_gammafit_scope", "module3_topic_gammafit_scope", "topic_gammafit_scopes", "module3_topic_gammafit_scopes"),
@@ -4111,8 +4124,11 @@ run_regulatory_topics <- function(filtered_dir,
 #'   local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 #'   read from `project_config` or use `"enrichly"`.
 #' @param pathway_species Species used to choose default pathway databases.
-#'   Supported values include `"human"` and `"mouse"`. If `NULL`, read from
-#'   `project_config` or infer from `ref_genome`.
+#'   Supported values include `"human"`, `"mouse"`, and
+#'   `"human_mouse_best"`. The best-of mode runs human and mouse pathway
+#'   databases separately and reports the better row per topic and normalized
+#'   pathway name, ranked by adjusted p-value, logp, combined score, and overlap
+#'   size. If `NULL`, read from `project_config` or infer from `ref_genome`.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides. Values here override project config values,
 #'   including TF-to-topic assignment cutoffs.

@@ -170,7 +170,7 @@ topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
 pathway_backend: enrichly
-pathway_species: mouse
+pathway_species: human_mouse_best
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
@@ -195,10 +195,18 @@ Module 3 uses different evidence for different topic-assignment units:
 
 `pathway_backend: enrichly` uses local cached pathway libraries when the
 optional `enrichly` package is installed; `pathway_backend: enrichr` keeps the
-web API backend. Set `pathway_species: human` or `pathway_species: mouse` to
-choose species-aware default databases; if omitted, Module 3 infers the species
-from `ref_genome` when possible. Benchmark grids are optional and should be
-enabled only for method-comparison experiments.
+web API backend. Set `pathway_species: human`, `pathway_species: mouse`, or
+`pathway_species: human_mouse_best` to choose pathway database behavior; if
+omitted, Module 3 infers the species from `ref_genome` when possible.
+Benchmark grids are optional and should be enabled only for method-comparison
+experiments.
+
+For cross-species projects or mouse data where human pathway libraries remain
+biologically useful, set `pathway_species: human_mouse_best`. Module 3 runs
+the human and mouse pathway database sets separately, writes the full audit
+table, and reports one best row per topic and normalized pathway name. The
+selected row is ranked by adjusted p-value, then `logp`, combined score, and
+overlap size, while retaining the selected species and database columns.
 
 Pathway gene matching uses formal species-specific gene-symbol resolution when
 the relevant Bioconductor organism package is installed: `org.Hs.eg.db` for

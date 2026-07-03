@@ -12,7 +12,7 @@
 # - The standard input is a diff_links_filtered directory containing
 #   *_filtered_links_up.csv and *_filtered_links_down.csv files.
 
-.normalize_pathway_species <- function(species = NULL) {
+.normalize_pathway_species_mode <- function(species = NULL) {
   if (is.null(species) || !length(species) || is.na(species[[1L]]) || !nzchar(as.character(species)[[1L]])) {
     opt <- getOption("craftgrn.pathway_species", NULL)
     env <- Sys.getenv("CRAFTGRN_PATHWAY_SPECIES", unset = "")
@@ -27,9 +27,19 @@
     "mouse"
   } else if (species %in% c("human", "homo_sapiens", "hg38", "grch38")) {
     "human"
+  } else if (species %in% c("human_mouse_best", "human_and_mouse_best", "both_best", "both", "human_mouse", "mouse_human_best")) {
+    "human_mouse_best"
   } else {
-    .log_abort("`pathway_species` must be 'human' or 'mouse'.")
+    .log_abort("`pathway_species` must be 'human', 'mouse', or 'human_mouse_best'.")
   }
+}
+
+.normalize_pathway_species <- function(species = NULL) {
+  species <- .normalize_pathway_species_mode(species)
+  if (identical(species, "human_mouse_best")) {
+    .log_abort("`pathway_species` must be 'human' or 'mouse' for species-specific gene symbol resolution.")
+  }
+  species
 }
 
 .pathway_species_from_ref_genome <- function(ref_genome = NULL) {
@@ -44,7 +54,7 @@
 }
 
 .default_pathway_databases <- function(species = NULL) {
-  species <- .normalize_pathway_species(species)
+  species <- .normalize_pathway_species_mode(species)
   shared <- c(
     "GO_Biological_Process_2023",
     "GO_Cellular_Component_2023",
@@ -61,11 +71,44 @@
       return(default_dbs)
     }
   }
+  if (identical(species, "human_mouse_best")) {
+    return(unique(c(
+      .default_pathway_databases("human"),
+      .default_pathway_databases("mouse")
+    )))
+  }
   if (identical(species, "mouse")) {
     c(shared, "WikiPathways_2024_Mouse", hallmark, "KEGG_2019_Mouse")
   } else {
     c(shared, "WikiPathways_2024_Human", hallmark, "KEGG_2021_Human")
   }
+}
+
+.pathway_database_species <- function(db) {
+  db <- tolower(as.character(db %||% ""))
+  db <- gsub("[^a-z0-9]+", "_", db)
+  if (grepl("mouse|mm10|mus_musculus|kegg_2019_mouse|wikipathways_2024_mouse", db)) return("mouse")
+  if (grepl("human|hg38|homo_sapiens|kegg_2021_human|wikipathways_2024_human", db)) return("human")
+  NA_character_
+}
+
+.split_pathway_databases_by_species <- function(dbs = NULL) {
+  if (is.null(dbs)) {
+    return(list(
+      human = .default_pathway_databases("human"),
+      mouse = .default_pathway_databases("mouse")
+    ))
+  }
+  dbs <- unique(as.character(dbs))
+  dbs <- dbs[!is.na(dbs) & nzchar(dbs)]
+  if (!length(dbs)) {
+    return(list(human = character(), mouse = character()))
+  }
+  species <- vapply(dbs, .pathway_database_species, character(1))
+  list(
+    human = dbs[is.na(species) | species == "human"],
+    mouse = dbs[is.na(species) | species == "mouse"]
+  )
 }
 
 #' Report differential pathway enrichment

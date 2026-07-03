@@ -292,7 +292,7 @@ topic_link_output: pass
 topic_vae_device: auto
 topic_vae_batch_size: 512
 pathway_backend: enrichly
-pathway_species: mouse
+pathway_species: human_mouse_best
 
 topic_benchmark_enabled: false
 topic_benchmark_methods: []
@@ -302,9 +302,12 @@ topic_benchmark_k_grid: []
 Use `pathway_backend: enrichly` for local cached pathway enrichment when the
 optional `enrichly` package is installed. Use `pathway_backend: enrichr` when
 you intentionally want the Enrichr web API backend. Use
-`pathway_species: human` or `pathway_species: mouse` to choose species-aware
-default databases; if omitted, Module 3 infers the species from `ref_genome`
-when possible.
+`pathway_species: human`, `pathway_species: mouse`, or
+`pathway_species: human_mouse_best` to choose pathway database behavior; if
+omitted, Module 3 infers the species from `ref_genome` when possible. The
+best-of mode runs human and mouse pathway databases separately and reports the
+better row for each topic and normalized pathway name, ranked by adjusted
+p-value, `logp`, combined score, and overlap size.
 
 Pathway gene matching uses formal species-specific gene-symbol resolution when
 the relevant Bioconductor organism package is installed: `org.Hs.eg.db` for

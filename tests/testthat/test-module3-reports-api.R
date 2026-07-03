@@ -120,6 +120,7 @@ test_that("Module 3 pathway backend supports local enrichly enrichment", {
 test_that("Module 3 pathway database defaults are species aware", {
   human <- craftgrn:::.default_pathway_databases("human")
   mouse <- craftgrn:::.default_pathway_databases("mm10")
+  both <- craftgrn:::.default_pathway_databases("human_mouse_best")
 
   expect_true("WikiPathways_2024_Human" %in% human)
   expect_true("KEGG_2021_Human" %in% human)
@@ -127,6 +128,9 @@ test_that("Module 3 pathway database defaults are species aware", {
   expect_true("KEGG_2019_Mouse" %in% mouse)
   expect_false("WikiPathways_2024_Human" %in% mouse)
   expect_false("KEGG_2021_Human" %in% mouse)
+  expect_true(all(c("WikiPathways_2024_Human", "KEGG_2021_Human") %in% both))
+  expect_true(all(c("WikiPathways_2024_Mouse", "KEGG_2019_Mouse") %in% both))
+  expect_equal(craftgrn:::.normalize_pathway_species_mode("both_best"), "human_mouse_best")
   expect_equal(craftgrn:::.pathway_species_from_ref_genome("hg38"), "human")
   expect_equal(craftgrn:::.pathway_species_from_ref_genome("mm10"), "mouse")
 })

@@ -1092,6 +1092,51 @@ test_that("overall topic pathway dotplot shows a readable expanded default", {
   expect_equal(formals(run_tfdocs_report_from_topic_base)$dot_top_n_per_topic, 25L)
 })
 
+test_that("human mouse pathway best selector keeps one best species row per pathway", {
+  dt <- data.table::data.table(
+    topic = c(1L, 1L, 1L, 2L),
+    pathway = c(
+      "KEGG: T cell receptor signaling pathway",
+      "KEGG: T cell receptor signaling pathway",
+      "Reactome: Interferon Signaling",
+      "WikiPathways: Apoptosis"
+    ),
+    database = c("KEGG_2021_Human", "KEGG_2019_Mouse", "Reactome_2022", "WikiPathways_2024_Mouse"),
+    database_label = c("KEGG", "KEGG", "Reactome", "WikiPathways"),
+    pathway_term = c(
+      "T cell receptor signaling pathway",
+      "T cell receptor signaling pathway",
+      "Interferon Signaling",
+      "Apoptosis"
+    ),
+    pathway_species = c("human", "mouse", "human", "mouse"),
+    padj = c(0.02, 0.01, 0.03, 0.04),
+    pval = c(0.002, 0.001, 0.003, 0.004),
+    overlap = c("2/10", "3/11", "1/8", "2/9"),
+    overlap_hits = c(2L, 3L, 1L, 2L),
+    genes = c("A;B", "A;B;C", "D", "E;F"),
+    logp = -log10(c(0.02, 0.01, 0.03, 0.04)),
+    combined_score = c(10, 8, 4, 5),
+    odds_ratio = c(2, 3, 1, 2),
+    cluster_size = c(20L, 20L, 20L, 30L),
+    query_size = c(20L, 20L, 20L, 30L),
+    term_size = c(10L, 11L, 8L, 9L),
+    background_size = 20000L
+  )
+
+  out <- .select_best_human_mouse_pathways(dt)
+  tcr <- out[topic == 1L & pathway_norm_key == "kegg:t cell receptor signaling pathway"]
+
+  expect_equal(nrow(out), 3L)
+  expect_equal(nrow(tcr), 1L)
+  expect_equal(tcr$selected_pathway_species, "mouse")
+  expect_equal(tcr$selected_database, "KEGG_2019_Mouse")
+  expect_equal(tcr$human_padj, 0.02)
+  expect_equal(tcr$mouse_padj, 0.01)
+  expect_equal(tcr$human_overlap_hits, 2L)
+  expect_equal(tcr$mouse_overlap_hits, 3L)
+})
+
 test_that("per-comparison topic-term pathway wrapper retests overall pathway genes", {
   topic_terms <- data.table::data.table(
     topic = c("Topic1", "Topic1", "Topic1", "Topic2"),

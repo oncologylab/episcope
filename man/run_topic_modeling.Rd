@@ -75,8 +75,11 @@ local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 read from `project_config` or use `"enrichly"`.}
 
 \item{pathway_species}{Species used to choose default pathway databases.
-Supported values include `"human"` and `"mouse"`. If `NULL`, read from
-`project_config` or infer from `ref_genome`.}
+Supported values include `"human"`, `"mouse"`, and
+`"human_mouse_best"`. The best-of mode runs human and mouse pathway
+databases separately and reports the better row per topic and normalized
+pathway name, ranked by adjusted p-value, logp, combined score, and overlap
+size. If `NULL`, read from `project_config` or infer from `ref_genome`.}
 
 \item{extraction_topic_report_args}{Optional named list of topic-extraction
 report argument overrides. Values here override project config values,

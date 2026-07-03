@@ -4395,6 +4395,26 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   .assert_pkg("data.table")
   option_label <- match.arg(option_label)
   doc_design <- match.arg(doc_design)
+  pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
+  human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
+  key_species <- if (human_mouse_best) c("human", "mouse") else pathway_species_mode
+  add_gene_keys <- function(dt) {
+    dt <- data.table::as.data.table(dt)
+    out <- lapply(key_species, function(sp) {
+      tmp <- data.table::copy(dt)
+      keys <- .gene_symbol_key_table(tmp$gene, species = sp)
+      tmp[, `:=`(
+        pathway_species = sp,
+        gene_key__ = keys$gene_key__,
+        gene_canonical = keys$gene_canonical,
+        gene_match_type = keys$gene_match_type,
+        gene_matched = keys$gene_matched,
+        gene_ambiguous = keys$gene_ambiguous
+      )]
+      tmp
+    })
+    data.table::rbindlist(out, use.names = TRUE, fill = TRUE)
+  }
   out_dir_pc <- if (is.null(per_comparison_dir) || !nzchar(as.character(per_comparison_dir)[[1L]]) || identical(as.character(per_comparison_dir)[[1L]], ".")) {
     out_dir
   } else {
@@ -4424,14 +4444,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     fill = TRUE
   )
   topic_gene_dt <- topic_gene_dt[is.finite(topic) & !is.na(gene) & nzchar(gene)]
-  topic_gene_keys <- .gene_symbol_key_table(topic_gene_dt$gene, species = pathway_species)
-  topic_gene_dt[, `:=`(
-    gene_key__ = topic_gene_keys$gene_key__,
-    gene_canonical = topic_gene_keys$gene_canonical,
-    gene_match_type = topic_gene_keys$gene_match_type,
-    gene_matched = topic_gene_keys$gene_matched,
-    gene_ambiguous = topic_gene_keys$gene_ambiguous
-  )]
+  topic_gene_dt <- add_gene_keys(topic_gene_dt)
   topic_gene_dt <- topic_gene_dt[!is.na(gene_key__) & nzchar(gene_key__)]
   topic_gene_dt <- unique(topic_gene_dt)
   if (!nrow(topic_gene_dt)) return(data.table::data.table())
@@ -4452,21 +4465,14 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     .(comparison_id, direction_group, gene = as.character(gene_key))
   ])
   comp_genes <- comp_genes[!is.na(gene) & nzchar(gene)]
-  comp_gene_keys <- .gene_symbol_key_table(comp_genes$gene, species = pathway_species)
-  comp_genes[, `:=`(
-    gene_key__ = comp_gene_keys$gene_key__,
-    gene_canonical = comp_gene_keys$gene_canonical,
-    gene_match_type = comp_gene_keys$gene_match_type,
-    gene_matched = comp_gene_keys$gene_matched,
-    gene_ambiguous = comp_gene_keys$gene_ambiguous
-  )]
+  comp_genes <- add_gene_keys(comp_genes)
   comp_genes <- comp_genes[!is.na(gene_key__) & nzchar(gene_key__)]
   if (!nrow(comp_genes)) return(data.table::data.table())
 
   query_gene_dt <- merge(
     comp_genes,
-    unique(topic_gene_dt[, .(topic, gene_key__)]),
-    by = "gene_key__",
+    unique(topic_gene_dt[, .(topic, pathway_species, gene_key__)]),
+    by = c("pathway_species", "gene_key__"),
     allow.cartesian = TRUE,
     sort = FALSE
   )
@@ -4476,9 +4482,9 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     query_gene_symbols = list(sort(unique(gene_canonical[!is.na(gene_canonical) & nzchar(gene_canonical)]))),
     query_gene_keys = list(sort(unique(gene_key__))),
     query_size = data.table::uniqueN(gene_key__),
-    topic_gene_count = data.table::uniqueN(topic_gene_dt[topic == .BY$topic, gene_key__]),
+    topic_gene_count = data.table::uniqueN(topic_gene_dt[topic == .BY$topic & pathway_species == .BY$pathway_species, gene_key__]),
     gene_match_summary = .gene_symbol_match_summary(gene_match_type)
-  ), by = .(comparison_id, direction_group, topic)]
+  ), by = .(comparison_id, direction_group, topic, pathway_species)]
   query_dt <- query_dt[query_size > 0]
   if (!nrow(query_dt)) return(data.table::data.table())
 
@@ -4491,6 +4497,32 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   if (!"database" %in% names(overall)) {
     overall[, database := sub(":.*$", "", as.character(pathway))]
   }
+  if (human_mouse_best) {
+    if ("selected_pathway_species" %in% names(overall)) {
+      overall[, pathway_species := as.character(selected_pathway_species)]
+    } else if ("pathway_species" %in% names(overall)) {
+      overall[, pathway_species := as.character(pathway_species)]
+    } else {
+      overall[, pathway_species := vapply(database, .pathway_database_species, character(1))]
+    }
+    overall <- overall[pathway_species %in% c("human", "mouse")]
+  } else {
+    overall[, pathway_species := pathway_species_mode]
+  }
+  if (!nrow(overall)) return(data.table::data.table())
+  if (!"pathway_norm_key" %in% names(overall)) {
+    db_label_for_key <- if ("database_label" %in% names(overall)) overall$database_label else sub(":.*$", "", as.character(overall$pathway))
+    term_for_key <- if ("pathway_term" %in% names(overall)) overall$pathway_term else sub("^[^:]+:\\s*", "", as.character(overall$pathway))
+    overall[, pathway_norm_key := mapply(
+      .normalize_topic_pathway_term,
+      pathway = pathway,
+      database_label = db_label_for_key,
+      pathway_term = term_for_key,
+      USE.NAMES = FALSE
+    )]
+  }
+  if (!"selected_pathway_species" %in% names(overall)) overall[, selected_pathway_species := pathway_species]
+  if (!"selected_database" %in% names(overall)) overall[, selected_database := database]
   if (!"pval" %in% names(overall)) overall[, pval := NA_real_]
   if (!"padj" %in% names(overall)) overall[, padj := NA_real_]
   if (!"overlap_hits" %in% names(overall)) {
@@ -4516,9 +4548,9 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     .log_abort("background_size must be at least as large as every pathway term.")
   }
   overall[, overall_overlap_genes_list := lapply(genes, .split_pathway_gene_string)]
-  overall_keys <- lapply(overall$overall_overlap_genes_list, function(x) {
-    .gene_symbol_key_table(x, species = pathway_species)
-  })
+  overall_keys <- Map(function(x, sp) {
+    .gene_symbol_key_table(x, species = sp)
+  }, overall$overall_overlap_genes_list, overall$pathway_species)
   overall_gene_key_dt <- data.table::rbindlist(overall_keys, use.names = TRUE, fill = TRUE)
   if (!all(c("gene", "gene_canonical", "gene_match_type", "gene_matched", "gene_ambiguous") %in% names(overall_gene_key_dt))) {
     overall_gene_key_dt <- data.table::data.table(
@@ -4545,8 +4577,12 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   overall[, overall_overlap_hits := lengths(overall_overlap_gene_keys_list)]
   overall_small <- overall[, .(
     topic,
+    pathway_species,
+    pathway_norm_key,
     pathway,
     database,
+    selected_pathway_species,
+    selected_database,
     overall_pval = as.numeric(pval),
     overall_padj = as.numeric(padj),
     overall_overlap = as.character(overlap),
@@ -4561,7 +4597,13 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     background_size = as.integer(background_size),
     overall_cluster_size = if ("cluster_size" %in% names(overall)) as.integer(cluster_size) else NA_integer_,
     overall_combined_score = if ("combined_score" %in% names(overall)) as.numeric(combined_score) else NA_real_,
-    overall_odds_ratio = if ("odds_ratio" %in% names(overall)) as.numeric(odds_ratio) else NA_real_
+    overall_odds_ratio = if ("odds_ratio" %in% names(overall)) as.numeric(odds_ratio) else NA_real_,
+    human_padj = if ("human_padj" %in% names(overall)) as.numeric(human_padj) else NA_real_,
+    mouse_padj = if ("mouse_padj" %in% names(overall)) as.numeric(mouse_padj) else NA_real_,
+    human_logp = if ("human_logp" %in% names(overall)) as.numeric(human_logp) else NA_real_,
+    mouse_logp = if ("mouse_logp" %in% names(overall)) as.numeric(mouse_logp) else NA_real_,
+    human_overlap_hits = if ("human_overlap_hits" %in% names(overall)) as.integer(human_overlap_hits) else NA_integer_,
+    mouse_overlap_hits = if ("mouse_overlap_hits" %in% names(overall)) as.integer(mouse_overlap_hits) else NA_integer_
   )]
   overall_small <- overall_small[is.finite(term_size) & term_size > 0 & is.finite(background_size) & background_size > 0]
   if (!nrow(overall_small)) return(data.table::data.table())
@@ -4569,7 +4611,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   res <- merge(
     query_dt,
     overall_small,
-    by = "topic",
+    by = c("topic", "pathway_species"),
     allow.cartesian = TRUE,
     sort = FALSE
   )
@@ -4616,6 +4658,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   ) := NULL]
   data.table::setcolorder(res, c(
     "comparison_id", "direction_group", "topic", "pathway", "database",
+    "pathway_species", "pathway_norm_key", "selected_pathway_species", "selected_database",
     "pval", "padj", "logp", "overlap", "overlap_hits", "overlap_genes",
     "overlap_gene_symbols",
     "query_size", "term_size", "background_size", "odds_ratio", "combined_score",
@@ -4623,7 +4666,9 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     "gene_match_summary", "overall_pval", "overall_padj",
     "overall_overlap", "overall_overlap_hits", "overall_overlap_genes",
     "overall_overlap_gene_symbols", "overall_gene_match_summary",
-    "overall_cluster_size", "overall_combined_score", "overall_odds_ratio"
+    "overall_cluster_size", "overall_combined_score", "overall_odds_ratio",
+    "human_padj", "mouse_padj", "human_logp", "mouse_logp",
+    "human_overlap_hits", "mouse_overlap_hits"
   ))
   data.table::setorder(res, comparison_id, direction_group, topic, padj, pval, -overlap_hits, pathway)
   out_file <- file.path(out_dir_pc, "topic_term_pathway_enrichment.csv")
@@ -5948,7 +5993,108 @@ link_scores_to_gene_sets <- function(link_scores,
   if (db %in% names(db_short)) db_short[[db]] else db
 }
 
-.topic_enrichr_result_to_table <- function(enr, topic_name, genes) {
+.normalize_topic_pathway_term <- function(pathway, database_label = NULL, pathway_term = NULL) {
+  label <- as.character(database_label %||% NA_character_)
+  term <- as.character(pathway_term %||% NA_character_)
+  if (!length(label) || is.na(label[[1L]]) || !nzchar(label[[1L]])) {
+    label <- sub(":.*$", "", as.character(pathway %||% ""))
+  }
+  if (!length(term) || is.na(term[[1L]]) || !nzchar(term[[1L]])) {
+    term <- sub("^[^:]+:\\s*", "", as.character(pathway %||% ""))
+  }
+  label <- tolower(label[[1L]])
+  term <- tolower(term[[1L]])
+  term <- gsub("\\b(homo sapiens|mus musculus|human|mouse)\\b", " ", term, perl = TRUE)
+  term <- gsub("\\b(hsa|mmu)[0-9]{4,6}\\b", " ", term, perl = TRUE)
+  term <- gsub("\\bwp[0-9]+\\b", " ", term, perl = TRUE)
+  term <- gsub("[^a-z0-9]+", " ", term, perl = TRUE)
+  term <- trimws(gsub("\\s+", " ", term, perl = TRUE))
+  label <- trimws(gsub("[^a-z0-9]+", " ", label, perl = TRUE))
+  paste(label, term, sep = ":")
+}
+
+.select_best_human_mouse_pathways <- function(res_dt) {
+  .assert_pkg("data.table")
+  res_dt <- data.table::as.data.table(res_dt)
+  if (!nrow(res_dt)) return(res_dt)
+  if (!"pathway_species" %in% names(res_dt)) res_dt[, pathway_species := NA_character_]
+  if (!"database" %in% names(res_dt)) res_dt[, database := sub(":.*$", "", as.character(pathway))]
+  if (!"database_label" %in% names(res_dt)) res_dt[, database_label := sub(":.*$", "", as.character(pathway))]
+  if (!"pathway_term" %in% names(res_dt)) res_dt[, pathway_term := sub("^[^:]+:\\s*", "", as.character(pathway))]
+  if (!"overlap_hits" %in% names(res_dt)) {
+    res_dt[, overlap_hits := suppressWarnings(as.integer(sub("/.*$", "", as.character(overlap))))]
+  }
+  if (!"combined_score" %in% names(res_dt)) res_dt[, combined_score := NA_real_]
+  if (!"logp" %in% names(res_dt)) res_dt[, logp := -log10(pmax(as.numeric(padj), .Machine$double.xmin))]
+
+  res_dt[, pathway_norm_key := mapply(
+    .normalize_topic_pathway_term,
+    pathway = pathway,
+    database_label = database_label,
+    pathway_term = pathway_term,
+    USE.NAMES = FALSE
+  )]
+  res_dt[, selected_pathway_species := as.character(pathway_species)]
+  res_dt[, selected_database := as.character(database)]
+
+  species_summary <- res_dt[
+    pathway_species %in% c("human", "mouse"),
+    {
+      ranked <- .SD[order(
+        as.numeric(padj),
+        -as.numeric(logp),
+        -as.numeric(combined_score),
+        -as.integer(overlap_hits),
+        as.character(database),
+        as.character(pathway)
+      )]
+      ranked[1L, .(
+        species_padj = as.numeric(padj),
+        species_pval = as.numeric(pval),
+        species_logp = as.numeric(logp),
+        species_combined_score = as.numeric(combined_score),
+        species_overlap_hits = as.integer(overlap_hits),
+        species_database = as.character(database),
+        species_pathway = as.character(pathway)
+      )]
+    },
+    by = .(topic, pathway_norm_key, pathway_species)
+  ]
+  if (nrow(species_summary)) {
+    species_summary <- data.table::dcast(
+      species_summary,
+      topic + pathway_norm_key ~ pathway_species,
+      value.var = c(
+        "species_padj", "species_pval", "species_logp", "species_combined_score",
+        "species_overlap_hits", "species_database", "species_pathway"
+      )
+    )
+    data.table::setnames(
+      species_summary,
+      old = grep("^species_", names(species_summary), value = TRUE),
+      new = sub("^species_([^_]+(?:_[^_]+)*)_(human|mouse)$", "\\2_\\1", grep("^species_", names(species_summary), value = TRUE), perl = TRUE)
+    )
+  }
+
+  ranked <- res_dt[order(
+    topic,
+    pathway_norm_key,
+    as.numeric(padj),
+    -as.numeric(logp),
+    -as.numeric(combined_score),
+    -as.integer(overlap_hits),
+    as.character(database),
+    as.character(pathway)
+  )]
+  out <- ranked[, .SD[1L], by = .(topic, pathway_norm_key)]
+  if (nrow(species_summary)) {
+    out <- merge(out, species_summary, by = c("topic", "pathway_norm_key"), all.x = TRUE, sort = FALSE)
+  }
+  data.table::setorder(out, topic, padj, pval, -overlap_hits, pathway)
+  out[]
+}
+
+.topic_enrichr_result_to_table <- function(enr, topic_name, genes, pathway_species = NULL) {
   if (is.null(enr) || !length(enr)) return(data.table::data.table())
   rows <- lapply(names(enr), function(db) {
     df <- enr[[db]]
@@ -5968,6 +6114,10 @@ link_scores_to_gene_sets <- function(link_scores,
     data.table::data.table(
       topic = as.integer(topic_name),
       pathway = paste(db_label, term_clean, sep = ": "),
+      database = as.character(db),
+      database_label = as.character(db_label),
+      pathway_term = as.character(term_clean),
+      pathway_species = as.character(pathway_species %||% NA_character_),
       padj = as.numeric(df$Adjusted.P.value),
       pval = if ("P.value" %in% names(df)) as.numeric(df$P.value) else NA_real_,
       overlap = if ("Overlap" %in% names(df)) as.character(df$Overlap) else NA_character_,
@@ -6319,7 +6469,10 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
-  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
+  pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
+  human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species_mode)
+  dbs_by_species <- if (human_mouse_best) .split_pathway_databases_by_species(dbs) else NULL
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- .module3_default_enrichr_cache_dir(dirname(out_file), backend = pathway_backend)
   }
@@ -6409,7 +6562,14 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   log_msg(sprintf("Option: %s", option_label))
   log_msg("Gene set source: assigned topic terms.")
   log_msg(sprintf("Topics with gene sets: %s", paste(names(gene_sets), collapse = ",")))
-  log_msg(sprintf("DBs: %s", paste(dbs, collapse = ",")))
+  if (human_mouse_best) {
+    log_msg("Pathway species mode: human_mouse_best.")
+    log_msg(sprintf("Human DBs: %s", paste(dbs_by_species$human, collapse = ",")))
+    log_msg(sprintf("Mouse DBs: %s", paste(dbs_by_species$mouse, collapse = ",")))
+  } else {
+    log_msg(sprintf("Pathway species: %s", pathway_species_mode))
+    log_msg(sprintf("DBs: %s", paste(dbs, collapse = ",")))
+  }
   gene_set_dt <- data.table::rbindlist(
     lapply(names(gene_sets), function(nm) {
       data.table::data.table(topic = as.integer(nm), gene = gene_sets[[nm]])
@@ -6426,36 +6586,59 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
 
   res_list <- vector("list", length(gene_sets))
   names(res_list) <- names(gene_sets)
-  run_one_enrichr <- function(nm) {
+  run_one_enrichr_species <- function(nm, species, dbs_use, cache_dir_use) {
     genes <- gene_sets[[nm]]
-    log_msg(sprintf("Topic %s gene count: %d", nm, length(genes)))
+    log_msg(sprintf("Topic %s %s gene count: %d", nm, species, length(genes)))
     if (length(genes) < as.integer(min_genes)) {
-      log_msg(sprintf("Topic %s skipped: gene count < %d", nm, min_genes))
+      log_msg(sprintf("Topic %s %s skipped: gene count < %d", nm, species, min_genes))
+      return(NULL)
+    }
+    if (!length(dbs_use)) {
+      log_msg(sprintf("Topic %s %s skipped: no databases.", nm, species))
       return(NULL)
     }
     enr <- tryCatch(
       .quiet_enrichr_call(.run_enrichr_cached(
         genes = genes,
-        dbs = dbs,
+        dbs = dbs_use,
         sleep_time = enrichr_sleep_time,
-        cache_dir = enrichr_cache_dir,
+        cache_dir = cache_dir_use,
         backend = pathway_backend,
-        pathway_species = pathway_species
+        pathway_species = species
       )),
       error = function(e) {
-        log_msg(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
+        log_msg(sprintf("Topic %s %s enrichr error: %s", nm, species, conditionMessage(e)))
         NULL
       }
     )
     if (is.null(enr)) {
-      log_msg(sprintf("Topic %s enrichr returned NULL.", nm))
+      log_msg(sprintf("Topic %s %s enrichr returned NULL.", nm, species))
       return(NULL)
     }
-    out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
+    out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes, pathway_species = species)
     out <- out[is.finite(padj) & padj <= as.numeric(padj_cut)]
     n_hits <- nrow(out)
-    log_msg(sprintf("Topic %s enriched pathways: %d (padj<=%s)", nm, n_hits, padj_cut))
+    log_msg(sprintf("Topic %s %s enriched pathways: %d (padj<=%s)", nm, species, n_hits, padj_cut))
     out
+  }
+  run_one_enrichr <- function(nm) {
+    if (human_mouse_best) {
+      out <- lapply(c("human", "mouse"), function(species) {
+        run_one_enrichr_species(
+          nm = nm,
+          species = species,
+          dbs_use = dbs_by_species[[species]],
+          cache_dir_use = file.path(enrichr_cache_dir, species)
+        )
+      })
+      return(data.table::rbindlist(out, use.names = TRUE, fill = TRUE))
+    }
+    run_one_enrichr_species(
+      nm = nm,
+      species = pathway_species_mode,
+      dbs_use = dbs,
+      cache_dir_use = enrichr_cache_dir
+    )
   }
   set_names <- names(gene_sets)
   if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
@@ -6485,6 +6668,14 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     .log_inform(msg)
     log_msg(msg)
     return(invisible(NULL))
+  }
+  if (human_mouse_best) {
+    data.table::fwrite(
+      res_dt,
+      file.path(dirname(out_file), "topic_pathway_enrichment_topic_terms_human_mouse_all.csv")
+    )
+    res_dt <- .select_best_human_mouse_pathways(res_dt)
+    log_msg(sprintf("Human/mouse best rows selected: %d.", nrow(res_dt)))
   }
   if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
     res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
@@ -6808,7 +6999,10 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
-  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
+  pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
+  human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species_mode)
+  dbs_by_species <- if (human_mouse_best) .split_pathway_databases_by_species(dbs) else NULL
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
@@ -7117,7 +7311,7 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
         }
       )
       if (is.null(enr)) return(NULL)
-      .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
+      .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes, pathway_species = pathway_species)
     }
     set_names <- names(gene_sets)
     if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
@@ -7209,7 +7403,10 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
-  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species)
+  pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
+  human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
+  if (is.null(dbs)) dbs <- .default_pathway_databases(pathway_species_mode)
+  dbs_by_species <- if (human_mouse_best) .split_pathway_databases_by_species(dbs) else NULL
   if (is.null(enrichr_cache_dir)) {
     enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
@@ -7283,31 +7480,56 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
 
   .collect_enrichr <- function(gene_sets, log_fun = log_msg) {
     if (!length(gene_sets)) return(data.table::data.table())
-    run_one_enrichr <- function(nm) {
+    run_one_enrichr_species <- function(nm, species, dbs_use, cache_dir_use) {
       genes <- gene_sets[[nm]]
       if (length(genes) < as.integer(min_genes)) {
-        log_fun(sprintf("Topic %s skipped: gene count < %d", nm, min_genes))
+        log_fun(sprintf("Topic %s %s skipped: gene count < %d", nm, species, min_genes))
         return(NULL)
       }
-      log_fun(sprintf("Topic %s gene count: %d", nm, length(genes)))
+      if (!length(dbs_use)) {
+        log_fun(sprintf("Topic %s %s skipped: no databases.", nm, species))
+        return(NULL)
+      }
+      log_fun(sprintf("Topic %s %s gene count: %d", nm, species, length(genes)))
       enr <- tryCatch(
         .quiet_enrichr_call(.run_enrichr_cached(
           genes = genes,
-          dbs = dbs,
+          dbs = dbs_use,
           sleep_time = enrichr_sleep_time,
-          cache_dir = enrichr_cache_dir,
+          cache_dir = cache_dir_use,
           backend = pathway_backend,
-          pathway_species = pathway_species
+          pathway_species = species
         )),
         error = function(e) {
-          log_fun(sprintf("Topic %s enrichr error: %s", nm, conditionMessage(e)))
+          log_fun(sprintf("Topic %s %s enrichr error: %s", nm, species, conditionMessage(e)))
           NULL
         }
       )
       if (is.null(enr)) return(NULL)
-      out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes)
-      log_fun(sprintf("Topic %s enriched pathways: %d finite adjusted p-values", nm, nrow(out)))
+      out <- .topic_enrichr_result_to_table(enr, topic_name = nm, genes = genes, pathway_species = species)
+      log_fun(sprintf("Topic %s %s enriched pathways: %d finite adjusted p-values", nm, species, nrow(out)))
       out
+    }
+    run_one_enrichr <- function(nm) {
+      if (human_mouse_best) {
+        out <- lapply(c("human", "mouse"), function(species) {
+          run_one_enrichr_species(
+            nm = nm,
+            species = species,
+            dbs_use = dbs_by_species[[species]],
+            cache_dir_use = file.path(enrichr_cache_dir, species)
+          )
+        })
+        out <- data.table::rbindlist(out, use.names = TRUE, fill = TRUE)
+        if (nrow(out)) out <- .select_best_human_mouse_pathways(out)
+        return(out)
+      }
+      run_one_enrichr_species(
+        nm = nm,
+        species = pathway_species_mode,
+        dbs_use = dbs,
+        cache_dir_use = enrichr_cache_dir
+      )
     }
     set_names <- names(gene_sets)
     if (.Platform$OS.type != "windows" && enrichr_n_cores > 1L && length(set_names) > 1L) {
@@ -8184,7 +8406,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   if (is.null(pathway_enrichr_cache_dir)) {
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
-  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_species <- .normalize_pathway_species_mode(pathway_species)
   pathway_dbs <- .default_pathway_databases(pathway_species)
   pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
   if (!is.finite(pathway_topic_term_theta_min)) {
@@ -8655,12 +8877,12 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       )
     )
   }
-  list(
+  invisible(list(
     out_dir = out_dir,
     edges_docs = edges_docs,
     dtm = dtm,
     topic_terms = topic_terms
-  )
+  ))
 }
 
 # =============================================================================
@@ -8777,7 +8999,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   if (is.null(pathway_enrichr_cache_dir)) {
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
-  pathway_species <- .normalize_pathway_species(pathway_species)
+  pathway_species <- .normalize_pathway_species_mode(pathway_species)
   pathway_dbs <- .default_pathway_databases(pathway_species)
   pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
   if (!is.finite(pathway_topic_term_theta_min)) {
