@@ -1843,6 +1843,9 @@
       if ("comparison_id" %in% names(dt)) {
         direction_col <- if ("direction_group" %in% names(dt)) "direction_group" else NA_character_
         direction_val <- if (!is.na(direction_col)) as.character(dt[[direction_col]]) else "All"
+        direction_val <- ifelse(direction_val %in% c("Up", "Target-Up"), "Target-Up",
+          ifelse(direction_val %in% c("Down", "Target-Down"), "Target-Down", direction_val)
+        )
         dt[, comparison_label := paste(as.character(comparison_id), direction_val, sep = "::")]
       } else {
         label <- sub("_dotplot[.]csv$", "", basename(path))

@@ -436,7 +436,7 @@ test_that("Module 3 condition reports read full per-comparison pathway tables", 
 
   expect_equal(nrow(pathways), 2L)
   expect_setequal(pathways$pathway, c("Reactome: Signal A", "GO:BP: Signal B"))
-  expect_setequal(pathways$comparison_label, "CmpA::Up")
+  expect_setequal(pathways$comparison_label, "CmpA::Target-Up")
   expect_equal(pathways[pathway == "GO:BP: Signal B", padj], 1)
   expect_equal(pathways[pathway == "GO:BP: Signal B", gene_in], 0L)
 
@@ -444,7 +444,7 @@ test_that("Module 3 condition reports read full per-comparison pathway tables", 
   craftgrn:::.m3tb_condition_report_html(
     title = "Condition pathway test",
     group_mds = data.table::data.table(
-      comparison_label = "CmpA::Up",
+      comparison_label = "CmpA::Target-Up",
       display_label = "CmpA Up",
       group_label = "CmpA Up",
       MDS1 = 0,
@@ -452,7 +452,7 @@ test_that("Module 3 condition reports read full per-comparison pathway tables", 
       n_docs = 2L
     ),
     group_topic = data.table::data.table(
-      comparison_label = "CmpA::Up",
+      comparison_label = "CmpA::Target-Up",
       display_label = "CmpA Up",
       n_docs = 2L,
       topic = "Topic1",
