@@ -409,6 +409,66 @@ test_that("Module 3 condition reports fall back to topic-level pathways", {
   expect_setequal(pathways$pathway, c("Reactome: Signal A", "GO:BP: Signal B"))
 })
 
+test_that("Module 3 condition reports read full per-comparison pathway tables", {
+  root <- tempfile("module3-condition-pathway-per-comparison-")
+  extraction_dir <- file.path(root, "topic_extraction", "K2")
+  dir.create(extraction_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(
+      comparison_id = c("CmpA", "CmpA"),
+      direction_group = c("Up", "Up"),
+      topic = c(1L, 1L),
+      pathway = c("Reactome: Signal A", "GO:BP: Signal B"),
+      pathway_norm_key = c("reactome:signal a", "go bp:signal b"),
+      padj = c(0.01, 1),
+      overlap = c("6/30", "0/40"),
+      overlap_hits = c(6L, 0L),
+      genes = c("G1;G2;G3;G4;G5;G6", "")
+    ),
+    file.path(extraction_dir, "per_comparison_topic_pathway_enrichment.csv")
+  )
+
+  pathways <- craftgrn:::.m3tb_read_condition_pathway_tables(
+    extraction_dir,
+    model_dir = NULL,
+    compute_universe = FALSE
+  )
+
+  expect_equal(nrow(pathways), 2L)
+  expect_setequal(pathways$pathway, c("Reactome: Signal A", "GO:BP: Signal B"))
+  expect_setequal(pathways$comparison_label, "CmpA::Up")
+  expect_equal(pathways[pathway == "GO:BP: Signal B", padj], 1)
+  expect_equal(pathways[pathway == "GO:BP: Signal B", gene_in], 0L)
+
+  out_file <- tempfile(fileext = ".html")
+  craftgrn:::.m3tb_condition_report_html(
+    title = "Condition pathway test",
+    group_mds = data.table::data.table(
+      comparison_label = "CmpA::Up",
+      display_label = "CmpA Up",
+      group_label = "CmpA Up",
+      MDS1 = 0,
+      MDS2 = 0,
+      n_docs = 2L
+    ),
+    group_topic = data.table::data.table(
+      comparison_label = "CmpA::Up",
+      display_label = "CmpA Up",
+      n_docs = 2L,
+      topic = "Topic1",
+      topic_num = 1L,
+      theta_mean = 0.8
+    ),
+    pathways = pathways,
+    out_html = out_file
+  )
+  html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
+
+  expect_match(html, "GO:BP: Signal B", fixed = TRUE)
+  expect_no_match(html, "Filter: N_gene >= 5, adjusted p-value < 0.05", fixed = TRUE)
+  expect_match(html, "Full per-comparison pathway table", fixed = TRUE)
+})
+
 test_that("Module 3 theta separation score does not mark singleton groups as perfect", {
   root <- tempfile("module3-theta-singleton-")
   dir.create(root, recursive = TRUE)
