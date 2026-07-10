@@ -2278,7 +2278,7 @@ make_topic_report_args_simple <- function(thrP,
     pathway_per_comparison_flat = TRUE,
     pathway_split_direction = TRUE,
     run_pathway_gsea = FALSE,
-    run_link_topic_scores = .topic_step_enabled(extraction_steps, "topic_links", TRUE),
+    run_link_topic_scores = .topic_step_enabled(extraction_steps, "topic_links", FALSE),
     run_gammafit_summary = .topic_step_enabled(extraction_steps, "gammafit_summary", TRUE),
     run_link_efdr_summary = .topic_step_enabled(extraction_steps, "link_efdr_summary", TRUE),
     link_topic_gate_mode = "none",
@@ -2811,8 +2811,9 @@ make_topic_report_args_simple <- function(thrP,
   fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
   dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
   grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
-  on.exit(grDevices::dev.off(), add = TRUE)
-  pheatmap::pheatmap(
+  device_open <- TRUE
+  on.exit(if (isTRUE(device_open)) grDevices::dev.off(), add = TRUE)
+  ph <- pheatmap::pheatmap(
     mat,
     color = grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101),
     breaks = seq(0, 1, length.out = 102),
@@ -2829,8 +2830,13 @@ make_topic_report_args_simple <- function(thrP,
     fontsize_row = fontsize_row,
     fontsize_col = fontsize_col,
     main = title,
-    angle_col = 45
+    angle_col = 45,
+    silent = TRUE
   )
+  grid::grid.newpage()
+  grid::grid.draw(ph$gtable)
+  grDevices::dev.off()
+  device_open <- FALSE
   invisible(out_file)
 }
 
@@ -4201,7 +4207,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     return(data.table::data.table())
   }
   if (is.null(rownames(theta))) {
-    .log_abort("theta must have document row names for per-comparison topic-term pathway gene sets.")
+    .log_abort("theta must have document row names for stratified topic-term pathway gene sets.")
   }
   if (!all(c("doc_id", "gene_key") %in% names(ed))) {
     .log_abort("edges_docs must contain doc_id and gene_key.")
@@ -4336,6 +4342,11 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   .assert_pkg("data.table")
   option_label <- match.arg(option_label)
   doc_design <- match.arg(doc_design)
+  group_id_col <- if (identical(doc_design, "condition")) "condition_id" else "comparison_id"
+  group_label <- if (identical(doc_design, "condition")) "condition" else "comparison"
+  group_prefix <- if (identical(doc_design, "condition")) "per_condition" else "per_comparison"
+  group_topic_genes_col <- if (identical(doc_design, "condition")) "condition_topic_genes" else "comparison_topic_genes"
+  group_topic_symbols_col <- if (identical(doc_design, "condition")) "condition_topic_gene_symbols" else "comparison_topic_gene_symbols"
   pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
   human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
   key_species <- if (human_mouse_best) c("human", "mouse") else pathway_species_mode
@@ -4391,7 +4402,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   if (!nrow(topic_gene_dt)) return(data.table::data.table())
 
   ed <- data.table::as.data.table(edges_docs)
-  .assert_has_cols(ed, c("doc_id", "gene_key"), context = "per-comparison topic pathway retest")
+  .assert_has_cols(ed, c("doc_id", "gene_key"), context = sprintf("per-%s topic pathway retest", group_label))
   ed <- ed[!is.na(doc_id) & nzchar(doc_id) & !is.na(gene_key) & nzchar(gene_key)]
   if (!nrow(ed)) return(data.table::data.table())
   doc_info <- .parse_doc_id(ed$doc_id, doc_design = doc_design)
@@ -4401,10 +4412,25 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   } else {
     ed[, direction_group := "All"]
   }
-  comp_genes <- unique(ed[
-    !is.na(comparison_id) & nzchar(comparison_id),
-    .(comparison_id, direction_group, gene = as.character(gene_key))
-  ])
+  if (identical(doc_design, "condition")) {
+    ed[, condition_id := comparison_id]
+  }
+  if (identical(doc_design, "condition") && "condition_label" %in% names(ed)) {
+    comp_genes <- unique(ed[
+      !is.na(get(group_id_col)) & nzchar(get(group_id_col)),
+      .(
+        group_id = get(group_id_col),
+        condition_label = as.character(condition_label),
+        direction_group,
+        gene = as.character(gene_key)
+      )
+    ])
+  } else {
+    comp_genes <- unique(ed[
+      !is.na(get(group_id_col)) & nzchar(get(group_id_col)),
+      .(group_id = get(group_id_col), direction_group, gene = as.character(gene_key))
+    ])
+  }
   comp_genes <- comp_genes[!is.na(gene) & nzchar(gene)]
   comp_genes <- add_gene_keys(comp_genes)
   comp_genes <- comp_genes[!is.na(gene_key__) & nzchar(gene_key__)]
@@ -4418,6 +4444,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     sort = FALSE
   )
   if (!nrow(query_gene_dt)) return(data.table::data.table())
+  query_by_cols <- c("group_id", if ("condition_label" %in% names(query_gene_dt)) "condition_label", "direction_group", "topic", "pathway_species")
   query_dt <- query_gene_dt[, .(
     query_genes = list(sort(unique(gene))),
     query_gene_symbols = list(sort(unique(gene_canonical[!is.na(gene_canonical) & nzchar(gene_canonical)]))),
@@ -4425,7 +4452,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     query_size = data.table::uniqueN(gene_key__),
     topic_gene_count = data.table::uniqueN(topic_gene_dt[topic == .BY$topic & pathway_species == .BY$pathway_species, gene_key__]),
     gene_match_summary = .gene_symbol_match_summary(gene_match_type)
-  ), by = .(comparison_id, direction_group, topic, pathway_species)]
+  ), by = query_by_cols]
   query_dt <- query_dt[query_size > 0]
   if (!nrow(query_dt)) return(data.table::data.table())
 
@@ -4506,7 +4533,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     out_dir,
     list(
       topic_term_genes = unique(topic_gene_dt[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)]),
-      comparison_document_genes = unique(comp_genes[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)]),
+      document_genes = unique(comp_genes[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)]),
       overall_pathway_overlap_genes = unique(overall_gene_key_dt[, .(gene, gene_canonical, gene_match_type, gene_matched, gene_ambiguous)])
     )
   )
@@ -4577,7 +4604,7 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
     lower.tail = FALSE
   )]
   res[!is.finite(pval), pval := NA_real_]
-  res[, padj := stats::p.adjust(pval, method = "BH"), by = .(comparison_id, direction_group, topic, database)]
+  res[, padj := stats::p.adjust(pval, method = "BH"), by = .(group_id, direction_group, topic, database)]
   res[, odds_ratio := {
     a <- as.numeric(overlap_hits)
     b <- as.numeric(query_size) - a
@@ -4590,29 +4617,32 @@ topic_gene_sets_by_comparison_terms <- function(topic_terms,
   res[, combined_score := odds_ratio * -log(pmax(pval, 1e-300))]
   res[, logp := -log10(pmax(padj, .Machine$double.xmin))]
   res[, overlap := paste0(overlap_hits, "/", term_size)]
-  res[, comparison_topic_genes := vapply(query_genes, paste, character(1), collapse = ";")]
-  res[, comparison_topic_gene_symbols := vapply(query_gene_symbols, paste, character(1), collapse = ";")]
+  res[, (group_topic_genes_col) := vapply(query_genes, paste, character(1), collapse = ";")]
+  res[, (group_topic_symbols_col) := vapply(query_gene_symbols, paste, character(1), collapse = ";")]
   res[, c(
     "query_genes", "query_gene_symbols", "query_gene_keys", "overall_overlap_genes_list",
     "overall_overlap_gene_keys_list", "overall_overlap_gene_symbols_list",
     "overlap_gene_key_list", "overlap_gene_list", "overlap_gene_symbol_list"
   ) := NULL]
-  data.table::setcolorder(res, c(
-    "comparison_id", "direction_group", "topic", "pathway", "database",
+  data.table::setnames(res, "group_id", group_id_col)
+  cols <- c(
+    group_id_col, if (identical(doc_design, "condition")) "condition_label", "direction_group", "topic", "pathway", "database",
     "pathway_species", "pathway_norm_key", "selected_pathway_species", "selected_database",
     "pval", "padj", "logp", "overlap", "overlap_hits", "overlap_genes",
     "overlap_gene_symbols",
     "query_size", "term_size", "background_size", "odds_ratio", "combined_score",
-    "comparison_topic_genes", "comparison_topic_gene_symbols", "topic_gene_count",
+    group_topic_genes_col, group_topic_symbols_col, "topic_gene_count",
     "gene_match_summary", "overall_pval", "overall_padj",
     "overall_overlap", "overall_overlap_hits", "overall_overlap_genes",
     "overall_overlap_gene_symbols", "overall_gene_match_summary",
     "overall_cluster_size", "overall_combined_score", "overall_odds_ratio",
     "human_padj", "mouse_padj", "human_logp", "mouse_logp",
     "human_overlap_hits", "mouse_overlap_hits"
-  ))
-  data.table::setorder(res, comparison_id, direction_group, topic, padj, pval, -overlap_hits, pathway)
-  out_file <- file.path(out_dir_pc, "per_comparison_topic_pathway_enrichment.csv")
+  )
+  cols <- cols[cols %in% names(res)]
+  data.table::setcolorder(res, cols)
+  data.table::setorderv(res, c(group_id_col, "direction_group", "topic", "padj", "pval", "overlap_hits", "pathway"), order = c(1L, 1L, 1L, 1L, 1L, -1L, 1L))
+  out_file <- file.path(out_dir_pc, paste0(group_prefix, "_topic_pathway_enrichment.csv"))
   data.table::fwrite(res, out_file)
   res[]
 }
@@ -5476,6 +5506,25 @@ compute_topic_links <- function(edges_docs,
     .log_inform("No valid links for topic_links after term matching.")
     return(invisible(FALSE))
   }
+  n_candidate_rows <- as.double(nrow(dt)) * as.double(K)
+  max_rows_env <- Sys.getenv("CRAFTGRN_TOPIC_LINK_MAX_SCORED_ROWS", unset = "")
+  max_scored_rows <- if (nzchar(max_rows_env)) {
+    suppressWarnings(as.numeric(max_rows_env[[1L]]))
+  } else {
+    suppressWarnings(as.numeric(getOption("craftgrn.topic_link.max_scored_rows", 1e8)))
+  }
+  if (is.na(max_scored_rows) || max_scored_rows <= 0) max_scored_rows <- 1e8
+  .log_inform(
+    "Topic-link preflight: {format(nrow(dt), big.mark = ',')} valid edges x {K} topics = {format(n_candidate_rows, scientific = FALSE, big.mark = ',')} candidate rows."
+  )
+  if (is.finite(max_scored_rows) && n_candidate_rows > max_scored_rows) {
+    .log_abort(c(
+      "Topic-link scoring would materialize too many edge-topic rows.",
+      i = "Candidate rows: {format(n_candidate_rows, scientific = FALSE, big.mark = ',')}; safety limit: {format(max_scored_rows, scientific = FALSE, big.mark = ',')}.",
+      i = "Standard extraction does not require topic-link enumeration.",
+      i = "For an intentional large diagnostic, set CRAFTGRN_TOPIC_LINK_MAX_SCORED_ROWS or options(craftgrn.topic_link.max_scored_rows = Inf)."
+    ))
+  }
 
   gamma_cutoffs_peak <- rep(NA_real_, K)
   gamma_cutoffs_gene <- rep(NA_real_, K)
@@ -5642,14 +5691,14 @@ compute_topic_links <- function(edges_docs,
   }
 
   if (identical(link_method, "gammafit")) {
-    n_before_gammafit <- nrow(dt) * K
+    n_before_gammafit <- n_candidate_rows
     n_pass_gammafit <- nrow(out)
     gammafit_label <- if (identical(fp_term_mode, "aggregate_weight")) "gene_only" else "peak_and_gene"
     .log_inform(
       "topic_links gammafit: {gammafit_label} pass {n_pass_gammafit}/{n_before_gammafit} rows."
     )
   } else if (identical(link_method, "theta_and_terms")) {
-    n_before_theta <- nrow(dt) * K
+    n_before_theta <- n_candidate_rows
     n_pass_theta <- nrow(out)
     theta_label <- if (identical(fp_term_mode, "aggregate_weight")) "theta_and_gene" else "theta_peak_and_gene"
     .log_inform(
@@ -5789,7 +5838,7 @@ compute_topic_links <- function(edges_docs,
     summary_dir <- dirname(if (!is.null(pass_file)) pass_file else out_file)
     summary_file <- file.path(summary_dir, "topic_link_summary.csv")
     n_scored_rows <- if (identical(link_method, "gammafit") || identical(link_method, "theta_and_terms")) {
-      as.double(nrow(dt) * K)
+      n_candidate_rows
     } else {
       as.double(nrow(out))
     }
@@ -5925,6 +5974,7 @@ link_scores_to_gene_sets <- function(link_scores,
     GO_Cellular_Component_2023 = "GO:CC",
     GO_Molecular_Function_2023 = "GO:MF",
     Reactome_2022 = "Reactome",
+    ImmuneSigDB = "ImmuneSigDB",
     WikiPathways_2024_Human = "WikiPathways",
     WikiPathways_2024_Mouse = "WikiPathways",
     MSigDB_Hallmark_2020 = "Hallmark",
@@ -6883,6 +6933,8 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
                                                               doc_design = c("comparison", "condition")) {
   .assert_pkg("data.table")
   doc_design <- match.arg(doc_design)
+  group_label <- if (identical(doc_design, "condition")) "condition" else "comparison"
+  group_prefix <- if (identical(doc_design, "condition")) "per_condition" else "per_comparison"
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
   pathway_backend <- .pathway_backend(pathway_backend)
@@ -6900,7 +6952,7 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
   }
   dir.create(out_dir_pc, recursive = TRUE, showWarnings = FALSE)
   if (is.null(title_prefix)) title_prefix <- basename(out_dir)
-  log_path <- file.path(out_dir_pc, "per_comparison_topic_pathway_debug.txt")
+  log_path <- file.path(out_dir_pc, paste0(group_prefix, "_topic_pathway_debug.txt"))
   log_msg <- function(msg) {
     stamp <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     cat(sprintf("[%s] %s\n", stamp, msg), file = log_path, append = TRUE)
@@ -6920,10 +6972,11 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
     doc_design = doc_design
   )
   log_msg(sprintf(
-    "Per-comparison pathway retest from overall table wrote %d row(s).",
+    "Per-%s pathway retest from overall table wrote %d row(s).",
+    group_label,
     nrow(retest)
   ))
-  log_msg("No per-comparison Enrichr/enrichly calls were run in this step.")
+  log_msg(sprintf("No per-%s Enrichr/enrichly calls were run in this step.", group_label))
   return(invisible(retest))
 
   .quiet_enrichr_call <- function(expr) {
@@ -7251,6 +7304,22 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
     data.table::fwrite(res_dt, file.path(out_dir_pc, "per_comparison_topic_pathway_enrichment.csv"))
   }
   invisible(TRUE)
+}
+
+plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
+                                                             edges_docs,
+                                                             theta,
+                                                             out_dir,
+                                                             ...) {
+  plot_topic_pathway_enrichment_by_comparison_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges_docs,
+    theta = theta,
+    out_dir = out_dir,
+    doc_design = "condition",
+    split_direction = FALSE,
+    ...
+  )
 }
 
 plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
@@ -8187,6 +8256,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_link_tf_max_topics = Inf,
                                               pathway_link_tf_top_n_per_topic = NA_integer_,
                                               pathway_per_comparison = FALSE,
+                                              pathway_per_condition = NULL,
                                               pathway_per_comparison_dir = ".",
                                               pathway_per_comparison_flat = TRUE,
                                               pathway_split_direction = TRUE,
@@ -8269,6 +8339,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
   if (!all(link_topic_gate_mode %in% allowed_gate_modes)) {
     .log_abort("link_topic_gate_mode must be one of: {paste(allowed_gate_modes, collapse = ', ')}.")
+  }
+  pathway_per_condition <- if (is.null(pathway_per_condition)) {
+    identical(doc_design, "condition") && isTRUE(run_pathway_enrichment)
+  } else {
+    isTRUE(pathway_per_condition)
   }
 
   .assert_pkg("cli")
@@ -8357,6 +8432,16 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       gamma_diagnostics_tbl,
       file.path(out_dir, "topic_gammafit_diagnostics.csv")
     )
+    gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
+      score_mat,
+      thrP = thrP,
+      min_terms = in_topic_min_terms,
+      gammafit_scope = gammafit_scope
+    )
+    data.table::fwrite(
+      gamma_cutoffs_tbl,
+      file.path(out_dir, "topic_gamma_cutoffs.csv")
+    )
   }
 
   topic_links_tbl <- NULL
@@ -8364,16 +8449,6 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     topic_links_tbl <- .record_step(
       "topic_links",
       {
-        gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
-          score_mat,
-          thrP = thrP,
-          min_terms = in_topic_min_terms,
-          gammafit_scope = gammafit_scope
-        )
-        data.table::fwrite(
-          gamma_cutoffs_tbl,
-          file.path(out_dir, "topic_gamma_cutoffs.csv")
-        )
         link_tbl <- compute_topic_links(
           edges_docs = edges_docs,
           score_mat = score_mat,
@@ -8409,11 +8484,6 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         link_tbl
       }
     )
-  } else {
-    topic_links_path <- .topic_links_path(out_dir, prefer = "pass")
-    if (file.exists(topic_links_path)) {
-      topic_links_tbl <- data.table::fread(topic_links_path)
-    }
   }
 
   if (binarize_method == "gammafit" && isTRUE(run_gammafit_summary)) {
@@ -8570,6 +8640,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
               c(
                 "per_comparison_topic_pathway_enrichment.csv",
                 "per_comparison_topic_pathway_debug.txt",
+                "per_condition_topic_pathway_enrichment.csv",
+                "per_condition_topic_pathway_debug.txt",
                 "topic_term_pathway_enrichment.csv",
                 "topic_term_pathway_debug.txt"
               )
@@ -8654,7 +8726,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         pathway_backend = pathway_backend
       )
 
-      if (isTRUE(pathway_per_comparison)) {
+      if (isTRUE(pathway_per_comparison) || isTRUE(pathway_per_condition)) {
+        retest_doc_design <- if (identical(doc_design, "condition")) "condition" else "comparison"
         plot_topic_pathway_enrichment_by_comparison_terms(
           topic_terms = topic_terms,
           edges_docs = edges_docs,
@@ -8679,7 +8752,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           pathway_species = pathway_species,
           pathway_backend = pathway_backend,
           overwrite = pathway_overwrite,
-          doc_design = doc_design
+          doc_design = retest_doc_design
         )
       }
 
@@ -9121,10 +9194,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       gamma_diagnostics_tbl,
       file.path(out_dir, "topic_gammafit_diagnostics.csv")
     )
-  }
-
-  topic_links_tbl <- NULL
-  if (isTRUE(run_link_topic_scores)) {
     gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
       score_mat,
       thrP = thrP,
@@ -9135,6 +9204,10 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       gamma_cutoffs_tbl,
       file.path(out_dir, "topic_gamma_cutoffs.csv")
     )
+  }
+
+  topic_links_tbl <- NULL
+  if (isTRUE(run_link_topic_scores)) {
     topic_links_tbl <- compute_topic_links(
       edges_docs = edges_docs,
       score_mat = score_mat,
@@ -9165,11 +9238,6 @@ run_tfdocs_warplda_one_option <- function(edges_all,
       if (file.exists(topic_links_path)) {
         topic_links_tbl <- data.table::fread(topic_links_path)
       }
-    }
-  } else {
-    topic_links_path <- file.path(out_dir, "topic_links.csv")
-    if (file.exists(topic_links_path)) {
-      topic_links_tbl <- data.table::fread(topic_links_path)
     }
   }
 
@@ -9750,7 +9818,7 @@ run_vae_topic_report_py <- function(doc_term,
     pathway_per_comparison_dir = ".",
     pathway_per_comparison_flat = TRUE,
     pathway_split_direction = TRUE,
-    run_link_topic_scores = TRUE,
+    run_link_topic_scores = FALSE,
     link_topic_gate_mode = c("none", "peak_and_gene_in_set"),
     link_topic_top_k = 3L,
     link_topic_min_prob = 0,
@@ -10444,6 +10512,10 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param Kgrid Integer vector of K values for training.
 #' @param input_dir Directory containing differential links (filtered up/down).
 #' @param output_dir Directory to write topic model outputs.
+#' @param input_source Input source type. Use `"differential_links"` for the
+#'   historical comparison/differential-link path and `"condition_links"` for
+#'   condition-native Module 3 links prepared by
+#'   `module3_prepare_condition_links()`.
 #' @param sample_subset Optional condition/sample labels to keep. When supplied,
 #'   only comparisons whose case and control labels are both in this vector are
 #'   used for topic training.
@@ -10510,6 +10582,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 train_topic_models <- function(Kgrid,
                                input_dir,
                                output_dir,
+                               input_source = c("differential_links", "condition_links"),
                                sample_subset = NULL,
                                analysis_label = NULL,
                                tf_cluster_map,
@@ -10578,42 +10651,53 @@ train_topic_models <- function(Kgrid,
   warplda_sampler <- match.arg(warplda_sampler)
   doc_mode <- match.arg(doc_mode)
   doc_design <- match.arg(doc_design)
+  input_source <- match.arg(input_source)
+  if (identical(input_source, "condition_links") && !identical(doc_design, "condition")) {
+    .log_abort("input_source = 'condition_links' requires doc_design = 'condition'.")
+  }
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   weight_label <- if (identical(doc_design, "condition")) "peak_score_gene_expr" else "peak_log2fc_fp_gene_fc_expr"
   count_input_requested <- if (is.null(count_input) || !length(count_input)) NA_character_ else as.character(count_input[[1L]])
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
-  delta_files <- .module3_filtered_link_files(input_dir)
-  if (!length(delta_files)) {
-    delta_files <- list.files(input_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) {
-    delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) {
-    delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) .log_abort("No delta link files found in {input_dir}")
-
-  .log_inform("Loading {length(delta_files)} delta-link file(s) from {input_dir}.")
-  edges_all <- load_delta_links_many(delta_files, keep_original = FALSE)
-  edges_dt <- data.table::as.data.table(edges_all)
-  edges_dt <- .apply_module3_manifest_labels(edges_dt, input_dir)
-  .log_inform("Loaded {nrow(edges_dt)} delta-link row(s).")
-  if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
-
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
   sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
-  if (length(sample_subset)) {
-    if (all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
-      n_before_subset <- nrow(edges_dt)
-      edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
-      .log_inform("Sample subset retained {nrow(edges_dt)}/{n_before_subset} delta-link row(s).")
-    } else {
-      .log_abort("sample_subset requires delta links with cond1_id and cond2_id columns.")
+  if (identical(input_source, "condition_links")) {
+    .log_inform("Loading condition-native links from {input_dir}.")
+    edges_dt <- .module3_read_condition_links(input_dir, conditions = sample_subset)
+    n_loaded <- nrow(edges_dt)
+    .log_inform("Loaded {n_loaded} condition-link row(s).")
+  } else {
+    delta_files <- .module3_filtered_link_files(input_dir)
+    if (!length(delta_files)) {
+      delta_files <- list.files(input_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
+    }
+    if (!length(delta_files)) {
+      delta_files <- list.files(input_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
+    }
+    if (!length(delta_files)) {
+      delta_files <- list.files(input_dir, "_delta_links\\.csv$", full.names = TRUE)
+    }
+    if (!length(delta_files)) .log_abort("No delta link files found in {input_dir}")
+
+    .log_inform("Loading {length(delta_files)} delta-link file(s) from {input_dir}.")
+    edges_all <- load_delta_links_many(delta_files, keep_original = FALSE)
+    edges_dt <- data.table::as.data.table(edges_all)
+    edges_dt <- .apply_module3_manifest_labels(edges_dt, input_dir)
+    n_loaded <- nrow(edges_dt)
+    .log_inform("Loaded {n_loaded} delta-link row(s).")
+    if (!("comparison_id" %in% names(edges_dt))) .log_abort("edges_all missing comparison_id.")
+    if (length(sample_subset)) {
+      if (all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
+        n_before_subset <- nrow(edges_dt)
+        edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
+        .log_inform("Sample subset retained {nrow(edges_dt)}/{n_before_subset} delta-link row(s).")
+      } else {
+        .log_abort("sample_subset requires delta links with cond1_id and cond2_id columns.")
+      }
     }
   }
   if (!nrow(edges_dt)) {
-    .log_abort("No delta-link rows remain after applying sample_subset.")
+    .log_abort("No topic-input rows remain after applying input filters.")
   }
   if (is.null(analysis_label) || !nzchar(as.character(analysis_label[[1L]]))) {
     analysis_label <- if (length(sample_subset)) "sample_subset" else "all_samples"
@@ -10642,27 +10726,35 @@ train_topic_models <- function(Kgrid,
 
     .log_inform("{analysis_id}: filtering {nrow(edges_sub)} edge row(s).")
     t_filter <- proc.time()[["elapsed"]]
-    edges_filt <- filter_edges_for_tf_topics(
-      edges_sub,
-      abs_log2fc_fp_min = abs_log2fc_fp_min,
-      abs_delta_fp_min = abs_delta_fp_min,
-      abs_log2fc_gene_min = abs_log2fc_gene_min,
-      require_fp_bound_either = require_fp_bound_either,
-      require_tf_expr_either = require_tf_expr_either,
-      require_gene_expr_either = require_gene_expr_either,
-      direction_consistency = direction_consistency
-    )
+    edges_filt <- if (identical(input_source, "condition_links")) {
+      edges_sub
+    } else {
+      filter_edges_for_tf_topics(
+        edges_sub,
+        abs_log2fc_fp_min = abs_log2fc_fp_min,
+        abs_delta_fp_min = abs_delta_fp_min,
+        abs_log2fc_gene_min = abs_log2fc_gene_min,
+        require_fp_bound_either = require_fp_bound_either,
+        require_tf_expr_either = require_tf_expr_either,
+        require_gene_expr_either = require_gene_expr_either,
+        direction_consistency = direction_consistency
+      )
+    }
     if (!nrow(edges_filt)) next
     .log_inform("{analysis_id}: retained {nrow(edges_filt)} edge row(s) after topic filters in {round(proc.time()[['elapsed']] - t_filter, 1)} sec.")
 
     if (identical(doc_design, "condition")) {
       .log_inform("{analysis_id}: building condition-level TF documents.")
       t_docs <- proc.time()[["elapsed"]]
-      edges_docs <- add_condition_tf_docs(
-        edges_filt,
-        tf_cluster_map = tf_cluster_map,
-        doc_mode = doc_mode
-      )
+      edges_docs <- if (identical(input_source, "condition_links")) {
+        data.table::copy(edges_filt)
+      } else {
+        add_condition_tf_docs(
+          edges_filt,
+          tf_cluster_map = tf_cluster_map,
+          doc_mode = doc_mode
+        )
+      }
       .log_inform("{analysis_id}: built {nrow(edges_docs)} condition-level document edge row(s) in {round(proc.time()[['elapsed']] - t_docs, 1)} sec.")
       .log_inform("{analysis_id}: building condition-level doc_term.")
       t_doc_term <- proc.time()[["elapsed"]]
@@ -10740,6 +10832,7 @@ train_topic_models <- function(Kgrid,
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
     topic_input_summary <- data.table::data.table(
       analysis_label = analysis_id,
+      input_source = input_source,
       doc_design = doc_design,
       doc_mode = doc_mode,
       fp_term_mode = fp_term_mode,
@@ -10971,10 +11064,11 @@ module3_train_topic_models <- function(k_grid,
 #' @param flatten_single_output If `TRUE` and only one trained output directory
 #'   is matched, write reports directly under `output_dir`.
 #' @param topic_report_args Optional list of overrides for report settings.
-#'   Standard extraction keeps pathway enrichment and per-comparison pathway
-#'   reports disabled by default for speed; set `run_pathway_enrichment = TRUE`
-#'   and `pathway_per_comparison = TRUE` inside this list for the full pathway
-#'   review.
+#'   Standard extraction keeps pathway enrichment disabled by default for speed.
+#'   Set `run_pathway_enrichment = TRUE` for the overall topic pathway review.
+#'   Comparison-topic runs can also set `pathway_per_comparison = TRUE`;
+#'   condition-topic runs write per-condition pathway retests by default when
+#'   pathway enrichment is enabled unless `pathway_per_condition = FALSE`.
 #' @noRd
 extract_regulatory_topics <- function(k,
                                       model_dir,
@@ -11099,10 +11193,11 @@ extract_regulatory_topics <- function(k,
       pathway_link_tf_max_topics = 5L,
       pathway_link_tf_top_n_per_topic = 30L,
       pathway_per_comparison = FALSE,
+      pathway_per_condition = NULL,
       pathway_per_comparison_dir = ".",
       pathway_per_comparison_flat = TRUE,
       pathway_split_direction = TRUE,
-      run_link_topic_scores = TRUE,
+      run_link_topic_scores = FALSE,
       link_topic_gate_mode = "none",
       link_topic_top_k = 3L,
       link_topic_min_prob = 0,
@@ -11167,6 +11262,147 @@ extract_regulatory_topics <- function(k,
   invisible(TRUE)
 }
 
+.module3_extraction_memory_bytes <- function(model_dir, memory_gb = NULL) {
+  gib <- 1024^3
+  memory_gb <- if (is.null(memory_gb) || !length(memory_gb)) {
+    NA_real_
+  } else {
+    suppressWarnings(as.numeric(memory_gb)[[1L]])
+  }
+  model_dir <- normalizePath(as.character(model_dir)[[1L]], winslash = "/", mustWork = FALSE)
+  candidates <- unique(c(
+    file.path(model_dir, "rds", "edges_docs.rds"),
+    list.files(model_dir, pattern = "^edges_docs[.]rds$", recursive = TRUE, full.names = TRUE)
+  ))
+  candidates <- candidates[file.exists(candidates)]
+  compressed_bytes <- if (length(candidates)) {
+    max(as.numeric(file.info(candidates)$size), na.rm = TRUE)
+  } else {
+    0
+  }
+  auto_bytes <- max(16 * gib, compressed_bytes * 24 + 4 * gib)
+  if (is.finite(memory_gb) && memory_gb >= 1) {
+    return(max(auto_bytes, memory_gb * gib))
+  }
+  auto_bytes
+}
+
+.module3_extraction_k_worker_plan <- function(n_tasks,
+                                              model_dir,
+                                              k_workers = NULL,
+                                              k_max_workers = 4L,
+                                              k_memory_gb = NULL,
+                                              k_memory_reserve_gb = 32,
+                                              cores = NULL,
+                                              link_scoring = FALSE,
+                                              available_bytes = .available_memory_bytes(),
+                                              os_type = .Platform$OS.type) {
+  gib <- 1024^3
+  n_tasks <- suppressWarnings(as.integer(n_tasks)[[1L]])
+  if (!is.finite(n_tasks) || n_tasks < 1L) n_tasks <- 1L
+  k_max_workers <- suppressWarnings(as.integer(k_max_workers)[[1L]])
+  if (!is.finite(k_max_workers) || k_max_workers < 1L) k_max_workers <- 4L
+  cores <- if (is.null(cores)) .available_cores(logical = TRUE) else suppressWarnings(as.integer(cores)[[1L]])
+  if (!is.finite(cores) || cores < 1L) cores <- 1L
+  requested <- if (is.null(k_workers) || !length(k_workers)) {
+    n_tasks
+  } else {
+    suppressWarnings(as.integer(k_workers)[[1L]])
+  }
+  if (!is.finite(requested) || requested < 1L) requested <- 1L
+  per_worker_bytes <- .module3_extraction_memory_bytes(model_dir, memory_gb = k_memory_gb)
+  reserve_gb <- suppressWarnings(as.numeric(k_memory_reserve_gb)[[1L]])
+  if (!is.finite(reserve_gb) || reserve_gb < 0) reserve_gb <- 32
+  reserve_bytes <- if (is.finite(available_bytes) && available_bytes > 0) {
+    max(reserve_gb * gib, available_bytes * 0.25)
+  } else {
+    NA_real_
+  }
+  memory_workers <- if (is.finite(available_bytes) && available_bytes > reserve_bytes) {
+    max(1L, floor((available_bytes - reserve_bytes) / per_worker_bytes))
+  } else {
+    1L
+  }
+  reason <- "adaptive memory and CPU limits"
+  workers <- min(n_tasks, requested, k_max_workers, cores, memory_workers)
+  if (!identical(os_type, "unix")) {
+    workers <- 1L
+    reason <- "parallel K extraction currently requires fork support"
+  } else if (!is.finite(available_bytes) || available_bytes <= 0) {
+    workers <- 1L
+    reason <- "available memory could not be measured"
+  } else if (isTRUE(link_scoring)) {
+    workers <- 1L
+    reason <- "topic-link scoring requires sequential K extraction"
+  } else if (memory_workers <= 1L) {
+    workers <- 1L
+    reason <- "available memory headroom supports one K worker"
+  }
+  list(
+    workers = as.integer(max(1L, workers)),
+    n_tasks = n_tasks,
+    requested_workers = as.integer(requested),
+    max_workers = as.integer(k_max_workers),
+    cores = as.integer(cores),
+    memory_workers = as.integer(memory_workers),
+    per_worker_bytes = as.numeric(per_worker_bytes),
+    available_bytes = as.numeric(available_bytes),
+    reserve_bytes = as.numeric(reserve_bytes),
+    reason = reason
+  )
+}
+
+.module3_run_extraction_k_tasks <- function(tasks,
+                                            worker_fun,
+                                            workers,
+                                            cores = NULL) {
+  workers <- max(1L, suppressWarnings(as.integer(workers)[[1L]]))
+  cores <- if (is.null(cores)) workers else max(1L, suppressWarnings(as.integer(cores)[[1L]]))
+  threads_per_worker <- max(1L, floor(cores / workers))
+  run_one <- function(i) {
+    warnings <- character()
+    old_threads <- if (requireNamespace("data.table", quietly = TRUE)) data.table::getDTthreads() else 1L
+    on.exit({
+      if (requireNamespace("data.table", quietly = TRUE)) data.table::setDTthreads(old_threads)
+    }, add = TRUE)
+    if (requireNamespace("data.table", quietly = TRUE)) data.table::setDTthreads(threads_per_worker)
+    value <- tryCatch(
+      withCallingHandlers(
+        suppressMessages(worker_fun(tasks[[i]])),
+        warning = function(w) {
+          warnings <<- c(warnings, conditionMessage(w))
+          invokeRestart("muffleWarning")
+        }
+      ),
+      error = function(e) e
+    )
+    list(index = i, value = value, warnings = unique(warnings))
+  }
+  results <- if (workers > 1L && .Platform$OS.type == "unix") {
+    parallel::mclapply(
+      seq_along(tasks),
+      run_one,
+      mc.cores = min(workers, length(tasks)),
+      mc.preschedule = FALSE,
+      mc.set.seed = FALSE
+    )
+  } else {
+    lapply(seq_along(tasks), run_one)
+  }
+  failures <- vapply(results, function(x) inherits(x$value, "error"), logical(1L))
+  if (any(failures)) {
+    messages <- vapply(results[failures], function(x) {
+      sprintf("K=%s: %s", tasks[[x$index]]$k, conditionMessage(x$value))
+    }, character(1L))
+    .log_abort(paste(c("Module 3 K extraction failed.", messages), collapse = "\n"))
+  }
+  worker_warnings <- unique(unlist(lapply(results, `[[`, "warnings"), use.names = FALSE))
+  if (length(worker_warnings)) {
+    .log_warn("Module 3 K extraction warning(s): {paste(worker_warnings, collapse = '; ')}")
+  }
+  invisible(results)
+}
+
 #' Extract Module 3 regulatory topics
 #'
 #' Public step function for extracting regulatory topics, pathway summaries,
@@ -11183,7 +11419,7 @@ extract_regulatory_topics <- function(k,
 #' pathway topic membership at extraction time; they can be projected later
 #' onto selected comparison/topic/pathway genes for subnetworks.
 #'
-#' @param k Integer K selected for extraction.
+#' @param k Integer K value or vector of K values selected for extraction.
 #' @param model_dir Directory containing trained topic model outputs.
 #' @param output_dir Directory to write extracted topic outputs.
 #' @param flatten_single_output Whether to write a single selected model
@@ -11191,6 +11427,15 @@ extract_regulatory_topics <- function(k,
 #' @param topic_score_method Topic-term score method. `"normtop_specificity"`
 #'   is the default for new extractions; `"rowmax_phi"` preserves the legacy
 #'   row-maximum-scaled phi score.
+#' @param k_workers Number of K values to extract concurrently. `NULL` selects
+#'   workers adaptively from current memory and CPU headroom.
+#' @param k_max_workers Maximum concurrent K workers in adaptive mode.
+#' @param k_memory_gb Optional conservative memory estimate per K worker in GiB.
+#'   When `NULL`, estimate from `edges_docs.rds` with a 16 GiB minimum.
+#' @param k_memory_reserve_gb Minimum RAM in GiB to leave unused. Adaptive
+#'   scheduling also reserves at least 25 percent of currently available RAM.
+#' @param cores CPU cores available to the extraction scheduler.
+#' @param verbose Emit concise extraction scheduler messages.
 #' @param ... Additional arguments passed to the internal extraction engine,
 #'   such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.
 #'
@@ -11201,15 +11446,67 @@ module3_extract_topics <- function(k,
                                    output_dir,
                                    flatten_single_output = TRUE,
                                    topic_score_method = c("normtop_specificity", "rowmax_phi"),
+                                   k_workers = NULL,
+                                   k_max_workers = 4L,
+                                   k_memory_gb = NULL,
+                                   k_memory_reserve_gb = 32,
+                                   cores = NULL,
+                                   verbose = TRUE,
                                    ...) {
-  extract_regulatory_topics(
-    k = k,
+  k <- sort(unique(as.integer(k)))
+  k <- k[is.finite(k) & k > 1L]
+  if (!length(k)) .log_abort("k must contain at least one integer greater than 1.")
+  topic_score_method <- match.arg(topic_score_method)
+  dots <- list(...)
+  if (length(k) == 1L) {
+    return(extract_regulatory_topics(
+      k = k,
+      model_dir = model_dir,
+      output_dir = output_dir,
+      flatten_single_output = flatten_single_output,
+      topic_score_method = topic_score_method,
+      ...
+    ))
+  }
+  link_scoring <- isTRUE(dots$topic_report_args$run_link_topic_scores)
+  plan <- .module3_extraction_k_worker_plan(
+    n_tasks = length(k),
     model_dir = model_dir,
-    output_dir = output_dir,
-    flatten_single_output = flatten_single_output,
-    topic_score_method = match.arg(topic_score_method),
-    ...
+    k_workers = k_workers,
+    k_max_workers = k_max_workers,
+    k_memory_gb = k_memory_gb,
+    k_memory_reserve_gb = k_memory_reserve_gb,
+    cores = cores,
+    link_scoring = link_scoring
   )
+  if (isTRUE(verbose)) {
+    .log_inform(
+      "Module 3 K extraction: {plan$workers}/{length(k)} concurrent worker(s); estimated {(.format_bytes(plan$per_worker_bytes))} per worker; reserve {(.format_bytes(plan$reserve_bytes))}; {plan$reason}."
+    )
+  }
+  tasks <- lapply(k, function(kk) list(
+    k = kk,
+    output_dir = file.path(output_dir, paste0("K", kk))
+  ))
+  worker_fun <- function(task) {
+    do.call(
+      extract_regulatory_topics,
+      c(list(
+        k = task$k,
+        model_dir = model_dir,
+        output_dir = task$output_dir,
+        flatten_single_output = TRUE,
+        topic_score_method = topic_score_method
+      ), dots)
+    )
+  }
+  .module3_run_extraction_k_tasks(
+    tasks = tasks,
+    worker_fun = worker_fun,
+    workers = plan$workers,
+    cores = plan$cores
+  )
+  invisible(TRUE)
 }
 
 

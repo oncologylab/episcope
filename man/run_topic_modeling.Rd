@@ -22,6 +22,7 @@ run_topic_modeling(
   pathway_backend = NULL,
   pathway_species = NULL,
   extraction_topic_report_args = list(),
+  input_source = c("differential_links", "condition_links"),
   ...
 )
 }
@@ -84,6 +85,9 @@ size. If `NULL`, read from `project_config` or infer from `ref_genome`.}
 \item{extraction_topic_report_args}{Optional named list of topic-extraction
 report argument overrides. Values here override project config values,
 including TF-to-topic assignment cutoffs.}
+
+\item{input_source}{Input source type. Use `"differential_links"` for
+comparison links and `"condition_links"` for condition-native links.}
 
 \item{...}{Additional arguments passed to the internal topic-modeling
 wrapper.}

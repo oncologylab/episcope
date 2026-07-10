@@ -1154,17 +1154,37 @@
 }
 
 .m3tb_summarize_topic_links <- function(output_dir, model_rows, review_dir = NULL) {
-  link_assignment_rows <- list()
-  item_coverage_rows <- list()
-  shared_rows <- list()
+  output_dir <- normalizePath(as.character(output_dir)[[1L]], winslash = "/", mustWork = FALSE)
+  model_rows <- data.table::as.data.table(model_rows)
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
+  review_dir <- normalizePath(as.character(review_dir)[[1L]], winslash = "/", mustWork = FALSE)
   existing_shared <- .m3tb_existing_shared_cache(review_dir)
   fast_summary <- isTRUE(getOption("craftgrn.topic_review.fast_summary", nrow(model_rows) > 24L))
-  seen <- new.env(parent = emptyenv())
-  for (i in seq_len(nrow(model_rows))) {
+  scan_link_tables <- isTRUE(getOption("craftgrn.topic_review.scan_link_tables", FALSE))
+  max_link_file_bytes <- suppressWarnings(as.numeric(
+    getOption("craftgrn.topic_review.max_link_file_bytes", 2 * 1024^3)
+  ))
+  if (is.na(max_link_file_bytes) || max_link_file_bytes <= 0) {
+    max_link_file_bytes <- 2 * 1024^3
+  }
+  workers <- .m3tb_review_worker_count(nrow(model_rows))
+  process_one <- function(i) {
+    old_dt_threads <- data.table::getDTthreads()
+    on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
+    if (workers > 1L) data.table::setDTthreads(1L)
+    link_assignment_rows <- list()
+    item_coverage_rows <- list()
+    shared_rows <- list()
+    seen <- new.env(parent = emptyenv())
     row <- model_rows[i]
     files <- .m3tb_find_topic_links(output_dir, row)
-    if (!length(files)) next
+    if (!length(files)) {
+      return(list(
+        link_assignment = link_assignment_rows,
+        item_coverage = item_coverage_rows,
+        shared = shared_rows
+      ))
+    }
     for (path in files) {
       key <- paste(row$method[[1L]], row$selected_k[[1L]], normalizePath(path, winslash = "/", mustWork = FALSE), sep = "\r")
       if (exists(key, envir = seen, inherits = FALSE)) next
@@ -1212,6 +1232,20 @@
           link_assignment_rows[[length(link_assignment_rows) + 1L]] <- topic_row_pass
           fast_pass_added <- TRUE
         }
+      }
+      if (!isTRUE(scan_link_tables)) {
+        next
+      }
+      link_file_bytes <- suppressWarnings(as.numeric(file.info(path)$size[[1L]]))
+      if (is.finite(max_link_file_bytes) && is.finite(link_file_bytes) &&
+          link_file_bytes > max_link_file_bytes) {
+        .log_abort(c(
+          "Raw topic-link table exceeds the safe review scan limit.",
+          i = "File: {path}",
+          i = "Size: {format(link_file_bytes, big.mark = ',')} bytes; limit: {format(max_link_file_bytes, big.mark = ',')} bytes.",
+          i = "Use compact topic_link_summary.csv and topic_item_coverage_counts.csv when possible.",
+          i = "For an intentional large diagnostic, set options(craftgrn.topic_review.max_link_file_bytes = Inf)."
+        ))
       }
       header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
       cols <- intersect(
@@ -1281,7 +1315,25 @@
         shared_rows[[length(shared_rows) + 1L]] <- shared
       }
     }
+    list(
+      link_assignment = link_assignment_rows,
+      item_coverage = item_coverage_rows,
+      shared = shared_rows
+    )
   }
+  results <- .m3tb_review_lapply(seq_len(nrow(model_rows)), function(i) {
+    tryCatch(process_one(i), error = function(e) .m3tb_review_row_error(i, e))
+  }, workers = workers)
+  failures <- vapply(results, inherits, logical(1L), "m3tb_review_row_error")
+  if (any(failures)) {
+    msg <- vapply(results[failures], function(x) {
+      sprintf("row %s: %s", x$index, x$message)
+    }, character(1L))
+    .log_abort(paste(c("Failed to summarize Module 3 topic links.", msg), collapse = "\n"))
+  }
+  link_assignment_rows <- unlist(lapply(results, `[[`, "link_assignment"), recursive = FALSE)
+  item_coverage_rows <- unlist(lapply(results, `[[`, "item_coverage"), recursive = FALSE)
+  shared_rows <- unlist(lapply(results, `[[`, "shared"), recursive = FALSE)
   link_assignment <- if (length(link_assignment_rows)) {
     data.table::rbindlist(link_assignment_rows, use.names = TRUE, fill = TRUE)
   } else {
@@ -1536,6 +1588,80 @@
   gsub("</", "<\\/", as.character(out), fixed = TRUE)
 }
 
+.m3tb_polish_topic_report_html <- function(html) {
+  html <- gsub(
+    "return{genes:Array.from(out).sort(),byTf:rows,edgeN:edges.size}}function mergeTfSupport(parts)",
+    paste0(
+      "return{genes:Array.from(out).sort(),byTf:rows,edgeN:edges.size,",
+      "context_id:String(ctx.subgrn_context_id||''),",
+      "context_label:String(ctx.comparison_label||ctx.comparison_id||'')}}function mergeTfSupport(parts)"
+    ),
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "return{n:genes.size,genes:detail.length?detail:Array.from(genes).sort(),target_genes:Array.from(genes).sort(),byTf:rows,tfN:rows.length,edgeN:edgeN}}function ensureTfPathwayCounts",
+    paste0(
+      "const ctxPart=(parts||[]).find(p=>p&&p.context_id)||{};",
+      "return{n:genes.size,genes:detail.length?detail:Array.from(genes).sort(),",
+      "target_genes:Array.from(genes).sort(),byTf:rows,tfN:rows.length,edgeN:edgeN,",
+      "context_id:ctxPart.context_id||'',context_label:ctxPart.context_label||''}}",
+      "function chooseTfSupport(parts){const out=(parts||[]).map(p=>mergeTfSupport([p]));",
+      "if(!out.length)return mergeTfSupport([]);",
+      "out.sort((a,b)=>(Number(b.tfN)||0)-(Number(a.tfN)||0)||",
+      "(Number(b.n)||0)-(Number(a.n)||0)||",
+      "String(a.context_label||'').localeCompare(String(b.context_label||'')));",
+      "return out[0]}function ensureTfPathwayCounts"
+    ),
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "tfPathwayCounts.set(key,mergeTfSupport(parts));tfPathwayPending.delete(key);drawPathways()",
+    "tfPathwayCounts.set(key,chooseTfSupport(parts));tfPathwayPending.delete(key);drawPathways()",
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "TF-target pairs represented: '+(Number(support.edgeN)||0)+",
+    "TF-target pairs represented: '+(Number(support.edgeN)||0)+(support.context_label?'\\nSubGRN context used for TF counts: '+support.context_label:'')+",
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "badgeText=selectedTfUppers.length>1?String(n)+'/'+String(tfN):String(n)",
+    paste0(
+      "badgeText=selectedTfUppers.length>1?selectedTfUppers.map(k=>{",
+      "const r=(support.byTf||[]).find(x=>String(x.tf||'').toUpperCase()===k);",
+      "return String(r?Number(r.n)||0:0)}).join('/'):String(n)"
+    ),
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "selectedTfUppers.length>1?'TF genes/TFs':'TF targets'",
+    "selectedTfUppers.length>1?'TF counts':'TF targets'",
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    "support.genes.join('; ')",
+    "support.genes.join(' / ')",
+    html,
+    fixed = TRUE
+  )
+  html <- gsub(
+    paste0(
+      "const detail=[];if(rows.length)detail.push('Summary: '+genes.size+' unique target genes; '+",
+      "rows.length+' selected TFs with hits; '+edgeN+' TF-target pairs');rows.forEach"
+    ),
+    "const detail=[];rows.forEach",
+    html,
+    fixed = TRUE
+  )
+  html
+}
+
 .m3tb_read_probability_csv <- function(path, id_col) {
   dt <- data.table::fread(path, showProgress = FALSE)
   if (!id_col %in% names(dt)) data.table::setnames(dt, names(dt)[[1L]], id_col)
@@ -1613,6 +1739,48 @@
   )][order(topic_num, -theta_mean)]
 }
 
+.m3tb_tf_topic_rows <- function(theta, context_type) {
+  topic_cols <- grep("^Topic[0-9]+$", colnames(theta), value = TRUE)
+  if (!length(topic_cols)) return(data.table::data.table())
+  doc_ids <- rownames(theta)
+  if (is.null(doc_ids)) doc_ids <- paste0("doc", seq_len(nrow(theta)))
+  parts <- strsplit(as.character(doc_ids), "::", fixed = TRUE)
+  tf <- vapply(parts, function(x) {
+    if (length(x) >= 2L) x[[2L]] else NA_character_
+  }, character(1L))
+  group <- .m3tb_parse_doc_label(doc_ids, context_type)
+  base <- data.table::data.table(
+    doc_id = as.character(doc_ids),
+    comparison_label = as.character(group),
+    display_label = .m3tb_display_label(group),
+    tf = as.character(tf),
+    tf_upper = toupper(as.character(tf))
+  )
+  keep <- !is.na(base$tf) & nzchar(trimws(base$tf))
+  if (!any(keep)) return(data.table::data.table())
+  mat <- as.matrix(theta[keep, topic_cols, drop = FALSE])
+  storage.mode(mat) <- "numeric"
+  out <- data.table::as.data.table(mat)
+  out[, row_id := seq_len(.N)]
+  base <- base[keep]
+  base[, row_id := seq_len(.N)]
+  out <- merge(base, out, by = "row_id", sort = FALSE)
+  out[, row_id := NULL]
+  out <- data.table::melt(
+    out,
+    id.vars = c("doc_id", "comparison_label", "display_label", "tf", "tf_upper"),
+    measure.vars = topic_cols,
+    variable.name = "topic",
+    value.name = "theta"
+  )
+  out[, `:=`(
+    topic = as.character(topic),
+    topic_num = as.integer(sub("^Topic", "", as.character(topic))),
+    theta = as.numeric(theta)
+  )]
+  out[is.finite(theta)][order(comparison_label, topic_num, -theta, tf)]
+}
+
 .m3tb_find_extraction_subdir <- function(row) {
   roots <- unique(c(
     if ("topic_extraction_dir" %in% names(row)) row$topic_extraction_dir[[1L]] else character(),
@@ -1630,6 +1798,28 @@
     file.exists(file.path(dirs, "topic_links_pass.csv"))
   if (any(has_topic)) return(dirs[which(has_topic)[[1L]]])
   dirs[[1L]]
+}
+
+.m3tb_reuse_existing_subgrn_manifest <- function(subgrn_payload_dir, row, k) {
+  review_dir <- dirname(normalizePath(subgrn_payload_dir, winslash = "/", mustWork = FALSE))
+  manifest_path <- file.path(review_dir, "tables", "pathway_subgrn_manifest.csv")
+  if (!file.exists(manifest_path)) return(data.table::data.table())
+  dt <- data.table::fread(manifest_path, showProgress = FALSE)
+  if (!nrow(dt) || !"payload_file" %in% names(dt)) return(data.table::data.table())
+  if ("method_setup" %in% names(dt) && "method_setup" %in% names(row)) {
+    dt <- dt[method_setup == row$method_setup[[1L]]]
+  }
+  if ("run_id" %in% names(dt) && "run_id" %in% names(row)) {
+    dt <- dt[run_id == row$run_id[[1L]]]
+  }
+  if ("k" %in% names(dt)) {
+    selected_k <- as.integer(k[[1L]])
+    dt[, k_for_filter := suppressWarnings(as.integer(k))]
+    dt <- dt[k_for_filter == selected_k][, k_for_filter := NULL][]
+  }
+  if (!nrow(dt)) return(data.table::data.table())
+  dt <- dt[file.exists(file.path(subgrn_payload_dir, payload_file))]
+  dt[]
 }
 
 .m3tb_parse_overlap_hits <- function(overlap) {
@@ -1788,16 +1978,20 @@
                                       per_group = FALSE,
                                       model_dir = NULL,
                                       compute_universe = TRUE,
+                                      padj_cut = 0.05,
                                       verbose = FALSE) {
   empty <- data.table::data.table(
     topic = integer(),
     topic_num = integer(),
+    comparison_id = character(),
+    direction_group = character(),
     comparison_label = character(),
     display_label = character(),
     pathway = character(),
     pathway_key = character(),
     padj = numeric(),
     overlap = character(),
+    overlap_genes = character(),
     gene_in = integer(),
     gene_total = integer(),
     gene_total_universe = integer(),
@@ -1810,6 +2004,7 @@
       extraction_dir,
       c(
         "per_comparison_topic_pathway_enrichment.csv",
+        "per_condition_topic_pathway_enrichment.csv",
         "topic_term_pathway_enrichment.csv"
       )
     )
@@ -1832,6 +2027,10 @@
     if (!"pathway" %in% names(dt) && "term" %in% names(dt)) data.table::setnames(dt, "term", "pathway")
     if (!"padj" %in% names(dt) && "adjusted_p_value" %in% names(dt)) data.table::setnames(dt, "adjusted_p_value", "padj")
     if (!"topic" %in% names(dt) && "topic_num" %in% names(dt)) data.table::setnames(dt, "topic_num", "topic")
+    has_condition_id <- "condition_id" %in% names(dt)
+    if (!"comparison_id" %in% names(dt) && "condition_id" %in% names(dt)) dt[, comparison_id := condition_id]
+    has_comparison_id <- "comparison_id" %in% names(dt)
+    has_direction_group <- "direction_group" %in% names(dt)
     if (!"overlap" %in% names(dt)) dt[, overlap := NA_character_]
     if (!"overlap_hits" %in% names(dt)) dt[, overlap_hits := .m3tb_parse_overlap_hits(overlap)]
     if (!"pathway_key" %in% names(dt) && "pathway_norm_key" %in% names(dt)) {
@@ -1839,13 +2038,20 @@
     }
     if (!"pathway_key" %in% names(dt)) dt[, pathway_key := pathway]
     if (!"genes" %in% names(dt)) dt[, genes := NA_character_]
+    if (!"overlap_genes" %in% names(dt)) dt[, overlap_genes := genes]
+    if (!"comparison_id" %in% names(dt)) dt[, comparison_id := NA_character_]
+    if (!"direction_group" %in% names(dt)) dt[, direction_group := NA_character_]
     if (isTRUE(per_group)) {
-      if ("comparison_id" %in% names(dt)) {
-        direction_col <- if ("direction_group" %in% names(dt)) "direction_group" else NA_character_
+      if (isTRUE(has_condition_id)) {
+        dt[, direction_group := "All"]
+        dt[, comparison_label := as.character(comparison_id)]
+      } else if (isTRUE(has_comparison_id)) {
+        direction_col <- if (isTRUE(has_direction_group)) "direction_group" else NA_character_
         direction_val <- if (!is.na(direction_col)) as.character(dt[[direction_col]]) else "All"
         direction_val <- ifelse(direction_val %in% c("Up", "Target-Up"), "Target-Up",
           ifelse(direction_val %in% c("Down", "Target-Down"), "Target-Down", direction_val)
         )
+        dt[, direction_group := .m3tb_subgrn_direction_group(direction_val)]
         dt[, comparison_label := paste(as.character(comparison_id), direction_val, sep = "::")]
       } else {
         label <- sub("_dotplot[.]csv$", "", basename(path))
@@ -1855,9 +2061,15 @@
         label <- sub("_Up$", "::Target-Up", label)
         label <- sub("_Down$", "::Target-Down", label)
         dt[, comparison_label := label]
+        label_chr <- as.character(dt$comparison_label)
+        dt[, `:=`(
+          comparison_id = sub("::.*$", "", label_chr),
+          direction_group = .m3tb_subgrn_direction_group(ifelse(grepl("::", label_chr, fixed = TRUE), sub("^.*::", "", label_chr), "All"))
+        )]
       }
       dt[, display_label := .m3tb_display_label(comparison_label)]
     } else {
+      dt[, `:=`(comparison_id = NA_character_, direction_group = NA_character_)]
       dt[, comparison_label := NA_character_]
       dt[, display_label := NA_character_]
     }
@@ -1869,6 +2081,9 @@
       gene_total = .m3tb_parse_overlap_total(overlap),
       pathway = as.character(pathway),
       pathway_key = as.character(pathway_key),
+      comparison_id = as.character(comparison_id),
+      direction_group = as.character(direction_group),
+      overlap_genes = as.character(overlap_genes),
       genes = as.character(genes)
     )]
     dt[is.na(gene_total) | !is.finite(gene_total), gene_total := pmax(gene_in, 1L, na.rm = TRUE)]
@@ -1879,9 +2094,13 @@
   })
   out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   if (!nrow(out)) return(empty)
-  out <- out[is.finite(topic_num) & !is.na(pathway) & nzchar(pathway)]
-  out[, rank := data.table::frank(padj, ties.method = "first"), by = .(topic_num, comparison_label)]
-  out <- out[rank <= 30L][, rank := NULL][]
+  out <- out[
+    is.finite(topic_num) &
+      !is.na(pathway) & nzchar(pathway) &
+      is.finite(gene_in) & gene_in > 0L &
+      is.finite(padj) & padj <= as.numeric(padj_cut)
+  ]
+  data.table::setorder(out, topic_num, comparison_label, padj, -gene_in, pathway)
   if (!is.null(model_dir)) {
     universe <- .m3tb_read_or_compute_universe_pathways(
       model_dir = model_dir,
@@ -1897,12 +2116,14 @@
 .m3tb_read_condition_pathway_tables <- function(extraction_dir,
                                                 model_dir = NULL,
                                                 compute_universe = TRUE,
+                                                padj_cut = 0.05,
                                                 verbose = FALSE) {
   pathways <- .m3tb_read_pathway_tables(
     extraction_dir,
     per_group = TRUE,
     model_dir = model_dir,
     compute_universe = compute_universe,
+    padj_cut = padj_cut,
     verbose = verbose
   )
   if (nrow(pathways)) return(pathways)
@@ -1911,14 +2132,29 @@
     per_group = FALSE,
     model_dir = model_dir,
     compute_universe = compute_universe,
+    padj_cut = padj_cut,
     verbose = verbose
   )
 }
 
-.m3tb_topic_report_html <- function(title, topic_mds, waterfall, pathways, out_html) {
+.m3tb_topic_report_html <- function(title,
+                                    topic_mds,
+                                    waterfall,
+                                    tf_topic = NULL,
+                                    pathways,
+                                    out_html,
+                                    condition_pathways = NULL,
+                                    subgrn_manifest = NULL,
+                                    subgrn_payload_base = "../../pathway_subgrn_payloads") {
   topic_json <- .m3tb_json_for_html(topic_mds)
   waterfall_json <- .m3tb_json_for_html(waterfall)
+  if (is.null(tf_topic)) tf_topic <- data.table::data.table()
+  tf_topic_json <- .m3tb_json_for_html(tf_topic)
   pathway_json <- .m3tb_json_for_html(pathways)
+  if (is.null(condition_pathways)) condition_pathways <- data.table::data.table()
+  condition_pathway_json <- .m3tb_json_for_html(condition_pathways)
+  if (is.null(subgrn_manifest)) subgrn_manifest <- .m3tb_subgrn_empty_manifest()
+  subgrn_json <- .m3tb_json_for_html(subgrn_manifest)
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
@@ -1926,40 +2162,58 @@
     "html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}",
     ".top{height:48px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 12px;box-sizing:border-box}",
     "h1{font-size:18px;line-height:1.05;margin:0}.meta{font-size:11px;color:#475569;line-height:1.1}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}",
-    "select,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}",
+    "select,input,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}",
     ".grid{height:calc(100vh - 48px);display:grid;grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr);gap:8px;padding:8px;box-sizing:border-box}",
     ".left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}",
-    ".paneHead{padding:8px 10px;border-bottom:1px solid #e5e5df;display:flex;justify-content:space-between;gap:8px;align-items:center}.pane h2{font-size:20px;line-height:1.05;margin:0}.body{position:relative;flex:1;min-height:0}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:360px;line-height:1.35;z-index:5}body.embed .top{display:none}body.embed .grid{height:100vh}",
+    ".paneHead{padding:8px 10px;border-bottom:1px solid #e5e5df;display:flex;justify-content:space-between;gap:8px;align-items:center}.pane h2{font-size:20px;line-height:1.05;margin:0}.paneMeta{display:flex;flex-direction:column;gap:3px;align-items:flex-end;min-width:0}.contextBadge{max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#111;color:#fff;border-radius:3px;padding:4px 7px;font-size:12px;line-height:1.1}.barControls{display:flex;gap:8px;align-items:center;white-space:nowrap}.barControls select{max-width:180px}.barControls input{width:130px}.barControls select[multiple]{height:46px;min-width:130px}.body{position:relative;flex:1;min-height:0}.splitWaterfall{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);height:100%;min-height:0}.splitSide{position:relative;min-width:0;min-height:0}.splitSide:first-child{border-right:1px solid #e5e5df}.clearTf{display:none;margin-left:8px;padding:3px 6px;font-size:11px}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:360px;line-height:1.35;z-index:5}body.embed .top{display:none}body.embed .grid{height:100vh}",
     "svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#334155;stroke-width:1.4;opacity:.78}.mdsLabel{font-size:22px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round}",
+    .m3tb_subgrn_css(),
     "@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:52px}.grid{height:calc(100vh - 52px)}}",
     "</style></head><body>",
     "<div class=\"top\">",
     paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
-    "<div class=\"controls\"><label>Palette <select id=\"paletteSelect\"><option value=\"default\" selected>Default</option><option value=\"npg\">NPG</option><option value=\"aaas\">AAAS</option><option value=\"d3\">D3</option></select></label><label>Topic <select id=\"topicSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
+    "<div class=\"controls\"><label>Palette <select id=\"paletteSelect\"><option value=\"default\" selected>Default</option><option value=\"aaas\">AAAS</option><option value=\"d3\">D3</option><option value=\"npg\">NPG</option></select></label><label>Topic <select id=\"topicSelect\"></select></label><label>Pathway scope <select id=\"pathwayScopeSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
     "<main class=\"grid\"><div class=\"left\">",
     "<section class=\"pane\"><div class=\"paneHead\"><h2>Intertopic Distance Map</h2><span id=\"mdsStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"mdsTooltip\"></div><svg id=\"mdsSvg\" viewBox=\"0 0 900 620\"><g id=\"mdsLayer\"></g></svg></div><div class=\"note\">Topics are embedded by Jensen-Shannon distance.</div></section>",
-    "<section class=\"pane\"><div class=\"paneHead\"><h2>Condition Waterfall</h2><span id=\"waterfallStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"wfTooltip\"></div><svg id=\"waterfallSvg\" viewBox=\"0 0 980 760\"><g id=\"waterfallLayer\"></g></svg></div><div class=\"note\">Bars use one shared x-scale inside this report.</div></section>",
-    "</div><section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><span id=\"pathStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"pathTooltip\"></div><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"><g id=\"pathLayer\"></g></svg></div><div class=\"note\">Filter: N_gene >= 5, adjusted p-value < 0.05, top 30 per topic. X-axis is full gene-universe pathway hits; red is topic overlap and blue is remaining universe hits.</div></section></main>",
+    "<section class=\"pane\"><div class=\"paneHead\"><h2>Topic Bar Plots</h2><div class=\"barControls\"><label>TF <input id=\"tfSearchInput\" list=\"tfOptionList\" placeholder=\"Type TF\"/><datalist id=\"tfOptionList\"></datalist></label><label>Selected <select id=\"tfSelect\" multiple size=\"3\"></select></label><span id=\"waterfallStats\" class=\"meta\"></span><button id=\"clearTfButton\" class=\"clearTf\" type=\"button\">Clear TF</button></div></div><div class=\"body\"><div class=\"tooltip\" id=\"wfTooltip\"></div><div class=\"splitWaterfall\"><div class=\"splitSide\"><svg id=\"tfWaterfallSvg\" viewBox=\"0 0 760 760\"><g id=\"tfWaterfallLayer\"></g></svg></div><div class=\"splitSide\"><svg id=\"waterfallSvg\" viewBox=\"0 0 760 760\"><g id=\"waterfallLayer\"></g></svg></div></div></div><div class=\"note\">Left: TF-to-topic probability from theta. Right: condition/comparison mean theta for the selected topic.</div></section>",
+    "</div><section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><div class=\"paneMeta\"><div id=\"selectedContext\" class=\"contextBadge\"></div><span id=\"pathStats\" class=\"meta\"></span></div></div><div class=\"body\"><div class=\"tooltip\" id=\"pathTooltip\"></div><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"><g id=\"pathLayer\"></g></svg>",
+    .m3tb_subgrn_html_panel(),
+    "</div><div class=\"note\">Filter: N_gene >= 5, adjusted p-value < 0.05, top 30 per topic or selected condition. X-axis is full gene-universe pathway hits; red is topic overlap and blue is remaining universe hits. Click a pathway bar to open the sub-GRN browser.</div></section></main>",
     "<script>",
     "if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');",
     paste0("const TOPICS=", topic_json, ";"),
     paste0("const WATERFALL=", waterfall_json, ";"),
-    paste0("const PATHWAYS=", pathway_json, ";"),
+    paste0("const TF_TOPIC=", tf_topic_json, ";"),
+    paste0("const PATHWAYS_TOPIC=", pathway_json, ";"),
+    paste0("const PATHWAYS_CONDITION=", condition_pathway_json, ";"),
+    "const PATHWAYS=PATHWAYS_TOPIC;",
+    paste0("const SUBGRN_MANIFEST=", subgrn_json, ";"),
+    paste0("const SUBGRN_PAYLOAD_BASE=", jsonlite::toJSON(subgrn_payload_base, auto_unbox = TRUE), ";"),
     "const COLOR_PRESETS={default:['#2563eb','#dc2626','#16a34a','#ca8a04','#7c3aed','#0891b2','#be123c','#4b5563','#65a30d','#c2410c'],npg:['#E64B35','#4DBBD5','#00A087','#3C5488','#F39B7F','#8491B4','#91D1C2','#DC0000','#7E6148','#B09C85'],aaas:['#EE0000','#3B4992','#008B45','#631879','#008280','#BB0021','#5F559B','#A20056','#808180','#1B1919'],d3:['#1F77B4','#FF7F0E','#2CA02C','#D62728','#9467BD','#8C564B','#E377C2','#7F7F7F','#BCBD22','#17BECF']};",
-    "const topicSelect=document.getElementById('topicSelect'),paletteSelect=document.getElementById('paletteSelect'),mdsSvg=document.getElementById('mdsSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg'),mdsLayer=document.getElementById('mdsLayer'),waterfallLayer=document.getElementById('waterfallLayer'),pathLayer=document.getElementById('pathLayer'),mdsTooltip=document.getElementById('mdsTooltip'),wfTooltip=document.getElementById('wfTooltip'),pathTooltip=document.getElementById('pathTooltip');",
+    "const topicSelect=document.getElementById('topicSelect'),paletteSelect=document.getElementById('paletteSelect'),tfSelect=document.getElementById('tfSelect'),tfSearchInput=document.getElementById('tfSearchInput'),tfOptionList=document.getElementById('tfOptionList'),pathwayScopeSelect=document.getElementById('pathwayScopeSelect'),groupSelect=pathwayScopeSelect,mdsSvg=document.getElementById('mdsSvg'),tfWaterfallSvg=document.getElementById('tfWaterfallSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg'),mdsLayer=document.getElementById('mdsLayer'),tfWaterfallLayer=document.getElementById('tfWaterfallLayer'),waterfallLayer=document.getElementById('waterfallLayer'),pathLayer=document.getElementById('pathLayer'),mdsTooltip=document.getElementById('mdsTooltip'),wfTooltip=document.getElementById('wfTooltip'),pathTooltip=document.getElementById('pathTooltip'),clearTfButton=document.getElementById('clearTfButton');let selectedTfUppers=[],selectedTfUpper='',tfLabelMap=new Map();const tfPathwayCounts=new Map(),tfPathwayPending=new Set();",
     "function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function tooltip(tt,ev,text){tt.innerHTML=esc(text).replace(/\\n/g,'<br/>');tt.style.display='block';tt.style.left=(ev.offsetX+12)+'px';tt.style.top=(ev.offsetY+12)+'px'}function svgFontSize(svg,targetPx){const m=svg.getScreenCTM();const s=m?Math.sqrt(Math.abs(m.a*m.d)):1;return Math.max(1,targetPx/Math.max(s,0.001)).toFixed(2)}",
     "function activePalette(){return COLOR_PRESETS[paletteSelect.value]||COLOR_PRESETS.default}function color(key){const colors=activePalette();let h=2166136261;const s=String(key||'NA');for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return colors[(h>>>0)%colors.length]}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}",
-    "function exportStyle(){return 'text{font-family:Arial,Helvetica,sans-serif;font-weight:700}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#334155;stroke-width:1.4;opacity:.78}.mdsLabel{font-size:22px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round}'}function exportSvgTitle(root,text,x,y,size){const t=el('text',{x:x,y:y,'font-size':size,'font-weight':700,fill:'#111'});t.textContent=text;root.appendChild(t)}function addExportPanel(root,src,title,x,y,w,h){exportSvgTitle(root,title,x,y+22,24);const clone=src.cloneNode(true);clone.setAttribute('x',x);clone.setAttribute('y',y+38);clone.setAttribute('width',w);clone.setAttribute('height',h-38);clone.setAttribute('preserveAspectRatio','xMidYMid meet');clone.removeAttribute('style');root.appendChild(clone)}function exportSvg(){draw();const root=el('svg',{xmlns:'http://www.w3.org/2000/svg',viewBox:'0 0 2480 1400',width:2480,height:1400});const style=el('style',{});style.textContent=exportStyle();root.appendChild(style);root.appendChild(el('rect',{x:0,y:0,width:2480,height:1400,fill:'#fff'}));exportSvgTitle(root,document.title||'Topic report',30,42,28);addExportPanel(root,mdsSvg,'Intertopic Distance Map',30,74,760,590);addExportPanel(root,waterfallSvg,'Condition Waterfall',30,720,760,620);addExportPanel(root,pathSvg,'Pathways',830,74,1600,1266);const text=new XMLSerializer().serializeToString(root),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'topic_report').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
-    "function init(){TOPICS.sort((a,b)=>topicNum(a.topic)-topicNum(b.topic)).forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic);topicSelect.appendChild(o)});topicSelect.addEventListener('change',draw);paletteSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',exportSvg);draw()}",
-    "function drawTopic(){mdsLayer.replaceChildren();const w=900,h=620,p=86,labelSize=svgFontSize(mdsSvg,28),labelNum=Number(labelSize),sx=sc(TOPICS.map(d=>+d.MDS1),p,w-p),sy=sc(TOPICS.map(d=>+d.MDS2),h-p,p),mx=Math.max(...TOPICS.map(d=>+d.mean_theta||0),1e-6),sel=topicSelect.value,cx=w/2,cy=h/2;const pts=TOPICS.map((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),r=20+42*Math.sqrt((+d.mean_theta||0)/mx);return{d,i,x,y,r,meanTheta:+d.mean_theta||0}});const selectTopic=p=>{topicSelect.value=p.d.topic;draw()};pts.slice().sort((a,b)=>((a.d.topic===sel)?1:0)-((b.d.topic===sel)?1:0)||b.r-a.r).forEach(p=>{const isSel=p.d.topic===sel,c=el('circle',{cx:p.x,cy:p.y,r:p.r,fill:color(p.d.topic),opacity:isSel?0.9:0.42,stroke:isSel?'#111':'#fff','stroke-width':isSel?5:2.2,style:'cursor:pointer'});c.addEventListener('click',()=>selectTopic(p));c.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,p.d.topic+'\\nmean document-to-topic probability: '+p.meanTheta.toFixed(4)));c.addEventListener('mouseout',()=>mdsTooltip.style.display='none');mdsLayer.appendChild(c)});const labels=pts.map(p=>{const text=String(p.d.topic).replace('Topic','');return{p,text,x:p.x,y:p.y,ax:p.x,ay:p.y,w:Math.max(34,text.length*labelNum*.72+18),h:labelNum+18,displaced:false}});function clampLabel(a){a.x=Math.max(a.w/2+8,Math.min(w-a.w/2-8,a.x));a.y=Math.max(a.h/2+8,Math.min(h-a.h/2-8,a.y))}function setOutward(a,extra){let dx=a.p.x-cx,dy=a.p.y-cy,len=Math.hypot(dx,dy);if(len<1){const ang=(a.p.i+1)*2.399963;dx=Math.cos(ang);dy=Math.sin(ang);len=1}const gap=a.p.r+42+(extra||0);a.ax=Math.max(a.w/2+8,Math.min(w-a.w/2-8,a.p.x+dx/len*gap));a.ay=Math.max(a.h/2+8,Math.min(h-a.h/2-8,a.p.y+dy/len*gap));if(!a.displaced){a.x=a.ax;a.y=a.ay}a.displaced=true}function overlaps(a,b,pad){return Math.abs(a.x-b.x)<(a.w+b.w)/2+pad&&Math.abs(a.y-b.y)<(a.h+b.h)/2+pad}for(let i=0;i<labels.length;i++){for(let j=i+1;j<labels.length;j++){if(overlaps(labels[i],labels[j],10)){setOutward(labels[i],(i%3)*8);setOutward(labels[j],(j%3)*8)}}}for(let iter=0;iter<120;iter++){labels.forEach(a=>{a.x+=(a.ax-a.x)*(a.displaced?.055:.06);a.y+=(a.ay-a.y)*(a.displaced?.055:.06);clampLabel(a)});for(let i=0;i<labels.length;i++){for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j],ox=(a.w+b.w)/2+10-Math.abs(a.x-b.x),oy=(a.h+b.h)/2+10-Math.abs(a.y-b.y);if(ox>0&&oy>0){if(!a.displaced&&!b.displaced){setOutward(a,(i%3)*8);setOutward(b,(j%3)*8)}let dx=a.x-b.x,dy=a.y-b.y;if(Math.abs(dx)<.1&&Math.abs(dy)<.1){dx=(a.p.i<=b.p.i?-1:1);dy=((a.p.i+b.p.i)%2?-1:1)}const len=Math.max(.1,Math.hypot(dx,dy)),push=Math.min(ox,oy)*.22;if(a.displaced&&b.displaced){a.x+=dx/len*push;a.y+=dy/len*push;b.x-=dx/len*push;b.y-=dy/len*push}else if(a.displaced){a.x+=dx/len*push*1.5;a.y+=dy/len*push*1.5}else if(b.displaced){b.x-=dx/len*push*1.5;b.y-=dy/len*push*1.5}clampLabel(a);clampLabel(b)}}}}labels.forEach(a=>{const p=a.p,dx=a.x-p.x,dy=a.y-p.y,dist=Math.hypot(dx,dy),moved=a.displaced&&dist>Math.max(10,p.r*.32);if(moved){const len=Math.max(1,dist),x1=p.x+dx/len*p.r,y1=p.y+dy/len*p.r,line=el('line',{x1:x1,y1:y1,x2:a.x,y2:a.y,class:'mdsLeader'});line.addEventListener('click',()=>selectTopic(p));mdsLayer.appendChild(line)}const t=el('text',{x:a.x,y:a.y+labelNum*.18,'text-anchor':'middle',class:'mdsLabel','font-size':labelSize,style:'cursor:pointer'});t.textContent=a.text;t.addEventListener('click',()=>selectTopic(p));t.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,p.d.topic+'\\nmean document-to-topic probability: '+p.meanTheta.toFixed(4)));t.addEventListener('mouseout',()=>mdsTooltip.style.display='none');mdsLayer.appendChild(t)});document.getElementById('mdsStats').textContent=TOPICS.length+' topics'}",
-    "function drawWaterfall(){waterfallLayer.replaceChildren();const topic=topicSelect.value,allRows=WATERFALL.filter(d=>d.topic===topic).sort((a,b)=>Number(b.theta_mean)-Number(a.theta_mean)),rows=allRows.slice(0,25),w=980,h=760,left=520,right=36,top=96,axisY=62,labelY=52,titleY=28,labelSize=svgFontSize(waterfallSvg,10),smallSize=svgFontSize(waterfallSvg,9),maxVal=Math.max(...WATERFALL.map(d=>Number(d.theta_mean)).filter(Number.isFinite),.001),rawTick=maxVal/4,tickPow=Math.pow(10,Math.floor(Math.log10(rawTick))),tickStep=([1,2,5,10].map(v=>v*tickPow).find(v=>rawTick<=v)||10*tickPow),axisMax=Math.max(tickStep,Math.ceil(maxVal/tickStep)*tickStep,.001),ticks=[],plotW=w-left-right,rowH=Math.max(14,Math.min(26,(h-58-top-10)/Math.max(1,rows.length))),fmt=v=>{const x=Math.abs(Number(v));if(!Number.isFinite(x)||x===0)return'0';if(x>=1)return Number(v).toFixed(2).replace(/\\.?0+$/,'');if(x>=.01)return Number(v).toFixed(3).replace(/\\.?0+$/,'');return Number(v).toExponential(1)},xval=v=>left+Math.max(0,Number(v||0))/axisMax*plotW;for(let tick=0;tick<=axisMax+tickStep*.25;tick+=tickStep)ticks.push(Number(tick.toPrecision(12)));ticks.forEach(t=>{const xx=xval(t);waterfallLayer.appendChild(el('line',{x1:xx,y1:top-6,x2:xx,y2:h-58,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32,'shape-rendering':'crispEdges'}));waterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=fmt(t)});waterfallLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,stroke:'#111','stroke-width':1.8,'shape-rendering':'crispEdges'}));waterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='Mean document-to-topic probability';rows.forEach((d,i)=>{const y=top+i*rowH,val=Number(d.theta_mean),bw=plotW*Math.max(0,val)/axisMax,label=String(d.display_label||d.comparison_label||'').replace(/_/g,' ');waterfallLayer.appendChild(el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:'#111'})).textContent=label.length>58?label.slice(0,56)+'..':label;const r=el('rect',{x:left,y:y+3,width:Math.max(1,bw),height:Math.max(4,rowH-7),fill:color(d.comparison_label||label),opacity:.9});r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,label+'\\nmean document-to-topic probability: '+val.toFixed(4)+'\\ndocs: '+d.n_docs));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');waterfallLayer.appendChild(r);const valueText=el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155'});if(left+bw+58>w-right)valueText.setAttribute('text-anchor','end');valueText.textContent=val.toFixed(3);waterfallLayer.appendChild(valueText)});document.getElementById('waterfallStats').textContent=rows.length+' of '+allRows.length+' groups'}",
+    "function exportStyle(){return 'text{font-family:Arial,Helvetica,sans-serif;font-weight:700}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#334155;stroke-width:1.4;opacity:.78}.mdsLabel{font-size:22px;font-weight:700;fill:#111;paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round}'}function exportSvgTitle(root,text,x,y,size){const t=el('text',{x:x,y:y,'font-size':size,'font-weight':700,fill:'#111'});t.textContent=text;root.appendChild(t)}function addExportPanel(root,src,title,x,y,w,h){exportSvgTitle(root,title,x,y+22,24);const clone=src.cloneNode(true);clone.setAttribute('x',x);clone.setAttribute('y',y+38);clone.setAttribute('width',w);clone.setAttribute('height',h-38);clone.setAttribute('preserveAspectRatio','xMidYMid meet');clone.removeAttribute('style');root.appendChild(clone)}function exportSvg(){draw();const root=el('svg',{xmlns:'http://www.w3.org/2000/svg',viewBox:'0 0 2480 1400',width:2480,height:1400});const style=el('style',{});style.textContent=exportStyle();root.appendChild(style);root.appendChild(el('rect',{x:0,y:0,width:2480,height:1400,fill:'#fff'}));exportSvgTitle(root,document.title||'Topic report',30,42,28);addExportPanel(root,mdsSvg,'Intertopic Distance Map',30,74,760,590);addExportPanel(root,waterfallSvg,'Condition Bar Plot',30,720,760,620);addExportPanel(root,pathSvg,'Pathways',830,74,1600,1266);const text=new XMLSerializer().serializeToString(root),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'topic_report').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
+    "function selectedTfSet(){return new Set(selectedTfUppers)}function hasSelectedTf(){return selectedTfUppers.length>0}function selectedTfKey(){return selectedTfUppers.slice().sort().join(',')}function selectedTfLabel(){return selectedTfUppers.join(', ')}function tfKeyFromInput(x){const raw=String(x||'').trim();if(!raw)return'';const up=raw.toUpperCase();if(tfLabelMap.has(up))return up;for(const [key,label] of tfLabelMap.entries()){if(String(label).toUpperCase()===up)return key}return''}function updateTfControls(){const keep=selectedTfSet();if(tfSelect)Array.from(tfSelect.options).forEach(o=>{o.selected=keep.has(o.value)});selectedTfUpper=selectedTfUppers[0]||'';if(clearTfButton)clearTfButton.style.display=hasSelectedTf()?'inline-block':'none'}function setSelectedTfs(vals){const seen=new Set(),out=[];(vals||[]).forEach(v=>{const k=tfKeyFromInput(v)||String(v||'').toUpperCase();if(k&&tfLabelMap.has(k)&&!seen.has(k)){seen.add(k);out.push(k)}});selectedTfUppers=out;updateTfControls();draw()}function setSelectedTf(tf){const k=tfKeyFromInput(tf)||String(tf||'').toUpperCase();if(!k||!tfLabelMap.has(k))return;const s=selectedTfSet();if(s.has(k))s.delete(k);else s.add(k);setSelectedTfs(Array.from(s))}function addTfFromSearch(){const k=tfKeyFromInput(tfSearchInput?tfSearchInput.value:'');if(k){const s=selectedTfSet();s.add(k);if(tfSearchInput)tfSearchInput.value='';setSelectedTfs(Array.from(s))}}function fillTfSelect(){const old=selectedTfUppers.slice(),seen=new Map();TF_TOPIC.forEach(d=>{const key=String(d.tf_upper||d.tf||'').toUpperCase();if(key&&!seen.has(key))seen.set(key,String(d.tf||key))});const rows=Array.from(seen.entries()).map(([key,label])=>({key,label})).sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.key.localeCompare(b.key));tfLabelMap=new Map(rows.map(d=>[d.key,d.label]));tfSelect.replaceChildren();if(tfOptionList)tfOptionList.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.key;o.textContent=d.label;tfSelect.appendChild(o);if(tfOptionList){const q=document.createElement('option');q.value=d.label;tfOptionList.appendChild(q)}});selectedTfUppers=old.filter(k=>tfLabelMap.has(k));updateTfControls()}",
+    "function selectedScopeLabel(){const opt=pathwayScopeSelect.options[pathwayScopeSelect.selectedIndex];return pathwayScopeSelect.value==='__overall__'?'Overall topic pathways':(opt?opt.textContent:pathwayScopeSelect.value)}function updateSelectedContext(){const x=document.getElementById('selectedContext');if(x)x.textContent='Selected: Topic '+topicNum(topicSelect.value)+' | '+selectedScopeLabel()}",
+    "function init(){TOPICS.sort((a,b)=>topicNum(a.topic)-topicNum(b.topic)).forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic);topicSelect.appendChild(o)});fillPathwayScopes();fillTfSelect();topicSelect.addEventListener('change',draw);paletteSelect.addEventListener('change',draw);pathwayScopeSelect.addEventListener('change',draw);tfSelect.addEventListener('change',()=>setSelectedTfs(Array.from(tfSelect.selectedOptions).map(o=>o.value)));if(tfSearchInput){tfSearchInput.addEventListener('change',addTfFromSearch);tfSearchInput.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();addTfFromSearch()}})}if(clearTfButton)clearTfButton.addEventListener('click',()=>setSelectedTfs([]));document.getElementById('exportSvgButton').addEventListener('click',exportSvg);draw()}",
+    "function drawTopic(){mdsLayer.replaceChildren();const w=900,h=620,p=86,labelSize=svgFontSize(mdsSvg,34),labelNum=Number(labelSize),sx=sc(TOPICS.map(d=>+d.MDS1),p,w-p),sy=sc(TOPICS.map(d=>+d.MDS2),h-p,p),mx=Math.max(...TOPICS.map(d=>+d.mean_theta||0),1e-6),sel=topicSelect.value,cx=w/2,cy=h/2;const pts=TOPICS.map((d,i)=>{const x=sx(+d.MDS1),y=sy(+d.MDS2),r=28+52*Math.sqrt((+d.mean_theta||0)/mx);return{d,i,x,y,r,meanTheta:+d.mean_theta||0}});const selectTopic=p=>{topicSelect.value=p.d.topic;draw()};pts.slice().sort((a,b)=>((a.d.topic===sel)?1:0)-((b.d.topic===sel)?1:0)||b.r-a.r).forEach(p=>{const isSel=p.d.topic===sel,c=el('circle',{cx:p.x,cy:p.y,r:p.r,fill:color(p.d.topic),opacity:isSel?0.9:0.42,stroke:isSel?'#111':'#fff','stroke-width':isSel?6:2.6,style:'cursor:pointer'});c.addEventListener('click',()=>selectTopic(p));c.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,p.d.topic+'\\nmean document-to-topic probability: '+p.meanTheta.toFixed(4)));c.addEventListener('mouseout',()=>mdsTooltip.style.display='none');mdsLayer.appendChild(c)});const labels=pts.map(p=>{const text=String(p.d.topic).replace('Topic','');return{p,text,x:p.x,y:p.y,ax:p.x,ay:p.y,w:Math.max(34,text.length*labelNum*.72+18),h:labelNum+18,displaced:false}});function clampLabel(a){a.x=Math.max(a.w/2+8,Math.min(w-a.w/2-8,a.x));a.y=Math.max(a.h/2+8,Math.min(h-a.h/2-8,a.y))}function setOutward(a,extra){let dx=a.p.x-cx,dy=a.p.y-cy,len=Math.hypot(dx,dy);if(len<1){const ang=(a.p.i+1)*2.399963;dx=Math.cos(ang);dy=Math.sin(ang);len=1}const gap=a.p.r+42+(extra||0);a.ax=Math.max(a.w/2+8,Math.min(w-a.w/2-8,a.p.x+dx/len*gap));a.ay=Math.max(a.h/2+8,Math.min(h-a.h/2-8,a.p.y+dy/len*gap));if(!a.displaced){a.x=a.ax;a.y=a.ay}a.displaced=true}function overlaps(a,b,pad){return Math.abs(a.x-b.x)<(a.w+b.w)/2+pad&&Math.abs(a.y-b.y)<(a.h+b.h)/2+pad}for(let i=0;i<labels.length;i++){for(let j=i+1;j<labels.length;j++){if(overlaps(labels[i],labels[j],10)){setOutward(labels[i],(i%3)*8);setOutward(labels[j],(j%3)*8)}}}for(let iter=0;iter<120;iter++){labels.forEach(a=>{a.x+=(a.ax-a.x)*(a.displaced?.055:.06);a.y+=(a.ay-a.y)*(a.displaced?.055:.06);clampLabel(a)});for(let i=0;i<labels.length;i++){for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j],ox=(a.w+b.w)/2+10-Math.abs(a.x-b.x),oy=(a.h+b.h)/2+10-Math.abs(a.y-b.y);if(ox>0&&oy>0){if(!a.displaced&&!b.displaced){setOutward(a,(i%3)*8);setOutward(b,(j%3)*8)}let dx=a.x-b.x,dy=a.y-b.y;if(Math.abs(dx)<.1&&Math.abs(dy)<.1){dx=(a.p.i<=b.p.i?-1:1);dy=((a.p.i+b.p.i)%2?-1:1)}const len=Math.max(.1,Math.hypot(dx,dy)),push=Math.min(ox,oy)*.22;if(a.displaced&&b.displaced){a.x+=dx/len*push;a.y+=dy/len*push;b.x-=dx/len*push;b.y-=dy/len*push}else if(a.displaced){a.x+=dx/len*push*1.5;a.y+=dy/len*push*1.5}else if(b.displaced){b.x-=dx/len*push*1.5;b.y-=dy/len*push*1.5}clampLabel(a);clampLabel(b)}}}}labels.forEach(a=>{const p=a.p,dx=a.x-p.x,dy=a.y-p.y,dist=Math.hypot(dx,dy),moved=a.displaced&&dist>Math.max(10,p.r*.32);if(moved){const len=Math.max(1,dist),x1=p.x+dx/len*p.r,y1=p.y+dy/len*p.r,line=el('line',{x1:x1,y1:y1,x2:a.x,y2:a.y,class:'mdsLeader'});line.addEventListener('click',()=>selectTopic(p));mdsLayer.appendChild(line)}const t=el('text',{x:a.x,y:a.y+labelNum*.18,'text-anchor':'middle',class:'mdsLabel','font-size':labelSize,style:'cursor:pointer'});t.textContent=a.text;t.addEventListener('click',()=>selectTopic(p));t.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,p.d.topic+'\\nmean document-to-topic probability: '+p.meanTheta.toFixed(4)));t.addEventListener('mouseout',()=>mdsTooltip.style.display='none');mdsLayer.appendChild(t)});document.getElementById('mdsStats').textContent=TOPICS.length+' topics'}",
+    "function currentTfTopicRows(){const topic=topicSelect.value,scope=pathwayScopeSelect.value,selSet=selectedTfSet();let rows=TF_TOPIC.filter(d=>d.topic===topic);function addSelected(top,sorted){selectedTfUppers.forEach(k=>{if(!top.some(d=>String(d.tf_upper||d.tf||'').toUpperCase()===k)){const sel=sorted.find(d=>String(d.tf_upper||d.tf||'').toUpperCase()===k);if(sel)top.push(sel)}});return top}if(scope&&scope!=='__overall__'){rows=rows.filter(d=>String(d.comparison_label||'')===String(scope));const sorted=rows.sort((a,b)=>(+b.theta)-(+a.theta)||String(a.tf||'').localeCompare(String(b.tf||''))),top=addSelected(sorted.slice(0,30),sorted);return top}const best=new Map();rows.forEach(d=>{const k=String(d.tf_upper||d.tf||'').toUpperCase();if(!k)return;const old=best.get(k);if(!old||(+d.theta)>(+old.theta))best.set(k,d)});const sorted=Array.from(best.values()).sort((a,b)=>(+b.theta)-(+a.theta)||String(a.tf||'').localeCompare(String(b.tf||''))),top=addSelected(sorted.slice(0,30),sorted);return top}",
+    "function drawTfWaterfall(){tfWaterfallLayer.replaceChildren();const rows=currentTfTopicRows(),selSet=selectedTfSet(),w=760,h=760,left=184,right=42,top=82,labelY=42,titleY=22,labelSize=svgFontSize(tfWaterfallSvg,12),smallSize=svgFontSize(tfWaterfallSvg,12),maxVal=Math.max(...rows.map(d=>+d.theta||0),.001),ticks=niceTicks(maxVal,5),axisMax=Math.max(...ticks,maxVal),plotW=w-left-right,rowH=Math.max(18,Math.min(34,(h-58-top-10)/Math.max(1,rows.length))),x=v=>left+Math.max(0,+v||0)/axisMax*plotW,selectRow=d=>setSelectedTf(d.tf_upper||d.tf||'');ticks.forEach(t=>{const xx=x(t);tfWaterfallLayer.appendChild(el('line',{x1:xx,y1:top-7,x2:xx,y2:h-56,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32}));tfWaterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=Number(t).toFixed(2).replace(/\\.?0+$/,'')});tfWaterfallLayer.appendChild(el('line',{x1:left,y1:56,x2:w-right,y2:56,stroke:'#111','stroke-width':1.8}));tfWaterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='TF theta for selected topic';rows.forEach((d,i)=>{const y=top+i*rowH,val=+d.theta||0,bw=x(val)-left,key=String(d.tf_upper||d.tf||'').toUpperCase(),isSel=selSet.has(key),label=String(d.tf||'TF'),shortLabel=label.length>18?label.slice(0,16)+'..':label,msg=label+'\\ntheta: '+val.toFixed(4)+'\\n'+String(d.display_label||d.comparison_label||'');const lab=el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:isSel?'#991b1b':'#111',style:'cursor:pointer'});lab.textContent=shortLabel;lab.addEventListener('click',()=>selectRow(d));lab.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));lab.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(lab);const r=el('rect',{x:left,y:y+4,width:Math.max(1,bw),height:Math.max(5,rowH-9),fill:isSel?'#dc2626':color(d.tf_upper||d.tf),opacity:isSel?.95:.76,stroke:isSel?'#111':'none','stroke-width':isSel?3:0,style:'cursor:pointer'});r.addEventListener('click',()=>selectRow(d));r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(r);const vt=el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155',style:'cursor:pointer'});vt.textContent=val.toFixed(3);vt.addEventListener('click',()=>selectRow(d));vt.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));vt.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(vt)});updateTfControls()}",
+    "function tfCountKey(d){return selectedTfKey()+'|'+String(d.comparison_label||d.comparison_id||'')+'|'+String(d.topic_num||d.topic||'')+'|'+String(d.pathway_key||d.pathway_norm_key||d.pathway||'')}function splitGenes(s){return String(s||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean)}function rowGeneSet(d){return new Set(splitGenes(d.genes||d.overlap_genes||''))}function contextMatchEdge(e,ctx,genes){return e.subgrn_context_id?e.subgrn_context_id===ctx.subgrn_context_id:(String(e.comparison_id||'')===String(ctx.comparison_id||'')&&String(e.direction||'')===String(ctx.direction||'')&&genes.has(String(e.gene_key||'')))}function countTfGenesInPayload(payload,ctx,row){const genes=rowGeneSet(row),allowed=subgrnGeneSet(ctx),tfSet=selectedTfSet();allowed.forEach(g=>genes.add(g));const out=new Set(),byTf=new Map(),edges=new Set();((payload&&payload.tf_gene_edges)||[]).forEach(e=>{const tf=String(e.tf_upper||e.tf||'').toUpperCase(),gene=String(e.gene_key||'');if(tfSet.has(tf)&&genes.has(gene)&&contextMatchEdge(e,ctx,genes)){out.add(gene);const rec=byTf.get(tf)||{tf:tf,label:tfLabelMap.get(tf)||String(e.tf||tf),genes:new Set()};rec.genes.add(gene);byTf.set(tf,rec);edges.add(tf+'\\t'+gene)}});const rows=Array.from(byTf.values()).map(r=>({tf:r.tf,label:r.label,genes:Array.from(r.genes).sort(),n:r.genes.size})).sort((a,b)=>b.n-a.n||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));return{genes:Array.from(out).sort(),byTf:rows,edgeN:edges.size}}function mergeTfSupport(parts){const genes=new Set(),byTf=new Map();let edgeN=0;(parts||[]).forEach(p=>{if(Array.isArray(p))p={genes:p,byTf:[],edgeN:0};(p.genes||[]).forEach(g=>genes.add(g));(p.byTf||[]).forEach(r=>{const key=String(r.tf||'').toUpperCase();if(!key)return;const rec=byTf.get(key)||{tf:key,label:r.label||tfLabelMap.get(key)||key,genes:new Set()};(r.genes||[]).forEach(g=>rec.genes.add(g));byTf.set(key,rec)});edgeN+=Number(p.edgeN)||0});const rows=Array.from(byTf.values()).map(r=>({tf:r.tf,label:r.label,genes:Array.from(r.genes).sort(),n:r.genes.size})).sort((a,b)=>b.n-a.n||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));const detail=[];if(rows.length)detail.push('Summary: '+genes.size+' unique target genes; '+rows.length+' selected TFs with hits; '+edgeN+' TF-target pairs');rows.forEach(r=>detail.push(r.label+' ('+r.n+'): '+r.genes.join(',')));return{n:genes.size,genes:detail.length?detail:Array.from(genes).sort(),target_genes:Array.from(genes).sort(),byTf:rows,tfN:rows.length,edgeN:edgeN}}function ensureTfPathwayCounts(rows){if(!hasSelectedTf())return;rows.forEach(d=>{const key=tfCountKey(d);if(tfPathwayCounts.has(key)||tfPathwayPending.has(key))return;const ctxs=subgrnContextRows(d);if(!ctxs.length){tfPathwayCounts.set(key,mergeTfSupport([]));return}tfPathwayPending.add(key);Promise.all(ctxs.map(ctx=>loadSubgrnPayload(ctx.payload_file).then(payload=>countTfGenesInPayload(payload,ctx,d)).catch(()=>({genes:[],byTf:[],edgeN:0})))).then(parts=>{tfPathwayCounts.set(key,mergeTfSupport(parts));tfPathwayPending.delete(key);drawPathways()})})}",
+    "function drawGroupWaterfall(){waterfallLayer.replaceChildren();const topic=topicSelect.value,allRows=WATERFALL.filter(d=>d.topic===topic).sort((a,b)=>Number(b.theta_mean)-Number(a.theta_mean)),rows=allRows.slice(0,25),w=760,h=760,left=345,right=30,top=96,axisY=62,labelY=52,titleY=28,labelSize=svgFontSize(waterfallSvg,10),smallSize=svgFontSize(waterfallSvg,9),maxVal=Math.max(...WATERFALL.map(d=>Number(d.theta_mean)).filter(Number.isFinite),.001),rawTick=maxVal/4,tickPow=Math.pow(10,Math.floor(Math.log10(rawTick))),tickStep=([1,2,5,10].map(v=>v*tickPow).find(v=>rawTick<=v)||10*tickPow),axisMax=Math.max(tickStep,Math.ceil(maxVal/tickStep)*tickStep,.001),ticks=[],plotW=w-left-right,rowH=Math.max(14,Math.min(26,(h-58-top-10)/Math.max(1,rows.length))),fmt=v=>{const x=Math.abs(Number(v));if(!Number.isFinite(x)||x===0)return'0';if(x>=1)return Number(v).toFixed(2).replace(/\\.?0+$/,'');if(x>=.01)return Number(v).toFixed(3).replace(/\\.?0+$/,'');return Number(v).toExponential(1)},xval=v=>left+Math.max(0,Number(v||0))/axisMax*plotW;for(let tick=0;tick<=axisMax+tickStep*.25;tick+=tickStep)ticks.push(Number(tick.toPrecision(12)));ticks.forEach(t=>{const xx=xval(t);waterfallLayer.appendChild(el('line',{x1:xx,y1:top-6,x2:xx,y2:h-58,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32,'shape-rendering':'crispEdges'}));waterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=fmt(t)});waterfallLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,stroke:'#111','stroke-width':1.8,'shape-rendering':'crispEdges'}));waterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='Mean document-to-topic probability';rows.forEach((d,i)=>{const y=top+i*rowH,val=Number(d.theta_mean),bw=plotW*Math.max(0,val)/axisMax,label=String(d.display_label||d.comparison_label||'').replace(/_/g,' ');waterfallLayer.appendChild(el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:'#111'})).textContent=label.length>58?label.slice(0,56)+'..':label;const r=el('rect',{x:left,y:y+3,width:Math.max(1,bw),height:Math.max(4,rowH-7),fill:color(d.comparison_label||label),opacity:.9});r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,label+'\\nmean document-to-topic probability: '+val.toFixed(4)+'\\ndocs: '+d.n_docs));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');waterfallLayer.appendChild(r);const valueText=el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155'});if(left+bw+58>w-right)valueText.setAttribute('text-anchor','end');valueText.textContent=val.toFixed(3);waterfallLayer.appendChild(valueText)});document.getElementById('waterfallStats').textContent=rows.length+' of '+allRows.length+' groups'}",
     "function niceTicks(maxVal,n){const out=[];if(!Number.isFinite(maxVal)||maxVal<=0)return[0,1];const raw=maxVal/Math.max(1,n),pow=Math.pow(10,Math.floor(Math.log10(raw))),step=([1,2,5,10].map(v=>v*pow).find(v=>raw<=v)||10*pow);for(let x=0;x<=maxVal+step*.5;x+=step)out.push(x);return out}",
+    "function fillPathwayScopes(){pathwayScopeSelect.replaceChildren();const o=document.createElement('option');o.value='__overall__';o.textContent='Overall topic pathways';pathwayScopeSelect.appendChild(o);const seen=new Map();PATHWAYS_CONDITION.forEach(d=>{const id=String(d.comparison_label||d.comparison_id||'');if(!id||seen.has(id))return;seen.set(id,String(d.display_label||d.comparison_label||d.comparison_id||id))});Array.from(seen.entries()).map(([id,label])=>({id,label})).sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id)).forEach(d=>{const opt=document.createElement('option');opt.value=d.id;opt.textContent=d.label;pathwayScopeSelect.appendChild(opt)})}",
+    "function selectedPathways(){const scope=pathwayScopeSelect.value;if(scope&&scope!=='__overall__'&&PATHWAYS_CONDITION.length)return PATHWAYS_CONDITION.filter(d=>String(d.comparison_label||d.comparison_id||'')===scope);return PATHWAYS_TOPIC.length?PATHWAYS_TOPIC:PATHWAYS_CONDITION}",
     "function wrapWords(s,maxChars,maxLines){const words=String(s||'').split(/\\s+/),lines=[];let line='';words.forEach(w=>{const next=line?line+' '+w:w;if(next.length>maxChars&&line){lines.push(line);line=w}else line=next});if(line)lines.push(line);if(lines.length>maxLines){lines.length=maxLines;lines[maxLines-1]=lines[maxLines-1].slice(0,Math.max(0,maxChars-2))+'..'}return lines}",
     "function addWrappedLabel(layer,text,x,y,maxChars,maxLines,lineHeight,fontSize,cls){const t=el('text',{x:x,y:y,'text-anchor':'end',class:cls||'pathLabel','font-size':fontSize});wrapWords(text,maxChars,maxLines).forEach((line,i)=>{const sp=el('tspan',{x:x,dy:i===0?0:lineHeight});sp.textContent=line;t.appendChild(sp)});layer.appendChild(t);return t}",
-    "function drawPathways(){pathLayer.replaceChildren();const tn=topicNum(topicSelect.value),rows=PATHWAYS.filter(d=>+d.topic_num===tn||+d.topic===tn).sort((a,b)=>(+a.padj)-(+b.padj)).slice(0,30),topicMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic)});document.getElementById('pathStats').textContent=rows.length+' rows';const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!rows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathways passed the display filter for this topic.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),cls=(topicMap.get(String(d.pathway||''))||new Set()).size===1?'pathLabel pathLabelTopicSpecific':'pathLabel';const lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls);const inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),marker=el('line',{x1:x(inside),y1:y-1,x2:x(inside),y2:y+barH+1,stroke:'#7f1d1d','stroke-width':1.2}),msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+'\\nGenes: '+String(d.genes||'');[rin,rout,marker,lab].forEach(node=>{node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout);pathLayer.appendChild(marker)})}",
-    "function draw(){drawTopic();drawWaterfall();drawPathways()}init();",
+    "function drawPathways(){pathLayer.replaceChildren();const activePathways=selectedPathways(),tn=topicNum(topicSelect.value),allRows=activePathways.filter(d=>+d.topic_num===tn||+d.topic===tn),rows=allRows.slice().sort((a,b)=>(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||''))).slice(0,30),topicMap=new Map();activePathways.forEach(d=>{const k=String(d.pathway||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic)});const scope=pathwayScopeSelect.value==='__overall__'?'overall topic pathways':'selected condition';document.getElementById('pathStats').textContent=rows.length+' of '+allRows.length+' rows for Topic '+tn+' in '+scope;const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!allRows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathway rows are available for this topic and pathway scope.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),cls=(topicMap.get(String(d.pathway||''))||new Set()).size===1?'pathLabel pathLabelTopicSpecific':'pathLabel';const lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls);const inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),marker=el('line',{x1:x(inside),y1:y-1,x2:x(inside),y2:y+barH+1,stroke:'#7f1d1d','stroke-width':1.2}),msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+'\\nGenes: '+String(d.genes||'');[rin,rout,marker,lab].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>openSubgrn(d));node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout);pathLayer.appendChild(marker)})}",
+    "function drawPathways(){pathLayer.replaceChildren();const activePathways=selectedPathways(),tn=topicNum(topicSelect.value),allRows=activePathways.filter(d=>+d.topic_num===tn||+d.topic===tn),baseRows=allRows.slice().sort((a,b)=>(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||''))).slice(0,30);ensureTfPathwayCounts(baseRows);let rows=baseRows;if(hasSelectedTf()){rows=baseRows.slice().sort((a,b)=>((tfPathwayCounts.get(tfCountKey(b))||{n:0}).n-(tfPathwayCounts.get(tfCountKey(a))||{n:0}).n)||((tfPathwayCounts.get(tfCountKey(b))||{tfN:0}).tfN-(tfPathwayCounts.get(tfCountKey(a))||{tfN:0}).tfN)||(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||'')))}const topicMap=new Map();activePathways.forEach(d=>{const k=String(d.pathway||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic)});const scope=pathwayScopeSelect.value==='__overall__'?'overall topic pathways':'selected condition';document.getElementById('pathStats').textContent=rows.length+' of '+allRows.length+' rows for Topic '+tn+' in '+scope+(hasSelectedTf()?' | selected TF target genes and per-TF counts shown':'');const w=1500,h=980,left=770,right=110,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!allRows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent='No pathway rows are available for this topic and pathway scope.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';if(hasSelectedTf())pathLayer.appendChild(el('text',{x:w-8,y:h-22,'text-anchor':'end',class:'pathLegendText'})).textContent=selectedTfUppers.length>1?'TF genes/TFs':'TF targets';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),cls=(topicMap.get(String(d.pathway||''))||new Set()).size===1?'pathLabel pathLabelTopicSpecific':'pathLabel',support=hasSelectedTf()?(tfPathwayCounts.get(tfCountKey(d))||{n:0,genes:[],tfN:0,edgeN:0}):null;const lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls);const inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),marker=el('line',{x1:x(inside),y1:y-1,x2:x(inside),y2:y+barH+1,stroke:'#7f1d1d','stroke-width':1.2}),extra=support?'\\nSelected TFs: '+selectedTfLabel()+'\\nUnique selected-TF target genes in pathway: '+support.n+'\\nSelected TFs with hits: '+(Number(support.tfN)||0)+' / '+selectedTfUppers.length+'\\nTF-target pairs represented: '+(Number(support.edgeN)||0)+(support.genes&&support.genes.length?'\\nPer-TF target genes: '+support.genes.join('; '):''):'',msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+extra+'\\nGenes: '+String(d.genes||'');[rin,rout,marker,lab].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>openSubgrn(d));node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout);pathLayer.appendChild(marker);if(support){const n=Number(support.n)||0,tfN=Number(support.tfN)||0,badgeText=selectedTfUppers.length>1?String(n)+'/'+String(tfN):String(n);if(n>0){const badge=el('rect',{x:w-72,y:y-2,width:64,height:barH+4,rx:8,fill:'#dc2626',stroke:'#7f1d1d','stroke-width':1.4,opacity:.95,style:'cursor:pointer'});badge.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));badge.addEventListener('mouseout',()=>pathTooltip.style.display='none');badge.addEventListener('click',()=>openSubgrn(d));pathLayer.appendChild(badge);rin.setAttribute('stroke','#dc2626');rin.setAttribute('stroke-width',2.4);rout.setAttribute('stroke','#dc2626');rout.setAttribute('stroke-width',1.6)}const ct=el('text',{x:w-40,y:y+barH*.78,'text-anchor':'middle','font-size':15,'font-weight':700,fill:n>0?'#fff':'#94a3b8',style:'cursor:pointer'});ct.textContent=badgeText;ct.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));ct.addEventListener('mouseout',()=>pathTooltip.style.display='none');ct.addEventListener('click',()=>openSubgrn(d));pathLayer.appendChild(ct)}})}",
+    .m3tb_subgrn_js(),
+    "function draw(){updateSelectedContext();drawTopic();drawTfWaterfall();drawGroupWaterfall();drawPathways()}init();",
     "</script></body></html>"
   )
+  html <- .m3tb_polish_topic_report_html(html)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
   writeLines(html, out_html, useBytes = TRUE)
   out_html
@@ -2256,40 +2510,81 @@
   p
 }
 
-.m3tb_condition_report_html <- function(title, group_mds, group_topic, pathways, out_html, mds_svg_src = NULL) {
+.m3tb_condition_report_html <- function(title,
+                                        group_mds,
+                                        group_topic,
+                                        tf_topic = NULL,
+                                        pathways,
+                                        out_html,
+                                        mds_svg_src = NULL,
+                                        subgrn_manifest = NULL,
+                                        subgrn_payload_base = "../../pathway_subgrn_payloads") {
   group_json <- .m3tb_json_for_html(group_mds)
   topic_json <- .m3tb_json_for_html(group_topic)
+  if (is.null(tf_topic)) tf_topic <- data.table::data.table()
+  tf_topic_json <- .m3tb_json_for_html(tf_topic)
   pathway_json <- .m3tb_json_for_html(pathways)
+  if (is.null(subgrn_manifest)) subgrn_manifest <- .m3tb_subgrn_empty_manifest()
+  subgrn_json <- .m3tb_json_for_html(subgrn_manifest)
   mds_img <- "<div class=\"tooltip\" id=\"mdsTooltip\"></div><svg id=\"mdsSvg\" viewBox=\"0 0 980 680\"><g id=\"mdsLayer\"></g></svg>"
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
-    "<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:48px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 12px;box-sizing:border-box}h1{font-size:18px;line-height:1.05;margin:0}.meta{font-size:11px;color:#475569;line-height:1.1}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}select,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}.grid{height:calc(100vh - 48px);display:grid;grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr);gap:8px;padding:8px;box-sizing:border-box}.left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}.paneHead{padding:8px 10px;border-bottom:1px solid #e5e5df;display:flex;justify-content:space-between;gap:8px;align-items:center}.pane h2{font-size:20px;line-height:1.05;margin:0}.body{position:relative;flex:1;min-height:0}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:380px;line-height:1.35;z-index:5}body.embed .top{display:none}body.embed .grid{height:100vh}svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.mdsLeader{stroke:#555;stroke-width:1.1;opacity:.65}.mdsPointHit{cursor:pointer;fill:transparent;stroke:transparent;pointer-events:all}.mdsLabel{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round;cursor:pointer}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:52px}.grid{height:calc(100vh - 52px)}}</style>",
+    paste0("<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:48px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 12px;box-sizing:border-box}h1{font-size:18px;line-height:1.05;margin:0}.meta{font-size:11px;color:#475569;line-height:1.1}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}select,input,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}.grid{height:calc(100vh - 48px);display:grid;grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr);gap:8px;padding:8px;box-sizing:border-box}.left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}.paneHead{padding:8px 10px;border-bottom:1px solid #e5e5df;display:flex;justify-content:space-between;gap:8px;align-items:center}.pane h2{font-size:20px;line-height:1.05;margin:0}.barControls{display:flex;gap:8px;align-items:center;white-space:nowrap}.barControls select{max-width:180px}.barControls input{width:130px}.barControls select[multiple]{height:46px;min-width:130px}.body{position:relative;flex:1;min-height:0}.splitWaterfall{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);height:100%;min-height:0}.splitSide{position:relative;min-width:0;min-height:0}.splitSide:first-child{border-right:1px solid #e5e5df}.clearTf{display:none;margin-left:8px;padding:3px 6px;font-size:11px}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:380px;line-height:1.35;z-index:5}body.embed .top{display:none}body.embed .grid{height:100vh}svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.mdsLeader{stroke:#555;stroke-width:1.7;opacity:.75}.mdsPointHit{cursor:pointer;fill:transparent;stroke:transparent;pointer-events:all}.mdsLabel{paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round;cursor:pointer}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}", .m3tb_subgrn_css(), "@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:52px}.grid{height:calc(100vh - 52px)}}</style>"),
     "</head><body><div class=\"top\">",
     paste0("<h1>", .m3tb_html_escape(title), "</h1>"),
     "<div class=\"controls\"><label>Condition/comparison <select id=\"groupSelect\"></select></label><label>Topic <select id=\"topicSelect\"></select></label><button id=\"exportSvgButton\">Export SVG</button></div></div>",
-    paste0("<main class=\"grid\"><div class=\"left\"><section class=\"pane\"><div class=\"paneHead\"><h2>Condition/Comparison MDS</h2><span id=\"mdsStats\" class=\"meta\"></span></div><div class=\"body\">", mds_img, "</div><div class=\"note\">Dots are condition/comparison mean document-to-topic probability profiles (theta) using Jensen-Shannon distance.</div></section><section class=\"pane\"><div class=\"paneHead\"><h2>Topic Waterfall</h2><span id=\"waterfallStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"wfTooltip\"></div><svg id=\"waterfallSvg\" viewBox=\"0 0 980 760\"><g id=\"waterfallLayer\"></g></svg></div><div class=\"note\">Bars are topics ranked by document-to-topic probability for the selected condition/comparison.</div></section></div><section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><span id=\"pathStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"pathTooltip\"></div><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"><g id=\"pathLayer\"></g></svg></div><div class=\"note\">Full per-comparison pathway table is embedded for the selected method and K; the plot displays the top 30 rows for the selected comparison and topic ranked by adjusted p-value. Pathway name colors: red = topic-specific, blue = condition/comparison-specific, purple = both.</div></section></main>"),
+    paste0("<main class=\"grid\"><div class=\"left\"><section class=\"pane\"><div class=\"paneHead\"><h2>Condition/Comparison MDS</h2><span id=\"mdsStats\" class=\"meta\"></span></div><div class=\"body\">", mds_img, "</div><div class=\"note\">Dots are condition/comparison mean document-to-topic probability profiles (theta) using Jensen-Shannon distance.</div></section><section class=\"pane\"><div class=\"paneHead\"><h2>Topic Bar Plots</h2><div class=\"barControls\"><label>TF <input id=\"tfSearchInput\" list=\"tfOptionList\" placeholder=\"Type TF\"/><datalist id=\"tfOptionList\"></datalist></label><label>Selected <select id=\"tfSelect\" multiple size=\"3\"></select></label><span id=\"waterfallStats\" class=\"meta\"></span><button id=\"clearTfButton\" class=\"clearTf\" type=\"button\">Clear TF</button></div></div><div class=\"body\"><div class=\"tooltip\" id=\"wfTooltip\"></div><div class=\"splitWaterfall\"><div class=\"splitSide\"><svg id=\"tfWaterfallSvg\" viewBox=\"0 0 760 760\"><g id=\"tfWaterfallLayer\"></g></svg></div><div class=\"splitSide\"><svg id=\"waterfallSvg\" viewBox=\"0 0 760 760\"><g id=\"waterfallLayer\"></g></svg></div></div></div><div class=\"note\">Left: TF theta for the selected topic. Right: topics for the selected condition; selecting TFs ranks topics by their mean TF theta.</div></section></div><section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><span id=\"pathStats\" class=\"meta\"></span></div><div class=\"body\"><div class=\"tooltip\" id=\"pathTooltip\"></div><svg id=\"pathSvg\" viewBox=\"0 0 1500 980\"><g id=\"pathLayer\"></g></svg>", .m3tb_subgrn_html_panel(), "</div><div class=\"note\">Full per-condition or per-comparison pathway table is embedded for the selected method and K; the plot displays the top 30 rows for the selected group and topic ranked by adjusted p-value. Pathway name colors: red = topic-specific, blue = condition/comparison-specific, purple = both. Click a pathway bar to open the sub-GRN browser.</div></section></main>"),
     "<script>",
     paste0("const GROUP_MDS=", group_json, ";"),
     paste0("const GROUP_TOPIC=", topic_json, ";"),
+    paste0("const TF_TOPIC=", tf_topic_json, ";"),
     paste0("const PATHWAYS=", pathway_json, ";"),
+    paste0("const SUBGRN_MANIFEST=", subgrn_json, ";"),
+    paste0("const SUBGRN_PAYLOAD_BASE=", jsonlite::toJSON(subgrn_payload_base, auto_unbox = TRUE), ";"),
     "if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');",
-    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#FF9DA7','#9C755F','#BAB0AC','#1F77B4','#D62728'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),mdsSvg=document.getElementById('mdsSvg'),mdsExportSvg=null,waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg'),mdsLayer=document.getElementById('mdsLayer'),waterfallLayer=document.getElementById('waterfallLayer'),pathLayer=document.getElementById('pathLayer'),mdsTooltip=document.getElementById('mdsTooltip'),wfTooltip=document.getElementById('wfTooltip'),pathTooltip=document.getElementById('pathTooltip');function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function tooltip(tt,ev,text){tt.innerHTML=esc(text).replace(/\\n/g,'<br/>');tt.style.display='block';tt.style.left=(ev.offsetX+12)+'px';tt.style.top=(ev.offsetY+12)+'px'}function svgFontSize(svg,targetPx){if(!svg)return String(targetPx);const m=svg.getScreenCTM();const s=m?Math.sqrt(Math.abs(m.a*m.d)):1;return Math.max(1,targetPx/Math.max(s,0.001)).toFixed(2)}function color(i){return PAL[i%PAL.length]}function groupColor(d,i){const c=String(d.color||'');return /^#[0-9A-Fa-f]{6}$/.test(c)?c:color(i)}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}function isDownGroup(d){const s=String(d.comparison_label||'')+' '+String(d.display_label||'')+' '+String(d.group_label||'');return Number(d.shape_value)===25||/Target-Down|\\bDown\\b/i.test(s)}",
+    "const PAL=['#4E79A7','#F28E2B','#59A14F','#E15759','#B07AA1','#76B7B2','#EDC948','#FF9DA7','#9C755F','#BAB0AC','#1F77B4','#D62728'];const groupSelect=document.getElementById('groupSelect'),topicSelect=document.getElementById('topicSelect'),tfSelect=document.getElementById('tfSelect'),tfSearchInput=document.getElementById('tfSearchInput'),tfOptionList=document.getElementById('tfOptionList'),mdsSvg=document.getElementById('mdsSvg'),mdsExportSvg=null,tfWaterfallSvg=document.getElementById('tfWaterfallSvg'),waterfallSvg=document.getElementById('waterfallSvg'),pathSvg=document.getElementById('pathSvg'),mdsLayer=document.getElementById('mdsLayer'),tfWaterfallLayer=document.getElementById('tfWaterfallLayer'),waterfallLayer=document.getElementById('waterfallLayer'),pathLayer=document.getElementById('pathLayer'),mdsTooltip=document.getElementById('mdsTooltip'),wfTooltip=document.getElementById('wfTooltip'),pathTooltip=document.getElementById('pathTooltip'),clearTfButton=document.getElementById('clearTfButton');let selectedTfUppers=[],selectedTfUpper='',tfLabelMap=new Map();const tfPathwayCounts=new Map(),tfPathwayPending=new Set();function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;')}function el(n,a){const x=document.createElementNS('http://www.w3.org/2000/svg',n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function sc(vals,lo,hi){const xs=vals.map(Number).filter(Number.isFinite),a=Math.min(...xs),b=Math.max(...xs);return v=>!Number.isFinite(Number(v))||a===b?(lo+hi)/2:lo+(Number(v)-a)/(b-a)*(hi-lo)}function tooltip(tt,ev,text){tt.innerHTML=esc(text).replace(/\\n/g,'<br/>');tt.style.display='block';tt.style.left=(ev.offsetX+12)+'px';tt.style.top=(ev.offsetY+12)+'px'}function svgFontSize(svg,targetPx){if(!svg)return String(targetPx);const m=svg.getScreenCTM();const s=m?Math.sqrt(Math.abs(m.a*m.d)):1;return Math.max(1,targetPx/Math.max(s,0.001)).toFixed(2)}function color(i){return PAL[i%PAL.length]}function groupColor(d,i){const c=String(d.color||'');return /^#[0-9A-Fa-f]{6}$/.test(c)?c:color(i)}function topicNum(t){return Number(String(t).replace(/^Topic/,''))}function isDownGroup(d){const s=String(d.comparison_label||'')+' '+String(d.display_label||'')+' '+String(d.group_label||'');return Number(d.shape_value)===25||/Target-Down|\\bDown\\b/i.test(s)}",
     "function selectGroup(id){groupSelect.value=id;fillTopics();draw()}",
     "function selectedGroupRows(){return GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>Number(b.theta_mean)-Number(a.theta_mean)||Number(a.topic_num)-Number(b.topic_num))}",
     "function topicHasPathwayForGroup(topic,grp){const tn=topicNum(topic),hasGroupPath=PATHWAYS.some(d=>String(d.comparison_label||'')!=='');return PATHWAYS.some(d=>(+d.topic_num===tn||+d.topic===tn)&&(!hasGroupPath||String(d.comparison_label||'')===grp))}",
-    "function exportStyle(){return 'text{font-family:Arial,Helvetica,sans-serif;font-weight:700}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#555;stroke-width:1.1;opacity:.65}'}function exportSvgTitle(root,text,x,y,size){const t=el('text',{x:x,y:y,'font-size':size,'font-weight':700,fill:'#111'});t.textContent=text;root.appendChild(t)}function addExportPanel(root,src,title,x,y,w,h){exportSvgTitle(root,title,x,y+22,24);if(src&&src.tagName&&src.tagName.toLowerCase()==='svg'){const clone=src.cloneNode(true);clone.setAttribute('x',x);clone.setAttribute('y',y+38);clone.setAttribute('width',w);clone.setAttribute('height',h-38);clone.setAttribute('preserveAspectRatio','xMidYMid meet');clone.removeAttribute('style');root.appendChild(clone);return}if(src&&src.getAttribute){const img=el('image',{x:x,y:y+38,width:w,height:h-38,preserveAspectRatio:'xMidYMid meet'});img.setAttributeNS('http://www.w3.org/1999/xlink','href',src.getAttribute('src')||'');img.setAttribute('href',src.getAttribute('src')||'');root.appendChild(img)}}function exportSvg(){draw();const root=el('svg',{xmlns:'http://www.w3.org/2000/svg',viewBox:'0 0 2480 1400',width:2480,height:1400});const style=el('style',{});style.textContent=exportStyle();root.appendChild(style);root.appendChild(el('rect',{x:0,y:0,width:2480,height:1400,fill:'#fff'}));exportSvgTitle(root,document.title||'Condition topic report',30,42,28);addExportPanel(root,mdsExportSvg||mdsSvg,'Condition/Comparison MDS',30,74,760,590);addExportPanel(root,waterfallSvg,'Topic Waterfall',30,720,760,620);addExportPanel(root,pathSvg,'Pathways',830,74,1600,1266);const text=new XMLSerializer().serializeToString(root),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'condition_topic_report').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
-    "function init(){GROUP_MDS.forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});if(GROUP_MDS.length)groupSelect.value=GROUP_MDS[0].comparison_label;groupSelect.addEventListener('change',()=>selectGroup(groupSelect.value));topicSelect.addEventListener('change',draw);document.getElementById('exportSvgButton').addEventListener('click',exportSvg);fillTopics();draw()}",
+    "function selectedGroupLabel(){const opt=groupSelect.options[groupSelect.selectedIndex];return opt?opt.textContent:groupSelect.value}function updateSelectedContext(){const x=document.getElementById('selectedContext');if(x)x.textContent='Selected: '+selectedGroupLabel()+' | Topic '+topicNum(topicSelect.value)}",
+    "function exportStyle(){return 'text{font-family:Arial,Helvetica,sans-serif;font-weight:700}.label{font-size:12px;font-weight:700}.small{font-size:10px}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}.mdsLeader{stroke:#555;stroke-width:1.1;opacity:.65}'}function exportSvgTitle(root,text,x,y,size){const t=el('text',{x:x,y:y,'font-size':size,'font-weight':700,fill:'#111'});t.textContent=text;root.appendChild(t)}function addExportPanel(root,src,title,x,y,w,h){exportSvgTitle(root,title,x,y+22,24);if(src&&src.tagName&&src.tagName.toLowerCase()==='svg'){const clone=src.cloneNode(true);clone.setAttribute('x',x);clone.setAttribute('y',y+38);clone.setAttribute('width',w);clone.setAttribute('height',h-38);clone.setAttribute('preserveAspectRatio','xMidYMid meet');clone.removeAttribute('style');root.appendChild(clone);return}if(src&&src.getAttribute){const img=el('image',{x:x,y:y+38,width:w,height:h-38,preserveAspectRatio:'xMidYMid meet'});img.setAttributeNS('http://www.w3.org/1999/xlink','href',src.getAttribute('src')||'');img.setAttribute('href',src.getAttribute('src')||'');root.appendChild(img)}}function exportSvg(){draw();const root=el('svg',{xmlns:'http://www.w3.org/2000/svg',viewBox:'0 0 2480 1400',width:2480,height:1400});const style=el('style',{});style.textContent=exportStyle();root.appendChild(style);root.appendChild(el('rect',{x:0,y:0,width:2480,height:1400,fill:'#fff'}));exportSvgTitle(root,document.title||'Condition topic report',30,42,28);addExportPanel(root,mdsExportSvg||mdsSvg,'Condition/Comparison MDS',30,74,760,590);addExportPanel(root,waterfallSvg,'Topic Bar Plot',30,720,760,620);addExportPanel(root,pathSvg,'Pathways',830,74,1600,1266);const text=new XMLSerializer().serializeToString(root),blob=new Blob([text],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(document.title||'condition_topic_report').replace(/[^A-Za-z0-9_.-]+/g,'_')+'.svg';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}",
+    "function selectedTfSet(){return new Set(selectedTfUppers)}function hasSelectedTf(){return selectedTfUppers.length>0}function selectedTfKey(){return selectedTfUppers.slice().sort().join(',')}function selectedTfLabel(){return selectedTfUppers.join(', ')}function tfKeyFromInput(x){const raw=String(x||'').trim();if(!raw)return'';const up=raw.toUpperCase();if(tfLabelMap.has(up))return up;for(const [key,label] of tfLabelMap.entries()){if(String(label).toUpperCase()===up)return key}return''}function updateTfControls(){const keep=selectedTfSet();if(tfSelect)Array.from(tfSelect.options).forEach(o=>{o.selected=keep.has(o.value)});selectedTfUpper=selectedTfUppers[0]||'';if(clearTfButton)clearTfButton.style.display=hasSelectedTf()?'inline-block':'none'}function setSelectedTfs(vals){const seen=new Set(),out=[];(vals||[]).forEach(v=>{const k=tfKeyFromInput(v)||String(v||'').toUpperCase();if(k&&tfLabelMap.has(k)&&!seen.has(k)){seen.add(k);out.push(k)}});selectedTfUppers=out;updateTfControls();draw()}function setSelectedTf(tf){const k=tfKeyFromInput(tf)||String(tf||'').toUpperCase();if(!k||!tfLabelMap.has(k))return;const s=selectedTfSet();if(s.has(k))s.delete(k);else s.add(k);setSelectedTfs(Array.from(s))}function addTfFromSearch(){const k=tfKeyFromInput(tfSearchInput?tfSearchInput.value:'');if(k){const s=selectedTfSet();s.add(k);if(tfSearchInput)tfSearchInput.value='';setSelectedTfs(Array.from(s))}}function fillTfSelect(){const old=selectedTfUppers.slice(),seen=new Map();TF_TOPIC.forEach(d=>{const key=String(d.tf_upper||d.tf||'').toUpperCase();if(key&&!seen.has(key))seen.set(key,String(d.tf||key))});const rows=Array.from(seen.entries()).map(([key,label])=>({key,label})).sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.key.localeCompare(b.key));tfLabelMap=new Map(rows.map(d=>[d.key,d.label]));tfSelect.replaceChildren();if(tfOptionList)tfOptionList.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.key;o.textContent=d.label;tfSelect.appendChild(o);if(tfOptionList){const q=document.createElement('option');q.value=d.label;tfOptionList.appendChild(q)}});selectedTfUppers=old.filter(k=>tfLabelMap.has(k));updateTfControls()}",
+    "function init(){GROUP_MDS.slice().sort((a,b)=>String(a.display_label||a.comparison_label||'').localeCompare(String(b.display_label||b.comparison_label||''),undefined,{sensitivity:'base'})).forEach((d,i)=>{const o=document.createElement('option');o.value=d.comparison_label;o.textContent=d.display_label||d.comparison_label;groupSelect.appendChild(o)});if(groupSelect.options.length)groupSelect.value=groupSelect.options[0].value;fillTfSelect();groupSelect.addEventListener('change',()=>selectGroup(groupSelect.value));topicSelect.addEventListener('change',draw);tfSelect.addEventListener('change',()=>setSelectedTfs(Array.from(tfSelect.selectedOptions).map(o=>o.value)));if(tfSearchInput){tfSearchInput.addEventListener('change',addTfFromSearch);tfSearchInput.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();addTfFromSearch()}})}if(clearTfButton)clearTfButton.addEventListener('click',()=>setSelectedTfs([]));document.getElementById('exportSvgButton').addEventListener('click',exportSvg);fillTopics();draw()}",
     "function fillTopics(){const rows=selectedGroupRows(),grp=groupSelect.value;topicSelect.replaceChildren();rows.forEach(d=>{const o=document.createElement('option');o.value=d.topic;o.textContent='Topic '+topicNum(d.topic)+' ('+(+d.theta_mean||0).toFixed(3)+')';topicSelect.appendChild(o)});const firstWithPath=rows.find(d=>topicHasPathwayForGroup(d.topic,grp));if(firstWithPath)topicSelect.value=firstWithPath.topic}",
-    "function mdsLabelText(d){return String(d.mds_label||d.display_label||d.comparison_label||'').replace(/_/g,' ')}function drawTextBox(g,text,x,y,anchor,fontSize,fill){const t=el('text',{x:x,y:y,'text-anchor':anchor||'middle','font-size':fontSize||13,'font-weight':700,fill:fill||'#111',class:'mdsLabel'});t.textContent=text;g.appendChild(t);return{t:t}}function layoutLabels(items,panel){const fs=13,labels=items.map((p,i)=>{const txt=mdsLabelText(p.d);let dx=p.x-(panel.x0+panel.x1)/2,dy=p.y-(panel.y0+panel.y1)/2,len=Math.hypot(dx,dy);if(len<1){const a=(i+1)*2.399963;dx=Math.cos(a);dy=Math.sin(a);len=1}const w=Math.max(54,Math.min(148,txt.length*fs*.62+16)),h=fs+10,gap=30+(i%3)*7;return{p,txt,x:p.x+dx/len*gap,y:p.y+dy/len*gap,w,h}});function clamp(a){a.x=Math.max(panel.x0+a.w/2+4,Math.min(panel.x1-a.w/2-4,a.x));a.y=Math.max(panel.y0+a.h/2+4,Math.min(panel.y1-a.h/2-4,a.y))}labels.forEach(clamp);for(let iter=0;iter<120;iter++){for(let i=0;i<labels.length;i++)for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j],ox=(a.w+b.w)/2+7-Math.abs(a.x-b.x),oy=(a.h+b.h)/2+7-Math.abs(a.y-b.y);if(ox>0&&oy>0){let dx=a.x-b.x,dy=a.y-b.y;if(Math.abs(dx)+Math.abs(dy)<.1){dx=i<j?-1:1;dy=(i+j)%2?-1:1}const len=Math.max(.1,Math.hypot(dx,dy)),push=Math.min(ox,oy)*.22;a.x+=dx/len*push;a.y+=dy/len*push;b.x-=dx/len*push;b.y-=dy/len*push;clamp(a);clamp(b)}}}return labels}function drawMarker(g,p,selected){const d=p.d,c=groupColor(d,p.i),shape=isDownGroup(d)?'down':'circle';if(shape==='down'){const s=12,pts=[[p.x,p.y+s],[p.x-s,p.y-s],[p.x+s,p.y-s]].map(v=>v.join(',')).join(' ');g.appendChild(el('polygon',{points:pts,fill:c,opacity:.86,stroke:selected?'#111':'#fff','stroke-width':selected?3:1.2}))}else{g.appendChild(el('circle',{cx:p.x,cy:p.y,r:selected?8.5:7.2,fill:c,opacity:.9,stroke:selected?'#111':'#fff','stroke-width':selected?3:1.2}))}const hit=el('circle',{cx:p.x,cy:p.y,r:26,class:'mdsPointHit'});hit.addEventListener('click',()=>selectGroup(d.comparison_label));hit.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(d.display_label||d.comparison_label)+'\\ndocs: '+d.n_docs));hit.addEventListener('mouseout',()=>mdsTooltip.style.display='none');g.appendChild(hit)}function drawMds(){if(!mdsLayer)return;mdsLayer.replaceChildren();const W=980,H=680,isComparison=GROUP_MDS.some(d=>String(d.doc_design||'')==='comparison'||isDownGroup(d)),panels=isComparison?[{name:'Up',rows:GROUP_MDS.filter(d=>!isDownGroup(d)),x0:38,x1:484,y0:82,y1:582},{name:'Down',rows:GROUP_MDS.filter(d=>isDownGroup(d)),x0:496,x1:960,y0:82,y1:582}]:[{name:'Condition',rows:GROUP_MDS,x0:50,x1:940,y0:72,y1:590}];panels.forEach(panel=>{if(!panel.rows.length)return;mdsLayer.appendChild(el('rect',{x:panel.x0,y:36,width:panel.x1-panel.x0,height:28,fill:'#f0f0ee',stroke:'#ddd'}));const strip=el('text',{x:(panel.x0+panel.x1)/2,y:56,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#222'});strip.textContent=panel.name;mdsLayer.appendChild(strip);mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y1,x2:panel.x1,y2:panel.y1,stroke:'#111','stroke-width':1.1}));mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y0,x2:panel.x0,y2:panel.y1,stroke:'#111','stroke-width':1.1}));const sx=sc(panel.rows.map(d=>+d.MDS1),panel.x0+42,panel.x1-42),sy=sc(panel.rows.map(d=>+d.MDS2),panel.y1-42,panel.y0+42),pts=panel.rows.map((d,i)=>({d,i,x:sx(+d.MDS1),y:sy(+d.MDS2)}));pts.forEach(p=>drawMarker(mdsLayer,p,p.d.comparison_label===groupSelect.value));const labels=layoutLabels(pts,panel);labels.forEach(a=>{mdsLayer.appendChild(el('line',{x1:a.p.x,y1:a.p.y,x2:a.x,y2:a.y,class:'mdsLeader'}));const lab=drawTextBox(mdsLayer,a.txt.length>24?a.txt.slice(0,22)+'..':a.txt,a.x,a.y+4,'middle',12.5,groupColor(a.p.d,a.p.i));[lab.t].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>selectGroup(a.p.d.comparison_label));node.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(a.p.d.display_label||a.p.d.comparison_label)+'\\ndocs: '+a.p.d.n_docs));node.addEventListener('mouseout',()=>mdsTooltip.style.display='none')})});const xl=el('text',{x:(panel.x0+panel.x1)/2,y:H-22,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'#111'});xl.textContent='MDS1';mdsLayer.appendChild(xl);const yl=el('text',{x:18,y:(panel.y0+panel.y1)/2,'text-anchor':'middle','font-size':13,'font-weight':700,fill:'#111',transform:'rotate(-90 18 '+((panel.y0+panel.y1)/2)+')'});if(!isComparison||panel.name==='Up')yl.textContent='MDS2';mdsLayer.appendChild(yl)});document.getElementById('mdsStats').textContent=GROUP_MDS.length+' groups'}",
+    "function mdsLabelText(d){return String(d.mds_label||d.display_label||d.comparison_label||'').replace(/_/g,' ')}function drawTextBox(g,text,x,y,anchor,fontSize,fill){const t=el('text',{x:x,y:y,'text-anchor':anchor||'middle','font-size':fontSize||13,'font-weight':700,fill:fill||'#111',class:'mdsLabel'});t.textContent=text;g.appendChild(t);return{t:t}}function layoutLabels(items,panel){const fs=16,labels=items.map((p,i)=>{const txt=mdsLabelText(p.d);let dx=p.x-(panel.x0+panel.x1)/2,dy=p.y-(panel.y0+panel.y1)/2,len=Math.hypot(dx,dy);if(len<1){const a=(i+1)*2.399963;dx=Math.cos(a);dy=Math.sin(a);len=1}const w=Math.max(54,Math.min(148,txt.length*fs*.62+16)),h=fs+10,gap=30+(i%3)*7;return{p,txt,x:p.x+dx/len*gap,y:p.y+dy/len*gap,w,h}});function clamp(a){a.x=Math.max(panel.x0+a.w/2+4,Math.min(panel.x1-a.w/2-4,a.x));a.y=Math.max(panel.y0+a.h/2+4,Math.min(panel.y1-a.h/2-4,a.y))}labels.forEach(clamp);for(let iter=0;iter<120;iter++){for(let i=0;i<labels.length;i++)for(let j=i+1;j<labels.length;j++){const a=labels[i],b=labels[j],ox=(a.w+b.w)/2+7-Math.abs(a.x-b.x),oy=(a.h+b.h)/2+7-Math.abs(a.y-b.y);if(ox>0&&oy>0){let dx=a.x-b.x,dy=a.y-b.y;if(Math.abs(dx)+Math.abs(dy)<.1){dx=i<j?-1:1;dy=(i+j)%2?-1:1}const len=Math.max(.1,Math.hypot(dx,dy)),push=Math.min(ox,oy)*.22;a.x+=dx/len*push;a.y+=dy/len*push;b.x-=dx/len*push;b.y-=dy/len*push;clamp(a);clamp(b)}}}return labels}function drawMarker(g,p,selected){const d=p.d,c=groupColor(d,p.i),shape=isDownGroup(d)?'down':'circle';if(shape==='down'){const s=18,pts=[[p.x,p.y+s],[p.x-s,p.y-s],[p.x+s,p.y-s]].map(v=>v.join(',')).join(' ');g.appendChild(el('polygon',{points:pts,fill:c,opacity:.86,stroke:selected?'#111':'#fff','stroke-width':selected?4:1.6}))}else{g.appendChild(el('circle',{cx:p.x,cy:p.y,r:selected?15:12,fill:c,opacity:.9,stroke:selected?'#111':'#fff','stroke-width':selected?4:1.6}))}const hit=el('circle',{cx:p.x,cy:p.y,r:36,class:'mdsPointHit'});hit.addEventListener('click',()=>selectGroup(d.comparison_label));hit.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(d.display_label||d.comparison_label)+'\\ndocs: '+d.n_docs));hit.addEventListener('mouseout',()=>mdsTooltip.style.display='none');g.appendChild(hit)}function drawMds(){if(!mdsLayer)return;mdsLayer.replaceChildren();const W=980,H=680,isComparison=GROUP_MDS.some(d=>String(d.doc_design||'')==='comparison'||isDownGroup(d)),panels=isComparison?[{name:'Up',rows:GROUP_MDS.filter(d=>!isDownGroup(d)),x0:38,x1:484,y0:82,y1:582},{name:'Down',rows:GROUP_MDS.filter(d=>isDownGroup(d)),x0:496,x1:960,y0:82,y1:582}]:[{name:'Condition',rows:GROUP_MDS,x0:50,x1:940,y0:72,y1:590}];panels.forEach(panel=>{if(!panel.rows.length)return;mdsLayer.appendChild(el('rect',{x:panel.x0,y:36,width:panel.x1-panel.x0,height:28,fill:'#f0f0ee',stroke:'#ddd'}));const strip=el('text',{x:(panel.x0+panel.x1)/2,y:56,'text-anchor':'middle','font-size':18,'font-weight':700,fill:'#222'});strip.textContent=panel.name;mdsLayer.appendChild(strip);mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y1,x2:panel.x1,y2:panel.y1,stroke:'#111','stroke-width':1.1}));mdsLayer.appendChild(el('line',{x1:panel.x0,y1:panel.y0,x2:panel.x0,y2:panel.y1,stroke:'#111','stroke-width':1.1}));const sx=sc(panel.rows.map(d=>+d.MDS1),panel.x0+42,panel.x1-42),sy=sc(panel.rows.map(d=>+d.MDS2),panel.y1-42,panel.y0+42),pts=panel.rows.map((d,i)=>({d,i,x:sx(+d.MDS1),y:sy(+d.MDS2)}));pts.forEach(p=>drawMarker(mdsLayer,p,p.d.comparison_label===groupSelect.value));const labels=layoutLabels(pts,panel);labels.forEach(a=>{mdsLayer.appendChild(el('line',{x1:a.p.x,y1:a.p.y,x2:a.x,y2:a.y,class:'mdsLeader'}));const lab=drawTextBox(mdsLayer,a.txt.length>24?a.txt.slice(0,22)+'..':a.txt,a.x,a.y+4,'middle',16,groupColor(a.p.d,a.p.i));[lab.t].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>selectGroup(a.p.d.comparison_label));node.addEventListener('mousemove',ev=>tooltip(mdsTooltip,ev,String(a.p.d.display_label||a.p.d.comparison_label)+'\\ndocs: '+a.p.d.n_docs));node.addEventListener('mouseout',()=>mdsTooltip.style.display='none')})});const xl=el('text',{x:(panel.x0+panel.x1)/2,y:H-22,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#111'});xl.textContent='MDS1';mdsLayer.appendChild(xl);const yl=el('text',{x:18,y:(panel.y0+panel.y1)/2,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#111',transform:'rotate(-90 18 '+((panel.y0+panel.y1)/2)+')'});if(!isComparison||panel.name==='Up')yl.textContent='MDS2';mdsLayer.appendChild(yl)});document.getElementById('mdsStats').textContent=GROUP_MDS.length+' groups'}",
     "function drawWaterfall(){waterfallLayer.replaceChildren();const rows=GROUP_TOPIC.filter(d=>d.comparison_label===groupSelect.value).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)),w=980,h=760,left=170,right=46,top=96,axisY=62,labelY=52,titleY=28,labelSize=svgFontSize(waterfallSvg,17),smallSize=svgFontSize(waterfallSvg,14),maxVal=Math.max(...GROUP_TOPIC.map(d=>Number(d.theta_mean)).filter(Number.isFinite),.001),ticks=niceTicks(maxVal,5),axisMax=Math.max(...ticks,maxVal),plotW=w-left-right,rowH=Math.max(18,Math.min(42,(h-58-top-10)/Math.max(1,rows.length))),x=v=>left+Math.max(0,Number(v||0))/axisMax*plotW,sel=topicSelect.value;ticks.forEach(t=>{const xx=x(t);waterfallLayer.appendChild(el('line',{x1:xx,y1:top-6,x2:xx,y2:h-58,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32}));waterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=Number(t).toFixed(2).replace(/\\.?0+$/,'')});waterfallLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,stroke:'#111','stroke-width':1.8}));waterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='Document-to-topic probability';rows.forEach((d,i)=>{const y=top+i*rowH,val=Number(d.theta_mean),bw=x(val)-left,isSel=d.topic===sel;waterfallLayer.appendChild(el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:isSel?'#111':'#333'})).textContent='Topic '+String(d.topic).replace(/^Topic/,'');const r=el('rect',{x:left,y:y+4,width:Math.max(1,bw),height:Math.max(5,rowH-9),fill:color(topicNum(d.topic)),opacity:isSel?.95:.72,stroke:isSel?'#111':'none','stroke-width':isSel?4:0,style:'cursor:pointer'});r.addEventListener('click',()=>{topicSelect.value=d.topic;draw()});r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,'Topic '+String(d.topic).replace(/^Topic/,'')+'\\ndocument-to-topic probability: '+val.toFixed(4)));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');waterfallLayer.appendChild(r);waterfallLayer.appendChild(el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155'})).textContent=val.toFixed(3)});document.getElementById('waterfallStats').textContent=rows.length+' topics'}",
     "function niceTicks(maxVal,n){const out=[];if(!Number.isFinite(maxVal)||maxVal<=0)return[0,1];const raw=maxVal/Math.max(1,n),pow=Math.pow(10,Math.floor(Math.log10(raw))),step=([1,2,5,10].map(v=>v*pow).find(v=>raw<=v)||10*pow);for(let x=0;x<=maxVal+step*.5;x+=step)out.push(x);return out}",
     "function wrapWords(s,maxChars,maxLines){const words=String(s||'').split(/\\s+/),lines=[];let line='';words.forEach(w=>{const next=line?line+' '+w:w;if(next.length>maxChars&&line){lines.push(line);line=w}else line=next});if(line)lines.push(line);if(lines.length>maxLines){lines.length=maxLines;lines[maxLines-1]=lines[maxLines-1].slice(0,Math.max(0,maxChars-2))+'..'}return lines}",
     "function addWrappedLabel(layer,text,x,y,maxChars,maxLines,lineHeight,fontSize,cls){const t=el('text',{x:x,y:y,'text-anchor':'end',class:cls||'pathLabel','font-size':fontSize});wrapWords(text,maxChars,maxLines).forEach((line,i)=>{const sp=el('tspan',{x:x,dy:i===0?0:lineHeight});sp.textContent=line;t.appendChild(sp)});layer.appendChild(t);return t}",
-    "function drawPathways(){pathLayer.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value,hasGroupPath=PATHWAYS.some(d=>String(d.comparison_label||'')!=='');const allRows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!hasGroupPath||String(d.comparison_label||'')===grp));let rows=allRows.slice().sort((a,b)=>(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||''))).slice(0,30);const topicMap=new Map(),groupMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||''),g=String(d.comparison_label||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic);if(g){if(!groupMap.has(k))groupMap.set(k,new Set());groupMap.get(k).add(g)}});document.getElementById('pathStats').textContent=rows.length+' of '+allRows.length+' rows for Topic '+tn+(hasGroupPath?' in selected comparison':'');const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!allRows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent=hasGroupPath?'No pathway rows are available for this topic and selected comparison.':'No pathway rows are available for this topic.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),pkey=String(d.pathway||''),topicSpecific=(topicMap.get(pkey)||new Set()).size===1,groupSpecific=(groupMap.get(pkey)||new Set()).size===1,cls=topicSpecific&&groupSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':groupSpecific?'pathLabel pathLabelGroupSpecific':'pathLabel',lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls),inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+'\\nGenes: '+String(d.genes||'');[rin,rout,lab].forEach(node=>{node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout)})}",
-    "function draw(){drawMds();drawWaterfall();drawPathways()}init();",
+    "function drawPathways(){pathLayer.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value,hasGroupPath=PATHWAYS.some(d=>String(d.comparison_label||'')!=='');const allRows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!hasGroupPath||String(d.comparison_label||'')===grp));let rows=allRows.slice().sort((a,b)=>(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||''))).slice(0,30);const topicMap=new Map(),groupMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||''),g=String(d.comparison_label||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic);if(g){if(!groupMap.has(k))groupMap.set(k,new Set());groupMap.get(k).add(g)}});document.getElementById('pathStats').textContent=rows.length+' of '+allRows.length+' rows for Topic '+tn+(hasGroupPath?' in selected group':'');const w=1500,h=980,left=770,right=56,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!allRows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent=hasGroupPath?'No pathway rows are available for this topic and selected group.':'No pathway rows are available for this topic.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),pkey=String(d.pathway||''),topicSpecific=(topicMap.get(pkey)||new Set()).size===1,groupSpecific=(groupMap.get(pkey)||new Set()).size===1,cls=topicSpecific&&groupSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':groupSpecific?'pathLabel pathLabelGroupSpecific':'pathLabel',lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls),inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+'\\nGenes: '+String(d.genes||'');[rin,rout,lab].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>openSubgrn(d));node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout)})}",
+    "function conditionTfRowsForTopic(){const grp=groupSelect.value,topic=topicSelect.value,sorted=TF_TOPIC.filter(d=>String(d.comparison_label||'')===String(grp)&&d.topic===topic).sort((a,b)=>(+b.theta)-(+a.theta)||String(a.tf||'').localeCompare(String(b.tf||''))),top=sorted.slice(0,30);selectedTfUppers.forEach(k=>{if(!top.some(d=>String(d.tf_upper||d.tf||'').toUpperCase()===k)){const sel=sorted.find(d=>String(d.tf_upper||d.tf||'').toUpperCase()===k);if(sel)top.push(sel)}});return top}",
+    "function drawTfWaterfall(){tfWaterfallLayer.replaceChildren();const rows=conditionTfRowsForTopic(),selSet=selectedTfSet(),w=760,h=760,left=184,right=42,top=82,labelY=42,titleY=22,labelSize=svgFontSize(tfWaterfallSvg,12),smallSize=svgFontSize(tfWaterfallSvg,12),maxVal=Math.max(...rows.map(d=>+d.theta||0),.001),ticks=niceTicks(maxVal,5),axisMax=Math.max(...ticks,maxVal),plotW=w-left-right,rowH=Math.max(18,Math.min(34,(h-58-top-10)/Math.max(1,rows.length))),x=v=>left+Math.max(0,+v||0)/axisMax*plotW,selectRow=d=>setSelectedTf(d.tf_upper||d.tf||'');ticks.forEach(t=>{const xx=x(t);tfWaterfallLayer.appendChild(el('line',{x1:xx,y1:top-7,x2:xx,y2:h-56,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32}));tfWaterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=Number(t).toFixed(2).replace(/\\.?0+$/,'')});tfWaterfallLayer.appendChild(el('line',{x1:left,y1:56,x2:w-right,y2:56,stroke:'#111','stroke-width':1.8}));tfWaterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent='TF theta for selected topic';rows.forEach((d,i)=>{const y=top+i*rowH,val=+d.theta||0,bw=x(val)-left,key=String(d.tf_upper||d.tf||'').toUpperCase(),isSel=selSet.has(key),label=String(d.tf||'TF'),shortLabel=label.length>18?label.slice(0,16)+'..':label,msg=label+'\\ntheta: '+val.toFixed(4);const lab=el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:isSel?'#991b1b':'#111',style:'cursor:pointer'});lab.textContent=shortLabel;lab.addEventListener('click',()=>selectRow(d));lab.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));lab.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(lab);const r=el('rect',{x:left,y:y+4,width:Math.max(1,bw),height:Math.max(5,rowH-9),fill:isSel?'#dc2626':groupColor({color:''},i),opacity:isSel?.95:.76,stroke:isSel?'#111':'none','stroke-width':isSel?3:0,style:'cursor:pointer'});r.addEventListener('click',()=>selectRow(d));r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(r);const vt=el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155',style:'cursor:pointer'});vt.textContent=val.toFixed(3);vt.addEventListener('click',()=>selectRow(d));vt.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,msg));vt.addEventListener('mouseout',()=>wfTooltip.style.display='none');tfWaterfallLayer.appendChild(vt)});updateTfControls()}",
+    "function drawWaterfall(){waterfallLayer.replaceChildren();const grp=groupSelect.value;let rows;if(hasSelectedTf()){const tfSet=selectedTfSet(),byTopic=new Map();TF_TOPIC.filter(d=>String(d.comparison_label||'')===String(grp)&&tfSet.has(String(d.tf_upper||d.tf||'').toUpperCase())).forEach(d=>{const k=d.topic,v=byTopic.get(k)||{comparison_label:d.comparison_label,display_label:d.display_label,n_docs:1,topic:d.topic,topic_num:d.topic_num,total:0,n:0,tf:d.tf};v.total+=Number(d.theta)||0;v.n+=1;byTopic.set(k,v)});rows=Array.from(byTopic.values()).map(d=>({comparison_label:d.comparison_label,display_label:d.display_label,n_docs:d.n,topic:d.topic,topic_num:d.topic_num,theta_mean:d.n?d.total/d.n:0,tf:selectedTfLabel()})).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean)||(+a.topic_num)-(+b.topic_num))}else{rows=GROUP_TOPIC.filter(d=>d.comparison_label===grp).sort((a,b)=>(+b.theta_mean)-(+a.theta_mean))}const w=760,h=760,left=135,right=42,top=82,labelY=42,titleY=22,labelSize=svgFontSize(waterfallSvg,15),smallSize=svgFontSize(waterfallSvg,12),maxVal=Math.max(...rows.map(d=>Number(d.theta_mean)).filter(Number.isFinite),.001),ticks=niceTicks(maxVal,5),axisMax=Math.max(...ticks,maxVal),plotW=w-left-right,rowH=Math.max(18,Math.min(38,(h-58-top-10)/Math.max(1,rows.length))),x=v=>left+Math.max(0,Number(v||0))/axisMax*plotW,sel=topicSelect.value;ticks.forEach(t=>{const xx=x(t);waterfallLayer.appendChild(el('line',{x1:xx,y1:top-6,x2:xx,y2:h-58,stroke:'#777','stroke-width':.8,opacity:t===0?1:.32}));waterfallLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=Number(t).toFixed(2).replace(/\\.?0+$/,'')});waterfallLayer.appendChild(el('line',{x1:left,y1:56,x2:w-right,y2:56,stroke:'#111','stroke-width':1.8}));waterfallLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle','font-size':smallSize,'font-weight':700,fill:'#111'})).textContent=hasSelectedTf()?'Selected TF mean theta by topic':'Document-to-topic probability';rows.forEach((d,i)=>{const y=top+i*rowH,val=Number(d.theta_mean),bw=x(val)-left,isSel=d.topic===sel;waterfallLayer.appendChild(el('text',{x:left-10,y:y+rowH*.62,'font-size':labelSize,'text-anchor':'end','font-weight':700,fill:isSel?'#111':'#333'})).textContent='Topic '+String(d.topic).replace(/^Topic/,'');const r=el('rect',{x:left,y:y+4,width:Math.max(1,bw),height:Math.max(5,rowH-9),fill:color(topicNum(d.topic)),opacity:isSel?.95:.72,stroke:isSel?'#111':'none','stroke-width':isSel?4:0,style:'cursor:pointer'});r.addEventListener('click',()=>{topicSelect.value=d.topic;draw()});r.addEventListener('mousemove',ev=>tooltip(wfTooltip,ev,'Topic '+String(d.topic).replace(/^Topic/,'')+'\\nprobability: '+val.toFixed(4)+(hasSelectedTf()?'\\nTFs: '+selectedTfLabel():'')));r.addEventListener('mouseout',()=>wfTooltip.style.display='none');waterfallLayer.appendChild(r);waterfallLayer.appendChild(el('text',{x:Math.min(w-right,left+bw+6),y:y+rowH*.62,'font-size':smallSize,'font-weight':700,fill:'#334155'})).textContent=val.toFixed(3)});document.getElementById('waterfallStats').textContent=rows.length+' topics'+(hasSelectedTf()?' for '+selectedTfLabel():'')}",
+    "function tfCountKey(d){return selectedTfKey()+'|'+String(d.comparison_label||d.comparison_id||'')+'|'+String(d.topic_num||d.topic||'')+'|'+String(d.pathway_key||d.pathway_norm_key||d.pathway||'')}function splitGenes(s){return String(s||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean)}function rowGeneSet(d){return new Set(splitGenes(d.genes||d.overlap_genes||''))}function contextMatchEdge(e,ctx,genes){return e.subgrn_context_id?e.subgrn_context_id===ctx.subgrn_context_id:(String(e.comparison_id||'')===String(ctx.comparison_id||'')&&String(e.direction||'')===String(ctx.direction||'')&&genes.has(String(e.gene_key||'')))}function countTfGenesInPayload(payload,ctx,row){const genes=rowGeneSet(row),allowed=subgrnGeneSet(ctx),tfSet=selectedTfSet();allowed.forEach(g=>genes.add(g));const out=new Set(),byTf=new Map(),edges=new Set();((payload&&payload.tf_gene_edges)||[]).forEach(e=>{const tf=String(e.tf_upper||e.tf||'').toUpperCase(),gene=String(e.gene_key||'');if(tfSet.has(tf)&&genes.has(gene)&&contextMatchEdge(e,ctx,genes)){out.add(gene);const rec=byTf.get(tf)||{tf:tf,label:tfLabelMap.get(tf)||String(e.tf||tf),genes:new Set()};rec.genes.add(gene);byTf.set(tf,rec);edges.add(tf+'\\t'+gene)}});const rows=Array.from(byTf.values()).map(r=>({tf:r.tf,label:r.label,genes:Array.from(r.genes).sort(),n:r.genes.size})).sort((a,b)=>b.n-a.n||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));return{genes:Array.from(out).sort(),byTf:rows,edgeN:edges.size}}function mergeTfSupport(parts){const genes=new Set(),byTf=new Map();let edgeN=0;(parts||[]).forEach(p=>{if(Array.isArray(p))p={genes:p,byTf:[],edgeN:0};(p.genes||[]).forEach(g=>genes.add(g));(p.byTf||[]).forEach(r=>{const key=String(r.tf||'').toUpperCase();if(!key)return;const rec=byTf.get(key)||{tf:key,label:r.label||tfLabelMap.get(key)||key,genes:new Set()};(r.genes||[]).forEach(g=>rec.genes.add(g));byTf.set(key,rec)});edgeN+=Number(p.edgeN)||0});const rows=Array.from(byTf.values()).map(r=>({tf:r.tf,label:r.label,genes:Array.from(r.genes).sort(),n:r.genes.size})).sort((a,b)=>b.n-a.n||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));const detail=[];if(rows.length)detail.push('Summary: '+genes.size+' unique target genes; '+rows.length+' selected TFs with hits; '+edgeN+' TF-target pairs');rows.forEach(r=>detail.push(r.label+' ('+r.n+'): '+r.genes.join(',')));return{n:genes.size,genes:detail.length?detail:Array.from(genes).sort(),target_genes:Array.from(genes).sort(),byTf:rows,tfN:rows.length,edgeN:edgeN}}function ensureTfPathwayCounts(rows){if(!hasSelectedTf())return;rows.forEach(d=>{const key=tfCountKey(d);if(tfPathwayCounts.has(key)||tfPathwayPending.has(key))return;const ctxs=subgrnContextRows(d);if(!ctxs.length){tfPathwayCounts.set(key,mergeTfSupport([]));return}tfPathwayPending.add(key);Promise.all(ctxs.map(ctx=>loadSubgrnPayload(ctx.payload_file).then(payload=>countTfGenesInPayload(payload,ctx,d)).catch(()=>({genes:[],byTf:[],edgeN:0})))).then(parts=>{tfPathwayCounts.set(key,mergeTfSupport(parts));tfPathwayPending.delete(key);drawPathways()})})}",
+    "function drawPathways(){pathLayer.replaceChildren();const tn=topicNum(topicSelect.value),grp=groupSelect.value,hasGroupPath=PATHWAYS.some(d=>String(d.comparison_label||'')!=='');const allRows=PATHWAYS.filter(d=>(+d.topic_num===tn||+d.topic===tn)&&(!hasGroupPath||String(d.comparison_label||'')===grp));const baseRows=allRows.slice().sort((a,b)=>(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||''))).slice(0,30);ensureTfPathwayCounts(baseRows);let rows=baseRows;if(hasSelectedTf()){rows=baseRows.slice().sort((a,b)=>((tfPathwayCounts.get(tfCountKey(b))||{n:0}).n-(tfPathwayCounts.get(tfCountKey(a))||{n:0}).n)||((tfPathwayCounts.get(tfCountKey(b))||{tfN:0}).tfN-(tfPathwayCounts.get(tfCountKey(a))||{tfN:0}).tfN)||(+a.padj)-(+b.padj)||(+b.gene_in)-(+a.gene_in)||String(a.pathway||'').localeCompare(String(b.pathway||'')))}const topicMap=new Map(),groupMap=new Map();PATHWAYS.forEach(d=>{const k=String(d.pathway||''),g=String(d.comparison_label||'');if(!k)return;if(!topicMap.has(k))topicMap.set(k,new Set());topicMap.get(k).add(+d.topic_num||+d.topic);if(g){if(!groupMap.has(k))groupMap.set(k,new Set());groupMap.get(k).add(g)}});document.getElementById('pathStats').textContent=rows.length+' of '+allRows.length+' rows for Topic '+tn+(hasGroupPath?' in selected group':'')+(hasSelectedTf()?' | selected TF target genes and per-TF counts shown':'');const w=1500,h=980,left=770,right=110,top=104,bottom=82,axisY=54,labelY=44,titleY=24,rowH=Math.min(30,(h-top-bottom-42)/Math.max(1,rows.length)),barH=Math.max(10,rowH*.5),totals=rows.map(d=>Math.max(+d.gene_total_universe||0,+d.gene_in||0));if(!allRows.length){const t=el('text',{x:40,y:80,class:'label'});t.textContent=hasGroupPath?'No pathway rows are available for this topic and selected group.':'No pathway rows are available for this topic.';pathLayer.appendChild(t);return}const ticks=niceTicks(Math.max(...totals,1),8),axisMax=Math.max(...ticks,...totals,1),x=v=>left+Math.max(0,+v||0)/axisMax*(w-left-right);pathLayer.appendChild(el('rect',{x:left,y:h-34,width:22,height:12,class:'barIn'}));pathLayer.appendChild(el('text',{x:left+30,y:h-22,class:'pathLegendText'})).textContent='topic genes';pathLayer.appendChild(el('rect',{x:left+190,y:h-34,width:22,height:12,class:'barOut'}));pathLayer.appendChild(el('text',{x:left+220,y:h-22,class:'pathLegendText'})).textContent='universe remainder';if(hasSelectedTf())pathLayer.appendChild(el('text',{x:w-8,y:h-22,'text-anchor':'end',class:'pathLegendText'})).textContent=selectedTfUppers.length>1?'TF genes/TFs':'TF targets';ticks.forEach(t=>{const xx=x(t);pathLayer.appendChild(el('line',{x1:xx,y1:top-10,x2:xx,y2:h-bottom-28,class:'pathTick',opacity:t===0?1:.35}));pathLayer.appendChild(el('text',{x:xx,y:labelY,'text-anchor':'middle',class:'pathTickText'})).textContent=String(Math.round(t))});pathLayer.appendChild(el('line',{x1:left,y1:axisY,x2:w-right,y2:axisY,class:'pathAxis'}));pathLayer.appendChild(el('text',{x:(left+w-right)/2,y:titleY,'text-anchor':'middle',class:'pathTickText'})).textContent='Genes in full document gene-universe enrichment';rows.forEach((d,i)=>{const y=top+18+i*rowH,inside=Math.max(0,+d.gene_in||0),total=Math.max(inside,+d.gene_total_universe||0),outside=Math.max(0,total-inside),pkey=String(d.pathway||''),topicSpecific=(topicMap.get(pkey)||new Set()).size===1,groupSpecific=(groupMap.get(pkey)||new Set()).size===1,cls=topicSpecific&&groupSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':groupSpecific?'pathLabel pathLabelGroupSpecific':'pathLabel',support=hasSelectedTf()?(tfPathwayCounts.get(tfCountKey(d))||{n:0,genes:[],tfN:0,edgeN:0}):null,lab=addWrappedLabel(pathLayer,d.pathway,left-12,y+barH*.72,76,rowH<27?1:2,14,16,cls),inW=Math.max(inside>0?3:0,x(inside)-left),outW=Math.max(outside>0?2:0,x(total)-x(inside)),rin=el('rect',{x:left,y:y,width:inW,height:barH,class:'barIn',rx:1}),rout=el('rect',{x:left+inW,y:y,width:outW,height:barH,class:'barOut',rx:1}),extra=support?'\\nSelected TFs: '+selectedTfLabel()+'\\nUnique selected-TF target genes in pathway: '+support.n+'\\nSelected TFs with hits: '+(Number(support.tfN)||0)+' / '+selectedTfUppers.length+'\\nTF-target pairs represented: '+(Number(support.edgeN)||0)+(support.genes&&support.genes.length?'\\nPer-TF target genes: '+support.genes.join('; '):''):'',msg=String(d.pathway)+'\\nGene in topic: '+inside+'\\nGene out of topic: '+outside+'\\nUniverse hits: '+total+'\\nadj-p: '+(Number.isFinite(Number(d.padj))?Number(d.padj).toExponential(2):'NA')+extra+'\\nGenes: '+String(d.genes||'');[rin,rout,lab].forEach(node=>{node.style.cursor='pointer';node.addEventListener('click',()=>openSubgrn(d));node.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));node.addEventListener('mouseout',()=>pathTooltip.style.display='none')});pathLayer.appendChild(rin);pathLayer.appendChild(rout);if(support){const n=Number(support.n)||0,tfN=Number(support.tfN)||0,badgeText=selectedTfUppers.length>1?String(n)+'/'+String(tfN):String(n);if(n>0){const badge=el('rect',{x:w-72,y:y-2,width:64,height:barH+4,rx:8,fill:'#dc2626',stroke:'#7f1d1d','stroke-width':1.4,opacity:.95,style:'cursor:pointer'});badge.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));badge.addEventListener('mouseout',()=>pathTooltip.style.display='none');badge.addEventListener('click',()=>openSubgrn(d));pathLayer.appendChild(badge);rin.setAttribute('stroke','#dc2626');rin.setAttribute('stroke-width',2.4);rout.setAttribute('stroke','#dc2626');rout.setAttribute('stroke-width',1.6)}const ct=el('text',{x:w-40,y:y+barH*.78,'text-anchor':'middle','font-size':15,'font-weight':700,fill:n>0?'#fff':'#94a3b8',style:'cursor:pointer'});ct.textContent=badgeText;ct.addEventListener('mousemove',ev=>tooltip(pathTooltip,ev,msg));ct.addEventListener('mouseout',()=>pathTooltip.style.display='none');ct.addEventListener('click',()=>openSubgrn(d));pathLayer.appendChild(ct)}})}",
+    .m3tb_subgrn_js(),
+    "function draw(){updateSelectedContext();drawMds();drawTfWaterfall();drawWaterfall();drawPathways()}init();",
     "</script></body></html>"
   )
+  html <- sub(
+    "</style>",
+    paste0(
+      ".paneMeta{display:flex;flex-direction:column;gap:3px;align-items:flex-end;min-width:0}",
+      ".contextBadge{max-width:560px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+      "background:#111;color:#fff;border-radius:3px;padding:4px 7px;font-size:12px;line-height:1.1}",
+      "</style>"
+    ),
+    html,
+    fixed = TRUE
+  )
+  html <- sub(
+    "<section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><span id=\"pathStats\" class=\"meta\"></span></div><div class=\"body\">",
+    "<section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><div class=\"paneMeta\"><div id=\"selectedContext\" class=\"contextBadge\"></div><span id=\"pathStats\" class=\"meta\"></span></div></div><div class=\"body\">",
+    html,
+    fixed = TRUE
+  )
+  html <- .m3tb_polish_topic_report_html(html)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
   writeLines(html, out_html, useBytes = TRUE)
   out_html
@@ -2458,21 +2753,274 @@
   out_file
 }
 
+.m3tb_review_worker_count <- function(n_tasks,
+                                      available_bytes = NULL,
+                                      detected_cores = NULL) {
+  n_tasks <- suppressWarnings(as.integer(n_tasks)[[1L]])
+  if (!is.finite(n_tasks) || n_tasks < 1L) return(1L)
+  opt <- getOption("craftgrn.review.workers", NULL)
+  env <- Sys.getenv("CRAFTGRN_REVIEW_WORKERS", unset = "")
+  if (!nzchar(env)) env <- Sys.getenv("CRAFTGRN_REVIEW_THREADS", unset = "")
+  raw <- if (!is.null(opt)) opt else env
+  explicit_workers <- !is.null(opt) || nzchar(env)
+  if (!isTRUE(explicit_workers) &&
+      identical(Sys.getenv("TESTTHAT", unset = ""), "true") &&
+      !isTRUE(getOption("craftgrn.review.auto_workers_in_tests", FALSE))) {
+    return(1L)
+  }
+  requested <- suppressWarnings(as.integer(raw)[[1L]])
+  max_workers <- suppressWarnings(as.integer(
+    getOption("craftgrn.review.max_workers", 8L)
+  )[[1L]])
+  if (!is.finite(max_workers) || max_workers < 1L) max_workers <- 8L
+  if (!is.finite(requested) || requested < 1L) requested <- max_workers
+  if (is.null(detected_cores)) {
+    detected_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  }
+  detected_cores <- suppressWarnings(as.integer(detected_cores)[[1L]])
+  if (!is.finite(detected_cores) || detected_cores < 1L) detected_cores <- 1L
+  if (is.null(available_bytes)) available_bytes <- .available_memory_bytes()
+  available_bytes <- suppressWarnings(as.numeric(available_bytes)[[1L]])
+  if (!is.finite(available_bytes) || available_bytes <= 0) return(1L)
+  reserve_gb <- suppressWarnings(as.numeric(
+    getOption("craftgrn.review.memory_reserve_gb", 32)
+  )[[1L]])
+  per_worker_gb <- suppressWarnings(as.numeric(
+    getOption("craftgrn.review.memory_per_worker_gb", 6)
+  )[[1L]])
+  if (!is.finite(reserve_gb) || reserve_gb < 0) reserve_gb <- 32
+  if (!is.finite(per_worker_gb) || per_worker_gb <= 0) per_worker_gb <- 6
+  reserve_bytes <- max(reserve_gb * 1024^3, 0.25 * available_bytes)
+  memory_workers <- floor(max(0, available_bytes - reserve_bytes) / (per_worker_gb * 1024^3))
+  max(
+    1L,
+    min(
+      n_tasks,
+      requested,
+      max_workers,
+      detected_cores,
+      as.integer(memory_workers)
+    )
+  )
+}
+
+.m3tb_review_lapply <- function(x, fun, workers) {
+  workers <- max(1L, suppressWarnings(as.integer(workers)[[1L]]))
+  if (workers <= 1L) {
+    return(lapply(x, fun))
+  }
+  cl <- parallel::makeCluster(workers, type = "PSOCK")
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+  parallel::clusterEvalQ(cl, {
+    repo_dir <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = "")
+    dev_load <- tolower(Sys.getenv("CRAFTGRN_DEV_LOAD", unset = "false")) %in% c("1", "true", "yes", "y")
+    if (dev_load && nzchar(repo_dir) && requireNamespace("devtools", quietly = TRUE)) {
+      devtools::load_all(repo_dir, quiet = TRUE)
+    } else {
+      library(craftgrn)
+    }
+    data.table::setDTthreads(1L)
+    options(craftgrn.topic_review.fast_summary = TRUE)
+    NULL
+  })
+  parallel::parLapplyLB(cl, x, fun)
+}
+
+.m3tb_review_row_error <- function(i, err) {
+  structure(
+    list(index = i, message = conditionMessage(err)),
+    class = "m3tb_review_row_error"
+  )
+}
+
+.m3tb_filter_pathways_to_subgrn_manifest <- function(pathways, subgrn_manifest, per_group = FALSE) {
+  pathways <- data.table::as.data.table(pathways)
+  subgrn_manifest <- data.table::as.data.table(subgrn_manifest)
+  if (!nrow(pathways) || !nrow(subgrn_manifest)) return(pathways[0])
+  if (!"pathway_key" %in% names(pathways) && "pathway_norm_key" %in% names(pathways)) {
+    data.table::setnames(pathways, "pathway_norm_key", "pathway_key")
+  }
+  if (!"topic_num" %in% names(pathways) && "topic" %in% names(pathways)) {
+    pathways[, topic_num := suppressWarnings(as.integer(topic))]
+  }
+  pathways[, `:=`(
+    topic_num = suppressWarnings(as.integer(topic_num)),
+    pathway_key = as.character(pathway_key)
+  )]
+  subgrn_manifest[, `:=`(
+    topic_num = suppressWarnings(as.integer(topic_num)),
+    pathway_key = as.character(pathway_key)
+  )]
+  if (isTRUE(per_group)) {
+    if (!"comparison_label" %in% names(pathways)) return(pathways[0])
+    keys <- unique(subgrn_manifest[, .(
+      comparison_label = as.character(comparison_label),
+      topic_num,
+      pathway_key
+    )])
+    pathways[, comparison_label := as.character(comparison_label)]
+    return(merge(pathways, keys, by = c("comparison_label", "topic_num", "pathway_key"), all = FALSE, sort = FALSE))
+  }
+  keys <- unique(subgrn_manifest[, .(topic_num, pathway_key)])
+  merge(pathways, keys, by = c("topic_num", "pathway_key"), all = FALSE, sort = FALSE)
+}
+
+.m3tb_build_review_pages_for_row <- function(i,
+                                             model_rows,
+                                             score_result,
+                                             topic_page_dir,
+                                             condition_page_dir,
+                                             subgrn_payload_dir) {
+  old_dt_threads <- data.table::getDTthreads()
+  on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
+  data.table::setDTthreads(1L)
+
+  row <- model_rows[i]
+  k <- as.integer(row$selected_k[[1L]])
+  theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", k))
+  phi_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("phi_K%d.csv", k))
+  if (!file.exists(theta_file) || !file.exists(phi_file)) {
+    return(list(
+      topic = data.table::data.table(),
+      condition = data.table::data.table(),
+      subgrn_manifest = data.table::data.table()
+    ))
+  }
+
+  theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
+  phi <- .m3tb_read_probability_csv(phi_file, "term_id")
+  extraction_dir <- .m3tb_find_extraction_subdir(row)
+  slug <- .m3tb_review_report_slug(row, k)
+  run_id <- .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]])
+
+  topic_pathways <- .m3tb_read_pathway_tables(
+    extraction_dir,
+    per_group = FALSE,
+    model_dir = row$model_dir[[1L]],
+    compute_universe = TRUE
+  )
+  condition_pathways <- .m3tb_read_condition_pathway_tables(
+    extraction_dir,
+    model_dir = row$model_dir[[1L]],
+    compute_universe = TRUE
+  )
+  max_context_raw <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
+  payload_disabled <- nzchar(max_context_raw) &&
+    is.finite(suppressWarnings(as.integer(max_context_raw[[1L]]))) &&
+    suppressWarnings(as.integer(max_context_raw[[1L]])) <= 0L
+  subgrn_manifest <- if (isTRUE(payload_disabled)) {
+    data.table::data.table()
+  } else {
+    .m3tb_write_pathway_subgrn_payload(
+      extraction_dir = extraction_dir,
+      model_dir = row$model_dir[[1L]],
+      payload_dir = subgrn_payload_dir,
+      payload_name = paste0(slug, "_pathway_subgrn"),
+      condition_pathways = condition_pathways,
+      topic_pathways = topic_pathways
+    )
+  }
+  if (!nrow(subgrn_manifest) && !isTRUE(payload_disabled)) {
+    subgrn_manifest <- .m3tb_reuse_existing_subgrn_manifest(subgrn_payload_dir, row, k)
+  }
+  if (nrow(subgrn_manifest)) {
+    subgrn_manifest[, `:=`(
+      method_setup = row$method_setup[[1L]],
+      run_id = run_id,
+      k = k
+    )]
+  }
+  topic_pathways_for_report <- topic_pathways
+  condition_pathways_for_report <- condition_pathways
+
+  topic_mds <- .m3tb_topic_mds_from_phi(phi, theta)
+  topic_waterfall <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
+  tf_topic <- .m3tb_tf_topic_rows(theta, row$context_type[[1L]])
+  topic_label <- sprintf("%s | K%d", row$method_setup[[1L]], k)
+  topic_out <- file.path(topic_page_dir, sprintf("%s_topic_report.html", slug))
+  .m3tb_topic_report_html(
+    topic_label,
+    topic_mds,
+    topic_waterfall,
+    tf_topic,
+    topic_pathways_for_report,
+    topic_out,
+    condition_pathways = condition_pathways_for_report,
+    subgrn_manifest = subgrn_manifest,
+    subgrn_payload_base = "../../pathway_subgrn_payloads"
+  )
+
+  condition_report <- data.table::data.table()
+  group_mds <- data.table::as.data.table(score_result$mds_points)[as.integer(k) == as.integer(row$selected_k[[1L]]) & method_setup == row$method_setup[[1L]]]
+  if (nrow(group_mds)) {
+    group_mds[, mds_label := .m3tb_short_label(display_label, 18L)]
+    group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
+    condition_label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
+    condition_out <- file.path(condition_page_dir, sprintf("%s_condition_topic_report.html", slug))
+    condition_mds_svg <- .m3tb_condition_mds_svg_path(condition_out)
+    .m3tb_write_condition_mds_svg(group_mds, condition_mds_svg)
+    .m3tb_condition_report_html(
+      condition_label,
+      group_mds,
+      group_topic,
+      tf_topic,
+      condition_pathways_for_report,
+      condition_out,
+      mds_svg_src = file.path("assets", basename(condition_mds_svg)),
+      subgrn_manifest = subgrn_manifest,
+      subgrn_payload_base = "../../pathway_subgrn_payloads"
+    )
+    condition_report <- data.table::data.table(
+      label = condition_label,
+      k = k,
+      method_setup = row$method_setup[[1L]],
+      run_id = run_id,
+      path = condition_out
+    )
+  }
+
+  list(
+    topic = data.table::data.table(
+      label = topic_label,
+      k = k,
+      method_setup = row$method_setup[[1L]],
+      run_id = run_id,
+      path = topic_out
+    ),
+    condition = condition_report,
+    subgrn_manifest = subgrn_manifest
+  )
+}
+
 .m3tb_write_review_html <- function(output_dir, score_result, link_summary, review_dir = NULL) {
+  output_dir <- normalizePath(as.character(output_dir)[[1L]], winslash = "/", mustWork = FALSE)
+  force(score_result)
+  force(link_summary)
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
+  review_dir <- normalizePath(as.character(review_dir)[[1L]], winslash = "/", mustWork = FALSE)
   html_dir <- .m3tb_review_html_dir(review_dir)
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
   topic_report_dir <- file.path(html_dir, "topic_reports")
   condition_report_dir <- file.path(html_dir, "condition_topic_reports")
   topic_page_dir <- file.path(topic_report_dir, "pages")
   condition_page_dir <- file.path(condition_report_dir, "pages")
+  subgrn_payload_dir <- file.path(html_dir, "pathway_subgrn_payloads")
   dir.create(topic_report_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(condition_report_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(topic_page_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(condition_page_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(subgrn_payload_dir, recursive = TRUE, showWarnings = FALSE)
   unlink(list.files(html_dir, pattern = "^(topic_report|condition_topic_report)_K[0-9]+[.]html$", full.names = TRUE))
   unlink(list.files(topic_report_dir, pattern = "_K[0-9]+_topic_report[.]html$", full.names = TRUE))
   unlink(list.files(condition_report_dir, pattern = "_K[0-9]+_condition_topic_report[.]html$", full.names = TRUE))
+  unlink(list.files(topic_page_dir, pattern = "_K[0-9]+_topic_report[.]html$", full.names = TRUE))
+  unlink(list.files(condition_page_dir, pattern = "_K[0-9]+_condition_topic_report[.]html$", full.names = TRUE))
+  subgrn_max_context_env <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
+  subgrn_skip_payloads <- nzchar(subgrn_max_context_env) &&
+    suppressWarnings(as.integer(subgrn_max_context_env[[1L]])) <= 0L
+  if (!isTRUE(subgrn_skip_payloads)) {
+    unlink(list.files(subgrn_payload_dir, pattern = "[.]js$", full.names = TRUE))
+  }
   asset_dir <- .m3tb_plot_dir(review_dir)
   image_manifest <- .m3tb_write_review_pngs(score_result, asset_dir)
   model_rows <- attr(score_result, "model_rows")
@@ -2480,70 +3028,42 @@
   condition_reports <- data.table::data.table()
   topic_page_reports <- data.table::data.table()
   condition_page_reports <- data.table::data.table()
+  subgrn_manifests <- list()
   if (is.data.frame(model_rows) && nrow(model_rows)) {
-    topic_rows <- lapply(seq_len(nrow(model_rows)), function(i) {
-      row <- model_rows[i]
-      theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", as.integer(row$selected_k[[1L]])))
-      phi_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("phi_K%d.csv", as.integer(row$selected_k[[1L]])))
-      if (!file.exists(theta_file) || !file.exists(phi_file)) return(NULL)
-      theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
-      phi <- .m3tb_read_probability_csv(phi_file, "term_id")
-      topic_mds <- .m3tb_topic_mds_from_phi(phi, theta)
-      waterfall <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
-      extraction_dir <- .m3tb_find_extraction_subdir(row)
-      pathways <- .m3tb_read_pathway_tables(
-        extraction_dir,
-        per_group = FALSE,
-        model_dir = row$model_dir[[1L]],
-        compute_universe = TRUE
+    workers <- .m3tb_review_worker_count(nrow(model_rows))
+    page_rows <- .m3tb_review_lapply(seq_len(nrow(model_rows)), function(i) {
+      tryCatch(
+        .m3tb_build_review_pages_for_row(
+          i = i,
+          model_rows = model_rows,
+          score_result = score_result,
+          topic_page_dir = topic_page_dir,
+          condition_page_dir = condition_page_dir,
+          subgrn_payload_dir = subgrn_payload_dir
+        ),
+        error = function(e) .m3tb_review_row_error(i, e)
       )
-      label <- sprintf("%s | K%d", row$method_setup[[1L]], as.integer(row$selected_k[[1L]]))
-      slug <- .m3tb_review_report_slug(row, row$selected_k[[1L]])
-      out <- file.path(topic_page_dir, sprintf("%s_topic_report.html", slug))
-      .m3tb_topic_report_html(label, topic_mds, waterfall, pathways, out)
-      data.table::data.table(
-        label = label,
-        k = as.integer(row$selected_k[[1L]]),
-        method_setup = row$method_setup[[1L]],
-        run_id = .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]]),
-        path = out
-      )
-    })
-    topic_reports <- data.table::rbindlist(topic_rows, use.names = TRUE, fill = TRUE)
+    }, workers = workers)
+    failures <- vapply(page_rows, inherits, logical(1L), "m3tb_review_row_error")
+    if (any(failures)) {
+      msg <- vapply(page_rows[failures], function(x) {
+        sprintf("row %s: %s", x$index, x$message)
+      }, character(1L))
+      .log_abort(paste(c("Failed to build Module 3 review HTML pages.", msg), collapse = "\n"))
+    }
+    topic_reports <- data.table::rbindlist(lapply(page_rows, `[[`, "topic"), use.names = TRUE, fill = TRUE)
     topic_page_reports <- data.table::copy(topic_reports)
-    condition_rows <- lapply(seq_len(nrow(model_rows)), function(i) {
-      row <- model_rows[i]
-      k <- as.integer(row$selected_k[[1L]])
-      group_mds <- data.table::as.data.table(score_result$mds_points)[as.integer(k) == as.integer(row$selected_k[[1L]]) & method_setup == row$method_setup[[1L]]]
-      if (!nrow(group_mds)) return(NULL)
-      group_mds[, mds_label := .m3tb_short_label(display_label, 18L)]
-      theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", k))
-      if (!file.exists(theta_file)) return(NULL)
-      theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
-      group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
-      extraction_dir <- .m3tb_find_extraction_subdir(row)
-      pathways <- .m3tb_read_condition_pathway_tables(
-        extraction_dir,
-        model_dir = row$model_dir[[1L]],
-        compute_universe = TRUE
-      )
-      label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
-      slug <- .m3tb_review_report_slug(row, k)
-      out <- file.path(condition_page_dir, sprintf("%s_condition_topic_report.html", slug))
-      condition_mds_svg <- .m3tb_condition_mds_svg_path(out)
-      .m3tb_write_condition_mds_svg(group_mds, condition_mds_svg)
-      mds_src <- file.path("assets", basename(condition_mds_svg))
-      .m3tb_condition_report_html(label, group_mds, group_topic, pathways, out, mds_svg_src = mds_src)
-      data.table::data.table(
-        label = label,
-        k = k,
-        method_setup = row$method_setup[[1L]],
-        run_id = .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]]),
-        path = out
-      )
-    })
-    condition_reports <- data.table::rbindlist(condition_rows, use.names = TRUE, fill = TRUE)
+    condition_reports <- data.table::rbindlist(lapply(page_rows, `[[`, "condition"), use.names = TRUE, fill = TRUE)
     condition_page_reports <- data.table::copy(condition_reports)
+    subgrn_manifests <- lapply(page_rows, `[[`, "subgrn_manifest")
+  }
+  if (length(subgrn_manifests)) {
+    subgrn_manifest <- data.table::rbindlist(subgrn_manifests, use.names = TRUE, fill = TRUE)
+    if (nrow(subgrn_manifest)) {
+      csv_dir <- .m3tb_review_tables_dir(review_dir)
+      dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+      data.table::fwrite(subgrn_manifest, file.path(csv_dir, "pathway_subgrn_manifest.csv"))
+    }
   }
   if (nrow(topic_reports)) {
     topic_reports[, method_key := paste(run_id, method_setup, sep = "\t")]
@@ -3010,7 +3530,7 @@
 #' `run_extraction = FALSE`.
 #'
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
-#'   files.
+#'   files, or condition-link files when `input_source = "condition_links"`.
 #' @param multiomic_data Optional CraftGRN multiomic object. Required when
 #'   `replicate_documents = TRUE`.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
@@ -3041,12 +3561,26 @@
 #' @param vae_seed VAE random seed.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
+#' @param input_source Input source type passed to topic training. Use
+#'   `"differential_links"` for comparison links and `"condition_links"` for
+#'   condition-native links.
 #' @param sample_subset Optional condition/sample labels passed to the Module 3
 #'   training engine. When supplied, only comparisons whose condition labels are
 #'   both in this vector are used.
 #' @param analysis_label Label used to name the topic-model analysis.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides.
+#' @param extraction_k_workers Number of K values to extract concurrently.
+#'   `NULL` selects workers adaptively from memory and CPU headroom.
+#' @param extraction_k_max_workers Maximum concurrent K extraction workers.
+#' @param extraction_k_memory_gb Optional conservative memory estimate per K
+#'   worker in GiB. `NULL` estimates from the shared `edges_docs.rds` cache.
+#' @param extraction_k_memory_reserve_gb Minimum available RAM in GiB to keep
+#'   unused while scheduling K workers. At least 25 percent is also reserved.
+#' @param paper_benchmark_csv Optional Tsao 2022-style benchmark CSV used to
+#'   score fibroblast paper-topic recovery from existing theta and phi files.
+#' @param run_fibroblast_paper_recovery Whether to write the fibroblast
+#'   paper-topic recovery review when `paper_benchmark_csv` is supplied.
 #' @param run_training Train topic models before reporting.
 #' @param run_extraction Run topic extraction before reporting.
 #' @param run_reports Build score tables and review reports.
@@ -3081,9 +3615,16 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         vae_lr = 1e-3,
                                         vae_seed = 123L,
                                         vae_device = "auto",
+                                        input_source = c("differential_links", "condition_links"),
                                         sample_subset = NULL,
                                         analysis_label = NULL,
                                         extraction_topic_report_args = list(),
+                                        extraction_k_workers = NULL,
+                                        extraction_k_max_workers = 4L,
+                                        extraction_k_memory_gb = NULL,
+                                        extraction_k_memory_reserve_gb = 32,
+                                        paper_benchmark_csv = NULL,
+                                        run_fibroblast_paper_recovery = !is.null(paper_benchmark_csv),
                                         run_training = TRUE,
                                         run_extraction = TRUE,
                                         run_reports = TRUE,
@@ -3096,6 +3637,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
   k_grid <- k_grid[is.finite(k_grid) & k_grid > 1L]
   if (!length(k_grid)) .log_abort("k_grid must include at least one integer greater than 1.")
   count_method <- match.arg(count_method)
+  input_source <- match.arg(input_source)
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
   method_plan <- .module3_topic_method_plan(methods = methods, k_grid = k_grid)
   output_layout <- .m3tb_resolve_output_layout(
@@ -3147,6 +3689,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         Kgrid = k_grid,
         input_dir = filtered_dir,
         output_dir = row$topic_models_dir[[1L]],
+        input_source = input_source,
         sample_subset = sample_subset,
         analysis_label = analysis_label,
         doc_mode = "tf",
@@ -3192,16 +3735,33 @@ run_module3_topic_benchmark <- function(filtered_dir,
       row <- method_plan[i]
       model_root <- row$topic_models_dir[[1L]]
       extract_roots <- .m3tb_extraction_output_dirs(row, k_grid, output_layout)
-      for (j in seq_along(k_grid)) {
-        k <- k_grid[[j]]
-        extract_root <- extract_roots[[j]]
-        if (isTRUE(verbose)) {
-          .log_inform("Extracting Module 3 topics for method: {row$method_setup}; K={k}.")
-        }
+      link_scoring <- isTRUE(extraction_topic_report_args$run_link_topic_scores)
+      k_plan <- .module3_extraction_k_worker_plan(
+        n_tasks = length(k_grid),
+        model_dir = model_root,
+        k_workers = extraction_k_workers,
+        k_max_workers = extraction_k_max_workers,
+        k_memory_gb = extraction_k_memory_gb,
+        k_memory_reserve_gb = extraction_k_memory_reserve_gb,
+        cores = link_topic_requested_cores,
+        link_scoring = link_scoring
+      )
+      link_cores_per_worker <- max(1L, floor(link_topic_requested_cores / k_plan$workers))
+      link_cores_per_worker <- min(link_cores_per_worker, link_topic_n_cores)
+      if (isTRUE(verbose)) {
+        .log_inform(
+          "Extracting Module 3 topics for method: {row$method_setup}; K={paste(k_grid, collapse = ',')}; {k_plan$workers} concurrent K worker(s); estimated {(.format_bytes(k_plan$per_worker_bytes))} per worker; reserve {(.format_bytes(k_plan$reserve_bytes))}; {k_plan$reason}."
+        )
+      }
+      tasks <- lapply(seq_along(k_grid), function(j) list(
+        k = k_grid[[j]],
+        output_dir = extract_roots[[j]]
+      ))
+      worker_fun <- function(task) {
         extract_regulatory_topics(
-          k = k,
+          k = task$k,
           model_dir = model_root,
-          output_dir = extract_root,
+          output_dir = task$output_dir,
           backend = row$backend[[1L]],
           vae_variant = row$vae_variant[[1L]],
           doc_mode = "tf",
@@ -3210,12 +3770,18 @@ run_module3_topic_benchmark <- function(filtered_dir,
           topic_report_args = modifyList(
             list(
               fp_term_mode = row$fp_mode[[1L]],
-              link_topic_n_cores = link_topic_n_cores
+              link_topic_n_cores = link_cores_per_worker
             ),
             extraction_topic_report_args
           )
         )
       }
+      .module3_run_extraction_k_tasks(
+        tasks = tasks,
+        worker_fun = worker_fun,
+        workers = k_plan$workers,
+        cores = k_plan$cores
+      )
     }
   }
   model_rows <- data.table::data.table()
@@ -3230,6 +3796,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
   score_result <- NULL
   link_summary <- NULL
   html <- character()
+  fibroblast_paper_recovery <- NULL
   if (isTRUE(run_reports)) {
     if (isTRUE(verbose)) .log_inform("Scoring Module 3 theta separation and writing review reports.")
     score_prefix <- if (isTRUE(replicate_documents)) {
@@ -3249,6 +3816,15 @@ run_module3_topic_benchmark <- function(filtered_dir,
     attr(score_result, "model_rows") <- model_rows
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
+    if (isTRUE(run_fibroblast_paper_recovery) && !is.null(paper_benchmark_csv)) {
+      fibroblast_paper_recovery <- .m3fb_score_existing_models(
+        output_dir = output_dir,
+        model_rows = model_rows,
+        benchmark_csv = paper_benchmark_csv,
+        review_dir = review_dir,
+        verbose = verbose
+      )
+    }
   }
   path_length_summary <- NULL
   if (isTRUE(path_length_check)) {
@@ -3265,6 +3841,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
     model_rows = model_rows,
     score = score_result,
     topic_link_summary = link_summary,
+    fibroblast_paper_recovery = fibroblast_paper_recovery,
     html = html,
     output_layout = output_layout,
     review_dir = review_dir,
@@ -3299,6 +3876,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #' @param count_input Count column used for the cached sparse topic matrix. If
 #'   `NULL`, CraftGRN uses `pseudo_count_log` for `count_method = "log"` and
 #'   `pseudo_count_bin` otherwise.
+#' @param input_source Input source type. Use `"differential_links"` for
+#'   filtered comparison links and `"condition_links"` for condition-native
+#'   links from `module3_prepare_condition_links()`.
 #' @param threshold_gene_expr Minimum condition-level target-gene expression.
 #' @param threshold_fp_score Minimum condition-level footprint score.
 #' @param threshold_tf_expr Minimum condition-level TF expression.
@@ -3325,6 +3905,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
 module3_prepare_topic_inputs <- function(filtered_dir,
                                          output_dir,
                                          tf_cluster_map,
+                                         input_source = c("differential_links", "condition_links"),
                                          doc_mode = c("tf", "tf_cluster"),
                                          doc_design = c("condition", "comparison"),
                                          fp_term_mode = c("aggregate_weight", "aggregate", "unique"),
@@ -3353,8 +3934,12 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          verbose = TRUE) {
   .assert_pkg("data.table")
   .assert_pkg("Matrix")
+  input_source <- match.arg(input_source)
   doc_mode <- match.arg(doc_mode)
   doc_design <- match.arg(doc_design)
+  if (identical(input_source, "condition_links") && !identical(doc_design, "condition")) {
+    .log_abort("input_source = 'condition_links' requires doc_design = 'condition'.")
+  }
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   gene_term_mode <- match.arg(gene_term_mode)
   count_method <- match.arg(count_method)
@@ -3367,7 +3952,8 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   if (!isTRUE(overwrite) && all(file.exists(required_cache)) && file.exists(summary_path)) {
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
     cache_matches <- nrow(summary_dt) &&
-      all(c("doc_design", "doc_mode", "fp_term_mode") %in% names(summary_dt)) &&
+      all(c("input_source", "doc_design", "doc_mode", "fp_term_mode") %in% names(summary_dt)) &&
+      identical(as.character(summary_dt$input_source[[1L]]), input_source) &&
       identical(as.character(summary_dt$doc_design[[1L]]), doc_design) &&
       identical(as.character(summary_dt$doc_mode[[1L]]), doc_mode) &&
       identical(as.character(summary_dt$fp_term_mode[[1L]]), fp_term_mode) &&
@@ -3382,44 +3968,58 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       .log_inform("Existing Module 3 topic input cache does not match requested document settings; rebuilding: {output_dir}")
     }
   }
-  delta_files <- .module3_filtered_link_files(filtered_dir)
-  if (!length(delta_files)) {
-    delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) {
-    delta_files <- list.files(filtered_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) {
-    delta_files <- list.files(filtered_dir, "_delta_links\\.csv$", full.names = TRUE)
-  }
-  if (!length(delta_files)) .log_abort("No Module 3 filtered link files found in {filtered_dir}.")
-  if (isTRUE(verbose)) .log_inform("Loading {length(delta_files)} Module 3 filtered-link file(s).")
-  edges_dt <- data.table::as.data.table(load_delta_links_many(delta_files, keep_original = FALSE))
-  edges_dt <- .apply_module3_manifest_labels(edges_dt, filtered_dir)
-  n_loaded <- nrow(edges_dt)
-  if (!("comparison_id" %in% names(edges_dt))) .log_abort("Module 3 links are missing comparison_id.")
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
   sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
-  if (length(sample_subset)) {
-    if (!all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
-      .log_abort("sample_subset requires cond1_id and cond2_id columns in Module 3 links.")
+  if (identical(input_source, "condition_links")) {
+    if (isTRUE(verbose)) .log_inform("Loading condition-native links from {filtered_dir}.")
+    edges_dt <- .module3_read_condition_links(filtered_dir, conditions = sample_subset)
+    n_loaded <- nrow(edges_dt)
+  } else {
+    delta_files <- .module3_filtered_link_files(filtered_dir)
+    if (!length(delta_files)) {
+      delta_files <- list.files(filtered_dir, "_filtered_links(_(up|down))?\\.csv$", full.names = TRUE)
     }
-    edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
+    if (!length(delta_files)) {
+      delta_files <- list.files(filtered_dir, "_delta_links_filtered(_(up|down))?\\.csv$", full.names = TRUE)
+    }
+    if (!length(delta_files)) {
+      delta_files <- list.files(filtered_dir, "_delta_links\\.csv$", full.names = TRUE)
+    }
+    if (!length(delta_files)) .log_abort("No Module 3 filtered link files found in {filtered_dir}.")
+    if (isTRUE(verbose)) .log_inform("Loading {length(delta_files)} Module 3 filtered-link file(s).")
+    edges_dt <- data.table::as.data.table(load_delta_links_many(delta_files, keep_original = FALSE))
+    edges_dt <- .apply_module3_manifest_labels(edges_dt, filtered_dir)
+    n_loaded <- nrow(edges_dt)
+    if (!("comparison_id" %in% names(edges_dt))) .log_abort("Module 3 links are missing comparison_id.")
+    if (length(sample_subset)) {
+      if (!all(c("cond1_id", "cond2_id") %in% names(edges_dt))) {
+        .log_abort("sample_subset requires cond1_id and cond2_id columns in Module 3 links.")
+      }
+      edges_dt <- edges_dt[cond1_id %in% sample_subset & cond2_id %in% sample_subset]
+    }
   }
   if (!nrow(edges_dt)) .log_abort("No Module 3 links remain after sample subsetting.")
-  edges_filt <- filter_edges_for_tf_topics(
-    edges_dt,
-    abs_log2fc_fp_min = abs_log2fc_fp_min,
-    abs_delta_fp_min = abs_delta_fp_min,
-    abs_log2fc_gene_min = abs_log2fc_gene_min,
-    require_fp_bound_either = require_fp_bound_either,
-    require_tf_expr_either = require_tf_expr_either,
-    require_gene_expr_either = require_gene_expr_either,
-    direction_consistency = direction_consistency
-  )
+  edges_filt <- if (identical(input_source, "condition_links")) {
+    edges_dt
+  } else {
+    filter_edges_for_tf_topics(
+      edges_dt,
+      abs_log2fc_fp_min = abs_log2fc_fp_min,
+      abs_delta_fp_min = abs_delta_fp_min,
+      abs_log2fc_gene_min = abs_log2fc_gene_min,
+      require_fp_bound_either = require_fp_bound_either,
+      require_tf_expr_either = require_tf_expr_either,
+      require_gene_expr_either = require_gene_expr_either,
+      direction_consistency = direction_consistency
+    )
+  }
   if (!nrow(edges_filt)) .log_abort("No Module 3 links passed topic-input filters.")
   if (identical(doc_design, "condition")) {
-    edges_docs <- add_condition_tf_docs(edges_filt, tf_cluster_map = tf_cluster_map, doc_mode = doc_mode)
+    edges_docs <- if (identical(input_source, "condition_links")) {
+      data.table::copy(edges_filt)
+    } else {
+      add_condition_tf_docs(edges_filt, tf_cluster_map = tf_cluster_map, doc_mode = doc_mode)
+    }
     doc_term <- build_doc_term_condition_union(
       edges_docs,
       count_method = count_method,
@@ -3467,6 +4067,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   .save_all(output_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
   summary_dt <- data.table::data.table(
     analysis_label = if (is.null(analysis_label)) NA_character_ else as.character(analysis_label[[1L]]),
+    input_source = input_source,
     doc_design = doc_design,
     doc_mode = doc_mode,
     fp_term_mode = fp_term_mode,
@@ -3797,7 +4398,7 @@ visualize_differential_grns <- function(differential_links_dir,
 #' default, and writes a Module 3 QC report.
 #'
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
-#'   files.
+#'   files, or condition-link files when `input_source = "condition_links"`.
 #' @param multiomic_data Optional CraftGRN multiomic object. Required when
 #'   `replicate_documents = TRUE`.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
@@ -3810,6 +4411,8 @@ visualize_differential_grns <- function(differential_links_dir,
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
 #' @param warplda_iterations Number of native WarpLDA iterations.
+#' @param input_source Input source type. Use `"differential_links"` for
+#'   comparison links and `"condition_links"` for condition-native links.
 #' @param sample_subset Optional condition/sample labels to keep.
 #' @param analysis_label Label used to name the topic-model analysis.
 #' @param topic_link_output Topic-link output mode. `"pass"` writes compact
@@ -3845,6 +4448,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   vae_lr = 1e-3,
                                   vae_seed = 123L,
                                   vae_device = "auto",
+                                  input_source = c("differential_links", "condition_links"),
                                   sample_subset = NULL,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
@@ -3857,6 +4461,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   verbose = TRUE) {
   topic_link_output <- match.arg(topic_link_output)
   count_method <- match.arg(count_method)
+  input_source <- match.arg(input_source)
   if (length(method) != 1L) .log_abort("run_regulatory_topics() expects one selected method.")
   extraction_args <- modifyList(
     list(
@@ -3887,6 +4492,7 @@ run_regulatory_topics <- function(filtered_dir,
     vae_lr = vae_lr,
     vae_seed = vae_seed,
     vae_device = vae_device,
+    input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
     extraction_topic_report_args = extraction_args,
@@ -4161,6 +4767,8 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides. Values here override project config values,
 #'   including TF-to-topic assignment cutoffs.
+#' @param input_source Input source type. Use `"differential_links"` for
+#'   comparison links and `"condition_links"` for condition-native links.
 #' @param ... Additional arguments passed to the internal topic-modeling
 #'   wrapper.
 #'
@@ -4184,7 +4792,9 @@ run_topic_modeling <- function(filtered_dir,
                                pathway_backend = NULL,
                                pathway_species = NULL,
                                extraction_topic_report_args = list(),
+                               input_source = c("differential_links", "condition_links"),
                                ...) {
+  input_source <- match.arg(input_source)
   resolved <- .module3_resolve_topic_run_config(
     project_config = project_config,
     method = method,
@@ -4214,6 +4824,7 @@ run_topic_modeling <- function(filtered_dir,
     extraction_topic_report_args = modifyList(resolved$extraction_args, extraction_topic_report_args),
     vae_device = resolved$vae_device,
     vae_batch_size = resolved$vae_batch_size,
+    input_source = input_source,
     ...
   )
 }

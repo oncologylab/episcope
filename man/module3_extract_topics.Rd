@@ -10,11 +10,17 @@ module3_extract_topics(
   output_dir,
   flatten_single_output = TRUE,
   topic_score_method = c("normtop_specificity", "rowmax_phi"),
+  k_workers = NULL,
+  k_max_workers = 4L,
+  k_memory_gb = NULL,
+  k_memory_reserve_gb = 32,
+  cores = NULL,
+  verbose = TRUE,
   ...
 )
 }
 \arguments{
-\item{k}{Integer K selected for extraction.}
+\item{k}{Integer K value or vector of K values selected for extraction.}
 
 \item{model_dir}{Directory containing trained topic model outputs.}
 
@@ -26,6 +32,21 @@ directly under `output_dir`. Defaults to `TRUE` for the public step API.}
 \item{topic_score_method}{Topic-term score method. `"normtop_specificity"`
 is the default for new extractions; `"rowmax_phi"` preserves the legacy
 row-maximum-scaled phi score.}
+
+\item{k_workers}{Number of K values to extract concurrently. `NULL` selects
+workers adaptively from current memory and CPU headroom.}
+
+\item{k_max_workers}{Maximum concurrent K workers in adaptive mode.}
+
+\item{k_memory_gb}{Optional conservative memory estimate per K worker in GiB.
+When `NULL`, estimate from `edges_docs.rds` with a 16 GiB minimum.}
+
+\item{k_memory_reserve_gb}{Minimum RAM in GiB to leave unused. Adaptive
+scheduling also reserves at least 25 percent of currently available RAM.}
+
+\item{cores}{CPU cores available to the extraction scheduler.}
+
+\item{verbose}{Emit concise extraction scheduler messages.}
 
 \item{...}{Additional arguments passed to the internal extraction engine,
 such as `backend`, `doc_mode`, `weight_label`, and `topic_report_args`.}

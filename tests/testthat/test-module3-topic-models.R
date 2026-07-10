@@ -232,6 +232,253 @@ test_that("condition doc_tf applies condition thresholds and TF self terms", {
   expect_false("PEAK:P2" %in% cond_terms)
 })
 
+test_that("Module 3 condition links are built directly from Module 2 links", {
+  links <- data.table::data.table(
+    tf = c("TF1", "TF1", "TF2", "TF3"),
+    fp_id = c("P1", "P2", "P1", "P3"),
+    target_gene = c("G1", "G2", "G1", "G3"),
+    module2_link_pass = TRUE,
+    tf_expression_target_r = c(0.8, 0.7, 0.6, 0.5),
+    fp_target_rna_r = c(0.9, 0.8, 0.7, 0.6)
+  )
+  module2 <- list(links = links, module2_links = links)
+
+  fp_score <- matrix(
+    c(3, 1, 4, 3, 1, 4),
+    nrow = 3,
+    dimnames = list(c("P1", "P2", "P3"), c("CondA", "CondB"))
+  )
+  fp_bound <- fp_score >= 2
+  gene_expr <- matrix(
+    c(12, 8, 8, 20, 20, 20, 20, 20, 20, 20),
+    nrow = 5,
+    dimnames = list(c("TF1", "TF2", "TF3", "G1", "G2"), c("CondA", "CondB"))
+  )
+  gene_on <- gene_expr >= 10
+  multiomic <- list(
+    schema = "craftgrn_multiomic_v1",
+    samples = data.frame(condition_id = c("CondA", "CondB")),
+    features = list(
+      fp = data.frame(fp_id = c("P1", "P2", "P3")),
+      gene = data.frame(gene_id = c("TF1", "TF2", "TF3", "G1", "G2"))
+    ),
+    matrices = list(
+      fp_score = fp_score,
+      fp_bound = fp_bound,
+      gene_expr = gene_expr,
+      gene_on = gene_on
+    ),
+    refs = list(tf = c("TF1", "TF2", "TF3"))
+  )
+  class(multiomic) <- c("craftgrn_multiomic", "list")
+
+  root <- withr::local_tempdir()
+  out <- module3_prepare_condition_links(
+    module2 = module2,
+    multiomic_data = multiomic,
+    conditions = c("CondA", "CondB"),
+    output_dir = root,
+    threshold_fp_score = 2,
+    threshold_gene_expr = 10,
+    threshold_tf_expr = 10,
+    output_format = "csv",
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+
+  expect_true(file.exists(file.path(root, "condition_links_manifest.csv")))
+  expect_equal(sort(out$manifest$condition_id), c("CondA", "CondB"))
+  cond_a <- data.table::fread(out$manifest[condition_id == "CondA", path])
+  cond_b <- data.table::fread(out$manifest[condition_id == "CondB", path])
+
+  expect_equal(nrow(cond_a), 1L)
+  expect_equal(cond_a$doc_id, "CondA::TF1")
+  expect_equal(cond_a$gene_key, "G1")
+  expect_equal(cond_a$peak_id, "P1")
+  expect_equal(cond_a$fp_score_condition, 3)
+  expect_equal(cond_a$gene_expr_condition, 20)
+  expect_equal(cond_a$tf_expr_condition, 12)
+
+  expect_equal(nrow(cond_b), 2L)
+  expect_setequal(cond_b$doc_id, c("CondB::TF1", "CondB::TF2"))
+  expect_false("TF3" %in% cond_b$tf)
+})
+
+test_that("condition links resolve project-prefixed matrix condition columns", {
+  links <- data.table::data.table(
+    tf = "TF1",
+    fp_id = "P1",
+    target_gene = "G1",
+    module2_link_pass = TRUE
+  )
+  module2 <- list(links = links, module2_links = links)
+  fp_score <- matrix(3, nrow = 1, dimnames = list("P1", "GSE_TEST_CondA"))
+  fp_bound <- matrix(TRUE, nrow = 1, dimnames = list("P1", "GSE_TEST_CondA"))
+  gene_expr <- matrix(
+    c(12, 20),
+    nrow = 2,
+    dimnames = list(c("TF1", "G1"), "GSE_TEST_CondA")
+  )
+  gene_on <- gene_expr >= 10
+  multiomic <- list(
+    schema = "craftgrn_multiomic_v1",
+    project = list(project_id = "GSE_TEST"),
+    samples = data.frame(condition_id = "CondA"),
+    features = list(
+      fp = data.frame(fp_id = "P1"),
+      gene = data.frame(gene_id = c("TF1", "G1"))
+    ),
+    matrices = list(
+      fp_score = fp_score,
+      fp_bound = fp_bound,
+      gene_expr = gene_expr,
+      gene_on = gene_on
+    ),
+    refs = list(tf = "TF1")
+  )
+  class(multiomic) <- c("craftgrn_multiomic", "list")
+
+  root <- withr::local_tempdir()
+  out <- module3_prepare_condition_links(
+    module2 = module2,
+    multiomic_data = multiomic,
+    conditions = "CondA",
+    output_dir = root,
+    threshold_fp_score = 2,
+    threshold_gene_expr = 10,
+    threshold_tf_expr = 10,
+    output_format = "csv",
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+  cond_a <- data.table::fread(out$manifest$path[[1L]])
+
+  expect_equal(out$manifest$condition_id, "CondA")
+  expect_equal(out$manifest$matrix_condition_id, "GSE_TEST_CondA")
+  expect_equal(cond_a$condition_id, "CondA")
+  expect_equal(cond_a$matrix_condition_id, "GSE_TEST_CondA")
+  expect_equal(cond_a$doc_id, "CondA::TF1")
+})
+
+test_that("condition-native topic training does not require differential link columns", {
+  root <- withr::local_tempdir()
+  input_dir <- file.path(root, "condition_links")
+  model_dir <- file.path(root, "models")
+  dir.create(input_dir, recursive = TRUE)
+
+  condition_links <- data.table::data.table(
+    condition_id = rep(c("CondA", "CondB"), each = 6),
+    condition_label = rep(c("CondA", "CondB"), each = 6),
+    doc_id = paste0(rep(c("CondA", "CondB"), each = 6), "::", rep(c("TF1", "TF2"), each = 3, times = 2)),
+    tf_doc = rep(c("TF1", "TF2"), each = 3, times = 2),
+    tf = rep(c("TF1", "TF2"), each = 3, times = 2),
+    gene_key = paste0("G", rep(1:6, times = 2)),
+    peak_id = paste0("P", rep(1:6, times = 2)),
+    fp_score_condition = c(5, 4, 3, 5, 4, 3, 4, 5, 3, 4, 5, 3),
+    gene_expr_condition = c(20, 18, 16, 21, 19, 17, 18, 20, 16, 19, 21, 17),
+    tf_expr_condition = 30
+  )
+  links_path <- file.path(input_dir, "all_condition_links.csv")
+  data.table::fwrite(condition_links, links_path)
+  data.table::fwrite(
+    data.table::data.table(
+      condition_id = c("CondA", "CondB"),
+      path = links_path,
+      format = "csv",
+      n_links = c(6L, 6L)
+    ),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+
+  train_topic_models(
+    Kgrid = 2L,
+    input_dir = input_dir,
+    output_dir = model_dir,
+    analysis_label = "condition_native",
+    doc_mode = "tf",
+    doc_design = "condition",
+    input_source = "condition_links",
+    fp_term_mode = "unique",
+    gene_term_mode = "unique",
+    include_tf_terms = TRUE,
+    min_df = 1,
+    count_method = "bin",
+    backend = "warplda",
+    warplda_iterations = 1L,
+    local_threads = 1L,
+    reuse_if_exists = FALSE,
+    threshold_gene_expr = 10,
+    threshold_fp_score = 2,
+    threshold_tf_expr = 10,
+    save_full_doc_term_csv = FALSE,
+    flat_output = TRUE
+  )
+
+  summary <- data.table::fread(file.path(model_dir, "topic_input_summary.csv"))
+  doc_term <- readRDS(file.path(model_dir, "rds", "doc_term.rds"))
+
+  expect_equal(summary$input_source, "condition_links")
+  expect_equal(summary$n_link_rows_after_filter, 12)
+  expect_setequal(unique(sub("::.*$", "", doc_term$doc_id)), c("CondA", "CondB"))
+  expect_true(file.exists(file.path(model_dir, "vae_models", "theta_K2.csv")))
+})
+
+test_that("module3_construct_docs accepts condition-link inputs", {
+  root <- withr::local_tempdir()
+  input_dir <- file.path(root, "condition_links")
+  docs_dir <- file.path(root, "topic_documents")
+  dir.create(input_dir, recursive = TRUE)
+
+  condition_links <- data.table::data.table(
+    condition_id = rep(c("CondA", "CondB"), each = 2),
+    condition_label = rep(c("CondA", "CondB"), each = 2),
+    doc_id = c("CondA::TF1", "CondA::TF2", "CondB::TF1", "CondB::TF2"),
+    tf_doc = c("TF1", "TF2", "TF1", "TF2"),
+    tf = c("TF1", "TF2", "TF1", "TF2"),
+    gene_key = c("G1", "G2", "G1", "G2"),
+    peak_id = c("P1", "P2", "P1", "P2"),
+    fp_score_condition = c(5, 4, 5, 4),
+    gene_expr_condition = c(20, 18, 20, 18),
+    tf_expr_condition = c(30, 30, 30, 30)
+  )
+  links_path <- file.path(input_dir, "condition_links.csv")
+  data.table::fwrite(condition_links, links_path)
+  data.table::fwrite(
+    data.table::data.table(
+      condition_id = c("CondA", "CondB"),
+      path = links_path,
+      format = "csv",
+      n_links = c(2L, 2L)
+    ),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+
+  out <- module3_construct_docs(
+    filtered_dir = input_dir,
+    output_dir = docs_dir,
+    input_source = "condition_links",
+    doc_mode = "tf",
+    doc_design = "condition",
+    fp_term_mode = "unique",
+    gene_term_mode = "unique",
+    include_tf_terms = TRUE,
+    count_method = "log",
+    threshold_gene_expr = 10,
+    threshold_fp_score = 2,
+    threshold_tf_expr = 10,
+    min_df = 1,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+
+  summary <- data.table::fread(file.path(docs_dir, "topic_input_summary.csv"))
+  doc_term <- readRDS(file.path(docs_dir, "rds", "doc_term.rds"))
+
+  expect_false(isTRUE(out$reused))
+  expect_equal(summary$input_source, "condition_links")
+  expect_setequal(unique(sub("::.*$", "", doc_term$doc_id)), c("CondA", "CondB"))
+})
+
 test_that("WarpLDA one-option runner exposes pathway dotplot control", {
   fmls <- names(formals(run_tfdocs_warplda_one_option))
   expect_true("pathway_make_heatmap" %in% fmls)
@@ -778,6 +1025,36 @@ test_that("topic link gammafit scope is passed through to gene-only links", {
   expect_equal(unique(global_scope$gene_gamma_cutoff), 0.95)
 })
 
+test_that("topic-link preflight blocks excessive Cartesian scoring", {
+  edges <- data.table::data.table(
+    doc_id = c("D1", "D1"),
+    tf = c("TF1", "TF1"),
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2")
+  )
+  score_mat <- matrix(
+    c(
+      0.9, 0.1, 0.8, 0.2,
+      0.2, 0.7, 0.1, 0.9
+    ),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("PEAK:P1", "PEAK:P2", "GENE:G1", "GENE:G2"))
+  )
+  withr::local_options(list(craftgrn.topic_link.max_scored_rows = 3))
+
+  expect_error(
+    compute_topic_links(
+      edges,
+      score_mat,
+      binarize_method = "topn",
+      link_method = "gammafit",
+      overwrite = TRUE
+    ),
+    "would materialize too many edge-topic rows"
+  )
+})
+
 test_that("gammafit topic link summary reports pre-filter scored rows", {
   edges <- data.table::data.table(
     doc_id = c("D1", "D1"),
@@ -1092,6 +1369,160 @@ test_that("overall topic pathway dotplot shows a readable expanded default", {
   expect_equal(formals(run_tfdocs_report_from_topic_base)$dot_top_n_per_topic, 25L)
 })
 
+test_that("topic-link enumeration is explicit opt-in", {
+  defaults <- make_topic_report_args_simple(
+    thrP = 0.9,
+    link_prob_cutoff = 0.3,
+    link_fdr_p = NA_real_
+  )
+  requested <- make_topic_report_args_simple(
+    thrP = 0.9,
+    link_prob_cutoff = 0.3,
+    link_fdr_p = NA_real_,
+    extraction_steps = "topic_links"
+  )
+
+  expect_false(defaults$run_link_topic_scores)
+  expect_true(requested$run_link_topic_scores)
+})
+
+test_that("Module 3 K extraction worker planning preserves RAM headroom", {
+  gib <- 1024^3
+  root <- tempfile("module3-k-worker-plan-")
+  dir.create(root, recursive = TRUE)
+
+  roomy <- .module3_extraction_k_worker_plan(
+    n_tasks = 8L,
+    model_dir = root,
+    k_max_workers = 4L,
+    k_memory_gb = 16,
+    k_memory_reserve_gb = 32,
+    cores = 36L,
+    available_bytes = 128 * gib,
+    os_type = "unix"
+  )
+  tight <- .module3_extraction_k_worker_plan(
+    n_tasks = 8L,
+    model_dir = root,
+    k_max_workers = 4L,
+    k_memory_gb = 16,
+    k_memory_reserve_gb = 32,
+    cores = 36L,
+    available_bytes = 40 * gib,
+    os_type = "unix"
+  )
+  link_scoring <- .module3_extraction_k_worker_plan(
+    n_tasks = 8L,
+    model_dir = root,
+    k_memory_gb = 16,
+    cores = 36L,
+    link_scoring = TRUE,
+    available_bytes = 128 * gib,
+    os_type = "unix"
+  )
+
+  expect_equal(roomy$workers, 4L)
+  expect_equal(tight$workers, 1L)
+  expect_equal(link_scoring$workers, 1L)
+  expect_match(link_scoring$reason, "topic-link scoring", fixed = TRUE)
+})
+
+test_that("Module 3 K extraction workers keep worker output quiet", {
+  tasks <- list(list(k = 2L), list(k = 3L))
+  expect_silent(
+    .module3_run_extraction_k_tasks(
+      tasks = tasks,
+      worker_fun = function(task) {
+        message("worker message")
+        task$k
+      },
+      workers = if (.Platform$OS.type == "unix") 2L else 1L,
+      cores = 2L
+    )
+  )
+})
+
+test_that("module3_extract_topics supports a safe multi-K extraction", {
+  testthat::skip_if_not_installed("Matrix")
+  root <- tempfile("module3-multi-k-extract-")
+  model_dir <- file.path(root, "models")
+  output_dir <- file.path(root, "extraction")
+  dir.create(file.path(model_dir, "vae_models"), recursive = TRUE)
+  dir.create(file.path(model_dir, "rds"), recursive = TRUE)
+
+  theta2 <- data.table::data.table(
+    doc_id = c("CondA::TF1", "CondB::TF1"),
+    Topic1 = c(0.8, 0.2),
+    Topic2 = c(0.2, 0.8)
+  )
+  theta3 <- data.table::data.table(
+    doc_id = c("CondA::TF1", "CondB::TF1"),
+    Topic1 = c(0.7, 0.1),
+    Topic2 = c(0.2, 0.7),
+    Topic3 = c(0.1, 0.2)
+  )
+  phi2 <- data.table::data.table(
+    term_id = c("Topic1", "Topic2"),
+    `PEAK:G1` = c(0.8, 0.2),
+    `PEAK:G2` = c(0.2, 0.8),
+    `GENE:G1` = c(0.8, 0.2),
+    `GENE:G2` = c(0.2, 0.8)
+  )
+  phi3 <- data.table::data.table(
+    term_id = c("Topic1", "Topic2", "Topic3"),
+    `PEAK:G1` = c(0.7, 0.2, 0.1),
+    `PEAK:G2` = c(0.1, 0.7, 0.2),
+    `GENE:G1` = c(0.7, 0.2, 0.1),
+    `GENE:G2` = c(0.1, 0.7, 0.2)
+  )
+  data.table::fwrite(theta2, file.path(model_dir, "vae_models", "theta_K2.csv"))
+  data.table::fwrite(theta3, file.path(model_dir, "vae_models", "theta_K3.csv"))
+  data.table::fwrite(phi2, file.path(model_dir, "vae_models", "phi_K2.csv"))
+  data.table::fwrite(phi3, file.path(model_dir, "vae_models", "phi_K3.csv"))
+
+  dtm <- Matrix::Matrix(matrix(c(3, 1, 2, 1, 1, 2, 1, 3), nrow = 2, byrow = TRUE), sparse = TRUE)
+  rownames(dtm) <- theta2$doc_id
+  colnames(dtm) <- c("PEAK:G1", "PEAK:G2", "GENE:G1", "GENE:G2")
+  edges <- data.table::data.table(
+    doc_id = theta2$doc_id,
+    tf = "TF1",
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2")
+  )
+  saveRDS(dtm, file.path(model_dir, "rds", "dtm.rds"))
+  saveRDS(edges, file.path(model_dir, "rds", "edges_docs.rds"))
+
+  module3_extract_topics(
+    k = c(2L, 3L),
+    model_dir = model_dir,
+    output_dir = output_dir,
+    backend = "warplda",
+    doc_mode = "tf",
+    weight_label = "peak_score_gene_expr",
+    k_workers = 2L,
+    k_max_workers = 2L,
+    k_memory_gb = 1,
+    k_memory_reserve_gb = 0,
+    cores = 2L,
+    verbose = FALSE,
+    topic_report_args = list(
+      fp_term_mode = "aggregate",
+      in_topic_min_terms = 1L,
+      run_link_topic_scores = FALSE,
+      run_gammafit_summary = FALSE,
+      run_pathway_enrichment = FALSE,
+      run_topic_term_heatmap = FALSE,
+      run_topic_by_comparison_heatmaps = FALSE,
+      run_intertopic_distance_map = FALSE
+    )
+  )
+
+  expect_true(file.exists(file.path(output_dir, "K2", "topic_terms.csv")))
+  expect_true(file.exists(file.path(output_dir, "K3", "topic_terms.csv")))
+  expect_true(file.exists(file.path(output_dir, "K2", "topic_extraction_step_timing.csv")))
+  expect_true(file.exists(file.path(output_dir, "K3", "topic_extraction_step_timing.csv")))
+})
+
 test_that("overall topic pathway output no longer writes a heatmap PDF", {
   testthat::skip_if_not_installed("pheatmap")
 
@@ -1325,6 +1756,86 @@ test_that("per-comparison pathway retest resolves formal human aliases", {
   expect_equal(row$overlap_genes, "P53")
   expect_equal(row$overlap_gene_symbols, "TP53")
   expect_match(row$gene_match_summary, "alias=1", fixed = TRUE)
+})
+
+test_that("condition pathway retest writes condition-labeled outputs", {
+  topic_terms <- data.table::data.table(
+    topic = c("Topic1", "Topic1", "Topic2"),
+    topic_num = c(1L, 1L, 2L),
+    term_id = c("GENE:GeneA", "GENE:GeneB", "GENE:GeneC"),
+    in_topic = TRUE,
+    score = c(0.9, 0.8, 0.7)
+  )
+  theta <- matrix(
+    c(
+      0.8, 0.2,
+      0.7, 0.3,
+      0.1, 0.9
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(
+      c("CondA::TF1", "CondA::TF2", "CondB::TF1"),
+      c("Topic1", "Topic2")
+    )
+  )
+  edges <- data.table::data.table(
+    doc_id = c("CondA::TF1", "CondA::TF2", "CondB::TF1"),
+    tf = c("TF1", "TF2", "TF1"),
+    peak_id = paste0("P", 1:3),
+    gene_key = c("GeneA", "GeneB", "GeneC")
+  )
+  out_dir <- file.path(tempdir(), paste0("condition-topic-pathway-", sample.int(1e8, 1L)))
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  data.table::fwrite(
+    data.table::data.table(
+      topic = c(1L, 2L),
+      pathway = c("Reactome: Condition Path A", "Reactome: Condition Path B"),
+      padj = c(0.01, 0.02),
+      pval = c(0.001, 0.002),
+      overlap = c("2/10", "1/8"),
+      overlap_hits = c(2L, 1L),
+      genes = c("GENEA;GENEB", "GENEC"),
+      logp = -log10(c(0.01, 0.02)),
+      combined_score = c(10, 5),
+      odds_ratio = c(2, 1.5),
+      cluster_size = c(2L, 1L),
+      term_size = NA,
+      background_size = NA
+    ),
+    file.path(out_dir, "topic_pathway_enrichment_topic_terms.csv")
+  )
+
+  plot_topic_pathway_enrichment_by_condition_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges,
+    theta = theta,
+    out_dir = out_dir,
+    pathway_backend = "enrichly",
+    pathway_species = "human",
+    background_size = 20000L
+  )
+
+  out_file <- file.path(out_dir, "per_condition_topic_pathway_enrichment.csv")
+  expect_true(file.exists(out_file))
+  expect_true(file.exists(file.path(out_dir, "per_condition_topic_pathway_debug.txt")))
+  expect_false(file.exists(file.path(out_dir, "per_comparison_topic_pathway_enrichment.csv")))
+  out <- data.table::fread(out_file)
+  expect_true(all(c(
+    "condition_id", "direction_group", "topic", "pathway", "pval", "padj",
+    "condition_topic_genes", "condition_topic_gene_symbols"
+  ) %in% names(out)))
+  expect_false("comparison_id" %in% names(out))
+  expect_false("comparison_topic_genes" %in% names(out))
+  row <- out[condition_id == "CondA" & direction_group == "All" & topic == 1L & pathway == "Reactome: Condition Path A"]
+  expect_equal(row$query_size, 2L)
+  expect_equal(row$overlap_hits, 2L)
+  expect_equal(row$overlap_genes, "GeneA;GeneB")
+  expect_equal(
+    row$pval,
+    stats::phyper(2 - 1, 10, 20000 - 10, 2, lower.tail = FALSE),
+    tolerance = 1e-12
+  )
 })
 
 test_that("TF topic assignment keeps direction-specific theta memberships", {
@@ -1651,6 +2162,7 @@ test_that("topic extraction standard output skips raw theta documents", {
 
 test_that("topic extraction defaults keep per-comparison pathway outputs flat", {
   expect_true(isTRUE(formals(run_tfdocs_report_from_topic_base)$pathway_per_comparison_flat))
+  expect_null(formals(run_tfdocs_report_from_topic_base)$pathway_per_condition)
 })
 
 test_that("topic extraction skips removed marker feature outputs", {

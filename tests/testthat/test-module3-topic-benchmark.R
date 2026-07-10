@@ -1,4 +1,8 @@
 test_that("Module 3 topic benchmark scores existing models and writes review reports", {
+  old_scan <- getOption("craftgrn.topic_review.scan_link_tables")
+  options(craftgrn.topic_review.scan_link_tables = TRUE)
+  on.exit(options(craftgrn.topic_review.scan_link_tables = old_scan), add = TRUE)
+
   root <- tempfile("module3-topic-benchmark-")
   dir.create(root, recursive = TRUE)
 
@@ -230,7 +234,8 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   topic_detail_html <- paste(readLines(topic_page_files[[1L]], warn = FALSE), collapse = "\n")
   condition_detail_html <- paste(readLines(condition_page_files[[1L]], warn = FALSE), collapse = "\n")
   expect_match(topic_detail_html, "Intertopic Distance Map", fixed = TRUE)
-  expect_match(topic_detail_html, "Condition Waterfall", fixed = TRUE)
+  expect_match(topic_detail_html, "Topic Bar Plots", fixed = TRUE)
+  expect_match(topic_detail_html, "id=\"tfSelect\"", fixed = TRUE)
   expect_match(topic_detail_html, "Pathways", fixed = TRUE)
   expect_match(topic_detail_html, "Export SVG", fixed = TRUE)
   expect_match(topic_detail_html, "image/svg+xml", fixed = TRUE)
@@ -246,6 +251,10 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(topic_detail_html, "paletteSelect", fixed = TRUE)
   expect_match(topic_detail_html, "mdsLayer", fixed = TRUE)
   expect_match(topic_detail_html, "waterfallLayer", fixed = TRUE)
+  expect_match(topic_detail_html, "TF_TOPIC", fixed = TRUE)
+  expect_match(topic_detail_html, "tfWaterfallSvg", fixed = TRUE)
+  expect_match(topic_detail_html, "selectedTfUpper", fixed = TRUE)
+  expect_match(topic_detail_html, "TF targets", fixed = TRUE)
   expect_match(topic_detail_html, "pathLayer", fixed = TRUE)
   expect_match(topic_detail_html, "mdsTooltip", fixed = TRUE)
   expect_match(topic_detail_html, "body.embed .top", fixed = TRUE)
@@ -257,7 +266,8 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(topic_detail_html, "Mean document-to-topic probability", fixed = TRUE)
   expect_match(topic_detail_html, "marker", fixed = TRUE)
   expect_match(condition_detail_html, "Condition/Comparison MDS", fixed = TRUE)
-  expect_match(condition_detail_html, "Topic Waterfall", fixed = TRUE)
+  expect_match(condition_detail_html, "Topic Bar Plots", fixed = TRUE)
+  expect_match(condition_detail_html, "id=\"tfSelect\"", fixed = TRUE)
   expect_match(condition_detail_html, "image/svg+xml", fixed = TRUE)
   expect_match(condition_detail_html, "XMLSerializer", fixed = TRUE)
   expect_match(condition_detail_html, "exportSvg", fixed = TRUE)
@@ -281,6 +291,10 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(condition_detail_html, "selectedGroupRows", fixed = TRUE)
   expect_match(condition_detail_html, "Document-to-topic probability", fixed = TRUE)
   expect_match(condition_detail_html, "waterfallLayer", fixed = TRUE)
+  expect_match(condition_detail_html, "TF_TOPIC", fixed = TRUE)
+  expect_match(condition_detail_html, "tfWaterfallSvg", fixed = TRUE)
+  expect_match(condition_detail_html, "selectedTfUpper", fixed = TRUE)
+  expect_match(condition_detail_html, "TF targets", fixed = TRUE)
   expect_match(condition_detail_html, "waterfallStats", fixed = TRUE)
   expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
 
@@ -434,11 +448,10 @@ test_that("Module 3 condition reports read full per-comparison pathway tables", 
     compute_universe = FALSE
   )
 
-  expect_equal(nrow(pathways), 2L)
-  expect_setequal(pathways$pathway, c("Reactome: Signal A", "GO:BP: Signal B"))
+  expect_equal(nrow(pathways), 1L)
+  expect_setequal(pathways$pathway, "Reactome: Signal A")
   expect_setequal(pathways$comparison_label, "CmpA::Target-Up")
-  expect_equal(pathways[pathway == "GO:BP: Signal B", padj], 1)
-  expect_equal(pathways[pathway == "GO:BP: Signal B", gene_in], 0L)
+  expect_false("GO:BP: Signal B" %in% pathways$pathway)
 
   out_file <- tempfile(fileext = ".html")
   craftgrn:::.m3tb_condition_report_html(
@@ -464,9 +477,311 @@ test_that("Module 3 condition reports read full per-comparison pathway tables", 
   )
   html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
 
-  expect_match(html, "GO:BP: Signal B", fixed = TRUE)
+  expect_no_match(html, "GO:BP: Signal B", fixed = TRUE)
   expect_no_match(html, "Filter: N_gene >= 5, adjusted p-value < 0.05", fixed = TRUE)
-  expect_match(html, "Full per-comparison pathway table", fixed = TRUE)
+  expect_match(html, "Full per-condition or per-comparison pathway table", fixed = TRUE)
+})
+
+test_that("Module 3 review builds TF-topic rows from theta document IDs", {
+  theta_condition <- matrix(
+    c(0.8, 0.2, 0.3, 0.7),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(c("CondA::TF1", "CondA::TF2"), c("Topic1", "Topic2"))
+  )
+  condition_rows <- craftgrn:::.m3tb_tf_topic_rows(theta_condition, "condition")
+  expect_setequal(condition_rows$comparison_label, "CondA")
+  expect_setequal(condition_rows$tf, c("TF1", "TF2"))
+  expect_equal(condition_rows[tf == "TF1" & topic == "Topic1", theta], 0.8)
+
+  theta_comparison <- matrix(
+    c(0.1, 0.9),
+    nrow = 1L,
+    dimnames = list("CmpA::TFX::Target-Up", c("Topic1", "Topic2"))
+  )
+  comparison_rows <- craftgrn:::.m3tb_tf_topic_rows(theta_comparison, "comparison")
+  expect_setequal(comparison_rows$comparison_label, "CmpA::Target-Up")
+  expect_setequal(comparison_rows$tf, "TFX")
+  expect_equal(comparison_rows[topic == "Topic2", theta], 0.9)
+})
+
+test_that("Module 3 pathway sub-GRN payloads support TF-gene and TF-peak-gene views", {
+  pathways <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction_group = "Up",
+    topic = 2L,
+    pathway = "Reactome: Signal A",
+    pathway_norm_key = "reactome:signal a",
+    padj = 0.01,
+    overlap_genes = "GeneA;GeneB"
+  )
+  edges_docs <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction = "Target-Up",
+    tf = c("TF1", "TF1", "TF2", "TF3", "TF1"),
+    gene_key = c("GeneA", "GeneA", "GeneA", "GeneB", "GeneC"),
+    peak_id = c("PeakShared", "Peak2", "PeakShared", "PeakShared", "Peak3"),
+    delta_fp = c(2, 1, 3, 0.5, 9),
+    delta_gene = c(1, 1, 1, 1, 1),
+    log2fc_gene = c(1.2, 0.8, 1.5, 0.4, 2)
+  )
+  tf_membership <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction = "Target-Up",
+    tf = c("TF1", "TF3"),
+    topic_num = c(2L, 1L),
+    membership_pass = c(TRUE, TRUE)
+  )
+
+  payload <- craftgrn:::.m3tb_build_pathway_subgrn_payload(
+    pathways = pathways,
+    edges_docs = edges_docs,
+    tf_membership = tf_membership,
+    max_tf_gene_edges_per_context = 20L,
+    max_tf_peak_gene_triplets_per_context = 20L
+  )
+
+  expect_equal(nrow(payload$manifest), 1L)
+  expect_equal(payload$manifest$direction[[1L]], "Target-Up")
+  expect_equal(payload$manifest$n_overlap_genes[[1L]], 2L)
+  expect_equal(payload$manifest$n_tf_gene_edges[[1L]], 3L)
+  expect_equal(payload$manifest$n_tf_peak_gene_triplets[[1L]], 4L)
+
+  tf_gene <- payload$tf_gene_edges
+  expect_setequal(tf_gene$gene_key, c("GeneA", "GeneB"))
+  expect_false("GeneC" %in% tf_gene$gene_key)
+  expect_equal(tf_gene[tf == "TF1" & gene_key == "GeneA", n_supporting_peaks], 2L)
+  expect_true(tf_gene[tf == "TF1" & gene_key == "GeneA", topic_tf])
+  expect_false(tf_gene[tf == "TF2" & gene_key == "GeneA", topic_tf])
+
+  triplets <- payload$tf_peak_gene_triplets
+  expect_equal(triplets[peak_id == "PeakShared", uniqueN(tf)], 3L)
+  expect_equal(triplets[peak_id == "PeakShared", uniqueN(gene_key)], 2L)
+  expect_true(all(triplets$gene_key %in% c("GeneA", "GeneB")))
+})
+
+test_that("Module 3 pathway sub-GRN contexts cover plotted pathway rows", {
+  all_pathways <- data.table::data.table(
+    comparison_id = c("CmpA", "CmpA", "CmpB", "CmpB"),
+    direction_group = c("Up", "Up", "Down", "Down"),
+    topic = c(1L, 1L, 1L, 2L),
+    pathway = c("Path A", "Path B", "Path B", "Path C"),
+    pathway_key = c("path:a", "path:b", "path:b", "path:c"),
+    padj = c(0.01, 0.02, 0.03, 0.04),
+    overlap_genes = c("GeneA", "GeneB", "GeneC", "GeneD")
+  )
+  condition_pathways <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction_group = "Target-Up",
+    topic = 1L,
+    topic_num = 1L,
+    pathway = "Path A",
+    pathway_key = "path:a"
+  )
+  topic_pathways <- data.table::data.table(
+    topic = 1L,
+    topic_num = 1L,
+    pathway = "Path B",
+    pathway_key = "path:b"
+  )
+
+  selected <- craftgrn:::.m3tb_select_pathway_subgrn_contexts(
+    all_pathways = all_pathways,
+    condition_pathways = condition_pathways,
+    topic_pathways = topic_pathways
+  )
+
+  selected_keys <- paste(selected$comparison_id, selected$direction_group, selected$topic, selected$pathway_key, sep = "|")
+  expect_setequal(
+    selected_keys,
+    c("CmpA|Up|1|path:a", "CmpA|Up|1|path:b", "CmpB|Down|1|path:b")
+  )
+  expect_false(any(selected$pathway_key == "path:c"))
+})
+
+test_that("Module 3 condition report HTML exposes pathway sub-GRN controls", {
+  out_file <- tempfile(fileext = ".html")
+  craftgrn:::.m3tb_condition_report_html(
+    title = "Condition subgrn test",
+    group_mds = data.table::data.table(
+      comparison_label = "CmpA::Target-Up",
+      display_label = "CmpA Up",
+      group_label = "CmpA Up",
+      MDS1 = 0,
+      MDS2 = 0,
+      n_docs = 2L
+    ),
+    group_topic = data.table::data.table(
+      comparison_label = "CmpA::Target-Up",
+      display_label = "CmpA Up",
+      n_docs = 2L,
+      topic = "Topic2",
+      topic_num = 2L,
+      theta_mean = 0.8
+    ),
+    pathways = data.table::data.table(
+      pathway_key = "reactome:signal a",
+      pathway = "Reactome: Signal A",
+      topic = 2L,
+      topic_num = 2L,
+      comparison_label = "CmpA::Target-Up",
+      display_label = "CmpA Up",
+      padj = 0.01,
+      overlap = "2/30",
+      gene_in = 2L,
+      gene_total = 30L,
+      gene_out = 28L,
+      gene_total_universe = 30L,
+      genes = "GeneA;GeneB"
+    ),
+    out_html = out_file,
+    subgrn_manifest = data.table::data.table(
+      subgrn_context_id = "ctx1",
+      comparison_label = "CmpA::Target-Up",
+      topic_num = 2L,
+      pathway_key = "reactome:signal a",
+      pathway = "Reactome: Signal A",
+      payload_file = "pathway_subgrn_payloads/chunk_001.js"
+    ),
+    subgrn_payload_base = "../pathway_subgrn_payloads"
+  )
+  html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
+
+  expect_match(html, "Sub GRN", fixed = TRUE)
+  expect_match(html, "tfScopeSelect", fixed = TRUE)
+  expect_match(html, "subgrnTopicThetaCutoff", fixed = TRUE)
+  expect_match(html, "subgrnPrimaryTopicOnly", fixed = TRUE)
+  expect_match(html, "subgrnTopicTheta", fixed = TRUE)
+  expect_match(html, "networkModeSelect", fixed = TRUE)
+  expect_match(html, "subgrnSpacingRange", fixed = TRUE)
+  expect_match(html, "subgrnPaletteSelect", fixed = TRUE)
+  expect_match(html, "subgrnShowArrows", fixed = TRUE)
+  expect_match(html, "subgrnResetButton", fixed = TRUE)
+  expect_match(html, "subgrnViewLayer", fixed = TRUE)
+  expect_match(html, "<option value=\"clustered\">Clustered</option>", fixed = TRUE)
+  expect_match(html, "<option value=\"spiral\">Spiral</option>", fixed = TRUE)
+  expect_match(html, "openSubgrn", fixed = TRUE)
+  expect_match(html, "pathway_subgrn_payloads/chunk_001.js", fixed = TRUE)
+})
+
+test_that("Module 3 pathway sub-GRN payload keeps theta and primary topic metadata", {
+  pathways <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction_group = "Up",
+    topic = 2L,
+    pathway = "Path A",
+    pathway_key = "path:a",
+    overlap_genes = "GeneA;GeneB",
+    padj = 0.01
+  )
+  edges_docs <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction = "Target-Up",
+    tf = c("TF1", "TF2", "TF3"),
+    gene_key = c("GeneA", "GeneA", "GeneB"),
+    peak_id = c("Peak1", "Peak2", "Peak3"),
+    delta_fp = c(2, 3, 4)
+  )
+  tf_membership <- data.table::data.table(
+    comparison_id = "CmpA",
+    direction = "Target-Up",
+    tf = c("TF1", "TF1", "TF2", "TF2", "TF3"),
+    topic_num = c(2L, 3L, 2L, 4L, 2L),
+    theta = c(0.72, 0.20, 0.46, 0.51, 0.29),
+    membership_pass = c(TRUE, FALSE, TRUE, TRUE, FALSE),
+    primary_topic_num = c(2L, 2L, 4L, 4L, 2L)
+  )
+
+  payload <- craftgrn:::.m3tb_build_pathway_subgrn_compact_payload(
+    pathways = pathways,
+    edges_docs = edges_docs,
+    tf_membership = tf_membership
+  )
+
+  tf_gene <- payload$tf_gene_edges
+  expect_true(all(c("tf_topic_nums", "tf_topic_scores", "tf_primary_topic_num") %in% names(tf_gene)))
+  expect_equal(tf_gene[tf == "TF1", tf_topic_nums], "2")
+  expect_match(tf_gene[tf == "TF1", tf_topic_scores], "2:0.72", fixed = TRUE)
+  expect_match(tf_gene[tf == "TF1", tf_topic_scores], "3:0.2", fixed = TRUE)
+  expect_equal(tf_gene[tf == "TF2", tf_topic_nums], "2;4")
+  expect_equal(tf_gene[tf == "TF2", tf_primary_topic_num], 4L)
+  expect_equal(payload$manifest$n_topic_tfs[[1L]], 2L)
+})
+
+test_that("condition pathway sub-GRN reader enforces bounds and reuses cache", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dplyr")
+  root <- tempfile("condition-subgrn-cache-")
+  link_dir <- file.path(root, "condition_links")
+  cache_dir <- file.path(root, "cache")
+  dir.create(link_dir, recursive = TRUE)
+  links <- data.frame(
+    tf = c("TF1", "TF2", "TF3", "TF4", "TF1"),
+    condition_id = "CondA",
+    condition_label = "Condition A",
+    gene_key = c("GeneA", "GeneA", "GeneA", "GeneA", "GeneB"),
+    peak_id = paste0("Peak", seq_len(5L)),
+    fp_score_condition = c(5, 4, 3, 2, 1)
+  )
+  link_path <- file.path(link_dir, "CondA_condition_links.parquet")
+  arrow::write_parquet(links, link_path)
+  data.table::fwrite(
+    data.table::data.table(condition_id = "CondA", path = link_path),
+    file.path(link_dir, "condition_links_manifest.csv")
+  )
+  pathways <- data.table::data.table(
+    comparison_id = "CondA",
+    topic_num = 1L,
+    overlap_genes = "GeneA;GeneB"
+  )
+  membership <- data.table::data.table(
+    comparison_id = "CondA",
+    tf = paste0("TF", 1:4),
+    topic_num = 1L,
+    membership_pass = TRUE
+  )
+  withr::local_envvar(CRAFTGRN_PATHWAY_SUBGRN_MAX_TFS_PER_GENE = "2")
+  first <- craftgrn:::.m3tb_read_condition_links_for_subgrn(
+    link_dir,
+    pathways,
+    tf_membership = membership,
+    cache_dir = cache_dir
+  )
+  second <- craftgrn:::.m3tb_read_condition_links_for_subgrn(
+    link_dir,
+    pathways,
+    tf_membership = membership,
+    cache_dir = cache_dir
+  )
+  expect_lte(first[gene_key == "GeneA", data.table::uniqueN(tf)], 2L)
+  expect_equal(
+    first[order(gene_key, tf), .(tf, gene_key, peak_id)],
+    second[order(gene_key, tf), .(tf, gene_key, peak_id)]
+  )
+  cache_files <- list.files(cache_dir, pattern = "[.]rds$", full.names = TRUE)
+  expect_length(cache_files, 1L)
+  expect_identical(readRDS(cache_files[[1L]])$cache_version, 2L)
+})
+
+test_that("pathway sub-GRN chunks use compressed columnar browser payloads", {
+  obj <- list(
+    manifest = data.table::data.table(subgrn_context_id = "ctx1"),
+    tf_gene_edges = data.table::data.table(tf = "TF1", gene_key = "GeneA"),
+    tf_peak_gene_triplets = data.table::data.table(
+      tf = "TF1", peak_id = "Peak1", gene_key = "GeneA"
+    )
+  )
+  packed <- lapply(
+    obj,
+    craftgrn:::.module2_report_browser_browser_payload_to_columnar
+  )
+  encoded <- craftgrn:::.module2_report_browser_encode_browser_json_deflate_base64(
+    packed
+  )
+  expect_gt(nchar(encoded), 20L)
+  js <- craftgrn:::.m3tb_subgrn_js()
+  expect_true(any(grepl("subgrnDecodePayload", js, fixed = TRUE)))
+  expect_true(any(grepl("compressed_columnar", js, fixed = TRUE)))
 })
 
 test_that("Module 3 theta separation score does not mark singleton groups as perfect", {
@@ -500,6 +815,402 @@ test_that("Module 3 theta separation score does not mark singleton groups as per
   expect_true(all(is.na(scored$per_label$theta_condition_label_score)))
   expect_equal(scored$score$n_scored_labels, 0L)
   expect_true(is.nan(scored$score$theta_condition_separation_score))
+})
+
+test_that("Fibroblast paper benchmark loader keeps Gold and Silver fibroblast targets", {
+  path <- tempfile(fileext = ".csv")
+  data.table::fwrite(data.table::data.table(
+    id = paste0("row", 1:8),
+    row_type = c("module_member", "module_member", rep("regulatory_edge", 6)),
+    regulator = c("Batf_Irf4_module", "Batf_Irf4_module", "Batf_Irf4_module", "Batf_Irf4_module", "Tcell_module", "Batf_Irf4_module", "Batf_Irf4_module", "Batf_Irf4_module"),
+    target = c("Batf", "Irf4", "Ccr7", "Ifngr1", "Sell", "LooseGene", "DownGene", "PathwayA"),
+    target_type = c("TF", "TF", "gene", "gene", "gene", "gene", "gene", "pathway"),
+    effect = c("member", "member", "up", "up", "up", "up", "down", "up"),
+    sign_num = c(0, 0, 1, 1, 1, 1, -1, 1),
+    context = c(
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "P14_Tcell_Batf_cKO",
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "NIH3T3_fibroblast_TF_overexpression_72h",
+      "NIH3T3_fibroblast_TF_overexpression_72h"
+    ),
+    observation = "",
+    evidence = "",
+    confidence = c("gold", "gold", "gold", "silver", "gold", "bronze", "gold", "gold"),
+    source = "test"
+  ), path)
+
+  bench <- craftgrn:::.m3fb_load_tsao_fibroblast_benchmark(path, confidence = c("gold", "silver"))
+  bench_all <- craftgrn:::.m3fb_load_tsao_fibroblast_benchmark(path)
+
+  expect_setequal(bench$module_members$target, c("Batf", "Irf4"))
+  expect_setequal(bench$targets$target, c("Ccr7", "Ifngr1"))
+  expect_false("LooseGene" %in% bench$targets$target)
+  expect_false("DownGene" %in% bench$targets$target)
+  expect_true(all(bench$targets$confidence %in% c("gold", "silver")))
+  expect_true("LooseGene" %in% bench_all$targets$target)
+})
+
+test_that("Fibroblast paper benchmark scorer favors TF-target co-topic recovery", {
+  bench <- list(
+    module_members = data.table::data.table(
+      regulator = "Batf_Irf4_Runx3_Tbx21_module",
+      target = c("Batf", "Irf4", "Runx3", "Tbx21")
+    ),
+    targets = data.table::data.table(
+      regulator = "Batf_Irf4_Runx3_Tbx21_module",
+      target = c("Ccr7", "Ifngr1", "Il17ra", "Tgfb1"),
+      confidence = c("gold", "gold", "silver", "silver")
+    )
+  )
+  theta_good <- matrix(
+    c(
+      0.82, 0.10, 0.08,
+      0.78, 0.12, 0.10,
+      0.69, 0.21, 0.10,
+      0.72, 0.18, 0.10
+    ),
+    nrow = 4,
+    byrow = TRUE,
+    dimnames = list(
+      paste0("Fib_BIRT_vs_NoTF::Target-Up::", c("Batf", "Irf4", "Runx3", "Tbx21")),
+      paste0("Topic", 1:3)
+    )
+  )
+  theta_bad <- theta_good
+  theta_bad[, ] <- c(
+    0.82, 0.10, 0.08,
+    0.10, 0.78, 0.12,
+    0.10, 0.18, 0.72,
+    0.72, 0.18, 0.10
+  )
+  phi <- matrix(
+    c(
+      0.90, 0.82, 0.80, 0.72,
+      0.08, 0.10, 0.12, 0.18,
+      0.02, 0.08, 0.08, 0.10
+    ),
+    nrow = 3,
+    byrow = TRUE,
+    dimnames = list(paste0("Topic", 1:3), c("GENE:Ccr7", "GENE:Ifngr1", "GENE:Il17ra", "PEAK:Tgfb1"))
+  )
+  rows <- data.table::data.table(
+    method_order = 1:2,
+    method = c("comparison_aggr_multivi", "comparison_aggr_lda"),
+    method_setup = c("diff fp aggr | MultiVI", "diff fp aggr | LDA"),
+    model_label = c("MultiVI", "LDA"),
+    selected_k = c(3L, 3L)
+  )
+
+  good <- craftgrn:::.m3fb_score_model_row(
+    theta = theta_good,
+    phi = phi,
+    row = rows[1],
+    benchmark = bench,
+    comparisons = "Fib_BIRT_vs_NoTF",
+    theta_cutoff = 0.3,
+    gene_score_cutoff = 0.7
+  )
+  bad <- craftgrn:::.m3fb_score_model_row(
+    theta = theta_bad,
+    phi = phi,
+    row = rows[2],
+    benchmark = bench,
+    comparisons = "Fib_BIRT_vs_NoTF",
+    theta_cutoff = 0.3,
+    gene_score_cutoff = 0.7
+  )
+
+  expect_gt(good$comparison_scores$model_score[[1L]], bad$comparison_scores$model_score[[1L]])
+  expect_equal(good$selected_topics$topic_num, 1L)
+  expect_equal(good$comparison_scores$n_required_tfs_covered[[1L]], 4L)
+  expect_equal(good$comparison_scores$n_targets_cotopic[[1L]], 4L)
+})
+
+test_that("Fibroblast paper benchmark writer emits review tables and index", {
+  root <- tempfile("fib-paper-review-")
+  model_dir <- file.path(root, "run_004_comparison_aggr_multivi", "topic_models")
+  dir.create(file.path(model_dir, "vae_models"), recursive = TRUE)
+  review_dir <- file.path(root, "review")
+  bench_path <- file.path(root, "tsao.csv")
+  data.table::fwrite(data.table::data.table(
+    id = paste0("row", 1:8),
+    row_type = c(rep("module_member", 4), rep("regulatory_edge", 4)),
+    regulator = "Batf_Irf4_Runx3_Tbx21_module",
+    target = c("Batf", "Irf4", "Runx3", "Tbx21", "Ccr7", "Ifngr1", "Il17ra", "Tgfb1"),
+    target_type = c(rep("TF", 4), rep("gene", 4)),
+    effect = c(rep("member", 4), rep("up", 4)),
+    sign_num = c(rep(0, 4), rep(1, 4)),
+    context = "NIH3T3_fibroblast_TF_overexpression_72h",
+    observation = "",
+    evidence = "",
+    confidence = c(rep("gold", 6), rep("silver", 2)),
+    source = "test"
+  ), bench_path)
+  theta <- data.table::data.table(
+    doc_id = paste0("Fib_BIRT_vs_NoTF::Target-Up::", c("Batf", "Irf4", "Runx3", "Tbx21")),
+    Topic1 = c(0.8, 0.75, 0.7, 0.72),
+    Topic2 = c(0.1, 0.15, 0.2, 0.18),
+    Topic3 = c(0.1, 0.1, 0.1, 0.1)
+  )
+  phi <- data.table::data.table(
+    term_id = paste0("Topic", 1:3),
+    `GENE:Ccr7` = c(0.90, 0.08, 0.02),
+    `GENE:Ifngr1` = c(0.82, 0.10, 0.08),
+    `GENE:Il17ra` = c(0.80, 0.12, 0.08),
+    `PEAK:Tgfb1` = c(0.72, 0.18, 0.10)
+  )
+  data.table::fwrite(theta, file.path(model_dir, "vae_models", "theta_K3.csv"))
+  data.table::fwrite(phi, file.path(model_dir, "vae_models", "phi_K3.csv"))
+  rows <- data.table::data.table(
+    method_order = 1L,
+    method = "comparison_aggr_multivi",
+    method_setup = "diff fp aggr | MultiVI",
+    model_label = "MultiVI",
+    selected_k = 3L,
+    model_dir = model_dir
+  )
+
+  out <- craftgrn:::.m3fb_score_existing_models(
+    output_dir = root,
+    model_rows = rows,
+    benchmark_csv = bench_path,
+    review_dir = review_dir,
+    comparisons = "Fib_BIRT_vs_NoTF",
+    verbose = FALSE
+  )
+
+  expect_true(file.exists(file.path(out$output_dir, "index.html")))
+  expect_true(file.exists(file.path(out$output_dir, "tables", "fibroblast_model_k_leaderboard.csv")))
+  expect_true(file.exists(file.path(out$output_dir, "figures", "fibroblast_model_k_leaderboard.pdf")))
+  expect_equal(out$leaderboard$rank[[1L]], 1L)
+  expect_equal(out$comparison_scores$n_targets_cotopic[[1L]], 4L)
+})
+
+test_that("Fibroblast paper benchmark maps targets to the expected comparison direction", {
+  bench <- list(
+    module_members = data.table::data.table(),
+    targets = data.table::data.table(
+      regulator = c("Batf_Irf4_module", "Batf_Irf4_module", "Batf_Irf4_Runx3_Tbx21_module", "Batf_Irf4_Runx3_Tbx21_module"),
+      target = c("Ccr7", "Ifngr1", "Nfatc1", "Tgfb1"),
+      target_key = c("CCR7", "IFNGR1", "NFATC1", "TGFB1"),
+      confidence = c("silver", "silver", "gold", "bronze"),
+      effect = "positive",
+      sign_num = 1
+    )
+  )
+
+  bi_targets <- craftgrn:::.m3fb_targets_for_comparison(bench, "Fib_BI_vs_NoTF")
+  birt_targets <- craftgrn:::.m3fb_targets_for_comparison(bench, "Fib_BIRT_vs_NoTF")
+  addon_targets <- craftgrn:::.m3fb_targets_for_comparison(bench, "Fib_BIRT_vs_BI")
+
+  expect_setequal(bi_targets$target, c("Ccr7", "Ifngr1"))
+  expect_setequal(birt_targets$target, c("Nfatc1", "Tgfb1"))
+  expect_setequal(addon_targets$target, c("Nfatc1", "Tgfb1"))
+  expect_equal(unique(craftgrn:::.m3fb_default_comparison_map()[comparison_id == "Fib_BIRT_vs_BI", direction]), "Target-Up")
+})
+
+test_that("Fibroblast paper benchmark full membership keeps Bronze and nonpassing genes for plots", {
+  bench <- list(
+    module_members = data.table::data.table(),
+    targets = data.table::data.table(
+      regulator = "Batf_Irf4_Runx3_Tbx21_module",
+      target = c("Ccr7", "Akt2"),
+      target_key = c("CCR7", "AKT2"),
+      confidence = c("gold", "bronze"),
+      effect = "positive",
+      sign_num = 1
+    )
+  )
+  theta <- matrix(
+    c(0.8, 0.2, 0.7, 0.3),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("Fib_BIRT_vs_NoTF::Batf::Target-Up", "Fib_BIRT_vs_NoTF::Irf4::Target-Up"),
+      c("Topic1", "Topic2")
+    )
+  )
+  phi <- matrix(
+    c(0.9, 0.1),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:Ccr7"))
+  )
+  rows <- data.table::data.table(
+    method_order = 1L,
+    method = "comparison_aggr_lda",
+    method_setup = "diff fp aggr | LDA",
+    model_label = "LDA",
+    selected_k = 2L
+  )
+
+  full <- craftgrn:::.m3fb_full_benchmark_membership(
+    theta = theta,
+    phi = phi,
+    row = rows,
+    benchmark = bench,
+    comparisons = "Fib_BIRT_vs_NoTF"
+  )
+
+  expect_true("Akt2" %in% full$item)
+  expect_true("bronze" %in% full$confidence)
+  expect_false(full[item == "Akt2" & topic_num == 1L, pass][[1L]])
+  expect_equal(unique(full[item == "Akt2", expected_direction]), "Target-Up")
+})
+
+test_that("Fibroblast paper benchmark prepares top model membership and clean heatmap labels", {
+  bench <- list(
+    module_members = data.table::data.table(),
+    targets = data.table::data.table(
+      regulator = "Batf_Irf4_Runx3_Tbx21_module",
+      target = c("Ccr7", "Akt2"),
+      target_key = c("CCR7", "AKT2"),
+      confidence = c("gold", "bronze"),
+      effect = "positive",
+      sign_num = 1
+    )
+  )
+  theta <- matrix(
+    c(0.8, 0.2, 0.7, 0.3),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(
+      c("Fib_BIRT_vs_NoTF::Batf::Target-Up", "Fib_BIRT_vs_NoTF::Irf4::Target-Up"),
+      c("Topic1", "Topic2")
+    )
+  )
+  phi <- matrix(
+    c(0.9, 0.1),
+    nrow = 2,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:Ccr7"))
+  )
+  row1 <- data.table::data.table(
+    method_order = 1L,
+    method = "comparison_aggr_lda",
+    method_setup = "diff fp aggr | LDA",
+    model_label = "LDA",
+    selected_k = 2L
+  )
+  row2 <- data.table::copy(row1)
+  row2[, `:=`(method_order = 2L, method_setup = "diff fp aggr | MultiVI", model_label = "MultiVI")]
+  leaderboard <- data.table::data.table(
+    method_order = 1:2,
+    method = c("comparison_aggr_lda", "comparison_aggr_multivi"),
+    method_setup = c("diff fp aggr | LDA", "diff fp aggr | MultiVI"),
+    model_label = c("LDA", "MultiVI"),
+    k = c(2L, 2L),
+    rank = c(1L, 2L)
+  )
+  model_rows <- data.table::data.table(
+    method_order = 1:2,
+    method = c("comparison_aggr_lda", "comparison_aggr_multivi"),
+    method_setup = c("diff fp aggr | LDA", "diff fp aggr | MultiVI"),
+    model_label = c("LDA", "MultiVI"),
+    selected_k = c(2L, 2L),
+    model_dir = tempfile(c("m1", "m2"))
+  )
+  for (md in model_rows$model_dir) {
+    dir.create(file.path(md, "vae_models"), recursive = TRUE)
+    data.table::fwrite(data.table::data.table(doc_id = rownames(theta), theta), file.path(md, "vae_models", "theta_K2.csv"))
+    data.table::fwrite(data.table::data.table(term_id = rownames(phi), phi), file.path(md, "vae_models", "phi_K2.csv"))
+  }
+
+  top_membership <- craftgrn:::.m3fb_full_membership_for_top_models(
+    model_rows = model_rows,
+    leaderboard = leaderboard,
+    benchmark = bench,
+    comparison_map = craftgrn:::.m3fb_default_comparison_map()[comparison_id == "Fib_BIRT_vs_NoTF"],
+    top_n_models = 2L
+  )
+  plot_data <- craftgrn:::.m3fb_prepare_story_heatmap_data(
+    leaderboard = leaderboard,
+    membership_long = top_membership,
+    top_n_models = 2L
+  )
+
+  expect_setequal(unique(top_membership$model_rank), c(1L, 2L))
+  expect_false(any(grepl("\\[", plot_data$item_label)))
+  expect_setequal(
+    unique(plot_data[item_type %in% c("Required TF", "Target gene"), .(item_type, item_color)]$item_color),
+    c("#2563eb", "#991b1b")
+  )
+})
+
+test_that("Fibroblast paper SubGRN index exposes model topic and separate score controls", {
+  out_dir <- tempfile("paper-subgrn-")
+  dir.create(out_dir, recursive = TRUE)
+  manifest <- data.table::data.table(
+    subgrn_context_id = "paper_001",
+    model_rank = 1L,
+    method_setup = "diff fp aggr | LDA",
+    model_label = "LDA",
+    k = 12L,
+    comparison_id = "Fib_BIRT_vs_NoTF",
+    comparison_label = "Fib_BIRT_vs_NoTF::Target-Up",
+    direction = "Target-Up",
+    topic_num = 3L,
+    pathway = "Paper benchmark targets",
+    pathway_key = "paper:rank1:Fib_BIRT_vs_NoTF:Target-Up:3",
+    overlap_genes = "Ccr7;Ifngr1",
+    n_overlap_genes = 2L,
+    n_tf_gene_edges = 1L,
+    n_tf_peak_gene_triplets = 1L,
+    payload_file = "paper_topic_subgrn_payload.js",
+    selected_story_topic = TRUE
+  )
+  payload <- list(
+    manifest = manifest,
+    tf_gene_edges = data.table::data.table(
+      subgrn_context_id = "paper_001",
+      tf = "Batf",
+      tf_upper = "BATF",
+      gene_key = "Ccr7",
+      abs_edge_score = 1,
+      n_supporting_peaks = 1L,
+      best_peak_id = "peak1",
+      tf_topic_score = 0.8,
+      gene_topic_score = 0.9
+    ),
+    tf_peak_gene_triplets = data.table::data.table(
+      subgrn_context_id = "paper_001",
+      tf = "Batf",
+      tf_upper = "BATF",
+      peak_id = "peak1",
+      gene_key = "Ccr7",
+      abs_edge_score = 1,
+      tf_topic_score = 0.8,
+      gene_topic_score = 0.9
+    )
+  )
+  writeLines(
+    paste0(
+      "window.CRAFTGRN_PAPER_PAYLOAD=",
+      jsonlite::toJSON(payload, dataframe = "rows", auto_unbox = TRUE, null = "null", na = "null"),
+      ";"
+    ),
+    file.path(out_dir, "paper_topic_subgrn_payload.js"),
+    useBytes = TRUE
+  )
+
+  index <- craftgrn:::.m3fb_write_subgrn_index(
+    out_dir = out_dir,
+    manifest = manifest,
+    payload_file = "paper_topic_subgrn_payload.js",
+    top_models = manifest[, .(model_rank, method_setup, model_label, k)]
+  )
+  html <- paste(readLines(index, warn = FALSE), collapse = "\n")
+
+  expect_match(html, "paperModelSelect", fixed = TRUE)
+  expect_match(html, "paperTopicSelect", fixed = TRUE)
+  expect_match(html, "paperTfCutoff", fixed = TRUE)
+  expect_match(html, "paperGeneCutoff", fixed = TRUE)
+  expect_match(html, "paperEvidenceMode", fixed = TRUE)
+  expect_match(html, "TF-peak-gene", fixed = TRUE)
 })
 
 test_that("Module 3 shared-topic summary fills missing K values when cache is partial", {
@@ -561,8 +1272,15 @@ test_that("Module 3 shared-topic summary fills missing K values when cache is pa
   )
 
   old <- getOption("craftgrn.topic_review.fast_summary")
-  options(craftgrn.topic_review.fast_summary = TRUE)
-  on.exit(options(craftgrn.topic_review.fast_summary = old), add = TRUE)
+  old_scan <- getOption("craftgrn.topic_review.scan_link_tables")
+  options(
+    craftgrn.topic_review.fast_summary = TRUE,
+    craftgrn.topic_review.scan_link_tables = TRUE
+  )
+  on.exit(options(
+    craftgrn.topic_review.fast_summary = old,
+    craftgrn.topic_review.scan_link_tables = old_scan
+  ), add = TRUE)
   out <- craftgrn:::.m3tb_summarize_topic_links(root, rows, review_dir = review)
 
   expect_true(any(out$shared$unit == "Links" & out$shared$selected_k == 2L))
@@ -570,6 +1288,40 @@ test_that("Module 3 shared-topic summary fills missing K values when cache is pa
   expect_true(any(out$shared$unit == "Genes" & out$shared$selected_k == 3L))
   expect_true(any(out$shared$unit == "TFs" & out$shared$selected_k == 3L))
   expect_true(any(out$link_assignment$count_basis == "Topic-link rows" & out$link_assignment$selected_k == 3L))
+})
+
+test_that("Module 3 review blocks oversized raw topic-link scans", {
+  root <- tempfile("module3-link-scan-guard-")
+  extraction_dir <- file.path(root, "topic_extraction", "K2")
+  dir.create(extraction_dir, recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(
+      tf = "TF1",
+      peak_id = "P1",
+      gene_key = "G1",
+      topic_num = 1L,
+      link_pass = TRUE
+    ),
+    file.path(extraction_dir, "topic_links_pass.csv")
+  )
+  rows <- data.table::data.table(
+    method = "comparison_aggr_lda",
+    method_order = 1L,
+    method_setup = "diff fp aggr | LDA",
+    setup = "std_tf_diff_fp_aggr",
+    model_label = "LDA",
+    selected_k = 2L,
+    topic_extraction_dir = file.path(root, "topic_extraction")
+  )
+  withr::local_options(list(
+    craftgrn.topic_review.scan_link_tables = TRUE,
+    craftgrn.topic_review.max_link_file_bytes = 1
+  ))
+
+  expect_error(
+    craftgrn:::.m3tb_summarize_topic_links(root, rows),
+    "exceeds the safe review scan limit"
+  )
 })
 
 test_that("Module 3 combined MDS plot separates comparison methods and directions", {
@@ -1508,4 +2260,101 @@ test_that("Module 3 theta review PNG writer is headless safe", {
   expect_equal(nrow(out), 1L)
   expect_true(file.exists(file.path(root, "theta_phi_topic_distance_correlation_k2.png")))
   expect_true(file.exists(file.path(root, "theta_group_mds_k2.png")))
+})
+
+test_that("Module 3 review worker count is adaptive and memory bounded", {
+  old_workers <- Sys.getenv("CRAFTGRN_REVIEW_WORKERS", unset = NA_character_)
+  old_threads <- Sys.getenv("CRAFTGRN_REVIEW_THREADS", unset = NA_character_)
+  withr::defer({
+    if (is.na(old_workers)) Sys.unsetenv("CRAFTGRN_REVIEW_WORKERS") else Sys.setenv(CRAFTGRN_REVIEW_WORKERS = old_workers)
+    if (is.na(old_threads)) Sys.unsetenv("CRAFTGRN_REVIEW_THREADS") else Sys.setenv(CRAFTGRN_REVIEW_THREADS = old_threads)
+  })
+  withr::local_options(list(
+    craftgrn.review.max_workers = 8L,
+    craftgrn.review.memory_reserve_gb = 32,
+    craftgrn.review.memory_per_worker_gb = 6,
+    craftgrn.review.auto_workers_in_tests = TRUE
+  ))
+
+  Sys.setenv(CRAFTGRN_REVIEW_WORKERS = "36", CRAFTGRN_REVIEW_THREADS = "1")
+  expect_equal(
+    craftgrn:::.m3tb_review_worker_count(96L, 128 * 1024^3, 36L),
+    8L
+  )
+  expect_equal(
+    craftgrn:::.m3tb_review_worker_count(4L, 128 * 1024^3, 36L),
+    4L
+  )
+  expect_equal(
+    craftgrn:::.m3tb_review_worker_count(96L, 40 * 1024^3, 36L),
+    1L
+  )
+
+  Sys.unsetenv("CRAFTGRN_REVIEW_WORKERS")
+  Sys.setenv(CRAFTGRN_REVIEW_THREADS = "20")
+  expect_equal(
+    craftgrn:::.m3tb_review_worker_count(96L, 128 * 1024^3, 36L),
+    8L
+  )
+
+  Sys.unsetenv("CRAFTGRN_REVIEW_THREADS")
+  expect_equal(
+    craftgrn:::.m3tb_review_worker_count(8L, 128 * 1024^3, 36L),
+    8L
+  )
+})
+
+test_that("Module 3 review parallel helper runs socket workers", {
+  skip_on_cran()
+  old_dev <- Sys.getenv("CRAFTGRN_DEV_LOAD", unset = NA_character_)
+  old_repo <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = NA_character_)
+  withr::defer({
+    if (is.na(old_dev)) Sys.unsetenv("CRAFTGRN_DEV_LOAD") else Sys.setenv(CRAFTGRN_DEV_LOAD = old_dev)
+    if (is.na(old_repo)) Sys.unsetenv("CRAFTGRN_REPO_DIR") else Sys.setenv(CRAFTGRN_REPO_DIR = old_repo)
+  })
+  repo_dir <- normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
+  Sys.setenv(
+    CRAFTGRN_DEV_LOAD = if (file.exists(file.path(repo_dir, "DESCRIPTION"))) "true" else "false",
+    CRAFTGRN_REPO_DIR = repo_dir
+  )
+  out <- craftgrn:::.m3tb_review_lapply(1:4, function(i) i * i, workers = 2L)
+  expect_equal(unlist(out), c(1L, 4L, 9L, 16L))
+})
+
+test_that("Module 3 topic-link summary forces path arguments before socket workers", {
+  old_dev <- Sys.getenv("CRAFTGRN_DEV_LOAD", unset = NA_character_)
+  old_repo <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = NA_character_)
+  old_workers <- Sys.getenv("CRAFTGRN_REVIEW_WORKERS", unset = NA_character_)
+  withr::defer({
+    if (is.na(old_dev)) Sys.unsetenv("CRAFTGRN_DEV_LOAD") else Sys.setenv(CRAFTGRN_DEV_LOAD = old_dev)
+    if (is.na(old_repo)) Sys.unsetenv("CRAFTGRN_REPO_DIR") else Sys.setenv(CRAFTGRN_REPO_DIR = old_repo)
+    if (is.na(old_workers)) Sys.unsetenv("CRAFTGRN_REVIEW_WORKERS") else Sys.setenv(CRAFTGRN_REVIEW_WORKERS = old_workers)
+  })
+  repo_dir <- normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
+  Sys.setenv(
+    CRAFTGRN_DEV_LOAD = if (file.exists(file.path(repo_dir, "DESCRIPTION"))) "true" else "false",
+    CRAFTGRN_REPO_DIR = repo_dir,
+    CRAFTGRN_REVIEW_WORKERS = "2"
+  )
+  root <- tempfile("topic-review-force-")
+  dir.create(root, recursive = TRUE)
+  rows <- data.table::data.table(
+    method = c("m1", "m2"),
+    selected_k = c(2L, 3L),
+    method_order = c(1L, 2L),
+    method_setup = c("setup 1", "setup 2"),
+    setup = c("setup1", "setup2"),
+    model_label = c("LDA", "VAE"),
+    topic_extraction_dir = file.path(root, c("missing1", "missing2"))
+  )
+  call_summary <- function(benchmark_dir) {
+    craftgrn:::.m3tb_summarize_topic_links(
+      output_dir = benchmark_dir,
+      model_rows = rows,
+      review_dir = file.path(benchmark_dir, "review")
+    )
+  }
+  out <- call_summary(root)
+  expect_s3_class(out$pass, "data.table")
+  expect_equal(nrow(out$pass), 0L)
 })

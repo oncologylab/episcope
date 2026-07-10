@@ -122,6 +122,8 @@ test_that("Module 3 pathway database defaults are species aware", {
   mouse <- craftgrn:::.default_pathway_databases("mm10")
   both <- craftgrn:::.default_pathway_databases("human_mouse_best")
 
+  expect_true("ImmuneSigDB" %in% human)
+  expect_true("ImmuneSigDB" %in% mouse)
   expect_true("WikiPathways_2024_Human" %in% human)
   expect_true("KEGG_2021_Human" %in% human)
   expect_true("WikiPathways_2024_Mouse" %in% mouse)

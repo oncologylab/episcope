@@ -59,16 +59,20 @@
     "GO_Biological_Process_2023",
     "GO_Cellular_Component_2023",
     "GO_Molecular_Function_2023",
-    "Reactome_2022"
+    "Reactome_2022",
+    "ImmuneSigDB"
   )
   hallmark <- "MSigDB_Hallmark_2020"
+  add_required_shared <- function(dbs) {
+    unique(c(dbs, "ImmuneSigDB"))
+  }
   if (.optional_namespace_available("enrichly")) {
     default_dbs <- tryCatch(
       getExportedValue("enrichly", "enrichly_default_databases")(species),
       error = function(e) NULL
     )
     if (is.character(default_dbs) && length(default_dbs)) {
-      return(default_dbs)
+      return(add_required_shared(default_dbs))
     }
   }
   if (identical(species, "human_mouse_best")) {
@@ -78,9 +82,9 @@
     )))
   }
   if (identical(species, "mouse")) {
-    c(shared, "WikiPathways_2024_Mouse", hallmark, "KEGG_2019_Mouse")
+    add_required_shared(c(shared, "WikiPathways_2024_Mouse", hallmark, "KEGG_2019_Mouse"))
   } else {
-    c(shared, "WikiPathways_2024_Human", hallmark, "KEGG_2021_Human")
+    add_required_shared(c(shared, "WikiPathways_2024_Human", hallmark, "KEGG_2021_Human"))
   }
 }
 
@@ -120,8 +124,8 @@
 #'
 #' When `pathway_databases = NULL`, CraftGRN uses the package default Enrichr
 #' databases: GO Biological Process 2023, GO Cellular Component 2023, GO
-#' Molecular Function 2023, Reactome 2022, WikiPathways 2024 Human, MSigDB
-#' Hallmark 2020, and KEGG 2021 Human.
+#' Molecular Function 2023, Reactome 2022, ImmuneSigDB, WikiPathways 2024
+#' Human, MSigDB Hallmark 2020, and KEGG 2021 Human.
 #'
 #' @param filtered_dir Directory containing files named
 #'   \code{*_filtered_links_up.csv} and \code{*_filtered_links_down.csv}.
