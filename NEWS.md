@@ -1,5 +1,7 @@
 # craftgrn 0.1.7
 
+* Added Module 1 condition-comparison, TF-TF co-binding, and interactive TFBS
+  UMAP visualization utilities, plus a provenance-aware QC Run Summary.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

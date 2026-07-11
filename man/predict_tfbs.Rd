@@ -9,6 +9,8 @@ predict_tfbs(
   out_dir = NULL,
   db = "JASPAR2024",
   label_col = NULL,
+  project_config = NULL,
+  project_date = NULL,
   r_cutoff = 0.3,
   p_cutoff = NULL,
   fdr_cutoff = NULL,
@@ -37,6 +39,11 @@ predict_tfbs(
 
 \item{label_col}{Metadata column used to build condition-level matrices when
 missing from `omics_data`.}
+
+\item{project_config}{Optional YAML path or list recorded in the QC report.
+It does not change analysis parameters.}
+
+\item{project_date}{Optional date displayed in the QC report.}
 
 \item{r_cutoff}{Minimum positive correlation used for motif-supported and
 prediction calls.}

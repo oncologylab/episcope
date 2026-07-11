@@ -75,7 +75,10 @@ test_that("pkgdown reference uses publication-facing Module 1 and Module 2 names
   expect_equal(module1_aux$contents, c(
     "output_predicted_tfbs",
     "load_predicted_tfbs",
-    "export_predicted_tfbs_bed"
+    "export_predicted_tfbs_bed",
+    "plot_tfbs_condition_comparison",
+    "plot_tf_tf_cobinding_heatmap",
+    "build_tfbs_umap_report"
   ))
   expect_equal(module2$contents, c(
     "predict_tf_targets",

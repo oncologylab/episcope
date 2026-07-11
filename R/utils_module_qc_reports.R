@@ -1173,7 +1173,7 @@
       .qc_format_number(ncol(mats$fp_score)),
       .qc_format_number(nrow(mats$fp_score)),
       .qc_format_number(sum(rowSums(mats$fp_bound > 0, na.rm = TRUE) > 0)),
-      .qc_format_number(nrow(mats$atac_score)),
+      .qc_format_number(if (is.null(mats$atac_score)) NA_real_ else nrow(mats$atac_score)),
       .qc_format_number(nrow(mats$gene_expr)),
       .qc_format_number(sum(rowSums(mats$gene_on > 0, na.rm = TRUE) > 0)),
       .qc_format_number(n_tf)
@@ -1275,6 +1275,91 @@
   out <- params[intersect(keep, names(params))]
   out$scan_predicted_tfbs <- isTRUE(scan_predicted_tfbs)
   .qc_key_value_table(out)
+}
+
+.module1_qc_flatten_values <- function(x, prefix = "") {
+  if (is.null(x) || !length(x)) return(list())
+  out <- list()
+  for (nm in names(x)) {
+    key <- if (nzchar(prefix)) paste(prefix, nm, sep = ".") else nm
+    value <- x[[nm]]
+    if (is.list(value) && !is.data.frame(value)) {
+      out <- c(out, .module1_qc_flatten_values(value, key))
+    } else if (length(value) <= 20L) {
+      out[[key]] <- if (!length(value) || is.null(value)) "NA" else paste(as.character(value), collapse = ", ")
+    }
+  }
+  out
+}
+
+.module1_qc_parameter_provenance <- function(module1, omics_data, project_config = NULL, scan_predicted_tfbs = FALSE) {
+  yaml_values <- .module1_relevant_config(project_config)
+  if (!length(yaml_values) && is.list(module1$parameters$project_config)) yaml_values <- module1$parameters$project_config
+  if (!length(yaml_values) && is_multiomic_object(omics_data) && is.list(omics_data$project$config)) yaml_values <- omics_data$project$config
+  yaml_values <- .module1_qc_flatten_values(yaml_values)
+  yaml_map <- c(
+    threshold_fp_tf_corr_r = "r_cutoff",
+    threshold_fp_tf_corr_p = "p_cutoff",
+    threshold_fp_tf_corr_fdr = "fdr_cutoff"
+  )
+  yaml_names <- names(yaml_values)
+  mapped <- unname(yaml_map[yaml_names])
+  yaml_names[!is.na(mapped)] <- mapped[!is.na(mapped)]
+  names(yaml_values) <- yaml_names
+
+  params <- if (is.list(module1$parameters)) module1$parameters else list()
+  params$qc_summary <- NULL
+  params$expressed_tfs <- if (length(params$expressed_tfs)) paste(sort(unique(as.character(params$expressed_tfs))), collapse = ", ") else NULL
+  params$project_config <- NULL
+  params$scan_predicted_tfbs <- isTRUE(scan_predicted_tfbs)
+  params <- .module1_qc_flatten_values(params)
+  keys <- unique(c(names(yaml_values), names(params)))
+  if (!length(keys)) return(tibble::tibble())
+  yaml_col <- vapply(keys, function(k) yaml_values[[k]] %||% "", character(1L))
+  command_col <- vapply(keys, function(k) params[[k]] %||% "", character(1L))
+  command_present <- nzchar(command_col)
+  tibble::tibble(
+    parameter = keys,
+    yaml_value = yaml_col,
+    command_value = command_col,
+    effective_value = ifelse(command_present, command_col, yaml_col),
+    source = ifelse(command_present & nzchar(yaml_col) & command_col != yaml_col, "command override", ifelse(command_present, "command/default", "YAML"))
+  )
+}
+
+.module1_qc_report_date <- function(module1, omics_data, project_config = NULL, project_date = NULL) {
+  config_values <- .module1_relevant_config(project_config)
+  candidates <- list(
+    project_date,
+    config_values$project_date,
+    if (is.list(module1$parameters)) module1$parameters$project_date else NULL,
+    if (is_multiomic_object(omics_data)) omics_data$project$project_date else NULL,
+    Sys.Date()
+  )
+  value <- candidates[[which(vapply(candidates, function(x) !is.null(x) && length(x) && !is.na(x[[1L]]) && nzchar(as.character(x[[1L]])), logical(1L)))[[1L]]]]
+  parsed <- suppressWarnings(as.Date(as.character(value[[1L]])))
+  if (is.na(parsed)) .log_abort("`project_date` must be coercible to YYYY-MM-DD.")
+  format(parsed, "%Y-%m-%d")
+}
+
+.module1_qc_run_cards <- function(qc_summary, omics_data, predicted_scan, predicted_rows) {
+  input_counts <- if (is_multiomic_object(omics_data) && is.list(omics_data$qc$input_counts)) omics_data$qc$input_counts else list()
+  n_conditions <- .qc_metric_value(qc_summary, "n_conditions", default = if (is_multiomic_object(omics_data)) ncol(omics_data$matrices$fp_score) else NA_real_)
+  n_raw_atac <- .qc_metric_value(qc_summary, "n_raw_atac_peaks", default = input_counts$n_raw_atac_peaks %||% NA_real_)
+  n_raw_fp <- .qc_metric_value(qc_summary, "n_raw_footprints", default = input_counts$n_raw_footprints %||% NA_real_)
+  n_aligned <- .qc_metric_value(qc_summary, "n_aligned_footprints", default = if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else NA_real_)
+  n_filtered <- .qc_metric_value(qc_summary, "n_canonical_bound_fps")
+  n_expressed <- .qc_metric_value(qc_summary, "n_expressed_tfs")
+  n_pred_tfs <- .qc_metric_value(qc_summary, "n_tfs_with_predicted_binding", default = if (is.data.frame(predicted_scan$tf_summary_all)) nrow(predicted_scan$tf_summary_all) else NA_real_)
+  values <- c(n_conditions, n_raw_atac, n_raw_fp, n_aligned, n_filtered, predicted_rows, n_expressed, n_pred_tfs)
+  tibble::tibble(
+    label = c(
+      "Conditions", "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
+      "Filtered footprints (canonical-bound)", "Predicted unique TFBS",
+      "Expressed TFs", "TFs with predicted binding"
+    ),
+    value = ifelse(is.finite(suppressWarnings(as.numeric(values))), .qc_format_number(values), "not available")
+  )
 }
 
 .module1_qc_gate_table <- function(qc_summary, omics_data = NULL) {
@@ -1610,6 +1695,9 @@
 #'   summarize top TFs and condition support. This is comprehensive but can take
 #'   extra time on full projects.
 #' @param top_n Number of TFs to show in top-TF summaries.
+#' @param project_config Optional YAML path or list used for parameter
+#'   provenance in the Run Summary.
+#' @param project_date Optional project date displayed in the report title.
 #' @param verbose Emit concise progress messages.
 #' @return Normalized path to the HTML report.
 #' @export
@@ -1619,6 +1707,8 @@ build_module1_qc_report <- function(module1,
                                     report_name = "module1_qc_report.html",
                                     scan_predicted_tfbs = TRUE,
                                     top_n = 20L,
+                                    project_config = NULL,
+                                    project_date = NULL,
                                     verbose = TRUE) {
   module1_dir <- NULL
   if (is.character(module1) && length(module1) == 1L) {
@@ -1702,14 +1792,10 @@ build_module1_qc_report <- function(module1,
   predicted_rows <- if (nrow(pred_manifest)) sum(suppressWarnings(as.numeric(pred_manifest$n_rows)), na.rm = TRUE) else .qc_metric_value(qc_summary, "n_predicted_tfbs")
   canonical_status <- .module1_qc_canonical_status(support_check, canonical_stats, qc_summary)
 
-  cards <- rbind(
-    input_cards,
-    tibble::tibble(
-      label = c("Predicted TFBS rows", "Predicted chunks", "Canonical support"),
-      value = c(.qc_format_number(predicted_rows), .qc_format_number(nrow(pred_manifest)), canonical_status$card)
-    )
-  )
-  parameter_table <- .module1_qc_parameters(module1, scan_predicted_tfbs = scan_predicted_tfbs)
+  cards <- .module1_qc_run_cards(qc_summary, omics_data, predicted_scan, predicted_rows)
+  parameter_table <- .module1_qc_parameter_provenance(module1, omics_data, project_config, scan_predicted_tfbs)
+  report_date <- .module1_qc_report_date(module1, omics_data, project_config, project_date)
+  report_title <- paste0("Module 1 QC Report (", report_date, ")")
   gate_table <- .module1_qc_gate_table(qc_summary, omics_data = omics_data)
   manifest_checks <- .qc_manifest_checks(pred_manifest)
   warning_checks <- .module1_qc_warning_checks(
@@ -1808,7 +1894,12 @@ build_module1_qc_report <- function(module1,
     canonical_status = canonical_status
   )
   sections <- list(
-    .qc_section("Summary", .qc_cards_html(cards)),
+    .qc_section("1. Run Summary", paste0(
+      .qc_cards_html(cards),
+      "<h3 style=\"margin-top:16px\">Input Parameters / Run Parameters</h3>",
+      "<p class=\"subtitle\">Relevant YAML values and effective command inputs used for this Module 1 run.</p>",
+      .qc_table_html(parameter_table, max_rows = 100L)
+    )),
     .qc_section("Key Findings", content$key),
     .qc_section("Condition QC", .qc_condition_qc_html(condition_qc, top_n = max(30L, as.integer(top_n[[1L]])))),
     .qc_section("Footprint Alignment And Input QC", paste0(
@@ -1869,11 +1960,10 @@ build_module1_qc_report <- function(module1,
     )),
     .qc_section("Recommended Review", content$review),
     .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
-    .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
     .qc_section("Related Files", .qc_links_html(related, from_dir = output_dir))
   )
   out <- file.path(output_dir, report_name)
-  path <- .qc_write_html(out, "Module 1 QC Report", sections)
+  path <- .qc_write_html(out, report_title, sections)
   if (isTRUE(verbose)) .log_inform("Module 1 QC HTML report written: {path}")
   path
 }

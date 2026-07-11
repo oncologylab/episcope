@@ -11,6 +11,8 @@ build_module1_qc_report(
   report_name = "module1_qc_report.html",
   scan_predicted_tfbs = TRUE,
   top_n = 20L,
+  project_config = NULL,
+  project_date = NULL,
   verbose = TRUE
 )
 }
@@ -31,6 +33,11 @@ summarize top TFs and condition support. This is comprehensive but can take
 extra time on full projects.}
 
 \item{top_n}{Number of TFs to show in top-TF summaries.}
+
+\item{project_config}{Optional YAML path or list used for parameter
+provenance in the Run Summary.}
+
+\item{project_date}{Optional project date displayed in the report title.}
 
 \item{verbose}{Emit concise progress messages.}
 }

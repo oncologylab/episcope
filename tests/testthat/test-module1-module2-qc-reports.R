@@ -21,12 +21,21 @@ test_that("Module 1 QC report writes an HTML summary", {
     result,
     output_dir = file.path(out_dir, "reports"),
     scan_predicted_tfbs = TRUE,
+    project_config = list(ref_genome = "hg38", threshold_fp_tf_corr_r = 0.7),
+    project_date = "2026-07-10",
     verbose = FALSE
   )
 
   expect_true(file.exists(html))
   page <- paste(readLines(html, warn = FALSE), collapse = "\n")
-  expect_true(grepl("Module 1 QC Report", page, fixed = TRUE))
+  expect_true(grepl("Module 1 QC Report (2026-07-10)", page, fixed = TRUE))
+  expect_true(grepl("1. Run Summary", page, fixed = TRUE))
+  expect_true(grepl("Input Parameters / Run Parameters", page, fixed = TRUE))
+  expect_true(grepl("Raw ATAC peaks", page, fixed = TRUE))
+  expect_true(grepl("Raw footprints", page, fixed = TRUE))
+  expect_true(grepl("Filtered footprints (canonical-bound)", page, fixed = TRUE))
+  expect_true(grepl("TFs with predicted binding", page, fixed = TRUE))
+  expect_true(grepl("command override", page, fixed = TRUE))
   expect_true(grepl("Run Parameters", page, fixed = TRUE))
   expect_true(grepl("Input Gates", page, fixed = TRUE))
   expect_true(grepl("Condition QC", page, fixed = TRUE))

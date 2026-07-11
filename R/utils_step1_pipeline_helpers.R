@@ -51,6 +51,7 @@ NULL
 #' correlation.
 #'
 #' @param config Optional YAML config path.
+#' @param project_date Optional project date stored for reproducible reports.
 #' @param genome Optional genome string used to override the config value.
 #' @param gene_symbol_col Gene-symbol column in the RNA table.
 #' @param fp_aligned Optional pre-aligned footprint object.
@@ -105,6 +106,7 @@ NULL
 #' @export
 load_prep_multiomic_data <- function(
     config = NULL,
+    project_date = NULL,
     genome = NULL,
     gene_symbol_col = "HGNC",
     fp_aligned = NULL,
@@ -143,16 +145,20 @@ load_prep_multiomic_data <- function(
     on.exit(.log_inform("Module 1 multiomic preparation completed in {round(as.numeric(difftime(Sys.time(), start_time, units = 'secs')), 1)} sec."), add = TRUE)
   }
   output_mode <- match.arg(output_mode)
+  config_input <- list()
 
   if (!is.null(config)) {
     if (is.character(config) && length(config) == 1L && file.exists(config)) {
-      load_config(config)
+      config_input <- load_config(config)
     } else {
       .log_abort("`config` must be a path to a YAML file.")
     }
   }
   if (!is.null(genome) && nzchar(genome)) {
     .cfg_set("ref_genome", genome)
+  }
+  if (is.null(project_date) && !is.null(config_input$project_date)) {
+    project_date <- config_input$project_date
   }
 
   get_cfg <- function(name, default = NULL) .cfg_get(name, default = default)
@@ -324,6 +330,15 @@ load_prep_multiomic_data <- function(
     }
   }
 
+  raw_atac_peaks <- if (is.data.frame(atac_data)) nrow(atac_data) else NA_integer_
+  raw_footprints <- NA_integer_
+  if (is.data.frame(fp_aligned$id_map) && "source_fp_peak" %in% names(fp_aligned$id_map)) {
+    source_ids <- unique(as.character(fp_aligned$id_map$source_fp_peak))
+    raw_footprints <- length(source_ids[!is.na(source_ids) & nzchar(source_ids)])
+  } else if (is.data.frame(fp_aligned$fp_sites) && "n_source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
+    raw_footprints <- sum(suppressWarnings(as.numeric(fp_aligned$fp_sites$n_source_fp_peaks)), na.rm = TRUE)
+  }
+  aligned_footprints <- if (is.data.frame(fp_aligned$fp_score)) nrow(fp_aligned$fp_score) else NA_integer_
   atac_out <- load_atac(atac_data, sort_peaks = TRUE)
 
   grn_set <- build_grn_set(
@@ -361,9 +376,21 @@ load_prep_multiomic_data <- function(
 
   compact <- as_multiomic_object(
     grn_set,
-    project = list(db = get_cfg("db"), ref_genome = get_cfg("ref_genome"), label_col = label_col),
+    project = list(
+      db = get_cfg("db"),
+      ref_genome = get_cfg("ref_genome"),
+      label_col = label_col,
+      project_date = project_date,
+      config_path = if (is.character(config) && length(config) == 1L) normalizePath(config, winslash = "/", mustWork = FALSE) else NULL,
+      config = .module1_relevant_config(config_input)
+    ),
     label_col = label_col,
     verbose = FALSE
+  )
+  compact$qc$input_counts <- list(
+    n_raw_atac_peaks = raw_atac_peaks,
+    n_raw_footprints = raw_footprints,
+    n_aligned_footprints = aligned_footprints
   )
 
   if (isTRUE(write_outputs)) {

@@ -702,7 +702,8 @@
       prediction_pair_count = pair_count,
       prediction_stats_manifest = NULL,
       prediction_stats_manifest_path = NULL,
-      n_prediction_stats = 0L
+      n_prediction_stats = 0L,
+      predicted_tfs = character()
     )
   }
   if (!nrow(high) || !length(tfs)) return(make_empty())
@@ -736,6 +737,7 @@
   chunks <- split(seq_along(tfs), ceiling(seq_along(tfs) / tf_chunk_size))
   prediction_stats_chunks <- if (stream_prediction_stats) NULL else vector("list", length(chunks))
   manifest_chunks <- vector("list", length(chunks))
+  predicted_tfs <- character()
 
   for (chunk_i in seq_along(chunks)) {
     ii <- chunks[[chunk_i]]
@@ -774,6 +776,7 @@
       high_confidence_footprints = high,
       omics_data = omics_data
     )
+    predicted_tfs <- union(predicted_tfs, as.character(prediction_stats_i$tf))
     if (stream_prediction_stats) {
       manifest_chunks[[chunk_i]] <- .module1_write_prediction_stats_chunk(
         x = prediction_stats_i,
@@ -814,7 +817,8 @@
     prediction_pair_count = pair_count,
     prediction_stats_manifest = prediction_stats_manifest,
     prediction_stats_manifest_path = prediction_stats_manifest_path,
-    n_prediction_stats = n_prediction_stats
+    n_prediction_stats = n_prediction_stats,
+    predicted_tfs = sort(unique(predicted_tfs))
   )
 }
 #' Predict transcription factor binding sites from matched footprint and RNA data
@@ -828,6 +832,9 @@
 #' @param db Motif database label used in output metadata.
 #' @param label_col Metadata column used to build condition-level matrices when
 #'   missing from `omics_data`.
+#' @param project_config Optional YAML path or list recorded in the QC report.
+#'   It does not change analysis parameters.
+#' @param project_date Optional date displayed in the QC report.
 #' @param r_cutoff Minimum positive correlation used for motif-supported and
 #'   prediction calls.
 #' @param p_cutoff Optional best-method p-value cutoff. If `NULL`, p-value
@@ -864,6 +871,8 @@ predict_tfbs <- function(omics_data,
                          out_dir = NULL,
                          db = "JASPAR2024",
                          label_col = NULL,
+                         project_config = NULL,
+                         project_date = NULL,
                          r_cutoff = 0.3,
                          p_cutoff = NULL,
                          fdr_cutoff = NULL,
@@ -907,6 +916,7 @@ predict_tfbs <- function(omics_data,
   p_cutoff <- if (is.infinite(cutoffs$p)) NULL else cutoffs$p
   fdr_cutoff <- if (is.infinite(cutoffs$fdr)) NULL else cutoffs$fdr
   stopifnot(is.logical(filter_to_canonical_bound), length(filter_to_canonical_bound) == 1L, !is.na(filter_to_canonical_bound))
+  multiomic_input <- omics_data
   omics_data <- .module1_prepare_predict_omics(
     omics_data = omics_data,
     label_col = label_col,
@@ -1055,9 +1065,13 @@ predict_tfbs <- function(omics_data,
     prediction_stats_manifest <- streamed$prediction_stats_manifest
     prediction_stats_manifest_path <- streamed$prediction_stats_manifest_path
     n_prediction_stats <- streamed$n_prediction_stats
+    predicted_tfs <- streamed$predicted_tfs
     if (isTRUE(verbose)) {
       .log_inform("Module 1 TFBS prediction: {streamed$prediction_pair_count} prediction FP-TF pair(s) evaluated without materializing all pairs.")
     }
+  }
+  if (!exists("predicted_tfs", inherits = FALSE)) {
+    predicted_tfs <- sort(unique(as.character(prediction_stats$tf)))
   }
 
   predicted_tfbs_paths <- NULL
@@ -1080,7 +1094,12 @@ predict_tfbs <- function(omics_data,
     n_predicted_tfbs <- nrow(predicted_tfbs)
   }
 
+  compact_counts <- if (is_multiomic_object(multiomic_input)) multiomic_input$qc$input_counts else list()
   qc_summary <- list(
+    n_conditions = length(cond_cols),
+    n_raw_atac_peaks = compact_counts$n_raw_atac_peaks %||% NA_real_,
+    n_raw_footprints = compact_counts$n_raw_footprints %||% NA_real_,
+    n_aligned_footprints = compact_counts$n_aligned_footprints %||% length(fp_universe),
     n_fp_input = length(fp_universe),
     n_fp_bound_accessible = length(bound_fp_ids),
     n_expressed_tfs = length(expressed_tfs),
@@ -1090,7 +1109,32 @@ predict_tfbs <- function(omics_data,
     n_prediction_fps = nrow(prediction_footprints),
     n_prediction_pairs = as.numeric(prediction_pair_count),
     n_prediction_stats = as.numeric(n_prediction_stats),
-    n_predicted_tfbs = as.numeric(n_predicted_tfbs)
+    n_predicted_tfbs = as.numeric(n_predicted_tfbs),
+    n_tfs_with_predicted_binding = length(predicted_tfs)
+  )
+
+  parameters <- list(
+    db = db,
+    label_col = label_col,
+    project_config = .module1_relevant_config(project_config),
+    project_date = project_date,
+    r_cutoff = r_cutoff,
+    min_non_na = as.integer(min_non_na),
+    cores = .module1_default_cores(cores),
+    tf_subset = tf_subset,
+    expressed_tfs = expressed_tfs,
+    p_cutoff = p_cutoff,
+    fdr_cutoff = fdr_cutoff,
+    filter_to_canonical_bound = isTRUE(filter_to_canonical_bound),
+    write_outputs = isTRUE(write_outputs),
+    write_stats = isTRUE(write_stats),
+    write_bed = isTRUE(write_bed),
+    write_qc_report = isTRUE(write_qc_report),
+    qc_report_scan = isTRUE(qc_report_scan),
+    output_format = output_format,
+    return_prediction_stats = isTRUE(keep_prediction_stats),
+    prediction_return_limit = prediction_return_limit,
+    qc_summary = qc_summary
   )
 
   reports <- list()
@@ -1147,50 +1191,33 @@ predict_tfbs <- function(omics_data,
   if (isTRUE(write_outputs) && isTRUE(write_qc_report)) {
     qc_report <- build_module1_qc_report(
       module1 = list(
-        omics_data = omics_data,
+        omics_data = multiomic_input,
         high_confidence_footprints = high_confidence_footprints,
         motif_supported_correlations = motif_supported_correlations,
         prediction_stats = prediction_stats,
         predicted_tfbs = predicted_tfbs,
         prediction_stats_manifest = prediction_stats_manifest,
         reports = reports,
-        parameters = list(qc_summary = qc_summary)
+        parameters = parameters
       ),
       output_dir = file.path(out_dir, "reports"),
       scan_predicted_tfbs = isTRUE(qc_report_scan),
+      project_config = project_config,
+      project_date = project_date,
       verbose = verbose
     )
     reports$qc_html <- qc_report
   }
 
   list(
-    omics_data = omics_data,
+    omics_data = multiomic_input,
     high_confidence_footprints = high_confidence_footprints,
     motif_supported_correlations = motif_supported_correlations,
     prediction_stats = prediction_stats,
     predicted_tfbs = predicted_tfbs,
     prediction_stats_manifest = prediction_stats_manifest,
     reports = reports,
-    parameters = list(
-      db = db,
-      label_col = label_col,
-      r_cutoff = r_cutoff,
-      min_non_na = as.integer(min_non_na),
-      cores = .module1_default_cores(cores),
-      tf_subset = tf_subset,
-      expressed_tfs = expressed_tfs,
-      p_cutoff = p_cutoff,
-      fdr_cutoff = fdr_cutoff,
-      filter_to_canonical_bound = isTRUE(filter_to_canonical_bound),
-      write_outputs = isTRUE(write_outputs),
-      write_stats = isTRUE(write_stats),
-      write_bed = isTRUE(write_bed),
-      write_qc_report = isTRUE(write_qc_report),
-      qc_report_scan = isTRUE(qc_report_scan),
-      output_format = output_format,
-      return_prediction_stats = isTRUE(keep_prediction_stats),
-      qc_summary = qc_summary
-    )
+    parameters = parameters
   )
 }
 NA

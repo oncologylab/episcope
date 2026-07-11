@@ -65,6 +65,9 @@ reference:
   - output_predicted_tfbs
   - load_predicted_tfbs
   - export_predicted_tfbs_bed
+  - plot_tfbs_condition_comparison
+  - plot_tf_tf_cobinding_heatmap
+  - build_tfbs_umap_report
 
 
 - title: Predict TF targets

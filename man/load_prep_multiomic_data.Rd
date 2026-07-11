@@ -6,6 +6,7 @@
 \usage{
 load_prep_multiomic_data(
   config = NULL,
+  project_date = NULL,
   genome = NULL,
   gene_symbol_col = "HGNC",
   fp_aligned = NULL,
@@ -42,6 +43,8 @@ load_prep_multiomic_data(
 }
 \arguments{
 \item{config}{Optional YAML config path.}
+
+\item{project_date}{Optional project date stored for reproducible reports.}
 
 \item{genome}{Optional genome string used to override the config value.}
 

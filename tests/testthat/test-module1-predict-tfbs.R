@@ -38,7 +38,7 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   expect_true(result$parameters$filter_to_canonical_bound)
   expect_null(result$parameters$p_cutoff)
   expect_null(result$parameters$fdr_cutoff)
-  expect_named(result$parameters$qc_summary, c("n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_prediction_stats", "n_predicted_tfbs"))
+  expect_named(result$parameters$qc_summary, c("n_conditions", "n_raw_atac_peaks", "n_raw_footprints", "n_aligned_footprints", "n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_prediction_stats", "n_predicted_tfbs", "n_tfs_with_predicted_binding"))
   expect_equal(result$parameters$qc_summary$n_prediction_fps, nrow(result$high_confidence_footprints))
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
 })

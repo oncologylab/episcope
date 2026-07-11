@@ -66,6 +66,7 @@ Suggests:
     shiny,
     spelling,
     testthat,
+    uwot,
     withr
 VignetteBuilder: knitr
 SystemRequirements: Optional Shiny app support on Linux may require libuv
