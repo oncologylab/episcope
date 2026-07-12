@@ -1349,8 +1349,16 @@
   n_raw_fp <- .qc_metric_value(qc_summary, "n_raw_footprints", default = input_counts$n_raw_footprints %||% NA_real_)
   n_aligned <- .qc_metric_value(qc_summary, "n_aligned_footprints", default = if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else NA_real_)
   n_filtered <- .qc_metric_value(qc_summary, "n_canonical_bound_fps")
-  n_expressed <- .qc_metric_value(qc_summary, "n_expressed_tfs")
-  n_pred_tfs <- .qc_metric_value(qc_summary, "n_tfs_with_predicted_binding", default = if (is.data.frame(predicted_scan$tf_summary_all)) nrow(predicted_scan$tf_summary_all) else NA_real_)
+  expressed_fallback <- NA_real_
+  if (is_multiomic_object(omics_data) && is.data.frame(omics_data$features$gene) && "is_tf" %in% names(omics_data$features$gene)) {
+    expressed_fallback <- sum(
+      omics_data$features$gene$is_tf %in% TRUE & rowSums(omics_data$matrices$gene_on > 0, na.rm = TRUE) > 0,
+      na.rm = TRUE
+    )
+  }
+  n_expressed <- .qc_metric_value(qc_summary, "n_expressed_tfs", default = expressed_fallback)
+  scanned_tf_n <- if (is.data.frame(predicted_scan$tf_summary_all) && nrow(predicted_scan$tf_summary_all)) nrow(predicted_scan$tf_summary_all) else NA_real_
+  n_pred_tfs <- .qc_metric_value(qc_summary, "n_tfs_with_predicted_binding", default = scanned_tf_n)
   values <- c(n_conditions, n_raw_atac, n_raw_fp, n_aligned, n_filtered, predicted_rows, n_expressed, n_pred_tfs)
   tibble::tibble(
     label = c(

@@ -40,6 +40,24 @@ test_that("TF-TF co-binding heatmap supports counts and JSD", {
   expect_equal(jsd, t(jsd))
   expect_equal(unname(diag(jsd)), rep(0, 3))
   expect_true(all(jsd >= 0 & jsd <= 1))
+
+  incidence <- Matrix::Matrix(rbind(c(1, 1, 0, 0), c(0, 1, 1, 0), c(0, 0, 0, 1)), sparse = TRUE)
+  rownames(incidence) <- c("A", "B", "C")
+  expect_equal(craftgrn:::.module1_jsd_matrix(incidence)["A", "B"], sqrt(0.5), tolerance = 1e-12)
+})
+
+test_that("Module 1 Run Summary does not report zero TFs when scanning is skipped", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  cards <- craftgrn:::.module1_qc_run_cards(
+    tibble::tibble(metric = character(), value = numeric()),
+    compact,
+    list(tf_summary_all = tibble::tibble()),
+    predicted_rows = 10
+  )
+
+  expect_equal(cards$value[cards$label == "TFs with predicted binding"], "not available")
+  expect_equal(cards$value[cards$label == "Expressed TFs"], "5")
 })
 
 test_that("TFBS UMAP report provides interactive cluster choices", {

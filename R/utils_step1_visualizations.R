@@ -145,8 +145,9 @@ plot_tfbs_condition_comparison <- function(module1,
                                            pseudocount = 1,
                                            label_top_n = 15L,
                                            verbose = TRUE) {
-  active1 <- active2 <- expr1 <- expr2 <- fp1 <- fp2 <- label <- max_tf_expression <- NULL
-  n_tfbs_cond1 <- n_tfbs_cond2 <- tf <- tf_expr_cond1 <- tf_expr_cond2 <- NULL
+  active1 <- active2 <- expr1 <- expr2 <- fp1 <- fp2 <- fp_id <- label <- max_tf_expression <- NULL
+  fp_score_cond1 <- fp_score_cond2 <- n_tfbs_cond1 <- n_tfbs_cond2 <- tf <- NULL
+  tf_expr_cond1 <- tf_expr_cond2 <- NULL
   omics <- .module1_resolve_multiomic(module1, multiomic_data)
   validate_multiomic_object(omics)
   cond1 <- as.character(cond1)[[1L]]
@@ -157,32 +158,48 @@ plot_tfbs_condition_comparison <- function(module1,
   pseudocount <- suppressWarnings(as.numeric(pseudocount)[[1L]])
   if (!is.finite(pseudocount) || pseudocount <= 0) .log_abort("`pseudocount` must be positive.")
 
-  pairs <- .module1_tfbs_pairs(module1)
-  if (!nrow(pairs)) .log_abort("No predicted TFBS pairs are available.")
-  dt <- data.table::as.data.table(pairs)
-  fp_idx <- match(dt$fp_id, rownames(omics$matrices$fp_score))
   gene_map <- stats::setNames(seq_len(nrow(omics$matrices$gene_expr)), toupper(rownames(omics$matrices$gene_expr)))
-  tf_idx <- unname(gene_map[toupper(dt$tf)])
   c1 <- match(cond1, conditions)
   c2 <- match(cond2, conditions)
-  valid <- !is.na(fp_idx) & !is.na(tf_idx)
-  dt[, `:=`(active1 = FALSE, active2 = FALSE, fp1 = NA_real_, fp2 = NA_real_, expr1 = NA_real_, expr2 = NA_real_)]
-  if (any(valid)) {
-    idx <- which(valid)
-    dt$active1[idx] <- omics$matrices$fp_bound[cbind(fp_idx[idx], c1)] & omics$matrices$gene_on[cbind(tf_idx[idx], match(cond1, colnames(omics$matrices$gene_on)))]
-    dt$active2[idx] <- omics$matrices$fp_bound[cbind(fp_idx[idx], c2)] & omics$matrices$gene_on[cbind(tf_idx[idx], match(cond2, colnames(omics$matrices$gene_on)))]
-    dt$fp1[idx] <- omics$matrices$fp_score[cbind(fp_idx[idx], c1)]
-    dt$fp2[idx] <- omics$matrices$fp_score[cbind(fp_idx[idx], c2)]
-    dt$expr1[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], match(cond1, colnames(omics$matrices$gene_expr)))]
-    dt$expr2[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], match(cond2, colnames(omics$matrices$gene_expr)))]
-  }
-  summary <- dt[, .(
-    n_tfbs_cond1 = sum(active1, na.rm = TRUE),
-    n_tfbs_cond2 = sum(active2, na.rm = TRUE),
-    fp_score_cond1 = sum(data.table::fifelse(active1, fp1, 0), na.rm = TRUE),
-    fp_score_cond2 = sum(data.table::fifelse(active2, fp2, 0), na.rm = TRUE),
-    tf_expr_cond1 = suppressWarnings(max(expr1, na.rm = TRUE)),
-    tf_expr_cond2 = suppressWarnings(max(expr2, na.rm = TRUE))
+  gene_c1 <- match(cond1, colnames(omics$matrices$gene_expr))
+  gene_c2 <- match(cond2, colnames(omics$matrices$gene_expr))
+  partials <- list()
+  source <- .module1_tfbs_source(module1)
+  .module1_tfbs_each(source, callback = function(x, i) {
+    if (!all(c("tf", "fp_id") %in% names(x)) || !nrow(x)) return()
+    dt <- unique(data.table::as.data.table(x[, c("tf", "fp_id"), drop = FALSE]))
+    dt <- dt[!is.na(tf) & nzchar(tf) & !is.na(fp_id) & nzchar(fp_id)]
+    if (!nrow(dt)) return()
+    fp_idx <- match(dt$fp_id, rownames(omics$matrices$fp_score))
+    tf_idx <- unname(gene_map[toupper(dt$tf)])
+    valid <- !is.na(fp_idx) & !is.na(tf_idx)
+    dt[, `:=`(active1 = FALSE, active2 = FALSE, fp1 = NA_real_, fp2 = NA_real_, expr1 = NA_real_, expr2 = NA_real_)]
+    if (any(valid)) {
+      idx <- which(valid)
+      dt$active1[idx] <- omics$matrices$fp_bound[cbind(fp_idx[idx], c1)] & omics$matrices$gene_on[cbind(tf_idx[idx], gene_c1)]
+      dt$active2[idx] <- omics$matrices$fp_bound[cbind(fp_idx[idx], c2)] & omics$matrices$gene_on[cbind(tf_idx[idx], gene_c2)]
+      dt$fp1[idx] <- omics$matrices$fp_score[cbind(fp_idx[idx], c1)]
+      dt$fp2[idx] <- omics$matrices$fp_score[cbind(fp_idx[idx], c2)]
+      dt$expr1[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], gene_c1)]
+      dt$expr2[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], gene_c2)]
+    }
+    partials[[length(partials) + 1L]] <<- dt[, .(
+      n_tfbs_cond1 = sum(active1, na.rm = TRUE),
+      n_tfbs_cond2 = sum(active2, na.rm = TRUE),
+      fp_score_cond1 = sum(data.table::fifelse(active1, fp1, 0), na.rm = TRUE),
+      fp_score_cond2 = sum(data.table::fifelse(active2, fp2, 0), na.rm = TRUE),
+      tf_expr_cond1 = suppressWarnings(max(expr1, na.rm = TRUE)),
+      tf_expr_cond2 = suppressWarnings(max(expr2, na.rm = TRUE))
+    ), by = tf]
+  })
+  if (!length(partials)) .log_abort("No predicted TFBS pairs are available.")
+  summary <- data.table::rbindlist(partials, use.names = TRUE)[, .(
+    n_tfbs_cond1 = sum(n_tfbs_cond1),
+    n_tfbs_cond2 = sum(n_tfbs_cond2),
+    fp_score_cond1 = sum(fp_score_cond1),
+    fp_score_cond2 = sum(fp_score_cond2),
+    tf_expr_cond1 = suppressWarnings(max(tf_expr_cond1, na.rm = TRUE)),
+    tf_expr_cond2 = suppressWarnings(max(tf_expr_cond2, na.rm = TRUE))
   ), by = tf]
   summary[!is.finite(tf_expr_cond1), tf_expr_cond1 := NA_real_]
   summary[!is.finite(tf_expr_cond2), tf_expr_cond2 := NA_real_]
@@ -237,17 +254,22 @@ plot_tfbs_condition_comparison <- function(module1,
 }
 
 .module1_jsd_matrix <- function(x) {
-  x <- as.matrix(x)
-  rs <- rowSums(x)
-  p <- x / pmax(rs, 1)
-  n <- nrow(p)
-  out <- matrix(0, n, n, dimnames = list(rownames(p), rownames(p)))
+  counts <- as.numeric(Matrix::rowSums(x > 0))
+  overlap <- as.matrix(Matrix::tcrossprod(x > 0))
+  n <- nrow(overlap)
+  out <- matrix(0, n, n, dimnames = list(rownames(x), rownames(x)))
   for (i in seq_len(n)) {
     for (j in i:n) {
-      m <- 0.5 * (p[i, ] + p[j, ])
-      kl1 <- sum(ifelse(p[i, ] > 0, p[i, ] * log2(p[i, ] / pmax(m, 1e-300)), 0))
-      kl2 <- sum(ifelse(p[j, ] > 0, p[j, ] * log2(p[j, ] / pmax(m, 1e-300)), 0))
-      value <- sqrt(max(0, 0.5 * (kl1 + kl2)))
+      a <- counts[[i]]
+      b <- counts[[j]]
+      shared <- overlap[i, j]
+      if (a <= 0 || b <= 0) {
+        value <- if (a == b) 0 else 1
+      } else {
+        kl1 <- (a - shared) / a + (shared / a) * log2(2 * b / (a + b))
+        kl2 <- (b - shared) / b + (shared / b) * log2(2 * a / (a + b))
+        value <- sqrt(max(0, 0.5 * (kl1 + kl2)))
+      }
       out[i, j] <- value
       out[j, i] <- value
     }
@@ -423,7 +445,7 @@ build_tfbs_umap_report <- function(module1,
   options_html <- paste(vapply(valid_k, function(k) sprintf("<option value=\"%d\"%s>%d</option>", k, if (k == default_clusters) " selected" else "", k), character(1L)), collapse = "")
   html <- paste0(
     "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Module 1 TFBS UMAP</title>",
-    "<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#17202a}header{padding:18px 24px;border-bottom:1px solid #d8dee8}h1{font-size:25px;margin:0 0 10px}label{font-weight:700}select{margin-left:8px;padding:5px}main{padding:16px 24px}.meta{color:#5d6673;margin-left:16px}svg{width:100%;height:auto;border:1px solid #d8dee8;background:#fff}.axis{stroke:#94a3b8}.dot{stroke:#fff;stroke-width:1;opacity:.88}.tip{position:fixed;display:none;background:#111827;color:#fff;padding:7px 9px;border-radius:3px;pointer-events:none;font-size:12px}</style></head><body>",
+    "<style>body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#17202a}header{padding:18px 24px;border-bottom:1px solid #d8dee8}h1{font-size:25px;margin:0 0 10px}label{font-weight:700}select{margin-left:8px;padding:5px}main{padding:16px 24px}.meta{color:#5d6673;margin-left:16px}svg{width:100%;height:auto;border:1px solid #d8dee8;background:#fff}.axis{stroke:#94a3b8}.dot{stroke:#fff;stroke-width:1;opacity:.88}#legend{pointer-events:none}.tip{position:fixed;display:none;background:#111827;color:#fff;padding:7px 9px;border-radius:3px;pointer-events:none;font-size:12px}</style></head><body>",
     "<header><h1>TF UMAP from highly variable predicted TFBS</h1><label>Number of clusters<select id=\"k\">", options_html, "</select></label><span id=\"meta\" class=\"meta\"></span></header>",
     "<main><svg id=\"plot\" viewBox=\"0 0 1100 760\"><g id=\"layer\"></g></svg></main><div id=\"tip\" class=\"tip\"></div>",
     "<script>const D=", json, ";const sel=document.getElementById('k'),layer=document.getElementById('layer'),tip=document.getElementById('tip'),meta=document.getElementById('meta');",
