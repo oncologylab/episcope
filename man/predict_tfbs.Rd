@@ -71,8 +71,8 @@ explicitly supplied.}
 
 \item{write_qc_report}{Write a Module 1 HTML QC report when outputs are written.}
 
-\item{write_tfbs_explorer}{Write the linked interactive TFBS Explorer when
-outputs are written.}
+\item{write_tfbs_explorer}{Embed the interactive Binding, Co-binding, and
+Motif explorer sections in the Module 1 QC HTML report.}
 
 \item{qc_report_scan}{Scan predicted TFBS chunks for top-TF summaries in the QC report.}
 

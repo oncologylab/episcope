@@ -83,8 +83,13 @@ test_that("Module 1 Run Summary does not report zero TFs when scanning is skippe
     predicted_rows = 10
   )
 
-  expect_equal(cards$value[cards$label == "TFs with predicted binding"], "not available")
+  expect_equal(cards$value[cards$label == "TFs with predicted binding"], "Not recorded")
   expect_equal(cards$value[cards$label == "Expressed TFs"], "5")
+  expect_equal(cards$label, c(
+    "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
+    "Filtered footprints (same as canonical-bound)", "Predicted unique TFBS",
+    "Expressed TFs", "TFs with predicted binding"
+  ))
 })
 
 test_that("TFBS UMAP report provides interactive cluster choices", {
@@ -148,6 +153,8 @@ test_that("TFBS Explorer writes compact exact co-binding controls", {
   expect_match(page, "Export SVG", fixed = TRUE)
   expect_equal(sum(popcount[shared_with_c + 1L]), 1L)
   expect_equal(cache$tf_counts["TF_A", "Overall"], 2)
+  expect_equal(sum(cache$tf_counts[, "Overall"]), nrow(unique(predicted[c("tf", "fp_id")])))
+  expect_true(sum(cache$tf_counts[, cache$conditions, drop = FALSE]) != sum(cache$tf_counts[, "Overall"]))
 })
 
 test_that("Module 1 config provenance keeps relevant values", {

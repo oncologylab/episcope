@@ -41,8 +41,8 @@ provenance in the Run Summary.}
 
 \item{project_date}{Optional project date displayed in the report title.}
 
-\item{build_tfbs_explorer}{Logical; build or refresh the linked interactive
-TFBS Explorer.}
+\item{build_tfbs_explorer}{Logical; embed the interactive Binding,
+Co-binding, and Motif explorer sections in the QC report.}
 
 \item{default_condition}{Optional initial condition for TFBS report previews
 and the linked explorer.}

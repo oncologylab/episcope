@@ -515,21 +515,34 @@ build_tfbs_umap_report <- function(module1,
   unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(motif) & nzchar(motif)])
 }
 
-.module1_explorer_correlation_hist <- function(module1, bins = 40L) {
+.module1_explorer_correlation_hist <- function(module1, bins = 40L, r_cutoff = NULL) {
   parts <- list()
+  cutoff <- if (!is.null(r_cutoff)) {
+    suppressWarnings(as.numeric(r_cutoff))
+  } else if (is.list(module1) && !is.data.frame(module1) && is.list(module1$parameters)) {
+    suppressWarnings(as.numeric(module1$parameters$r_cutoff %||% 0.5))
+  } else {
+    0.5
+  }
+  if (!is.finite(cutoff)) cutoff <- 0.5
   add_table <- function(x, scope) {
     if (!is.data.frame(x) || !nrow(x) || !"tf" %in% names(x)) return()
     for (method in c("pearson_r", "spearman_r")) {
       if (!method %in% names(x)) next
-      dt <- data.table::data.table(tf = as.character(x$tf), value = suppressWarnings(as.numeric(x[[method]])))
+      pass <- suppressWarnings(as.numeric(x[[method]])) >= cutoff
+      dt <- data.table::data.table(
+        tf = as.character(x$tf),
+        value = suppressWarnings(as.numeric(x[[method]])),
+        pass = pass
+      )
       dt <- dt[is.finite(value) & value >= -1 & value <= 1]
       if (!nrow(dt)) next
       dt[, bin := pmin(bins - 1L, pmax(0L, floor((value + 1) / 2 * bins)))]
-      per_tf <- dt[, .(n = .N), by = .(tf, bin)]
-      overall <- dt[, .(n = .N), by = bin][, tf := "Overall"]
+      per_tf <- dt[, .(n = .N, n_pass = sum(pass)), by = .(tf, bin)]
+      overall <- dt[, .(n = .N, n_pass = sum(pass)), by = bin][, tf := "Overall"]
       out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE)
       out[, `:=`(scope = scope, method = method)]
-      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n)]
+      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n, n_pass)]
     }
   }
   if (is.list(module1) && !is.data.frame(module1)) {
@@ -561,20 +574,30 @@ build_tfbs_umap_report <- function(module1,
     }
   }
   if (!length(parts)) return(tibble::tibble())
-  data.table::rbindlist(parts, use.names = TRUE)[, .(n = sum(n)), by = .(scope, method, tf, bin)] |>
+  data.table::rbindlist(parts, use.names = TRUE, fill = TRUE)[
+    , .(n = sum(n), n_pass = sum(n_pass, na.rm = TRUE)), by = .(scope, method, tf, bin)
+  ] |>
     tibble::as_tibble()
 }
 
 .module1_build_explorer_cache <- function(module1, omics, cache_file, rebuild = FALSE, verbose = TRUE) {
   validate_multiomic_object(omics)
+  r_cutoff <- if (is.list(module1) && !is.data.frame(module1) && is.list(module1$parameters)) {
+    module1$parameters$r_cutoff
+  } else {
+    omics$project$config$threshold_fp_tf_corr_r %||% 0.5
+  }
+  r_cutoff <- suppressWarnings(as.numeric(r_cutoff)[[1L]])
+  if (!is.finite(r_cutoff)) r_cutoff <- 0.5
   source <- .module1_tfbs_source(module1)
   manifest_rows <- if (is.data.frame(source$manifest) && "n_rows" %in% names(source$manifest)) {
     sum(suppressWarnings(as.numeric(source$manifest$n_rows)), na.rm = TRUE)
   } else if (is.data.frame(source$data)) nrow(source$data) else NA_real_
   fingerprint <- list(
-    schema = "module1_qc_analysis_v4",
+    schema = "module1_qc_analysis_v5",
     n_sites = nrow(omics$matrices$fp_score),
     conditions = colnames(omics$matrices$fp_score),
+    r_cutoff = r_cutoff,
     manifest_rows = manifest_rows,
     source_files = if (is.data.frame(source$manifest) && "path" %in% names(source$manifest)) {
       info <- file.info(as.character(source$manifest$path))
@@ -673,7 +696,7 @@ build_tfbs_umap_report <- function(module1,
     gene_on = gene_on,
     tf_counts = tf_counts,
     motif_counts = tibble::as_tibble(motif_counts),
-    correlation_hist = .module1_explorer_correlation_hist(module1)
+    correlation_hist = .module1_explorer_correlation_hist(module1, r_cutoff = r_cutoff)
   )
   dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
   saveRDS(cache, cache_file, compress = "xz")
@@ -702,11 +725,67 @@ build_tfbs_umap_report <- function(module1,
   sort(conditions)[[1L]]
 }
 
+.module1_tfbs_explorer_components <- function(cache, default_condition, standalone = FALSE) {
+  if (!is.list(cache) || !length(cache$tf_names)) return(NULL)
+  encode <- function(x) jsonlite::base64_enc(x)
+  motif_rows <- split(as.data.frame(cache$motif_counts, stringsAsFactors = FALSE), as.character(cache$motif_counts$motif))
+  payload <- list(
+    tfs = cache$tf_names,
+    conditions = cache$conditions,
+    defaultCondition = default_condition,
+    tfBits = unname(vapply(cache$tf_bits, encode, character(1L))),
+    boundBits = unname(vapply(cache$bound_bits, encode, character(1L))),
+    geneOn = unname(lapply(seq_len(nrow(cache$gene_on)), function(i) as.integer(cache$gene_on[i, ]))),
+    motifs = motif_rows
+  )
+  payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, dataframe = "rows", na = "null")
+  payload_json <- gsub("</", "<\\/", payload_json, fixed = TRUE)
+  css <- paste(
+    ".m1-tabs{display:flex;gap:6px;margin:20px 0}.m1-tab{border:1px solid var(--line);background:var(--soft);padding:9px 14px;border-radius:5px;cursor:pointer;font-weight:700}.m1-tab.active{background:#e8f0f8;border-color:#8aa8c8;color:#173d69}",
+    ".m1-panel.standalone{display:none}.m1-panel.standalone.active{display:block}.m1-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:end;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:4px;margin:12px 0}.m1-control{display:grid;gap:4px}.m1-control label{font-size:12px;font-weight:700;color:#475569}.m1-controls select,.m1-controls button{font:inherit;border:1px solid #b9c6d6;border-radius:4px;background:#fff;padding:7px 9px}.m1-controls select[multiple]{min-width:220px;height:100px}.m1-controls button{cursor:pointer}",
+    ".m1-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.m1-plot-card{border:1px solid var(--line);border-radius:4px;padding:14px;overflow:hidden}.m1-plot-card h3{margin:0 0 8px;font-size:15px}.m1-chart{width:100%;min-height:420px}.m1-bar{fill:#315f97;cursor:pointer}.m1-bar.co{fill:#16847a}.m1-bar.rest{fill:#dbe5ef}.m1-bar.highlight,.m1-dot.highlight{stroke:#b2182b;stroke-width:3}.m1-axis-label{font-size:12px;fill:#334155}.m1-value{font-size:12px;font-weight:700;fill:#172033}.m1-canonical{font-size:12px;font-weight:800;fill:#b2182b}.m1-stem{stroke:#315f97;stroke-width:2.2}.m1-dot{fill:#6486af;cursor:pointer}",
+    "@media(max-width:800px){.m1-grid{grid-template-columns:1fr}.m1-tabs{overflow:auto}.m1-chart{min-height:360px}}",
+    sep = "\n"
+  )
+  js <- paste0(
+    "(()=>{const D=", payload_json, ";",
+    "const dec=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));D.tfBits=D.tfBits.map(dec);D.boundBits=D.boundBits.map(dec);",
+    "const pop=Uint8Array.from({length:256},(_,i)=>{let n=i,c=0;while(n){c+=n&1;n>>=1}return c});",
+    "const count=a=>{let n=0;for(const x of a)n+=pop[x];return n};const andCount=(a,b)=>{let n=0;for(let i=0;i<a.length;i++)n+=pop[a[i]&b[i]];return n};",
+    "const tfIndex=new Map(D.tfs.map((x,i)=>[x,i])),condIndex=new Map(D.conditions.map((x,i)=>[x,i]));",
+    "const active=(ti,cond)=>{const src=D.tfBits[ti];if(cond==='Overall')return src;const ci=condIndex.get(cond);if(!D.geneOn[ti][ci])return new Uint8Array(src.length);const b=D.boundBits[ci];return Uint8Array.from(src,(x,i)=>x&b[i])};",
+    "const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));let selectedTf='';",
+    "function bars(el,rows,stack=false,lollipop=false){const w=620,rh=27,left=150,right=82,h=Math.max(180,rows.length*rh+45),mx=Math.max(1,...rows.map(x=>x.total));let s='<svg viewBox=\"0 0 '+w+' '+h+'\">';rows.forEach((d,i)=>{const y=12+i*rh,bw=(w-left-right)*d.total/mx,cw=(w-left-right)*(d.co||0)/mx,lc=d.canonical?'m1-canonical':'m1-axis-label';s+='<text x=\"'+(left-8)+'\" y=\"'+(y+15)+'\" text-anchor=\"end\" class=\"'+lc+'\">'+esc(d.tf)+'</text>';if(stack)s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"m1-bar rest\"/><rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+cw+'\" height=\"18\" class=\"m1-bar co\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.co+' co-bound of '+d.total+'</title></rect>';else if(lollipop)s+='<line x1=\"'+left+'\" y1=\"'+(y+9)+'\" x2=\"'+(left+bw)+'\" y2=\"'+(y+9)+'\" class=\"m1-stem\"/><circle cx=\"'+(left+bw)+'\" cy=\"'+(y+9)+'\" r=\"6\" class=\"m1-dot\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></circle>';else s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"m1-bar\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></rect>';s+='<text x=\"'+(left+bw+9)+'\" y=\"'+(y+15)+'\" class=\"m1-value\">'+d.total.toLocaleString()+'</text>'});el.innerHTML=s+'</svg>';el.querySelectorAll('[data-tf]').forEach(x=>x.onclick=()=>highlight(x.dataset.tf))}",
+    "function highlight(tf){selectedTf=tf;document.querySelectorAll('[data-tf]').forEach(x=>x.classList.toggle('highlight',x.dataset.tf===tf))}const n=id=>+document.getElementById(id).value;",
+    "const counts=cond=>D.tfs.map((tf,i)=>({tf,total:count(active(i,cond))})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf));",
+    "function drawBinding(){bars(document.getElementById('binding-overall'),counts('Overall').slice(0,n('binding-n')),false,true);bars(document.getElementById('binding-condition'),counts(document.getElementById('binding-cond').value).slice(0,n('binding-n')),false,true);if(selectedTf)highlight(selectedTf)}",
+    "function drawCobinding(){const names=Array.from(document.getElementById('focal').selectedOptions).map(x=>x.value);if(!names.length)return;const cond=document.getElementById('cobind-cond').value;let mask=null;for(const tf of names){const b=active(tfIndex.get(tf),cond);mask=mask?Uint8Array.from(mask,(x,i)=>x&b[i]):Uint8Array.from(b)}const rows=D.tfs.filter(tf=>!names.includes(tf)).map(tf=>{const b=active(tfIndex.get(tf),cond);return{tf,total:count(b),co:andCount(mask,b)}}).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true)}",
+    "function drawMotif(){const rows=(D.motifs[document.getElementById('motif-select').value]||[]).map(x=>({tf:x.tf,total:+x.n,canonical:String(x.canonical_tf||'').split(/[,:;]/).map(y=>y.trim().toUpperCase()).includes(String(x.tf).toUpperCase())})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,20);bars(document.getElementById('motif-chart'),rows)}",
+    "window.exportSvg=function(id,name){const svg=document.querySelector('#'+id+' svg');if(!svg)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));a.download=name+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)};",
+    "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const f=document.getElementById('focal');D.tfs.forEach(x=>f.add(new Option(x,x)));f.options[0].selected=true;const m=document.getElementById('motif-select');Object.keys(D.motifs).sort().forEach(x=>m.add(new Option(x,x)))}",
+    "function tab(id){document.querySelectorAll('.m1-tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));document.querySelectorAll('.m1-panel.standalone').forEach(x=>x.classList.toggle('active',x.dataset.panel===id));history.replaceState(null,'','#'+id)}document.querySelectorAll('.m1-tab').forEach(x=>x.onclick=()=>tab(x.dataset.tab));",
+    "fill();['binding-cond','binding-n','focal','cobind-cond','cobind-n','motif-select'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{drawBinding();drawCobinding();drawMotif()}));drawBinding();drawCobinding();drawMotif();if(document.querySelector('.m1-tab'))tab(['binding','cobinding','motif'].includes(location.hash.slice(1))?location.hash.slice(1):'binding')})()"
+  )
+  panel_class <- if (isTRUE(standalone)) "m1-panel standalone" else "m1-panel"
+  binding <- paste0(
+    "<div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"binding-cond\">Condition</label><select id=\"binding-cond\"></select></div><div class=\"m1-control\"><label for=\"binding-n\">Top N</label><select id=\"binding-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('binding-overall','tfbs_binding_overall')\">Export overall SVG</button><button onclick=\"exportSvg('binding-condition','tfbs_binding_condition')\">Export condition SVG</button></div>",
+    "<div class=\"m1-grid\"><div class=\"m1-plot-card\"><h3>Overall</h3><div id=\"binding-overall\" class=\"m1-chart\"></div></div><div class=\"m1-plot-card\"><h3>Selected condition</h3><div id=\"binding-condition\" class=\"m1-chart\"></div></div></div>"
+  )
+  cobinding <- paste0(
+    "<p class=\"subtitle\">With multiple focal TFs, co-bound sites must be shared by every selected TF.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"focal\">Focal TFs</label><select id=\"focal\" multiple></select></div><div class=\"m1-control\"><label for=\"cobind-cond\">Scope</label><select id=\"cobind-cond\"></select></div><div class=\"m1-control\"><label for=\"cobind-n\">Top N</label><select id=\"cobind-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('cobind-chart','tfbs_cobinding')\">Export SVG</button></div>",
+    "<div class=\"m1-plot-card\"><div id=\"cobind-chart\" class=\"m1-chart\"></div></div>"
+  )
+  motif <- paste0(
+    "<p class=\"subtitle\">Canonical motif-matched TFs are bold and red. Rankings show at most 20 TFs.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"motif-select\">Motif</label><select id=\"motif-select\"></select></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div>",
+    "<div class=\"m1-plot-card\"><div id=\"motif-chart\" class=\"m1-chart\"></div></div>"
+  )
+  list(css = css, script = paste0("<script>", js, "</script>"), binding = binding, cobinding = cobinding, motif = motif, panel_class = panel_class)
+}
+
 #' Build the interactive Module 1 TFBS Explorer
 #'
-#' Builds a self-contained HTML explorer with overall and condition-specific
-#' predicted TFBS counts, exact single- or multi-TF co-binding summaries, and
-#' motif-centered predicted TF rankings.
+#' Builds an explicitly requested standalone HTML explorer. Standard
+#' `predict_tfbs()` runs embed the same controls in the Module 1 QC report.
 #'
 #' @param module1 A `predict_tfbs()` result, Module 1 output directory,
 #'   predicted TFBS table, table path, or manifest path.
@@ -741,56 +820,19 @@ build_module1_tfbs_explorer <- function(module1,
   cache <- .module1_build_explorer_cache(module1, omics, cache_file, rebuild = rebuild_cache, verbose = verbose)
   if (!length(cache$tf_names)) .log_abort("No predicted TFs are available for the TFBS Explorer.")
   default_condition <- .module1_explorer_default_condition(cache$conditions, default_condition, project_config, omics)
-  encode <- function(x) jsonlite::base64_enc(x)
-  motif_rows <- split(as.data.frame(cache$motif_counts, stringsAsFactors = FALSE), as.character(cache$motif_counts$motif))
-  payload <- list(
-    tfs = cache$tf_names,
-    conditions = cache$conditions,
-    defaultCondition = default_condition,
-    tfBits = unname(vapply(cache$tf_bits, encode, character(1L))),
-    boundBits = unname(vapply(cache$bound_bits, encode, character(1L))),
-    geneOn = unname(lapply(seq_len(nrow(cache$gene_on)), function(i) as.integer(cache$gene_on[i, ]))),
-    motifs = motif_rows
-  )
-  payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, dataframe = "rows", na = "null")
-  payload_json <- gsub("</", "<\\/", payload_json, fixed = TRUE)
-  css <- paste(
-    ":root{--ink:#172033;--muted:#64748b;--line:#dbe3ed;--soft:#f6f8fb;--blue:#315f97;--teal:#16847a}",
-    "*{box-sizing:border-box}body{margin:0;font:14px/1.45 Arial,Helvetica,sans-serif;color:var(--ink);background:#fff}",
-    ".wrap{max-width:1240px;margin:auto;padding:24px 30px}header{border-bottom:1px solid var(--line)}h1{margin:0;font-size:28px}h2{font-size:20px;margin:0 0 8px}.sub{color:var(--muted);margin-top:5px}",
-    ".tabs{display:flex;gap:6px;margin:20px 0}.tab{border:1px solid var(--line);background:var(--soft);padding:9px 14px;border-radius:5px;cursor:pointer;font-weight:700}.tab.active{background:#e8f0f8;border-color:#8aa8c8;color:#173d69}",
-    ".panel{display:none}.panel.active{display:block}.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:end;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:6px;margin:12px 0}.control{display:grid;gap:4px}.control label{font-size:12px;font-weight:700;color:#475569}select,button{font:inherit;border:1px solid #b9c6d6;border-radius:4px;background:#fff;padding:7px 9px}select[multiple]{min-width:220px;height:100px}button{cursor:pointer}",
-    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{border:1px solid var(--line);border-radius:6px;padding:14px;overflow:hidden}.card h3{margin:0 0 8px;font-size:15px}.chart{width:100%;min-height:420px}.bar{fill:var(--blue);cursor:pointer}.bar.co{fill:var(--teal)}.bar.rest{fill:#dbe5ef}.bar.highlight{stroke:#b2182b;stroke-width:3}.axis-label{font-size:12px;fill:#334155}.value{font-size:12px;font-weight:700;fill:#172033}.canonical{font-size:12px;font-weight:800;fill:#b2182b}",
-    "@media(max-width:800px){.wrap{padding:18px}.grid{grid-template-columns:1fr}.tabs{overflow:auto}.chart{min-height:360px}}",
-    sep = "\n"
-  )
-  js <- paste0(
-    "const D=", payload_json, ";",
-    "const dec=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));D.tfBits=D.tfBits.map(dec);D.boundBits=D.boundBits.map(dec);",
-    "const pop=Uint8Array.from({length:256},(_,i)=>{let n=i,c=0;while(n){c+=n&1;n>>=1}return c});",
-    "const count=a=>{let n=0;for(const x of a)n+=pop[x];return n};const andCount=(a,b)=>{let n=0;for(let i=0;i<a.length;i++)n+=pop[a[i]&b[i]];return n};",
-    "const tfIndex=new Map(D.tfs.map((x,i)=>[x,i])),condIndex=new Map(D.conditions.map((x,i)=>[x,i]));",
-    "const active=(ti,cond)=>{const src=D.tfBits[ti];if(cond==='Overall')return src;const ci=condIndex.get(cond);if(!D.geneOn[ti][ci])return new Uint8Array(src.length);const b=D.boundBits[ci];return Uint8Array.from(src,(x,i)=>x&b[i])};",
-    "const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));let selectedTf='';",
-    "function bars(el,rows,stack=false){const w=620,rh=27,left=150,right=72,h=Math.max(180,rows.length*rh+45),mx=Math.max(1,...rows.map(x=>x.total));let s='<svg viewBox=\"0 0 '+w+' '+h+'\">';rows.forEach((d,i)=>{const y=12+i*rh,bw=(w-left-right)*d.total/mx,cw=(w-left-right)*(d.co||0)/mx,lc=d.canonical?'canonical':'axis-label';s+='<text x=\"'+(left-8)+'\" y=\"'+(y+15)+'\" text-anchor=\"end\" class=\"'+lc+'\">'+esc(d.tf)+'</text>';if(stack)s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"bar rest\"/><rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+cw+'\" height=\"18\" class=\"bar co\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.co+' co-bound of '+d.total+'</title></rect>';else s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"bar\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></rect>';s+='<text x=\"'+(left+bw+6)+'\" y=\"'+(y+15)+'\" class=\"value\">'+d.total.toLocaleString()+'</text>'});el.innerHTML=s+'</svg>';el.querySelectorAll('[data-tf]').forEach(x=>x.onclick=()=>highlight(x.dataset.tf))}",
-    "function highlight(tf){selectedTf=tf;document.querySelectorAll('[data-tf]').forEach(x=>x.classList.toggle('highlight',x.dataset.tf===tf))}const n=id=>+document.getElementById(id).value;",
-    "const counts=cond=>D.tfs.map((tf,i)=>({tf,total:count(active(i,cond))})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf));",
-    "function drawBinding(){bars(document.getElementById('binding-overall'),counts('Overall').slice(0,n('binding-n')));bars(document.getElementById('binding-condition'),counts(document.getElementById('binding-cond').value).slice(0,n('binding-n')));if(selectedTf)highlight(selectedTf)}",
-    "function drawCobinding(){const names=Array.from(document.getElementById('focal').selectedOptions).map(x=>x.value);if(!names.length)return;const cond=document.getElementById('cobind-cond').value;let mask=null;for(const tf of names){const b=active(tfIndex.get(tf),cond);mask=mask?Uint8Array.from(mask,(x,i)=>x&b[i]):Uint8Array.from(b)}const rows=D.tfs.filter(tf=>!names.includes(tf)).map(tf=>{const b=active(tfIndex.get(tf),cond);return{tf,total:count(b),co:andCount(mask,b)}}).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true)}",
-    "function drawMotif(){const rows=(D.motifs[document.getElementById('motif-select').value]||[]).map(x=>({tf:x.tf,total:+x.n,canonical:String(x.canonical_tf||'').split(/[,:;]/).map(y=>y.trim().toUpperCase()).includes(String(x.tf).toUpperCase())})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,20);bars(document.getElementById('motif-chart'),rows)}",
-    "function exportSvg(id,name){const svg=document.querySelector('#'+id+' svg');if(!svg)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));a.download=name+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}",
-    "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const f=document.getElementById('focal');D.tfs.forEach(x=>f.add(new Option(x,x)));f.options[0].selected=true;const m=document.getElementById('motif-select');Object.keys(D.motifs).sort().forEach(x=>m.add(new Option(x,x)))}",
-    "function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===id));history.replaceState(null,'','#'+id)}document.querySelectorAll('.tab').forEach(x=>x.onclick=()=>tab(x.dataset.tab));",
-    "fill();document.querySelectorAll('select').forEach(x=>x.onchange=()=>{drawBinding();drawCobinding();drawMotif()});drawBinding();drawCobinding();drawMotif();tab(['binding','cobinding','motif'].includes(location.hash.slice(1))?location.hash.slice(1):'binding');"
+  x <- .module1_tfbs_explorer_components(cache, default_condition, standalone = TRUE)
+  standalone_css <- paste0(
+    ":root{--ink:#172033;--muted:#64748b;--line:#dbe3ed;--soft:#f6f8fb}*{box-sizing:border-box}body{margin:0;font:14px/1.45 Arial,Helvetica,sans-serif;color:var(--ink);background:#fff}.wrap{max-width:1240px;margin:auto;padding:24px 30px}header{border-bottom:1px solid var(--line)}h1{margin:0;font-size:28px}h2{font-size:20px}.subtitle{color:var(--muted)}section{border:0;padding:0}",
+    x$css
   )
   html <- paste0(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Module 1 TFBS Explorer</title><style>", css, "</style></head><body>",
-    "<header><div class=\"wrap\"><h1>Module 1 TFBS Explorer</h1><div class=\"sub\">Explore predicted binding, exact TF co-binding, and motif-centered TF rankings.</div></div></header><main class=\"wrap\">",
-    "<nav class=\"tabs\"><button class=\"tab\" data-tab=\"binding\">Binding</button><button class=\"tab\" data-tab=\"cobinding\">Co-binding</button><button class=\"tab\" data-tab=\"motif\">Motif</button></nav>",
-    "<section id=\"binding\" class=\"panel\"><h2>Predicted binding sites per TF</h2><div class=\"controls\"><div class=\"control\"><label for=\"binding-cond\">Condition</label><select id=\"binding-cond\"></select></div><div class=\"control\"><label for=\"binding-n\">Top N</label><select id=\"binding-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('binding-overall','tfbs_binding_overall')\">Export overall SVG</button><button onclick=\"exportSvg('binding-condition','tfbs_binding_condition')\">Export condition SVG</button></div><div class=\"grid\"><div class=\"card\"><h3>Overall</h3><div id=\"binding-overall\" class=\"chart\"></div></div><div class=\"card\"><h3>Selected condition</h3><div id=\"binding-condition\" class=\"chart\"></div></div></div></section>",
-    "<section id=\"cobinding\" class=\"panel\"><h2>TF co-binding summary</h2><p class=\"sub\">With multiple focal TFs, co-bound sites must be shared by every selected TF.</p><div class=\"controls\"><div class=\"control\"><label for=\"focal\">Focal TFs</label><select id=\"focal\" multiple></select></div><div class=\"control\"><label for=\"cobind-cond\">Scope</label><select id=\"cobind-cond\"></select></div><div class=\"control\"><label for=\"cobind-n\">Top N</label><select id=\"cobind-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('cobind-chart','tfbs_cobinding')\">Export SVG</button></div><div class=\"card\"><div id=\"cobind-chart\" class=\"chart\"></div></div></section>",
-    "<section id=\"motif\" class=\"panel\"><h2>Top predicted bound TF per motif</h2><p class=\"sub\">Canonical motif-matched TFs are bold and red. Rankings show at most 20 TFs.</p><div class=\"controls\"><div class=\"control\"><label for=\"motif-select\">Motif</label><select id=\"motif-select\"></select></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div><div class=\"card\"><div id=\"motif-chart\" class=\"chart\"></div></div></section>",
-    "</main><script>", js, "</script></body></html>"
+    "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Module 1 TFBS Explorer</title><style>", standalone_css, "</style></head><body>",
+    "<header><div class=\"wrap\"><h1>Module 1 TFBS Explorer</h1><div class=\"subtitle\">Explore predicted binding, exact TF co-binding, and motif-centered TF rankings.</div></div></header><main class=\"wrap\">",
+    "<nav class=\"m1-tabs\"><button class=\"m1-tab\" data-tab=\"binding\">Binding</button><button class=\"m1-tab\" data-tab=\"cobinding\">Co-binding</button><button class=\"m1-tab\" data-tab=\"motif\">Motif</button></nav>",
+    "<section class=\"", x$panel_class, "\" data-panel=\"binding\"><h2>Predicted binding sites per TF</h2>", x$binding, "</section>",
+    "<section class=\"", x$panel_class, "\" data-panel=\"cobinding\"><h2>TF co-binding summary</h2>", x$cobinding, "</section>",
+    "<section class=\"", x$panel_class, "\" data-panel=\"motif\"><h2>Top predicted bound TF per motif</h2>", x$motif, "</section>",
+    "</main>", x$script, "</body></html>"
   )
   dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
   writeLines(html, output_file, useBytes = TRUE)

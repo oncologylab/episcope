@@ -694,13 +694,14 @@
     ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:16px;max-width:none;width:100%}",
+    ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:16px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:8px}",
     "table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
-    ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}.funnel-bar{opacity:.92}",
+    ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:10px 2px 2px}.condition-tag{font-size:11px;color:#435066;display:inline-flex;align-items:center;gap:5px}.condition-tag i{width:9px;height:9px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
-    ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
-    "@media(max-width:760px){.wrap{padding:18px}.plot-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
+    ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;padding:6px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
+    "@media(max-width:1100px){.correlation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}}@media(max-width:760px){.wrap{padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
@@ -1347,8 +1348,8 @@
 
 .module1_qc_run_cards <- function(qc_summary, omics_data, predicted_scan, predicted_rows) {
   input_counts <- if (is_multiomic_object(omics_data) && is.list(omics_data$qc$input_counts)) omics_data$qc$input_counts else list()
-  n_conditions <- .qc_metric_value(qc_summary, "n_conditions", default = if (is_multiomic_object(omics_data)) ncol(omics_data$matrices$fp_score) else NA_real_)
-  n_raw_atac <- .qc_metric_value(qc_summary, "n_raw_atac_peaks", default = input_counts$n_raw_atac_peaks %||% NA_real_)
+  atac_fallback <- if (is_multiomic_object(omics_data) && is.data.frame(omics_data$features$atac)) nrow(omics_data$features$atac) else NA_real_
+  n_raw_atac <- .qc_metric_value(qc_summary, "n_raw_atac_peaks", default = input_counts$n_raw_atac_peaks %||% atac_fallback)
   n_raw_fp <- .qc_metric_value(qc_summary, "n_raw_footprints", default = input_counts$n_raw_footprints %||% NA_real_)
   n_aligned <- .qc_metric_value(qc_summary, "n_aligned_footprints", default = if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else NA_real_)
   n_filtered <- .qc_metric_value(qc_summary, "n_canonical_bound_fps")
@@ -1362,14 +1363,14 @@
   n_expressed <- .qc_metric_value(qc_summary, "n_expressed_tfs", default = expressed_fallback)
   scanned_tf_n <- if (is.data.frame(predicted_scan$tf_summary_all) && nrow(predicted_scan$tf_summary_all)) nrow(predicted_scan$tf_summary_all) else NA_real_
   n_pred_tfs <- .qc_metric_value(qc_summary, "n_tfs_with_predicted_binding", default = scanned_tf_n)
-  values <- c(n_conditions, n_raw_atac, n_raw_fp, n_aligned, n_filtered, predicted_rows, n_expressed, n_pred_tfs)
+  values <- c(n_raw_atac, n_raw_fp, n_aligned, n_filtered, predicted_rows, n_expressed, n_pred_tfs)
   tibble::tibble(
     label = c(
-      "Conditions", "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
-      "Filtered footprints (canonical-bound)", "Predicted unique TFBS",
+      "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
+      "Filtered footprints (same as canonical-bound)", "Predicted unique TFBS",
       "Expressed TFs", "TFs with predicted binding"
     ),
-    value = ifelse(is.finite(suppressWarnings(as.numeric(values))), .qc_format_number(values), "not available")
+    value = ifelse(is.finite(suppressWarnings(as.numeric(values))), .qc_format_number(values), "Not recorded")
   )
 }
 
@@ -1686,11 +1687,12 @@
   list(key = key, interpretation = interp, review = review)
 }
 
-.module1_qc_pca_scores <- function(mat, label, max_features = 2000L) {
+.module1_qc_pca_scores <- function(mat, label, max_features = 2000L, transform = c("identity", "log2p1")) {
+  transform <- match.arg(transform)
   mat <- .qc_as_numeric_matrix(mat)
   if (nrow(mat) < 2L || ncol(mat) < 3L) return(tibble::tibble())
   mat[!is.finite(mat)] <- 0
-  mat <- log1p(pmax(mat, 0))
+  if (identical(transform, "log2p1")) mat <- log2(pmax(mat, 0) + 1)
   variance <- apply(mat, 1L, stats::var, na.rm = TRUE)
   keep <- head(order(variance, decreasing = TRUE, na.last = NA), min(as.integer(max_features), sum(is.finite(variance) & variance > 0)))
   if (length(keep) < 2L) return(tibble::tibble())
@@ -1705,6 +1707,126 @@
     x_label = paste0("PC1 (", round(explained[[1L]], 1), "%)"),
     y_label = paste0("PC2 (", round(explained[[2L]], 1), "%)")
   )
+}
+
+.module1_qc_pca_svg <- function(x, title, condition_levels, width = 520L, height = 390L) {
+  if (!is.data.frame(x) || !nrow(x)) return(paste0("<h3>", .qc_html_escape(title), "</h3><p class=\"empty\">PCA requires at least three samples and two variable features.</p>"))
+  x <- as.data.frame(x, stringsAsFactors = FALSE)
+  condition_levels <- unique(as.character(condition_levels))
+  colors <- grDevices::hcl.colors(max(3L, length(condition_levels)), palette = "Dark 3")
+  color_map <- stats::setNames(colors[seq_along(condition_levels)], condition_levels)
+  left <- 64L
+  right <- 24L
+  top <- 44L
+  bottom <- 58L
+  plot_w <- width - left - right
+  plot_h <- height - top - bottom
+  xr <- range(x$PC1, finite = TRUE)
+  yr <- range(x$PC2, finite = TRUE)
+  if (diff(xr) == 0) xr <- xr + c(-1, 1)
+  if (diff(yr) == 0) yr <- yr + c(-1, 1)
+  px <- left + (x$PC1 - xr[[1L]]) / diff(xr) * plot_w
+  py <- top + plot_h - (x$PC2 - yr[[1L]]) / diff(yr) * plot_h
+  grid_x <- seq(xr[[1L]], xr[[2L]], length.out = 5L)
+  grid_y <- seq(yr[[1L]], yr[[2L]], length.out = 5L)
+  x_axis <- x$x_label[[1L]] %||% "PC1"
+  y_axis <- x$y_label[[1L]] %||% "PC2"
+  grids <- c(
+    vapply(seq_along(grid_x), function(i) {
+      gx <- left + (grid_x[[i]] - xr[[1L]]) / diff(xr) * plot_w
+      paste0("<line x1=\"", gx, "\" y1=\"", top, "\" x2=\"", gx, "\" y2=\"", top + plot_h, "\" class=\"pca-grid\"/><text x=\"", gx, "\" y=\"", top + plot_h + 20L, "\" text-anchor=\"middle\" class=\"pca-tick\">", format(round(grid_x[[i]], 1), trim = TRUE), "</text>")
+    }, character(1L)),
+    vapply(seq_along(grid_y), function(i) {
+      gy <- top + plot_h - (grid_y[[i]] - yr[[1L]]) / diff(yr) * plot_h
+      paste0("<line x1=\"", left, "\" y1=\"", gy, "\" x2=\"", left + plot_w, "\" y2=\"", gy, "\" class=\"pca-grid\"/><text x=\"", left - 8L, "\" y=\"", gy + 4L, "\" text-anchor=\"end\" class=\"pca-tick\">", format(round(grid_y[[i]], 1), trim = TRUE), "</text>")
+    }, character(1L))
+  )
+  points <- vapply(seq_len(nrow(x)), function(i) {
+    condition <- as.character(x$condition[[i]])
+    fill <- unname(color_map[condition])
+    if (!length(fill) || is.na(fill) || !nzchar(fill)) fill <- "#315f97"
+    paste0(
+      "<circle cx=\"", round(px[[i]], 2), "\" cy=\"", round(py[[i]], 2), "\" r=\"6.5\" fill=\"", fill, "\" class=\"pca-point\"><title>",
+      .qc_html_escape(paste0(condition, " | ", x_axis, ": ", round(x$PC1[[i]], 2), " | ", y_axis, ": ", round(x$PC2[[i]], 2))),
+      "</title></circle>"
+    )
+  }, character(1L))
+  paste0(
+    "<svg class=\"qc-plot pca-plot\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
+    "<text x=\"", width / 2, "\" y=\"24\" text-anchor=\"middle\" class=\"plot-title\">", .qc_html_escape(title), "</text>",
+    paste(grids, collapse = ""),
+    "<line x1=\"", left, "\" y1=\"", top + plot_h, "\" x2=\"", left + plot_w, "\" y2=\"", top + plot_h, "\" class=\"axis\"/>",
+    "<line x1=\"", left, "\" y1=\"", top, "\" x2=\"", left, "\" y2=\"", top + plot_h, "\" class=\"axis\"/>",
+    paste(points, collapse = ""),
+    "<text x=\"", left + plot_w / 2, "\" y=\"", height - 8L, "\" text-anchor=\"middle\" class=\"axis-title\">", .qc_html_escape(x_axis), "</text>",
+    "<text x=\"16\" y=\"", top + plot_h / 2, "\" transform=\"rotate(-90 16 ", top + plot_h / 2, ")\" text-anchor=\"middle\" class=\"axis-title\">", .qc_html_escape(y_axis), "</text></svg>"
+  )
+}
+
+.module1_qc_condition_legend <- function(conditions) {
+  conditions <- unique(as.character(conditions))
+  if (!length(conditions)) return("")
+  colors <- grDevices::hcl.colors(max(3L, length(conditions)), palette = "Dark 3")[seq_along(conditions)]
+  items <- vapply(seq_along(conditions), function(i) {
+    paste0("<span class=\"condition-tag\"><i style=\"background:", colors[[i]], "\"></i>", .qc_html_escape(conditions[[i]]), "</span>")
+  }, character(1L))
+  paste0("<div class=\"condition-legend\">", paste(items, collapse = ""), "</div>")
+}
+
+.module1_qc_violin_svg <- function(x, title, stage_labels = NULL, width = 900L) {
+  need <- c("condition", "stage", "probability", "value")
+  if (!is.data.frame(x) || !nrow(x) || !all(need %in% names(x))) return("<p class=\"empty\">Distribution data are unavailable.</p>")
+  x <- as.data.frame(x, stringsAsFactors = FALSE)
+  x <- x[is.finite(x$probability) & is.finite(x$value), , drop = FALSE]
+  conditions <- unique(as.character(x$condition))
+  stages <- unique(as.character(x$stage))
+  if (!length(conditions) || !length(stages)) return("<p class=\"empty\">Distribution data are unavailable.</p>")
+  labels <- c(raw = "Raw", quantile_normalized = "Quantile-normalized", canonical_filtered = "Filtered", gene_expression = "Gene expression")
+  if (!is.null(stage_labels)) labels[names(stage_labels)] <- stage_labels
+  colors <- c(raw = "#27c1c7", quantile_normalized = "#ed8582", canonical_filtered = "#315f97", gene_expression = "#31a354")
+  left <- 220L
+  right <- 35L
+  top <- 60L
+  row_h <- max(34L, 22L + 13L * length(stages))
+  bottom <- 52L
+  height <- top + length(conditions) * row_h + bottom
+  plot_w <- width - left - right
+  central <- x[x$probability >= 0.01 & x$probability <= 0.99, , drop = FALSE]
+  value_range <- range(central$value, finite = TRUE)
+  if (diff(value_range) == 0) value_range <- value_range + c(-0.5, 0.5)
+  sx <- function(v) left + (v - value_range[[1L]]) / diff(value_range) * plot_w
+  paths <- list()
+  k <- 1L
+  for (ci in seq_along(conditions)) {
+    condition <- conditions[[ci]]
+    base_y <- top + (ci - 0.5) * row_h
+    paths[[k]] <- paste0("<text x=\"", left - 12L, "\" y=\"", base_y + 4L, "\" text-anchor=\"end\" class=\"violin-label\">", .qc_html_escape(.qc_truncate_label(condition, 32L)), "</text>")
+    k <- k + 1L
+    for (si in seq_along(stages)) {
+      stage <- stages[[si]]
+      d <- x[x$condition == condition & x$stage == stage, , drop = FALSE]
+      d <- d[order(d$probability), , drop = FALSE]
+      if (nrow(d) < 5L) next
+      probs <- seq(0.005, 0.995, length.out = 401L)
+      sample_values <- stats::approx(d$probability, d$value, xout = probs, rule = 2, ties = "ordered")$y
+      den <- tryCatch(stats::density(sample_values, n = 96L, from = value_range[[1L]], to = value_range[[2L]], na.rm = TRUE), error = function(e) NULL)
+      if (is.null(den) || !length(den$y) || max(den$y) <= 0) next
+      center <- base_y + (si - (length(stages) + 1) / 2) * 13L
+      half <- 5.2 * den$y / max(den$y)
+      xp <- sx(den$x)
+      poly_x <- c(xp, rev(xp))
+      poly_y <- c(center - half, rev(center + half))
+      points <- paste(paste0(round(poly_x, 2), ",", round(poly_y, 2)), collapse = " ")
+      median <- stats::approx(d$probability, d$value, xout = 0.5, rule = 2)$y
+      fill <- colors[[stage]] %||% "#64748b"
+      paths[[k]] <- paste0("<polygon points=\"", points, "\" fill=\"", fill, "\" class=\"violin-shape\"><title>", .qc_html_escape(paste0(condition, " | ", labels[[stage]] %||% stage)), "</title></polygon><line x1=\"", sx(median), "\" y1=\"", center - 5.5, "\" x2=\"", sx(median), "\" y2=\"", center + 5.5, "\" class=\"violin-median\"/>")
+      k <- k + 1L
+    }
+  }
+  ticks <- seq(value_range[[1L]], value_range[[2L]], length.out = 5L)
+  tick_svg <- vapply(ticks, function(v) paste0("<line x1=\"", sx(v), "\" y1=\"", top - 8L, "\" x2=\"", sx(v), "\" y2=\"", height - bottom, "\" class=\"violin-grid\"/><text x=\"", sx(v), "\" y=\"", height - 18L, "\" text-anchor=\"middle\" class=\"pca-tick\">", format(signif(v, 3), trim = TRUE), "</text>"), character(1L))
+  legend <- paste(vapply(seq_along(stages), function(i) paste0("<rect x=\"", left + (i - 1L) * 150L, "\" y=\"32\" width=\"12\" height=\"12\" fill=\"", colors[[stages[[i]]]] %||% "#64748b", "\"/><text x=\"", left + 18L + (i - 1L) * 150L, "\" y=\"42\" class=\"pca-tick\">", .qc_html_escape(labels[[stages[[i]]]] %||% stages[[i]]), "</text>"), character(1L)), collapse = "")
+  paste0("<svg class=\"qc-plot violin-plot\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\"><text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>", legend, paste(tick_svg, collapse = ""), paste(paths, collapse = ""), "</svg>")
 }
 
 .module1_qc_distribution_table <- function(omics_data, canonical_fps = character()) {
@@ -1751,37 +1873,22 @@
     tibble::as_tibble()
 }
 
-.module1_qc_explorer_preview <- function(cache, condition, explorer_path, output_dir) {
-  if (!is.list(cache) || is.null(cache$tf_counts) || !nrow(cache$tf_counts)) return("")
-  top_overall <- head(sort(cache$tf_counts[, "Overall"], decreasing = TRUE), 20L)
-  condition <- if (condition %in% colnames(cache$tf_counts)) condition else colnames(cache$tf_counts)[[2L]]
-  top_condition <- head(sort(cache$tf_counts[, condition], decreasing = TRUE), 20L)
-  rel <- .qc_relative_path(explorer_path, output_dir)
-  link <- paste0("<p class=\"report-link\"><a href=\"", .qc_html_escape(rel), "#binding\">Open the interactive TFBS Explorer</a></p>")
-  paste0(
-    .qc_plot_grid(
-      .qc_lollipop_svg(tibble::tibble(tf = names(top_overall), n = as.numeric(top_overall)), "tf", "n", title = "Overall predicted TFBS", max_rows = 20L),
-      .qc_lollipop_svg(tibble::tibble(tf = names(top_condition), n = as.numeric(top_condition)), "tf", "n", title = paste0("Predicted TFBS: ", condition), max_rows = 20L)
-    ),
-    link
-  )
-}
-
 .module1_qc_correlation_browser <- function(canonical_stats, prediction_stats, bins = 40L, hist_rows = NULL) {
   parts <- list()
   add_scope <- function(x, scope) {
     if (!is.data.frame(x) || !nrow(x) || !"tf" %in% names(x)) return()
     for (method in c("pearson_r", "spearman_r")) {
       if (!method %in% names(x)) next
-      dt <- data.table::data.table(tf = as.character(x$tf), value = suppressWarnings(as.numeric(x[[method]])))
+      pass <- if ("pass" %in% names(x)) x$pass %in% TRUE else suppressWarnings(as.numeric(x[[method]])) >= 0.5
+      dt <- data.table::data.table(tf = as.character(x$tf), value = suppressWarnings(as.numeric(x[[method]])), pass = pass)
       dt <- dt[is.finite(value) & value >= -1 & value <= 1]
       if (!nrow(dt)) next
       dt[, bin := pmin(bins - 1L, pmax(0L, floor((value + 1) / 2 * bins)))]
-      per_tf <- dt[, .(n = .N), by = .(tf, bin)]
-      overall <- dt[, .(n = .N), by = bin][, tf := "Overall"]
+      per_tf <- dt[, .(n = .N, n_pass = sum(pass)), by = .(tf, bin)]
+      overall <- dt[, .(n = .N, n_pass = sum(pass)), by = bin][, tf := "Overall"]
       out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE)
       out[, `:=`(scope = scope, method = method)]
-      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n)]
+      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n, n_pass)]
     }
   }
   if (is.data.frame(hist_rows) && nrow(hist_rows)) {
@@ -1792,11 +1899,13 @@
     if (!length(parts)) return("<p class=\"empty\">Correlation histograms are unavailable in this saved run.</p>")
     rows <- data.table::rbindlist(parts, use.names = TRUE)
   }
+  if (!"n_pass" %in% names(rows)) rows[, n_pass := 0]
+  rows[, n_pass := pmin(as.numeric(n), pmax(0, as.numeric(n_pass)))]
   json <- jsonlite::toJSON(rows, dataframe = "rows", auto_unbox = TRUE)
   json <- gsub("</", "<\\/", json, fixed = TRUE)
   paste0(
-    "<div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>TF <select id=\"corr-tf\"></select></label></div><div class=\"plot-grid\"><figure class=\"plot-card\"><div id=\"corr-pearson-overall\"></div></figure><figure class=\"plot-card\"><div id=\"corr-spearman-overall\"></div></figure><figure class=\"plot-card\"><div id=\"corr-pearson-tf\"></div></figure><figure class=\"plot-card\"><div id=\"corr-spearman-tf\"></div></figure></div></div>",
-    "<script>(()=>{const R=", json, ",scope=document.getElementById('corr-scope'),tf=document.getElementById('corr-tf');const scopes=[...new Set(R.map(x=>x.scope))],tfs=[...new Set(R.filter(x=>x.tf!=='Overall').map(x=>x.tf))].sort();scopes.forEach(x=>scope.add(new Option(x,x)));tfs.forEach(x=>tf.add(new Option(x,x)));function hist(id,method,name,title){const rows=R.filter(x=>x.scope===scope.value&&x.method===method&&x.tf===name),w=540,h=260,l=48,b=35,top=35,m=Math.max(1,...rows.map(x=>x.n));let s='<svg class=\"qc-plot\" viewBox=\"0 0 '+w+' '+h+'\"><text x=\"0\" y=\"20\" class=\"plot-title\">'+title+'</text><line x1=\"'+l+'\" y1=\"'+(h-b)+'\" x2=\"'+(w-10)+'\" y2=\"'+(h-b)+'\" class=\"axis\"/>';rows.forEach(x=>{const bw=(w-l-10)/40,bh=(h-b-top)*x.n/m,px=l+x.bin*bw,py=h-b-bh;s+='<rect x=\"'+px+'\" y=\"'+py+'\" width=\"'+Math.max(1,bw-.5)+'\" height=\"'+bh+'\" class=\"bar\"><title>'+x.n.toLocaleString()+'</title></rect>'});document.getElementById(id).innerHTML=s+'<text x=\"'+l+'\" y=\"'+(h-7)+'\" class=\"tick\">-1</text><text x=\"'+(w-25)+'\" y=\"'+(h-7)+'\" class=\"tick\">1</text></svg>'}function draw(){hist('corr-pearson-overall','pearson_r','Overall','Overall Pearson R');hist('corr-spearman-overall','spearman_r','Overall','Overall Spearman R');hist('corr-pearson-tf','pearson_r',tf.value,tf.value+' Pearson R');hist('corr-spearman-tf','spearman_r',tf.value,tf.value+' Spearman R')}scope.onchange=draw;tf.onchange=draw;draw()})()</script>"
+    "<div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>TF 1 <select id=\"corr-tf-1\"></select></label><label>TF 2 <select id=\"corr-tf-2\"></select></label><label>TF 3 <select id=\"corr-tf-3\"></select></label></div><div id=\"corr-grid\" class=\"correlation-grid\"></div></div>",
+    "<script>(()=>{const R=", json, ",scope=document.getElementById('corr-scope'),sels=[1,2,3].map(i=>document.getElementById('corr-tf-'+i)),grid=document.getElementById('corr-grid');const scopes=[...new Set(R.map(x=>x.scope))],alpha=[...new Set(R.filter(x=>x.tf!=='Overall').map(x=>x.tf))].sort(),rank=[...alpha].sort((a,b)=>R.filter(x=>x.tf===b).reduce((s,x)=>s+(+x.n_pass||0),0)-R.filter(x=>x.tf===a).reduce((s,x)=>s+(+x.n_pass||0),0)||a.localeCompare(b));scopes.forEach(x=>scope.add(new Option(x,x)));sels.forEach((s,i)=>{alpha.forEach(x=>s.add(new Option(x,x)));s.value=rank[Math.min(i,rank.length-1)]||alpha[i]||''});function hist(method,name){const rows=R.filter(x=>x.scope===scope.value&&x.method===method&&x.tf===name),w=360,h=285,l=58,b=52,t=42,pw=w-l-12,ph=h-b-t,m=Math.max(1,...rows.map(x=>+x.n)),color=method==='pearson_r'?'#67a9cf':'#ef8a62',title=name+' '+(method==='pearson_r'?'Pearson R':'Spearman R');let s='<figure class=\"correlation-card\"><svg class=\"qc-plot\" viewBox=\"0 0 '+w+' '+h+'\"><text x=\"'+(w/2)+'\" y=\"22\" text-anchor=\"middle\" class=\"corr-title\">'+title+'</text>';for(let i=0;i<=2;i++){const v=m*i/2,y=t+ph-ph*i/2;s+='<line x1=\"'+l+'\" y1=\"'+y+'\" x2=\"'+(w-12)+'\" y2=\"'+y+'\" class=\"corr-gridline\"/><text x=\"'+(l-7)+'\" y=\"'+(y+4)+'\" text-anchor=\"end\" class=\"corr-tick\">'+Math.round(v).toLocaleString()+'</text>'}rows.forEach(x=>{const bw=pw/40,px=l+(+x.bin)*bw,bh=ph*(+x.n)/m,passh=ph*(+x.n_pass||0)/m;s+='<rect x=\"'+px+'\" y=\"'+(t+ph-bh)+'\" width=\"'+Math.max(1,bw-.5)+'\" height=\"'+bh+'\" fill=\"#dddddd\"><title>Total: '+(+x.n).toLocaleString()+'</title></rect><rect x=\"'+px+'\" y=\"'+(t+ph-passh)+'\" width=\"'+Math.max(1,bw-.5)+'\" height=\"'+passh+'\" fill=\"'+color+'\"><title>Passing: '+(+x.n_pass||0).toLocaleString()+'</title></rect>'});[-1,-.5,0,.5,1].forEach(v=>{const x=l+(v+1)/2*pw;s+='<text x=\"'+x+'\" y=\"'+(h-29)+'\" text-anchor=\"middle\" class=\"corr-tick\">'+v+'</text>'});s+='<line x1=\"'+l+'\" y1=\"'+(t+ph)+'\" x2=\"'+(w-12)+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><line x1=\"'+l+'\" y1=\"'+t+'\" x2=\"'+l+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><text x=\"'+(l+pw/2)+'\" y=\"'+(h-5)+'\" text-anchor=\"middle\" class=\"corr-axis-title\">R value</text><text x=\"15\" y=\"'+(t+ph/2)+'\" transform=\"rotate(-90 15 '+(t+ph/2)+')\" text-anchor=\"middle\" class=\"corr-axis-title\">Count</text></svg></figure>';return s}function distinct(){const used=new Set();sels.forEach(s=>{if(used.has(s.value)){const next=alpha.find(x=>!used.has(x));if(next)s.value=next}used.add(s.value)})}function draw(){distinct();const names=['Overall',...sels.map(s=>s.value)];grid.innerHTML=names.map(n=>hist('pearson_r',n)+hist('spearman_r',n)).join('')}scope.addEventListener('change',draw);sels.forEach(s=>s.addEventListener('change',draw));draw()})()</script>"
   )
 }
 
@@ -1823,8 +1932,8 @@
 #' @param project_config Optional YAML path or list used for parameter
 #'   provenance in the Run Summary.
 #' @param project_date Optional project date displayed in the report title.
-#' @param build_tfbs_explorer Logical; build or refresh the linked interactive
-#'   TFBS Explorer.
+#' @param build_tfbs_explorer Logical; embed the interactive Binding,
+#'   Co-binding, and Motif explorer sections in the QC report.
 #' @param default_condition Optional initial condition for TFBS report previews
 #'   and the linked explorer.
 #' @param verbose Emit concise progress messages.
@@ -1928,30 +2037,19 @@ build_module1_qc_report <- function(module1,
   parameter_table <- .module1_qc_parameter_provenance(module1, omics_data, project_config, scan_predicted_tfbs)
   report_date <- .module1_qc_report_date(module1, omics_data, project_config, project_date)
   report_title <- paste0("Module 1 QC Report (", report_date, ")")
-  explorer_path <- NA_character_
   explorer_source <- if (!is.null(module1_dir)) module1_dir else module1_input
+  explorer_cache <- NULL
   if (isTRUE(build_tfbs_explorer) && is_multiomic_object(omics_data)) {
-    explorer_path <- tryCatch(
-      build_module1_tfbs_explorer(
-        module1 = explorer_source,
-        multiomic_data = omics_data,
-        output_file = file.path(output_dir, "module1_tfbs_explorer.html"),
-        default_condition = default_condition,
-        project_config = project_config,
-        verbose = verbose
-      ),
+    cache_path <- .module1_explorer_cache_path(explorer_source, file.path(output_dir, report_name))
+    explorer_cache <- tryCatch(
+      .module1_build_explorer_cache(explorer_source, omics_data, cache_path, rebuild = FALSE, verbose = verbose),
       error = function(e) {
-        .log_warn("Module 1 TFBS Explorer was not built: {conditionMessage(e)}")
-        NA_character_
+        .log_warn("Embedded Module 1 TFBS Explorer was not built: {conditionMessage(e)}")
+        NULL
       }
     )
-  } else {
-    candidate <- file.path(output_dir, "module1_tfbs_explorer.html")
-    if (file.exists(candidate)) explorer_path <- candidate
-  }
-  explorer_cache <- NULL
-  if (is.character(explorer_path) && length(explorer_path) == 1L && !is.na(explorer_path)) {
-    cache_path <- .module1_explorer_cache_path(explorer_source, explorer_path)
+  } else if (is_multiomic_object(omics_data)) {
+    cache_path <- .module1_explorer_cache_path(explorer_source, file.path(output_dir, report_name))
     if (file.exists(cache_path)) explorer_cache <- tryCatch(readRDS(cache_path), error = function(e) NULL)
   }
   if (is.list(explorer_cache)) {
@@ -1959,7 +2057,9 @@ build_module1_qc_report <- function(module1,
       used_idx <- .module1_unpack_site_indices(explorer_cache$used_site_bits, nrow(omics_data$matrices$fp_score))
       canonical_fps <- rownames(omics_data$matrices$fp_score)[used_idx]
     }
-    cards$value[cards$label == "Filtered footprints (canonical-bound)"] <- .qc_format_number(length(canonical_fps))
+    predicted_rows <- sum(explorer_cache$tf_counts[, "Overall"], na.rm = TRUE)
+    cards$value[cards$label == "Filtered footprints (same as canonical-bound)"] <- .qc_format_number(length(canonical_fps))
+    cards$value[cards$label == "Predicted unique TFBS"] <- .qc_format_number(predicted_rows)
     cards$value[cards$label == "TFs with predicted binding"] <- .qc_format_number(length(explorer_cache$tf_names))
     if (!is.finite(.qc_metric_value(qc_summary, "n_canonical_bound_fps"))) {
       qc_summary <- dplyr::bind_rows(qc_summary, tibble::tibble(metric = "n_canonical_bound_fps", value = length(canonical_fps)))
@@ -1973,6 +2073,11 @@ build_module1_qc_report <- function(module1,
   } else {
     ""
   }
+  explorer_components <- if (is.list(explorer_cache) && isTRUE(build_tfbs_explorer)) {
+    .module1_tfbs_explorer_components(explorer_cache, default_condition_use, standalone = FALSE)
+  } else {
+    NULL
+  }
   gate_table <- .module1_qc_gate_table(qc_summary, omics_data = omics_data)
   manifest_checks <- .qc_manifest_checks(pred_manifest)
   warning_checks <- .module1_qc_warning_checks(
@@ -1982,16 +2087,6 @@ build_module1_qc_report <- function(module1,
     canonical_stats = canonical_stats,
     prediction_stats = prediction_stats
   )
-  funnel <- tibble::tibble(
-    step = c("Input FPs", "Bound FPs", "Canonical-bound FPs", "Prediction FPs", "Predicted TFBS"),
-    n = c(
-      .qc_metric_value(qc_summary, "n_fp_input", default = if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else NA_real_),
-      .qc_metric_value(qc_summary, "n_fp_bound_accessible", default = if (is_multiomic_object(omics_data)) sum(rowSums(omics_data$matrices$fp_bound > 0, na.rm = TRUE) > 0) else NA_real_),
-      .qc_metric_value(qc_summary, "n_canonical_bound_fps", default = .qc_metric_value(support_check, "predicted_unique_fp")),
-      .qc_metric_value(qc_summary, "n_prediction_fps", default = .qc_metric_value(support_check, "predicted_unique_fp")),
-      predicted_rows
-    )
-  )
   related <- character()
   if (!is.null(module1_dir)) {
     related <- c(
@@ -1999,38 +2094,6 @@ build_module1_qc_report <- function(module1,
       pred_manifest_path
     )
   }
-  predicted_tf_plots <- .qc_plot_grid(
-    .qc_scatter_svg(
-      predicted_scan$tf_summary,
-      x_col = "n_fp",
-      y_col = "n_predicted_tfbs",
-      label_col = "tf",
-      size_col = "mean_condition_support",
-      title = "Predicted TFBS breadth by TF"
-    ),
-    .qc_metric_heatmap_svg(
-      predicted_scan$tf_summary,
-      row_col = "tf",
-      value_cols = c("n_predicted_tfbs", "n_fp", "mean_condition_support"),
-      title = "Top predicted TF signal matrix"
-    ),
-    .qc_lollipop_svg(
-      predicted_scan$tf_summary,
-      label_col = "tf",
-      value_col = "n_predicted_tfbs",
-      title = "Top TFs by predicted TFBS"
-    )
-  )
-  correlation_plots <- .qc_plot_grid(
-    .qc_density_svg(canonical_corr$best_r, title = "Motif-supported best r density"),
-    .qc_density_svg(prediction_corr$best_r, title = "Prediction best r density"),
-    .qc_metric_heatmap_svg(
-      canonical_corr$top_tf,
-      row_col = "tf",
-      value_cols = c("n_pass", "n_fp", "median_best_r"),
-      title = "Canonical-bound TF summary"
-    )
-  )
   condition_support_plots <- .qc_plot_grid(
     .qc_lollipop_svg(
       predicted_scan$condition_support,
@@ -2079,31 +2142,37 @@ build_module1_qc_report <- function(module1,
   distribution_summary <- .module1_qc_distribution_summary(distribution_table)
   if (nrow(distribution_summary)) distribution_summary$condition_stage <- paste(distribution_summary$condition, distribution_summary$stage, sep = " | ")
   gene_distribution <- if (is_multiomic_object(omics_data)) {
+    probs <- seq(0, 1, length.out = 101L)
     dplyr::bind_rows(lapply(seq_len(ncol(omics_data$matrices$gene_expr)), function(i) {
-      values <- log1p(pmax(suppressWarnings(as.numeric(omics_data$matrices$gene_expr[, i])), 0))
+      values <- log2(pmax(suppressWarnings(as.numeric(omics_data$matrices$gene_expr[, i])), 0) + 1)
       values <- values[is.finite(values)]
       tibble::tibble(
         condition = colnames(omics_data$matrices$gene_expr)[[i]],
-        median_log1p = if (length(values)) stats::median(values) else NA_real_,
-        p95_log1p = if (length(values)) as.numeric(stats::quantile(values, 0.95, names = FALSE)) else NA_real_
+        stage = "gene_expression",
+        probability = probs,
+        value = as.numeric(stats::quantile(values, probs, names = FALSE)),
+        n = length(values)
       )
     }))
   } else {
     tibble::tibble()
   }
-  pca_rna <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$gene_expr, "RNA PCA") else tibble::tibble()
-  pca_atac <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$atac_score, "ATAC PCA") else tibble::tibble()
+  pca_rna <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$gene_expr, "RNA PCA", transform = "log2p1") else tibble::tibble()
+  pca_atac <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$atac_score, "ATAC PCA", transform = "identity") else tibble::tibble()
   filtered_idx <- if (is_multiomic_object(omics_data)) match(canonical_fps, rownames(omics_data$matrices$fp_score), nomatch = 0L) else integer()
   filtered_idx <- unique(filtered_idx[filtered_idx > 0L])
   pca_fp <- if (is_multiomic_object(omics_data) && length(filtered_idx)) {
-    .module1_qc_pca_scores(omics_data$matrices$fp_score[filtered_idx, , drop = FALSE], "Canonical-filtered FP PCA")
+    .module1_qc_pca_scores(omics_data$matrices$fp_score[filtered_idx, , drop = FALSE], "Filtered FP PCA", transform = "identity")
   } else {
     tibble::tibble()
   }
-  pca_plots <- .qc_plot_grid(
-    .qc_scatter_svg(pca_rna, "PC1", "PC2", "condition", title = "RNA PCA"),
-    .qc_scatter_svg(pca_atac, "PC1", "PC2", "condition", title = "ATAC PCA"),
-    .qc_scatter_svg(pca_fp, "PC1", "PC2", "condition", title = "Canonical-filtered FP PCA")
+  condition_levels <- if (is_multiomic_object(omics_data)) colnames(omics_data$matrices$fp_score) else character()
+  pca_plots <- paste0(
+    "<div class=\"plot-grid-three\">",
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", condition_levels), "</figure>",
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", condition_levels), "</figure>",
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", condition_levels), "</figure></div>",
+    .module1_qc_condition_legend(condition_levels)
   )
   filtered_by_condition <- if (is_multiomic_object(omics_data) && length(filtered_idx)) {
     tibble::tibble(
@@ -2121,56 +2190,41 @@ build_module1_qc_report <- function(module1,
   } else {
     tibble::tibble()
   }
-  explorer_preview <- if (is.list(explorer_cache) && !is.na(explorer_path)) {
-    .module1_qc_explorer_preview(explorer_cache, default_condition_use, explorer_path, output_dir)
+  explorer_empty <- "<p class=\"empty\">Interactive TFBS data are unavailable in this saved run.</p>"
+  explorer_style <- if (is.list(explorer_components)) paste0("<style>", explorer_components$css, "</style>") else ""
+  n_conditions <- if (is_multiomic_object(omics_data)) ncol(omics_data$matrices$fp_score) else .qc_metric_value(qc_summary, "n_conditions")
+  condition_names <- if (is_multiomic_object(omics_data)) colnames(omics_data$matrices$fp_score) else character()
+  setup_html <- paste0(
+    "<div class=\"run-setup\"><div><h3>Input parameters</h3><p class=\"subtitle\">Effective YAML and command-line values with their provenance.</p>",
+    .qc_table_html(parameter_table, max_rows = 100L),
+    "</div><aside class=\"condition-summary\"><div class=\"card-label\"># Conditions</div><div class=\"condition-count\">", .qc_format_number(n_conditions), "</div><div class=\"condition-list\">", .qc_html_escape(paste(condition_names, collapse = " | ")), "</div></aside></div>"
+  )
+  missing_fp_stages <- setdiff(c("raw", "quantile_normalized", "canonical_filtered"), unique(as.character(distribution_table$stage)))
+  distribution_notice <- if (length(missing_fp_stages)) {
+    paste0("<p class=\"empty\">", .qc_html_escape(paste0(
+      "Not recorded in this saved multiomic object: ", paste(gsub("_", " ", missing_fp_stages), collapse = ", "),
+      ". New preprocessing runs retain compact raw and normalized distribution summaries."
+    )), "</p>")
   } else {
-    "<p class=\"empty\">The interactive TFBS Explorer is not available for this saved run.</p>"
-  }
-  explorer_link <- function(tab, label) {
-    if (is.na(explorer_path) || !file.exists(explorer_path)) return("<p class=\"empty\">Interactive explorer unavailable.</p>")
-    rel <- .qc_relative_path(explorer_path, output_dir)
-    paste0("<p class=\"report-link\"><a href=\"", .qc_html_escape(rel), "#", tab, "\">", .qc_html_escape(label), "</a></p>")
+    ""
   }
   sections <- list(
     .qc_section("1. Run Summary", paste0(
+      explorer_style,
       "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a><a href=\"#per-condition-qc\">Per-condition QC</a><a href=\"#correlation-summary\">Correlations</a><a href=\"#predicted-binding-sites-per-tf\">Binding</a><a href=\"#co-binding-summary\">Co-binding</a><a href=\"#top-predicted-bound-tf-per-motif\">Motifs</a></nav>",
-      content$key,
-      .qc_cards_html(cards),
-      .qc_plot_card_html(.qc_funnel_svg(funnel, "step", "n", title = "Module 1 processing funnel"), wide = TRUE),
-      "<details><summary>Run configuration</summary><p class=\"subtitle\">YAML values, command inputs, effective values, and provenance.</p>",
-      .qc_table_html(parameter_table, max_rows = 100L), "</details>"
+      "<div class=\"report-row\">", setup_html, "</div>",
+      "<div class=\"report-row\">", .qc_cards_html(cards), "<p class=\"subtitle\">Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p></div>"
     )),
     .qc_section("2. Per-Condition QC", paste0(
-      .qc_callout_html("How to read this section", c(
-        "Raw and quantile-normalized FP summaries should remain comparable across conditions; canonical-filtered values use only canonical-bound footprints.",
-        "PCA highlights broad sample structure in RNA, ATAC, and canonical-filtered footprint signal.",
-        "Condition-level predicted TFBS require both a bound footprint and an expressed TF."
-      )),
-      .qc_plot_grid(
-        .qc_metric_heatmap_svg(distribution_summary, "condition_stage", c("median", "p95"), title = "FP score distribution summary", max_rows = 100L),
-        .qc_metric_heatmap_svg(gene_distribution, "condition", c("median_log1p", "p95_log1p"), title = "Gene expression distribution", max_rows = 100L)
-      ),
-      "<h3 style=\"margin-top:16px\">RNA PCA | ATAC PCA | Canonical-filtered FP PCA</h3>",
-      pca_plots,
-      .qc_plot_grid(
-        .qc_lollipop_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Canonical-filtered footprints per condition", max_rows = 100L),
-        .qc_lollipop_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Active predicted TFBS per condition", max_rows = 100L)
-      ),
+      "<div class=\"report-row\">", distribution_notice, "<div class=\"plot-grid\"><figure class=\"plot-card\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition"), "</figure><figure class=\"plot-card\">", .module1_qc_violin_svg(gene_distribution, "Gene expression distribution per condition"), "</figure></div></div>",
+      "<div class=\"report-row\"><h3>PCA of samples based on the most variable RNA, ATAC, and filtered footprints</h3>", pca_plots, "</div>",
+      "<div class=\"report-row\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div>",
       "<details><summary>Per-condition values</summary>",
       .qc_table_html(distribution_summary, max_rows = 300L),
       .qc_table_html(condition_qc$condition_summary, max_rows = 100L), "</details>"
     )),
     .qc_section("3. Correlation Summary", paste0(
-      .qc_callout_html("Correlation scopes", c(
-        "Motif-supported correlations establish canonical-bound footprints.",
-        "Prediction correlations evaluate broader expressed-TF binding after canonical-bound footprint selection.",
-        "Colored passing counts and configured thresholds are reported in the supporting tables."
-      )),
       correlation_browser,
-      .qc_plot_grid(
-        .qc_lollipop_svg(canonical_corr$top_tf, "tf", "n_pass", title = "Top canonical-bound TFs"),
-        .qc_metric_heatmap_svg(canonical_corr$top_tf, "tf", c("n_pass", "n_fp", "median_best_r"), title = "Canonical TF correlation metrics")
-      ),
       "<details><summary>Correlation values</summary>",
       .qc_table_html(dplyr::bind_rows(canonical_corr$summary, prediction_corr$summary), max_rows = 20L),
       .qc_table_html(canonical_corr$top_tf, max_rows = top_n), "</details>"
@@ -2179,9 +2233,9 @@ build_module1_qc_report <- function(module1,
       .qc_callout_html("Overall vs condition", c(
         "Overall counts include unique predicted TF-footprint pairs.",
         paste0("The initial condition is ", default_condition_use, "; condition-specific counts require a bound footprint and expressed TF."),
-        "Use the TFBS Explorer to change condition or top N and click a TF to highlight it."
+        "Change condition or top N and click a TF to highlight it across both panels."
       )),
-      explorer_preview,
+      if (is.list(explorer_components)) explorer_components$binding else explorer_empty,
       "<details><summary>Prediction summary values</summary>", .qc_table_html(tf_overview, max_rows = 20L), "</details>"
     )),
     .qc_section("5. Co-binding Summary", paste0(
@@ -2190,14 +2244,15 @@ build_module1_qc_report <- function(module1,
         "For multiple focal TFs, a site must be shared by every selected TF.",
         "Stacked bars separate co-bound sites from the remainder of each partner TF total."
       )),
-      explorer_link("cobinding", "Open the Co-binding tab in the TFBS Explorer")
+      if (is.list(explorer_components)) explorer_components$cobinding else explorer_empty
     )),
     .qc_section("6. Top Predicted Bound TF per Motif", paste0(
       .qc_callout_html("Motif-centered review", c(
         "Select a motif to rank up to 20 predicted TFs by bound-site count.",
         "The TF mapped to the motif is emphasized without TF-family cluster colors."
       )),
-      explorer_link("motif", "Open the Motif tab in the TFBS Explorer")
+      if (is.list(explorer_components)) explorer_components$motif else explorer_empty,
+      if (is.list(explorer_components)) explorer_components$script else ""
     )),
     .qc_section("Technical Appendix", paste0(
       content$review,
@@ -2216,11 +2271,13 @@ build_module1_qc_report <- function(module1,
       .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L), "</details>",
       "<details><summary>Predicted TFBS chunks and related files</summary>",
       .qc_lollipop_svg(pred_manifest, "chunk_id", "n_rows", title = "Predicted TFBS rows per chunk"),
-      .qc_table_html(pred_manifest, max_rows = 25L), .qc_links_html(c(related, explorer_path), from_dir = output_dir), "</details>"
+      .qc_table_html(pred_manifest, max_rows = 25L), .qc_links_html(related, from_dir = output_dir), "</details>"
     ))
   )
   out <- file.path(output_dir, report_name)
   path <- .qc_write_html(out, report_title, sections)
+  stale_explorer <- file.path(output_dir, "module1_tfbs_explorer.html")
+  if (file.exists(stale_explorer)) unlink(stale_explorer)
   if (isTRUE(verbose)) .log_inform("Module 1 QC HTML report written: {path}")
   path
 }

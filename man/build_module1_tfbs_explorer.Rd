@@ -35,7 +35,6 @@ configuration, control metadata, then A-Z order.}
 Normalized path to the HTML report.
 }
 \description{
-Builds a self-contained HTML explorer with overall and condition-specific
-predicted TFBS counts, exact single- or multi-TF co-binding summaries, and
-motif-centered predicted TF rankings.
+Builds an explicitly requested standalone HTML explorer. Standard
+`predict_tfbs()` runs embed the same controls in the Module 1 QC report.
 }

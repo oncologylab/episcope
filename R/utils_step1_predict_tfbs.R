@@ -851,8 +851,8 @@
 #' @param write_stats Retain and write full FP-TF correlation statistics.
 #' @param write_bed Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.
 #' @param write_qc_report Write a Module 1 HTML QC report when outputs are written.
-#' @param write_tfbs_explorer Write the linked interactive TFBS Explorer when
-#'   outputs are written.
+#' @param write_tfbs_explorer Embed the interactive Binding, Co-binding, and
+#'   Motif explorer sections in the Module 1 QC HTML report.
 #' @param qc_report_scan Scan predicted TFBS chunks for top-TF summaries in the QC report.
 #' @param output_format Output format for large streamed TFBS prediction statistic chunks.
 #' @param return_prediction_stats Return the TFBS prediction statistic table in memory. If `NULL`,
@@ -1214,19 +1214,6 @@ predict_tfbs <- function(omics_data,
     )
     reports$qc_html <- qc_report
   }
-  if (isTRUE(write_outputs) && isTRUE(write_tfbs_explorer) && !isTRUE(write_qc_report)) {
-    reports$tfbs_explorer <- build_module1_tfbs_explorer(
-      module1 = list(omics_data = multiomic_input, predicted_tfbs = predicted_tfbs, reports = reports),
-      multiomic_data = multiomic_input,
-      output_file = file.path(out_dir, "reports", "module1_tfbs_explorer.html"),
-      project_config = project_config,
-      verbose = verbose
-    )
-  } else if (isTRUE(write_outputs) && isTRUE(write_tfbs_explorer)) {
-    explorer_candidate <- file.path(out_dir, "reports", "module1_tfbs_explorer.html")
-    if (file.exists(explorer_candidate)) reports$tfbs_explorer <- normalizePath(explorer_candidate, winslash = "/", mustWork = FALSE)
-  }
-
   list(
     omics_data = multiomic_input,
     high_confidence_footprints = high_confidence_footprints,
