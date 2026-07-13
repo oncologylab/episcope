@@ -23,6 +23,33 @@ test_that("TFBS condition comparison uses active sites and summed FP scores", {
   expect_equal(plot$labels$title, "cond_a v cond_d")
 })
 
+test_that("TFBS condition comparison aggregates FP scores over the active-site union", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  fp <- rownames(compact$matrices$fp_score)[1:2]
+  compact$matrices$fp_bound[fp, ] <- FALSE
+  compact$matrices$fp_bound[fp[[1L]], "cond_a"] <- TRUE
+  compact$matrices$fp_bound[fp[[2L]], "cond_d"] <- TRUE
+  compact$matrices$fp_score[fp, "cond_a"] <- c(2, 100)
+  compact$matrices$fp_score[fp, "cond_d"] <- c(50, 4)
+  tf_i <- match("TF_A", rownames(compact$matrices$gene_on))
+  compact$matrices$gene_on[tf_i, c("cond_a", "cond_d")] <- TRUE
+
+  plot <- plot_tfbs_condition_comparison(
+    tibble::tibble(tf = "TF_A", fp_id = fp),
+    multiomic_data = compact,
+    cond1 = "cond_a",
+    cond2 = "cond_d",
+    pseudocount = 1,
+    verbose = FALSE
+  )
+  summary <- attr(plot, "tfbs_summary")
+
+  expect_equal(summary$fp_score_cond1, 102)
+  expect_equal(summary$fp_score_cond2, 54)
+  expect_equal(summary$log2fc_fp_score, log2(103 / 55))
+})
+
 test_that("TF-TF co-binding heatmap supports counts and JSD", {
   predicted <- tibble::tibble(
     tf = c("TF1", "TF1", "TF2", "TF2", "TF3"),
@@ -87,6 +114,40 @@ test_that("TFBS UMAP report provides interactive cluster choices", {
   expect_match(page, "option value=\"3\" selected", fixed = TRUE)
   expect_match(page, "TF UMAP from highly variable predicted TFBS", fixed = TRUE)
   expect_match(page, "predicted TFBS", fixed = TRUE)
+})
+
+test_that("TFBS Explorer writes compact exact co-binding controls", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  fp <- rownames(compact$matrices$fp_score)[1:4]
+  predicted <- tibble::tibble(
+    tf = c("TF_A", "TF_A", "TF_B", "TF_B", "TF_C", "TF_C"),
+    fp_id = c(fp[[1L]], fp[[2L]], fp[[2L]], fp[[3L]], fp[[2L]], fp[[4L]])
+  )
+  out <- tempfile(fileext = ".html")
+
+  path <- build_module1_tfbs_explorer(
+    predicted,
+    multiomic_data = compact,
+    output_file = out,
+    default_condition = "cond_a",
+    verbose = FALSE
+  )
+  page <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  cache <- readRDS(file.path(dirname(out), "module1_qc_analysis.rds"))
+  bits <- cache$tf_bits
+  shared <- bitwAnd(as.integer(bits$TF_A), as.integer(bits$TF_B))
+  shared_with_c <- bitwAnd(shared, as.integer(bits$TF_C))
+  popcount <- vapply(0:255, function(value) sum(as.integer(intToBits(value))[1:8]), integer(1L))
+
+  expect_true(file.exists(path))
+  expect_match(page, "Binding", fixed = TRUE)
+  expect_match(page, "Co-binding", fixed = TRUE)
+  expect_match(page, "Motif", fixed = TRUE)
+  expect_match(page, "multiple focal TFs", fixed = TRUE)
+  expect_match(page, "Export SVG", fixed = TRUE)
+  expect_equal(sum(popcount[shared_with_c + 1L]), 1L)
+  expect_equal(cache$tf_counts["TF_A", "Overall"], 2)
 })
 
 test_that("Module 1 config provenance keeps relevant values", {

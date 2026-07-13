@@ -20,6 +20,7 @@ predict_tfbs(
   write_stats = FALSE,
   write_bed = FALSE,
   write_qc_report = TRUE,
+  write_tfbs_explorer = TRUE,
   qc_report_scan = FALSE,
   output_format = c("csv", "parquet", "auto"),
   return_prediction_stats = NULL,
@@ -69,6 +70,9 @@ explicitly supplied.}
 \item{write_bed}{Write optional BED-like browser files for high-confidence footprints and in-memory TFBS prediction statistics.}
 
 \item{write_qc_report}{Write a Module 1 HTML QC report when outputs are written.}
+
+\item{write_tfbs_explorer}{Write the linked interactive TFBS Explorer when
+outputs are written.}
 
 \item{qc_report_scan}{Scan predicted TFBS chunks for top-TF summaries in the QC report.}
 

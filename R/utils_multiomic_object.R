@@ -185,6 +185,29 @@ is_multiomic_object <- function(x) {
   out
 }
 
+.compact_fp_distribution_summary <- function(omics_data, n_quantiles = 101L) {
+  tables <- list(raw = omics_data$fp_score_condition, quantile_normalized = omics_data$fp_score_condition_qn)
+  probs <- seq(0, 1, length.out = as.integer(n_quantiles))
+  parts <- list()
+  for (stage in names(tables)) {
+    x <- tables[[stage]]
+    if (!is.data.frame(x) || !"peak_ID" %in% names(x)) next
+    for (condition in setdiff(names(x), "peak_ID")) {
+      values <- suppressWarnings(as.numeric(x[[condition]]))
+      values <- values[is.finite(values)]
+      if (!length(values)) next
+      parts[[length(parts) + 1L]] <- tibble::tibble(
+        condition = condition,
+        stage = stage,
+        probability = probs,
+        value = as.numeric(stats::quantile(values, probs = probs, na.rm = TRUE, names = FALSE)),
+        n = length(values)
+      )
+    }
+  }
+  dplyr::bind_rows(parts)
+}
+
 #' @noRd
 as_multiomic_object <- function(omics_data,
                               project = list(),
@@ -227,7 +250,7 @@ as_multiomic_object <- function(omics_data,
       motif_db = omics_data$motif_db,
       tf = omics_data$tf_list
     ),
-    qc = list(),
+    qc = list(fp_score_distributions = .compact_fp_distribution_summary(omics_data)),
     paths = paths
   )
   class(object) <- c("craftgrn_multiomic", "list")

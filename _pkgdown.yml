@@ -68,6 +68,7 @@ reference:
   - plot_tfbs_condition_comparison
   - plot_tf_tf_cobinding_heatmap
   - build_tfbs_umap_report
+  - build_module1_tfbs_explorer
 
 
 - title: Predict TF targets

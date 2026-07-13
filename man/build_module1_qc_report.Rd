@@ -13,6 +13,8 @@ build_module1_qc_report(
   top_n = 20L,
   project_config = NULL,
   project_date = NULL,
+  build_tfbs_explorer = TRUE,
+  default_condition = NULL,
   verbose = TRUE
 )
 }
@@ -38,6 +40,12 @@ extra time on full projects.}
 provenance in the Run Summary.}
 
 \item{project_date}{Optional project date displayed in the report title.}
+
+\item{build_tfbs_explorer}{Logical; build or refresh the linked interactive
+TFBS Explorer.}
+
+\item{default_condition}{Optional initial condition for TFBS report previews
+and the linked explorer.}
 
 \item{verbose}{Emit concise progress messages.}
 }

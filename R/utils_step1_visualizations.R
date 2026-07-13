@@ -14,7 +14,7 @@
     "threshold_expr", "threshold_gene_expr", "threshold_fp_score",
     "threshold_fp_tf_corr_r", "threshold_fp_tf_corr_p", "threshold_fp_tf_corr_fdr",
     "filter_to_canonical_bound", "footprint_sample_scope", "mid_slop",
-    "round_digits", "score_match_pct", "output_mode"
+    "round_digits", "score_match_pct", "output_mode", "module1_default_condition"
   )
   out <- config[intersect(keep, names(config))]
   secret <- grepl("token|password|secret|credential|api[_-]?key", names(out), ignore.case = TRUE)
@@ -24,7 +24,7 @@
 
 .module1_tfbs_source <- function(module1) {
   if (is.data.frame(module1)) return(list(data = tibble::as_tibble(module1)))
-  if (is.list(module1)) {
+  if (is.list(module1) && !is.data.frame(module1)) {
     if (is.data.frame(module1$predicted_tfbs) && nrow(module1$predicted_tfbs)) {
       return(list(data = tibble::as_tibble(module1$predicted_tfbs)))
     }
@@ -183,11 +183,12 @@ plot_tfbs_condition_comparison <- function(module1,
       dt$expr1[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], gene_c1)]
       dt$expr2[idx] <- omics$matrices$gene_expr[cbind(tf_idx[idx], gene_c2)]
     }
+    dt[, union_active := active1 | active2]
     partials[[length(partials) + 1L]] <<- dt[, .(
       n_tfbs_cond1 = sum(active1, na.rm = TRUE),
       n_tfbs_cond2 = sum(active2, na.rm = TRUE),
-      fp_score_cond1 = sum(data.table::fifelse(active1, fp1, 0), na.rm = TRUE),
-      fp_score_cond2 = sum(data.table::fifelse(active2, fp2, 0), na.rm = TRUE),
+      fp_score_cond1 = sum(data.table::fifelse(union_active, fp1, 0), na.rm = TRUE),
+      fp_score_cond2 = sum(data.table::fifelse(union_active, fp2, 0), na.rm = TRUE),
       tf_expr_cond1 = suppressWarnings(max(expr1, na.rm = TRUE)),
       tf_expr_cond2 = suppressWarnings(max(expr2, na.rm = TRUE))
     ), by = tf]
@@ -456,5 +457,344 @@ build_tfbs_umap_report <- function(module1,
   writeLines(html, output_file, useBytes = TRUE)
   path <- normalizePath(output_file, winslash = "/", mustWork = FALSE)
   if (isTRUE(verbose)) .log_inform("Module 1 TFBS UMAP HTML written: {path}")
+  path
+}
+
+.module1_pack_site_indices <- function(indices, n_sites) {
+  out <- raw(ceiling(as.integer(n_sites) / 8))
+  indices <- unique(suppressWarnings(as.integer(indices)))
+  indices <- indices[is.finite(indices) & indices >= 1L & indices <= n_sites]
+  if (!length(indices)) return(out)
+  byte <- (indices - 1L) %/% 8L + 1L
+  mask <- bitwShiftL(1L, (indices - 1L) %% 8L)
+  packed <- data.table::data.table(byte = byte, mask = mask)[, .(mask = sum(unique(mask))), by = byte]
+  out[packed$byte] <- as.raw(packed$mask)
+  out
+}
+
+.module1_unpack_site_indices <- function(bits, n_sites) {
+  if (!length(bits) || n_sites < 1L) return(integer())
+  byte_index <- rep(seq_along(bits), each = 8L)
+  bit_index <- rep(0:7, times = length(bits))
+  keep <- bitwAnd(rep(as.integer(bits), each = 8L), bitwShiftL(1L, bit_index)) > 0L
+  out <- (byte_index[keep] - 1L) * 8L + bit_index[keep] + 1L
+  out[out <= n_sites]
+}
+
+.module1_or_packed_indices <- function(bits, indices) {
+  indices <- unique(suppressWarnings(as.integer(indices)))
+  indices <- indices[is.finite(indices) & indices >= 1L & indices <= length(bits) * 8L]
+  if (!length(indices)) return(bits)
+  byte <- (indices - 1L) %/% 8L + 1L
+  mask <- bitwShiftL(1L, (indices - 1L) %% 8L)
+  packed <- data.table::data.table(byte = byte, mask = mask)[, .(mask = sum(unique(mask))), by = byte]
+  bits[packed$byte] <- as.raw(bitwOr(as.integer(bits[packed$byte]), packed$mask))
+  bits
+}
+
+.module1_explorer_cache_path <- function(module1, output_file) {
+  if (is.character(module1) && length(module1) == 1L && dir.exists(module1)) {
+    return(file.path(module1, "cache", "module1_qc_analysis.rds"))
+  }
+  if (is.list(module1) && !is.data.frame(module1)) {
+    manifest <- module1$reports$predicted_tfbs_manifest %||% module1$predicted_tfbs_paths$manifest
+    if (!is.null(manifest) && length(manifest) == 1L && nzchar(manifest)) {
+      return(file.path(dirname(manifest), "cache", "module1_qc_analysis.rds"))
+    }
+  }
+  file.path(dirname(output_file), "module1_qc_analysis.rds")
+}
+
+.module1_explorer_motif_map <- function(omics) {
+  x <- omics$features$fp_motif
+  if (!is.data.frame(x) || !all(c("fp_id", "motif") %in% names(x))) {
+    return(data.table::data.table(fp_id = character(), motif = character(), canonical_tf = character()))
+  }
+  canonical <- if ("tf" %in% names(x)) as.character(x$tf) else rep("", nrow(x))
+  out <- data.table::data.table(fp_id = as.character(x$fp_id), motif = as.character(x$motif), canonical_tf = canonical)
+  unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(motif) & nzchar(motif)])
+}
+
+.module1_explorer_correlation_hist <- function(module1, bins = 40L) {
+  parts <- list()
+  add_table <- function(x, scope) {
+    if (!is.data.frame(x) || !nrow(x) || !"tf" %in% names(x)) return()
+    for (method in c("pearson_r", "spearman_r")) {
+      if (!method %in% names(x)) next
+      dt <- data.table::data.table(tf = as.character(x$tf), value = suppressWarnings(as.numeric(x[[method]])))
+      dt <- dt[is.finite(value) & value >= -1 & value <= 1]
+      if (!nrow(dt)) next
+      dt[, bin := pmin(bins - 1L, pmax(0L, floor((value + 1) / 2 * bins)))]
+      per_tf <- dt[, .(n = .N), by = .(tf, bin)]
+      overall <- dt[, .(n = .N), by = bin][, tf := "Overall"]
+      out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE)
+      out[, `:=`(scope = scope, method = method)]
+      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n)]
+    }
+  }
+  if (is.list(module1) && !is.data.frame(module1)) {
+    add_table(module1$motif_supported_correlations, "Canonical motif-supported")
+    add_table(module1$prediction_stats, "Full prediction")
+    manifest <- module1$prediction_stats_manifest
+    if (is.data.frame(manifest) && nrow(manifest)) {
+      for (i in seq_len(nrow(manifest))) {
+        add_table(
+          .qc_read_table_file(as.character(manifest$path[[i]]), as.character(manifest$format[[i]]), columns = c("tf", "pearson_r", "spearman_r")),
+          "Full prediction"
+        )
+      }
+    }
+  }
+  module1_dir <- if (is.character(module1) && length(module1) == 1L && dir.exists(module1)) module1 else NULL
+  if (!is.null(module1_dir)) {
+    canonical_path <- file.path(module1_dir, "module1_canonical_prediction_stats.csv.gz")
+    if (file.exists(canonical_path)) add_table(.qc_read_table_file(canonical_path), "Canonical motif-supported")
+    stats_manifest_path <- file.path(module1_dir, "module1_prediction_stats_chunks", "module1_prediction_stats_manifest.csv")
+    if (file.exists(stats_manifest_path)) {
+      manifest <- .qc_read_manifest_chunks(stats_manifest_path)
+      for (i in seq_len(nrow(manifest))) {
+        add_table(
+          .qc_read_table_file(as.character(manifest$path[[i]]), as.character(manifest$format[[i]]), columns = c("tf", "pearson_r", "spearman_r")),
+          "Full prediction"
+        )
+      }
+    }
+  }
+  if (!length(parts)) return(tibble::tibble())
+  data.table::rbindlist(parts, use.names = TRUE)[, .(n = sum(n)), by = .(scope, method, tf, bin)] |>
+    tibble::as_tibble()
+}
+
+.module1_build_explorer_cache <- function(module1, omics, cache_file, rebuild = FALSE, verbose = TRUE) {
+  validate_multiomic_object(omics)
+  source <- .module1_tfbs_source(module1)
+  manifest_rows <- if (is.data.frame(source$manifest) && "n_rows" %in% names(source$manifest)) {
+    sum(suppressWarnings(as.numeric(source$manifest$n_rows)), na.rm = TRUE)
+  } else if (is.data.frame(source$data)) nrow(source$data) else NA_real_
+  fingerprint <- list(
+    schema = "module1_qc_analysis_v4",
+    n_sites = nrow(omics$matrices$fp_score),
+    conditions = colnames(omics$matrices$fp_score),
+    manifest_rows = manifest_rows,
+    source_files = if (is.data.frame(source$manifest) && "path" %in% names(source$manifest)) {
+      info <- file.info(as.character(source$manifest$path))
+      data.frame(
+        path = normalizePath(as.character(source$manifest$path), winslash = "/", mustWork = FALSE),
+        size = as.numeric(info$size),
+        mtime = format(info$mtime, tz = "UTC", usetz = TRUE),
+        stringsAsFactors = FALSE
+      )
+    } else NULL
+  )
+  if (!isTRUE(rebuild) && file.exists(cache_file)) {
+    cached <- tryCatch(readRDS(cache_file), error = function(e) NULL)
+    if (is.list(cached) && identical(cached$fingerprint, fingerprint)) return(cached)
+  }
+  if (isTRUE(verbose)) .log_inform("Building compact Module 1 TFBS explorer cache.")
+  fp_ids <- rownames(omics$matrices$fp_score)
+  fp_index <- stats::setNames(seq_along(fp_ids), fp_ids)
+  n_sites <- length(fp_ids)
+  n_bytes <- ceiling(n_sites / 8)
+  tf_bits <- list()
+  motif_map <- .module1_explorer_motif_map(omics)
+  canonical_by_motif <- if (nrow(motif_map)) {
+    motif_map[, .(canonical_tf = paste(sort(unique(canonical_tf[!is.na(canonical_tf) & nzchar(canonical_tf)])), collapse = ";")), by = motif]
+  } else {
+    data.table::data.table(motif = character(), canonical_tf = character())
+  }
+  motif_sites <- if (nrow(motif_map)) unique(motif_map[, .(fp_id, motif)]) else motif_map[, .(fp_id, motif)]
+  motif_parts <- list()
+  .module1_tfbs_each(source, columns = c("tf", "fp_id"), callback = function(x, i) {
+    if (!all(c("tf", "fp_id") %in% names(x)) || !nrow(x)) return()
+    dt <- unique(data.table::data.table(tf = as.character(x$tf), fp_id = as.character(x$fp_id)))
+    dt <- dt[!is.na(tf) & nzchar(tf) & !is.na(fp_id) & nzchar(fp_id)]
+    dt[, site_index := unname(fp_index[fp_id])]
+    dt <- dt[!is.na(site_index)]
+    if (!nrow(dt)) return()
+    by_tf <- split(dt$site_index, dt$tf)
+    for (tf_name in names(by_tf)) {
+      bits <- tf_bits[[tf_name]]
+      if (is.null(bits)) bits <- raw(n_bytes)
+      tf_bits[[tf_name]] <<- .module1_or_packed_indices(bits, by_tf[[tf_name]])
+    }
+    if (nrow(motif_sites)) {
+      joined <- motif_sites[dt[, .(fp_id, tf)], on = "fp_id", nomatch = 0L, allow.cartesian = TRUE]
+      if (nrow(joined)) motif_parts[[length(motif_parts) + 1L]] <<- joined[, .(n = .N), by = .(motif, tf)]
+    }
+  })
+  tf_names <- sort(names(tf_bits))
+  tf_bits <- tf_bits[tf_names]
+  conditions <- colnames(omics$matrices$fp_bound)
+  bound_bits <- lapply(seq_along(conditions), function(i) {
+    .module1_pack_site_indices(which(omics$matrices$fp_bound[, i] %in% TRUE), n_sites)
+  })
+  names(bound_bits) <- conditions
+  gene_index <- stats::setNames(seq_len(nrow(omics$matrices$gene_on)), toupper(rownames(omics$matrices$gene_on)))
+  gene_on <- matrix(FALSE, nrow = length(tf_names), ncol = length(conditions), dimnames = list(tf_names, conditions))
+  tf_idx <- unname(gene_index[toupper(tf_names)])
+  cond_idx <- match(conditions, colnames(omics$matrices$gene_on))
+  valid_tf <- which(!is.na(tf_idx))
+  valid_cond <- which(!is.na(cond_idx))
+  if (length(valid_tf) && length(valid_cond)) {
+    gene_on[valid_tf, valid_cond] <- omics$matrices$gene_on[tf_idx[valid_tf], cond_idx[valid_cond], drop = FALSE]
+  }
+  popcount <- vapply(0:255, function(value) sum(as.integer(intToBits(value))[1:8]), integer(1L))
+  tf_counts <- matrix(0, nrow = length(tf_names), ncol = length(conditions) + 1L, dimnames = list(tf_names, c("Overall", conditions)))
+  for (i in seq_along(tf_names)) {
+    tf_counts[i, "Overall"] <- sum(popcount[as.integer(tf_bits[[i]]) + 1L])
+    for (j in seq_along(conditions)) {
+      if (gene_on[i, j]) {
+        tf_counts[i, j + 1L] <- sum(popcount[bitwAnd(as.integer(tf_bits[[i]]), as.integer(bound_bits[[j]])) + 1L])
+      }
+    }
+  }
+  motif_counts <- if (length(motif_parts)) {
+    data.table::rbindlist(motif_parts, use.names = TRUE)[, .(n = sum(n)), by = .(motif, tf)]
+  } else {
+    data.table::data.table(motif = character(), tf = character(), n = integer())
+  }
+  motif_counts <- canonical_by_motif[motif_counts, on = "motif"]
+  if (nrow(motif_counts)) {
+    data.table::setorderv(motif_counts, c("motif", "n", "tf"), order = c(1L, -1L, 1L))
+    motif_counts <- motif_counts[, head(.SD, 20L), by = motif]
+  }
+  used_site_bits <- if (length(tf_bits)) {
+    Reduce(function(a, b) as.raw(bitwOr(as.integer(a), as.integer(b))), tf_bits)
+  } else {
+    raw(n_bytes)
+  }
+  cache <- list(
+    fingerprint = fingerprint,
+    tf_names = tf_names,
+    tf_bits = tf_bits,
+    used_site_bits = used_site_bits,
+    conditions = conditions,
+    bound_bits = bound_bits,
+    gene_on = gene_on,
+    tf_counts = tf_counts,
+    motif_counts = tibble::as_tibble(motif_counts),
+    correlation_hist = .module1_explorer_correlation_hist(module1)
+  )
+  dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(cache, cache_file, compress = "xz")
+  if (isTRUE(verbose)) .log_inform("Finished compact Module 1 TFBS explorer cache.")
+  cache
+}
+
+.module1_explorer_default_condition <- function(conditions, default_condition = NULL, project_config = NULL, omics = NULL) {
+  config <- .module1_relevant_config(project_config)
+  candidate <- default_condition %||% config$module1_default_condition
+  candidate <- as.character(candidate %||% "")[[1L]]
+  if (nzchar(candidate) && candidate %in% conditions) return(candidate)
+  meta <- if (is_multiomic_object(omics) && is.data.frame(omics$samples)) omics$samples else NULL
+  if (is.data.frame(meta)) {
+    value_cols <- intersect(c("condition", "stress_type", "sample", "name", "condition_id"), names(meta))
+    key_cols <- intersect(c("condition_id", "sample_id", "id", "name", "sample"), names(meta))
+    for (value_col in value_cols) {
+      ctrl <- grepl("(^|[_ -])(ctrl|control)([_ -]|$)", as.character(meta[[value_col]]), ignore.case = TRUE)
+      if (!any(ctrl, na.rm = TRUE)) next
+      for (key_col in key_cols) {
+        hits <- intersect(conditions, as.character(meta[[key_col]][ctrl]))
+        if (length(hits)) return(sort(hits)[[1L]])
+      }
+    }
+  }
+  sort(conditions)[[1L]]
+}
+
+#' Build the interactive Module 1 TFBS Explorer
+#'
+#' Builds a self-contained HTML explorer with overall and condition-specific
+#' predicted TFBS counts, exact single- or multi-TF co-binding summaries, and
+#' motif-centered predicted TF rankings.
+#'
+#' @param module1 A `predict_tfbs()` result, Module 1 output directory,
+#'   predicted TFBS table, table path, or manifest path.
+#' @param multiomic_data Optional CraftGRN multiomic object.
+#' @param output_file HTML output path.
+#' @param default_condition Initial condition. If `NULL`, use project
+#'   configuration, control metadata, then A-Z order.
+#' @param project_config Optional YAML path or configuration list.
+#' @param rebuild_cache Rebuild the compact analysis cache even when valid.
+#' @param verbose Emit concise progress messages.
+#' @return Normalized path to the HTML report.
+#' @export
+build_module1_tfbs_explorer <- function(module1,
+                                        multiomic_data = NULL,
+                                        output_file = NULL,
+                                        default_condition = NULL,
+                                        project_config = NULL,
+                                        rebuild_cache = FALSE,
+                                        verbose = TRUE) {
+  omics <- .module1_resolve_multiomic(module1, multiomic_data)
+  if (is.null(output_file)) {
+    output_file <- if (is.character(module1) && length(module1) == 1L && dir.exists(module1)) {
+      file.path(module1, "reports", "module1_tfbs_explorer.html")
+    } else {
+      file.path(getwd(), "module1_tfbs_explorer.html")
+    }
+  }
+  if (!is.character(output_file) || length(output_file) != 1L || !nzchar(output_file)) {
+    .log_abort("`output_file` must be a non-empty HTML path.")
+  }
+  cache_file <- .module1_explorer_cache_path(module1, output_file)
+  cache <- .module1_build_explorer_cache(module1, omics, cache_file, rebuild = rebuild_cache, verbose = verbose)
+  if (!length(cache$tf_names)) .log_abort("No predicted TFs are available for the TFBS Explorer.")
+  default_condition <- .module1_explorer_default_condition(cache$conditions, default_condition, project_config, omics)
+  encode <- function(x) jsonlite::base64_enc(x)
+  motif_rows <- split(as.data.frame(cache$motif_counts, stringsAsFactors = FALSE), as.character(cache$motif_counts$motif))
+  payload <- list(
+    tfs = cache$tf_names,
+    conditions = cache$conditions,
+    defaultCondition = default_condition,
+    tfBits = unname(vapply(cache$tf_bits, encode, character(1L))),
+    boundBits = unname(vapply(cache$bound_bits, encode, character(1L))),
+    geneOn = unname(lapply(seq_len(nrow(cache$gene_on)), function(i) as.integer(cache$gene_on[i, ]))),
+    motifs = motif_rows
+  )
+  payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, dataframe = "rows", na = "null")
+  payload_json <- gsub("</", "<\\/", payload_json, fixed = TRUE)
+  css <- paste(
+    ":root{--ink:#172033;--muted:#64748b;--line:#dbe3ed;--soft:#f6f8fb;--blue:#315f97;--teal:#16847a}",
+    "*{box-sizing:border-box}body{margin:0;font:14px/1.45 Arial,Helvetica,sans-serif;color:var(--ink);background:#fff}",
+    ".wrap{max-width:1240px;margin:auto;padding:24px 30px}header{border-bottom:1px solid var(--line)}h1{margin:0;font-size:28px}h2{font-size:20px;margin:0 0 8px}.sub{color:var(--muted);margin-top:5px}",
+    ".tabs{display:flex;gap:6px;margin:20px 0}.tab{border:1px solid var(--line);background:var(--soft);padding:9px 14px;border-radius:5px;cursor:pointer;font-weight:700}.tab.active{background:#e8f0f8;border-color:#8aa8c8;color:#173d69}",
+    ".panel{display:none}.panel.active{display:block}.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:end;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:6px;margin:12px 0}.control{display:grid;gap:4px}.control label{font-size:12px;font-weight:700;color:#475569}select,button{font:inherit;border:1px solid #b9c6d6;border-radius:4px;background:#fff;padding:7px 9px}select[multiple]{min-width:220px;height:100px}button{cursor:pointer}",
+    ".grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{border:1px solid var(--line);border-radius:6px;padding:14px;overflow:hidden}.card h3{margin:0 0 8px;font-size:15px}.chart{width:100%;min-height:420px}.bar{fill:var(--blue);cursor:pointer}.bar.co{fill:var(--teal)}.bar.rest{fill:#dbe5ef}.bar.highlight{stroke:#b2182b;stroke-width:3}.axis-label{font-size:12px;fill:#334155}.value{font-size:12px;font-weight:700;fill:#172033}.canonical{font-size:12px;font-weight:800;fill:#b2182b}",
+    "@media(max-width:800px){.wrap{padding:18px}.grid{grid-template-columns:1fr}.tabs{overflow:auto}.chart{min-height:360px}}",
+    sep = "\n"
+  )
+  js <- paste0(
+    "const D=", payload_json, ";",
+    "const dec=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));D.tfBits=D.tfBits.map(dec);D.boundBits=D.boundBits.map(dec);",
+    "const pop=Uint8Array.from({length:256},(_,i)=>{let n=i,c=0;while(n){c+=n&1;n>>=1}return c});",
+    "const count=a=>{let n=0;for(const x of a)n+=pop[x];return n};const andCount=(a,b)=>{let n=0;for(let i=0;i<a.length;i++)n+=pop[a[i]&b[i]];return n};",
+    "const tfIndex=new Map(D.tfs.map((x,i)=>[x,i])),condIndex=new Map(D.conditions.map((x,i)=>[x,i]));",
+    "const active=(ti,cond)=>{const src=D.tfBits[ti];if(cond==='Overall')return src;const ci=condIndex.get(cond);if(!D.geneOn[ti][ci])return new Uint8Array(src.length);const b=D.boundBits[ci];return Uint8Array.from(src,(x,i)=>x&b[i])};",
+    "const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));let selectedTf='';",
+    "function bars(el,rows,stack=false){const w=620,rh=27,left=150,right=72,h=Math.max(180,rows.length*rh+45),mx=Math.max(1,...rows.map(x=>x.total));let s='<svg viewBox=\"0 0 '+w+' '+h+'\">';rows.forEach((d,i)=>{const y=12+i*rh,bw=(w-left-right)*d.total/mx,cw=(w-left-right)*(d.co||0)/mx,lc=d.canonical?'canonical':'axis-label';s+='<text x=\"'+(left-8)+'\" y=\"'+(y+15)+'\" text-anchor=\"end\" class=\"'+lc+'\">'+esc(d.tf)+'</text>';if(stack)s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"bar rest\"/><rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+cw+'\" height=\"18\" class=\"bar co\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.co+' co-bound of '+d.total+'</title></rect>';else s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"bar\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></rect>';s+='<text x=\"'+(left+bw+6)+'\" y=\"'+(y+15)+'\" class=\"value\">'+d.total.toLocaleString()+'</text>'});el.innerHTML=s+'</svg>';el.querySelectorAll('[data-tf]').forEach(x=>x.onclick=()=>highlight(x.dataset.tf))}",
+    "function highlight(tf){selectedTf=tf;document.querySelectorAll('[data-tf]').forEach(x=>x.classList.toggle('highlight',x.dataset.tf===tf))}const n=id=>+document.getElementById(id).value;",
+    "const counts=cond=>D.tfs.map((tf,i)=>({tf,total:count(active(i,cond))})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf));",
+    "function drawBinding(){bars(document.getElementById('binding-overall'),counts('Overall').slice(0,n('binding-n')));bars(document.getElementById('binding-condition'),counts(document.getElementById('binding-cond').value).slice(0,n('binding-n')));if(selectedTf)highlight(selectedTf)}",
+    "function drawCobinding(){const names=Array.from(document.getElementById('focal').selectedOptions).map(x=>x.value);if(!names.length)return;const cond=document.getElementById('cobind-cond').value;let mask=null;for(const tf of names){const b=active(tfIndex.get(tf),cond);mask=mask?Uint8Array.from(mask,(x,i)=>x&b[i]):Uint8Array.from(b)}const rows=D.tfs.filter(tf=>!names.includes(tf)).map(tf=>{const b=active(tfIndex.get(tf),cond);return{tf,total:count(b),co:andCount(mask,b)}}).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true)}",
+    "function drawMotif(){const rows=(D.motifs[document.getElementById('motif-select').value]||[]).map(x=>({tf:x.tf,total:+x.n,canonical:String(x.canonical_tf||'').split(/[,:;]/).map(y=>y.trim().toUpperCase()).includes(String(x.tf).toUpperCase())})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,20);bars(document.getElementById('motif-chart'),rows)}",
+    "function exportSvg(id,name){const svg=document.querySelector('#'+id+' svg');if(!svg)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));a.download=name+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)}",
+    "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const f=document.getElementById('focal');D.tfs.forEach(x=>f.add(new Option(x,x)));f.options[0].selected=true;const m=document.getElementById('motif-select');Object.keys(D.motifs).sort().forEach(x=>m.add(new Option(x,x)))}",
+    "function tab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===id));history.replaceState(null,'','#'+id)}document.querySelectorAll('.tab').forEach(x=>x.onclick=()=>tab(x.dataset.tab));",
+    "fill();document.querySelectorAll('select').forEach(x=>x.onchange=()=>{drawBinding();drawCobinding();drawMotif()});drawBinding();drawCobinding();drawMotif();tab(['binding','cobinding','motif'].includes(location.hash.slice(1))?location.hash.slice(1):'binding');"
+  )
+  html <- paste0(
+    "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Module 1 TFBS Explorer</title><style>", css, "</style></head><body>",
+    "<header><div class=\"wrap\"><h1>Module 1 TFBS Explorer</h1><div class=\"sub\">Explore predicted binding, exact TF co-binding, and motif-centered TF rankings.</div></div></header><main class=\"wrap\">",
+    "<nav class=\"tabs\"><button class=\"tab\" data-tab=\"binding\">Binding</button><button class=\"tab\" data-tab=\"cobinding\">Co-binding</button><button class=\"tab\" data-tab=\"motif\">Motif</button></nav>",
+    "<section id=\"binding\" class=\"panel\"><h2>Predicted binding sites per TF</h2><div class=\"controls\"><div class=\"control\"><label for=\"binding-cond\">Condition</label><select id=\"binding-cond\"></select></div><div class=\"control\"><label for=\"binding-n\">Top N</label><select id=\"binding-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('binding-overall','tfbs_binding_overall')\">Export overall SVG</button><button onclick=\"exportSvg('binding-condition','tfbs_binding_condition')\">Export condition SVG</button></div><div class=\"grid\"><div class=\"card\"><h3>Overall</h3><div id=\"binding-overall\" class=\"chart\"></div></div><div class=\"card\"><h3>Selected condition</h3><div id=\"binding-condition\" class=\"chart\"></div></div></div></section>",
+    "<section id=\"cobinding\" class=\"panel\"><h2>TF co-binding summary</h2><p class=\"sub\">With multiple focal TFs, co-bound sites must be shared by every selected TF.</p><div class=\"controls\"><div class=\"control\"><label for=\"focal\">Focal TFs</label><select id=\"focal\" multiple></select></div><div class=\"control\"><label for=\"cobind-cond\">Scope</label><select id=\"cobind-cond\"></select></div><div class=\"control\"><label for=\"cobind-n\">Top N</label><select id=\"cobind-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('cobind-chart','tfbs_cobinding')\">Export SVG</button></div><div class=\"card\"><div id=\"cobind-chart\" class=\"chart\"></div></div></section>",
+    "<section id=\"motif\" class=\"panel\"><h2>Top predicted bound TF per motif</h2><p class=\"sub\">Canonical motif-matched TFs are bold and red. Rankings show at most 20 TFs.</p><div class=\"controls\"><div class=\"control\"><label for=\"motif-select\">Motif</label><select id=\"motif-select\"></select></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div><div class=\"card\"><div id=\"motif-chart\" class=\"chart\"></div></div></section>",
+    "</main><script>", js, "</script></body></html>"
+  )
+  dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
+  writeLines(html, output_file, useBytes = TRUE)
+  path <- normalizePath(output_file, winslash = "/", mustWork = FALSE)
+  if (isTRUE(verbose)) .log_inform("Module 1 TFBS Explorer written: {path}")
   path
 }
