@@ -78,7 +78,10 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("data-qc-group=\"per-condition\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"distribution\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"pca\"", page, fixed = TRUE))
-  expect_true(grepl("width:min(96vw,1920px)", page, fixed = TRUE))
+  expect_true(grepl("width:min(98vw,2880px)", page, fixed = TRUE))
+  expect_true(grepl("option value=\"best\" selected", page, fixed = TRUE))
+  expect_true(grepl("Colored retained-pair overlays are shown only for Best R", page, fixed = TRUE))
+  expect_true(grepl("option selected>10</option>", page, fixed = TRUE))
   expect_true(grepl("@media(min-width:1600px)", page, fixed = TRUE))
   expect_true(grepl("How to read this section", page, fixed = TRUE))
   expect_true(grepl("Canonical motif TF reference", page, fixed = TRUE))
@@ -145,6 +148,113 @@ test_that("Module 1 QC recovers legacy raw footprint counts from compact caches"
     legacy_raw_unavailable = TRUE
   )
   expect_equal(cards$value[cards$label == "Raw footprints"], "Unavailable for legacy run")
+})
+
+test_that("Module 1 QC follows source projects and reads legacy footprint maps", {
+  project_root <- tempfile("module1-legacy-fp-project-")
+  source_root <- tempfile("module1-legacy-fp-source-")
+  dir.create(file.path(project_root, "predict_tf_binding_sites"), recursive = TRUE)
+  dir.create(file.path(source_root, "cache"), recursive = TRUE)
+  readr::write_csv(
+    tibble::tibble(
+      peak_ID = c("p1", "p2", "p3", "p4"),
+      fp_peak_bak = c("s1", "s2", "s2", "s3")
+    ),
+    file.path(source_root, "cache", "fp_id_map_TEST.csv")
+  )
+  config_path <- file.path(project_root, "project.yaml")
+  yaml::write_yaml(list(base_dir = project_root, source_project = source_root, db = "TEST"), config_path)
+  compact <- craftgrn:::as_multiomic_object(module1_tiny_fixture()$omics_data, verbose = FALSE)
+
+  recovered <- craftgrn:::.module1_qc_raw_footprint_recovery(
+    compact,
+    module1_dir = file.path(project_root, "predict_tf_binding_sites"),
+    project_config = config_path
+  )
+
+  expect_equal(recovered$count, 3)
+  expect_match(recovered$path, "fp_id_map_TEST[.]csv$")
+})
+
+test_that("Module 1 QC recovers and caches legacy raw score distributions", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  compact$qc$fp_score_distributions <- tibble::tibble()
+  project_root <- tempfile("module1-distribution-project-")
+  source_root <- tempfile("module1-distribution-source-")
+  module1_dir <- file.path(project_root, "predict_tf_binding_sites")
+  source_module1 <- file.path(source_root, "predict_tf_binding_sites")
+  dir.create(module1_dir, recursive = TRUE)
+  dir.create(source_module1, recursive = TRUE)
+  raw <- fixture$omics_data$fp_score_condition_qn
+  raw[, -1] <- lapply(raw[, -1, drop = FALSE], function(x) x * 3 + 1)
+  readr::write_csv(raw, file.path(source_module1, "02_fp_score_raw_TEST.csv"))
+  config_path <- file.path(project_root, "project.yaml")
+  yaml::write_yaml(list(base_dir = project_root, source_project = source_root, db = "TEST"), config_path)
+
+  distributions <- craftgrn:::.module1_qc_distribution_table(
+    compact,
+    module1_dir = module1_dir,
+    project_config = config_path,
+    verbose = FALSE
+  )
+
+  expect_setequal(unique(distributions$stage), c("raw", "quantile_normalized"))
+  expect_equal(sort(unique(distributions$condition)), sort(colnames(compact$matrices$fp_score)))
+  expect_true(file.exists(file.path(module1_dir, "module1_fp_score_distributions.csv")))
+  cached <- craftgrn:::.module1_qc_read_distribution_cache(compact, module1_dir)
+  expect_equal(nrow(cached), 2L * 4L * 101L)
+})
+
+test_that("Module 1 QC rejects mismatched raw score footprints", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  compact$qc$fp_score_distributions <- tibble::tibble()
+  project_root <- tempfile("module1-distribution-mismatch-")
+  module1_dir <- file.path(project_root, "predict_tf_binding_sites")
+  dir.create(module1_dir, recursive = TRUE)
+  raw <- fixture$omics_data$fp_score_condition_qn
+  raw$peak_ID[[1L]] <- "wrong-footprint"
+  readr::write_csv(raw, file.path(module1_dir, "02_fp_score_raw_TEST.csv"))
+
+  distributions <- craftgrn:::.module1_qc_distribution_table(
+    compact,
+    module1_dir = module1_dir,
+    project_config = list(base_dir = project_root, db = "TEST"),
+    verbose = FALSE
+  )
+
+  expect_equal(unique(distributions$stage), "quantile_normalized")
+  expect_false(file.exists(file.path(module1_dir, "module1_fp_score_distributions.csv")))
+})
+
+test_that("Module 1 QC recovers validated legacy canonical footprints", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  prepared <- craftgrn:::.module1_prepare_predict_omics(compact, verbose = FALSE)
+  module1_dir <- tempfile("module1-canonical-recovery-")
+  dir.create(file.path(module1_dir, "cache"), recursive = TRUE)
+  used <- c(1L, 3L, 5L)
+  explorer <- list(
+    fingerprint = list(
+      n_sites = nrow(compact$matrices$fp_score),
+      fp_ids_digest = digest::digest(rownames(compact$matrices$fp_score), algo = "xxhash64")
+    ),
+    tf_names = craftgrn:::.module1_expressed_tfs(prepared),
+    used_site_bits = craftgrn:::.module1_pack_site_indices(used, nrow(compact$matrices$fp_score))
+  )
+  saveRDS(explorer, file.path(module1_dir, "cache", "module1_qc_analysis.rds"))
+
+  recovered <- craftgrn:::.module1_qc_recover_canonical_fp_cache(
+    list(),
+    module1_dir,
+    compact,
+    project_config = list(filter_to_canonical_bound = TRUE),
+    verbose = FALSE
+  )
+
+  expect_equal(recovered$fp_id, rownames(compact$matrices$fp_score)[used])
+  expect_true(file.exists(file.path(module1_dir, "cache", "module1_canonical_bound_fps.csv.gz")))
 })
 
 test_that("QC metric reader accepts one-row integrity tables", {

@@ -201,7 +201,7 @@
   rows
 }
 
-.qc_bar_svg <- function(x, label_col, value_col, title = NULL, width = 860L, bar_height = 24L) {
+.qc_bar_svg <- function(x, label_col, value_col, title = NULL, width = 860L, bar_height = 24L, row_gap = 10L) {
   if (!is.data.frame(x) || !nrow(x) || !all(c(label_col, value_col) %in% names(x))) return("<p class=\"empty\">No plot data available.</p>")
   x <- as.data.frame(x, stringsAsFactors = FALSE)
   x[[value_col]] <- suppressWarnings(as.numeric(x[[value_col]]))
@@ -212,7 +212,7 @@
   left <- 230L
   right <- 120L
   top <- if (is.null(title)) 12L else 44L
-  row_gap <- 10L
+  row_gap <- max(2L, as.integer(row_gap))
   height <- top + nrow(x) * (bar_height + row_gap) + 20L
   plot_w <- width - left - right
   rows <- lapply(seq_len(nrow(x)), function(i) {
@@ -684,24 +684,24 @@
   css <- paste(
     ":root{--ink:#17202a;--muted:#5d6673;--line:#d8dee8;--panel:#ffffff;--soft:#f7f9fb;--accent:#2166ac;--accent2:#1b9e77;--navy:#172a45;--paper-red:#b2182b;--paper-gold:#c99400;--warn:#9a5b00;--skip:#6b7280}",
     "*{box-sizing:border-box}body{margin:0;background:#ffffff;color:var(--ink);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5}",
-    ".wrap{width:min(96vw,1920px);max-width:none;margin:0 auto;padding:24px 30px}",
+    ".wrap{width:min(98vw,2880px);max-width:none;margin:0 auto;padding:18px 22px}",
     "header{background:#fff;border-bottom:1px solid #cfd6df}",
-    "header .wrap{padding-top:24px;padding-bottom:18px}",
+    "header .wrap{padding-top:18px;padding-bottom:13px}",
     "h1{font-size:28px;line-height:1.12;margin:0 0 5px 0;letter-spacing:0;color:#111827;font-weight:750}",
     "h2{font-size:17px;line-height:1.25;margin:0 0 12px 0;color:#111827;font-weight:750;border-bottom:1px solid var(--line);padding-bottom:7px}",
-    "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px;min-width:0}",
+    "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:12px 0;padding:12px 14px 14px;min-width:0}",
     "h3{font-size:14px;line-height:1.25;margin:0 0 8px 0;color:#111827;font-weight:750}",
     ".subtitle{color:var(--muted);font-size:13px}.metric-note{margin:7px 0 0;color:var(--muted);font-size:11px}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
     ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.run-setup>*{min-width:0}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-grid .plot-card,.plot-card-wide{margin-top:12px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px;padding:4px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:7px 11px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 8px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 12px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:6px 9px;font-size:12px}.qc-guide .callout{margin-top:8px}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:10px;align-items:start;margin-top:6px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:10px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:8px 10px;overflow:hidden;max-width:620px;width:100%}.plot-grid .plot-card,.plot-card-wide{margin-top:6px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:8px}.counts-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 7px;padding:3px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:5px 9px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 5px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 6px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:4px 7px;font-size:11px}.qc-guide .callout{margin-top:6px}",
     ".table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
-    ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
-    ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:10px 2px 2px}.condition-tag{font-size:11px;color:#435066;display:inline-flex;align-items:center;gap:5px}.condition-tag i{width:9px;height:9px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
+    ".qc-plot{display:block;width:100%;height:auto;max-height:none}.pca-plot,.distribution-plot{max-height:430px}.counts-grid .qc-plot{max-height:450px}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
+    ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:4px 9px;margin:5px 2px 1px}.condition-tag{font-size:10px;color:#435066;display:inline-flex;align-items:center;gap:4px}.condition-tag i{width:8px;height:8px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
     ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;border-radius:4px;padding:8px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
-    "@media(min-width:1600px){.cards{grid-template-columns:repeat(8,minmax(0,1fr))}.correlation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}section{padding:18px 22px 22px}}@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{width:100%;padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
+    "@media(min-width:1600px){.cards{grid-template-columns:repeat(8,minmax(0,1fr))}.correlation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}section{padding:14px 16px 16px}}@media(max-width:900px){.plot-grid-three,.counts-grid{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{width:100%;padding:14px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
@@ -738,9 +738,37 @@
   tibble::as_tibble(readr::read_csv(manifest_path, show_col_types = FALSE))
 }
 
-.qc_find_module1_omics_rds <- function(module1_dir) {
-  hits <- list.files(module1_dir, pattern = "^01_multiomic_data_object_.*\\.rds$", full.names = TRUE)
-  if (length(hits)) hits[[1L]] else NA_character_
+.qc_find_module1_omics_rds <- function(module1_dir, project_config = NULL) {
+  config_path <- if (is.character(project_config) && length(project_config) == 1L && file.exists(project_config)) {
+    normalizePath(project_config, winslash = "/", mustWork = TRUE)
+  } else if (file.exists(file.path(dirname(module1_dir), "project.yaml"))) {
+    normalizePath(file.path(dirname(module1_dir), "project.yaml"), winslash = "/", mustWork = TRUE)
+  } else {
+    NA_character_
+  }
+  config <- if (is.list(project_config)) {
+    project_config
+  } else if (!is.na(config_path)) {
+    tryCatch(yaml::read_yaml(config_path), error = function(e) list())
+  } else {
+    list()
+  }
+  base_dir <- as.character(config$base_dir %||% if (!is.na(config_path)) dirname(config_path) else dirname(module1_dir))
+  configured <- as.character(config$multiomic_object %||% "")
+  if (length(configured) && !is.na(configured[[1L]]) && nzchar(configured[[1L]])) {
+    configured <- path.expand(configured[[1L]])
+    if (!grepl("^(/|[A-Za-z]:[/\\\\])", configured)) configured <- file.path(base_dir[[1L]], configured)
+  } else {
+    configured <- character()
+  }
+  candidates <- c(
+    configured,
+    list.files(module1_dir, pattern = "^01_multiomic_data_object_.*[.]rds$", full.names = TRUE),
+    list.files(file.path(dirname(module1_dir), "data"), pattern = "^01_multiomic_data_object_.*[.]rds$", full.names = TRUE)
+  )
+  candidates <- unique(candidates[!is.na(candidates) & nzchar(candidates)])
+  candidates <- candidates[file.exists(candidates)]
+  if (length(candidates)) normalizePath(candidates[[1L]], winslash = "/", mustWork = TRUE) else NA_character_
 }
 
 .qc_as_numeric_matrix <- function(x) {
@@ -1374,6 +1402,8 @@
   cache_dirs <- c(config$fp_cache_dir)
   if (!is.null(config$base_dir) && nzchar(config$base_dir)) cache_dirs <- c(cache_dirs, file.path(config$base_dir, "cache"))
   if (!is.null(module1_dir) && nzchar(module1_dir)) cache_dirs <- c(cache_dirs, file.path(module1_dir, "cache"), file.path(dirname(module1_dir), "cache"))
+  project_roots <- .module1_qc_project_roots(project_config = project_config, module1_dir = module1_dir)
+  cache_dirs <- c(cache_dirs, file.path(project_roots, "cache"), file.path(project_roots, "predict_tf_binding_sites", "cache"))
   cache_dirs <- unique(as.character(cache_dirs))
   cache_dirs <- cache_dirs[!is.na(cache_dirs) & nzchar(cache_dirs)]
   tags <- unique(as.character(c(config$fp_cache_tag, config$db)))
@@ -1391,13 +1421,182 @@
   paths <- unique(c(as.character(direct_paths), cache_paths))
   paths <- paths[!is.na(paths) & nzchar(paths) & file.exists(paths)]
   for (path in paths) {
-    columns <- if (grepl("fp_id_map_", basename(path), fixed = TRUE)) "source_fp_peak" else c("source_fp_peaks", "n_source_fp_peaks")
+    is_id_map <- grepl("fp_id_map_", basename(path), fixed = TRUE)
+    columns <- if (is_id_map) {
+      available <- tryCatch(names(data.table::fread(path, nrows = 0L, showProgress = FALSE)), error = function(e) character())
+      intersect(c("source_fp_peak", "fp_peak_bak"), available)
+    } else {
+      c("source_fp_peaks", "n_source_fp_peaks")
+    }
+    if (!length(columns)) next
     table <- tryCatch(.qc_read_table_file(path, columns = columns), error = function(e) tibble::tibble())
+    if ("fp_peak_bak" %in% names(table) && !"source_fp_peak" %in% names(table)) {
+      names(table)[names(table) == "fp_peak_bak"] <- "source_fp_peak"
+    }
     aligned <- if ("source_fp_peak" %in% names(table)) list(id_map = table) else list(fp_sites = table)
     count <- .module1_raw_footprint_count(aligned)
     if (is.finite(count)) return(list(count = count, path = path))
   }
   list(count = NA_real_, path = NA_character_)
+}
+
+.module1_qc_project_roots <- function(project_config = NULL, module1_dir = NULL) {
+  config_path <- if (is.character(project_config) && length(project_config) == 1L && file.exists(project_config)) {
+    normalizePath(project_config, winslash = "/", mustWork = TRUE)
+  } else if (!is.null(module1_dir) && file.exists(file.path(dirname(module1_dir), "project.yaml"))) {
+    normalizePath(file.path(dirname(module1_dir), "project.yaml"), winslash = "/", mustWork = TRUE)
+  } else {
+    NA_character_
+  }
+  config <- if (is.list(project_config)) {
+    project_config
+  } else if (!is.na(config_path)) {
+    tryCatch(yaml::read_yaml(config_path), error = function(e) list())
+  } else {
+    list()
+  }
+  roots <- character()
+  seen <- character()
+  for (i in seq_len(8L)) {
+    base <- as.character(config$base_dir %||% if (!is.na(config_path)) dirname(config_path) else "")
+    if (length(base) && !is.na(base[[1L]]) && nzchar(base[[1L]])) roots <- c(roots, path.expand(base[[1L]]))
+    source <- as.character(config$source_project %||% "")
+    if (!length(source) || is.na(source[[1L]]) || !nzchar(source[[1L]])) break
+    source <- path.expand(source[[1L]])
+    roots <- c(roots, source)
+    next_path <- if (dir.exists(source)) file.path(source, "project.yaml") else source
+    next_key <- normalizePath(next_path, winslash = "/", mustWork = FALSE)
+    if (next_key %in% seen || !file.exists(next_path)) break
+    seen <- c(seen, next_key)
+    config_path <- next_path
+    config <- tryCatch(yaml::read_yaml(next_path), error = function(e) list())
+  }
+  if (!is.null(module1_dir)) roots <- c(roots, dirname(module1_dir))
+  roots <- unique(normalizePath(roots[nzchar(roots)], winslash = "/", mustWork = FALSE))
+  roots[dir.exists(roots)]
+}
+
+.module1_qc_distribution_cache_path <- function(module1_dir) {
+  if (is.null(module1_dir) || !nzchar(module1_dir)) return("")
+  file.path(module1_dir, "module1_fp_score_distributions.csv")
+}
+
+.module1_qc_write_distribution_cache <- function(distributions, omics_data, module1_dir, source_file = NA_character_) {
+  if (!is_multiomic_object(omics_data) || !is.data.frame(distributions) || !nrow(distributions)) return(NA_character_)
+  path <- .module1_qc_distribution_cache_path(module1_dir)
+  if (!nzchar(path)) return(NA_character_)
+  keep <- intersect(c("condition", "stage", "probability", "value", "n"), names(distributions))
+  if (!all(c("condition", "stage", "probability", "value", "n") %in% keep)) return(NA_character_)
+  out <- tibble::as_tibble(distributions[, keep, drop = FALSE])
+  out$schema <- "module1_fp_score_distributions_v1"
+  out$fp_ids_digest <- digest::digest(rownames(omics_data$matrices$fp_score), algo = "xxhash64")
+  out$source_file <- as.character(source_file %||% NA_character_)[[1L]]
+  out <- out[, c("schema", "fp_ids_digest", "source_file", keep), drop = FALSE]
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  readr::write_csv(out, path)
+  normalizePath(path, winslash = "/", mustWork = FALSE)
+}
+
+.module1_qc_read_distribution_cache <- function(omics_data, module1_dir) {
+  path <- .module1_qc_distribution_cache_path(module1_dir)
+  if (!nzchar(path) || !file.exists(path) || !is_multiomic_object(omics_data)) return(tibble::tibble())
+  out <- tryCatch(readr::read_csv(path, show_col_types = FALSE), error = function(e) tibble::tibble())
+  required <- c("schema", "fp_ids_digest", "condition", "stage", "probability", "value", "n")
+  expected_digest <- digest::digest(rownames(omics_data$matrices$fp_score), algo = "xxhash64")
+  if (!nrow(out) || !all(required %in% names(out)) ||
+      !all(out$schema == "module1_fp_score_distributions_v1") ||
+      !all(out$fp_ids_digest == expected_digest)) return(tibble::tibble())
+  conditions <- sort(unique(as.character(out$condition)))
+  expected_conditions <- sort(colnames(omics_data$matrices$fp_score))
+  if (!identical(conditions, expected_conditions)) return(tibble::tibble())
+  tibble::as_tibble(out[, c("condition", "stage", "probability", "value", "n"), drop = FALSE])
+}
+
+.module1_qc_raw_score_candidates <- function(project_config = NULL, module1_dir = NULL) {
+  config <- if (is.list(project_config)) project_config else if (is.character(project_config) && length(project_config) == 1L && file.exists(project_config)) {
+    tryCatch(yaml::read_yaml(project_config), error = function(e) list())
+  } else {
+    list()
+  }
+  direct <- as.character(c(config$fp_score_raw, config$fp_score_raw_path))
+  direct <- direct[!is.na(direct) & nzchar(direct)]
+  roots <- .module1_qc_project_roots(project_config = project_config, module1_dir = module1_dir)
+  db <- as.character(config$db %||% "")
+  conventional <- character()
+  for (root in roots) {
+    prediction_dir <- file.path(root, "predict_tf_binding_sites")
+    if (nzchar(db)) conventional <- c(conventional, file.path(prediction_dir, paste0("02_fp_score_raw_", db, ".csv")))
+    if (dir.exists(prediction_dir)) {
+      conventional <- c(conventional, list.files(prediction_dir, pattern = "^02_fp_score_raw_.*[.]csv$", full.names = TRUE))
+    }
+  }
+  candidates <- unique(normalizePath(c(direct, conventional), winslash = "/", mustWork = FALSE))
+  candidates[file.exists(candidates)]
+}
+
+.module1_qc_raw_score_column_map <- function(omics_data, available) {
+  conditions <- colnames(omics_data$matrices$fp_score)
+  if (all(conditions %in% available)) return(stats::setNames(conditions, conditions))
+  samples <- omics_data$samples
+  if (!is.data.frame(samples) || !nrow(samples)) return(character())
+  condition_cols <- intersect(c("condition_id", "condition", "name", "Sample", "sample"), names(samples))
+  sample_cols <- intersect(c("sample_id", "id", "ID", "Sample", "sample", "name"), names(samples))
+  mapping <- stats::setNames(rep(NA_character_, length(conditions)), conditions)
+  for (condition in conditions) {
+    rows <- unique(unlist(lapply(condition_cols, function(column) which(as.character(samples[[column]]) == condition)), use.names = FALSE))
+    candidates <- unique(unlist(lapply(sample_cols, function(column) as.character(samples[[column]][rows])), use.names = FALSE))
+    hits <- intersect(candidates[!is.na(candidates) & nzchar(candidates)], available)
+    if (length(hits) != 1L) return(character())
+    mapping[[condition]] <- hits[[1L]]
+  }
+  if (anyDuplicated(unname(mapping))) return(character())
+  mapping
+}
+
+.module1_qc_recover_raw_distributions <- function(omics_data, module1_dir = NULL, project_config = NULL, verbose = TRUE) {
+  if (!is_multiomic_object(omics_data)) return(tibble::tibble())
+  probs <- seq(0, 1, length.out = 101L)
+  for (path in .module1_qc_raw_score_candidates(project_config = project_config, module1_dir = module1_dir)) {
+    header <- tryCatch(names(data.table::fread(path, nrows = 0L, showProgress = FALSE)), error = function(e) character())
+    id_col <- intersect(c("peak_ID", "fp_id"), header)
+    column_map <- .module1_qc_raw_score_column_map(omics_data, header)
+    if (length(id_col) != 1L || length(column_map) != ncol(omics_data$matrices$fp_score)) next
+    if (isTRUE(verbose)) .log_inform("Recovering compact raw footprint-score distributions from a validated legacy table.")
+    table <- tryCatch(
+      data.table::fread(path, select = c(id_col, unname(column_map)), showProgress = FALSE),
+      error = function(e) data.table::data.table()
+    )
+    expected_ids <- rownames(omics_data$matrices$fp_score)
+    observed_ids <- as.character(table[[id_col]])
+    if (nrow(table) != length(expected_ids) || anyDuplicated(observed_ids) || !setequal(observed_ids, expected_ids)) next
+    if (!identical(observed_ids, expected_ids)) table <- table[match(expected_ids, observed_ids)]
+    raw <- dplyr::bind_rows(lapply(names(column_map), function(condition) {
+      values <- suppressWarnings(as.numeric(table[[column_map[[condition]]]]))
+      values <- values[is.finite(values)]
+      tibble::tibble(
+        condition = condition,
+        stage = "raw",
+        probability = probs,
+        value = as.numeric(stats::quantile(values, probs, na.rm = TRUE, names = FALSE)),
+        n = length(values)
+      )
+    }))
+    normalized <- dplyr::bind_rows(lapply(seq_len(ncol(omics_data$matrices$fp_score)), function(i) {
+      values <- omics_data$matrices$fp_score[, i]
+      tibble::tibble(
+        condition = colnames(omics_data$matrices$fp_score)[[i]],
+        stage = "quantile_normalized",
+        probability = probs,
+        value = as.numeric(stats::quantile(values, probs, na.rm = TRUE, names = FALSE)),
+        n = length(values)
+      )
+    }))
+    out <- dplyr::bind_rows(raw, normalized)
+    .module1_qc_write_distribution_cache(out, omics_data, module1_dir, source_file = path)
+    if (isTRUE(verbose)) .log_inform("Finished recovering raw footprint-score distributions.")
+    return(out)
+  }
+  tibble::tibble()
 }
 
 .module1_qc_run_cards <- function(qc_summary, omics_data, predicted_scan, predicted_rows, legacy_raw_unavailable = FALSE) {
@@ -1491,6 +1690,40 @@
     }
   }
   tibble::tibble()
+}
+
+.module1_qc_recover_canonical_fp_cache <- function(module1,
+                                                    module1_dir,
+                                                    omics_data,
+                                                    project_config = NULL,
+                                                    verbose = TRUE) {
+  existing <- .module1_qc_read_canonical_fp_cache(module1, module1_dir = module1_dir)
+  if (nrow(existing) || is.null(module1_dir) || !is_multiomic_object(omics_data)) return(existing)
+  config_path <- file.path(dirname(module1_dir), "project.yaml")
+  config_source <- project_config %||% if (file.exists(config_path)) config_path else NULL
+  config <- .module1_relevant_config(config_source)
+  explorer_path <- file.path(module1_dir, "cache", "module1_qc_analysis.rds")
+  explorer <- if (file.exists(explorer_path)) tryCatch(readRDS(explorer_path), error = function(e) NULL) else NULL
+  if (!isTRUE(config$filter_to_canonical_bound) || !is.list(explorer) || !length(explorer$used_site_bits)) return(existing)
+  expected_n <- nrow(omics_data$matrices$fp_score)
+  expected_digest <- digest::digest(rownames(omics_data$matrices$fp_score), algo = "xxhash64")
+  matching_sites <- identical(as.integer(explorer$fingerprint$n_sites), as.integer(expected_n)) &&
+    identical(as.character(explorer$fingerprint$fp_ids_digest), expected_digest)
+  if (!matching_sites) return(existing)
+  prepared <- tryCatch(.module1_prepare_predict_omics(omics_data, verbose = FALSE), error = function(e) NULL)
+  matching_tfs <- is.list(prepared) && setequal(.module1_expressed_tfs(prepared), as.character(explorer$tf_names))
+  if (!matching_tfs) return(existing)
+  used <- .module1_unpack_site_indices(explorer$used_site_bits, expected_n)
+  footprint_ids <- rownames(omics_data$matrices$fp_score)[used]
+  if (!length(footprint_ids)) return(existing)
+  recovered <- tibble::tibble(fp_id = footprint_ids, has_canonical_bound = TRUE)
+  cache_path <- file.path(module1_dir, "cache", "module1_canonical_bound_fps.csv.gz")
+  dir.create(dirname(cache_path), recursive = TRUE, showWarnings = FALSE)
+  readr::write_csv(recovered, cache_path)
+  if (isTRUE(verbose)) {
+    .log_warn("Recovered and cached the exact legacy canonical-bound footprint population from the validated TFBS explorer cache.")
+  }
+  recovered
 }
 
 .module1_qc_normalize_prediction_stats <- function(x) {
@@ -1885,7 +2118,7 @@
   p <- ggplot2::ggplot(x, ggplot2::aes(x = PC1, y = PC2, color = biological_group, label = display_label)) +
     ggplot2::geom_hline(yintercept = 0, color = "#d7dde6", linewidth = 0.35) +
     ggplot2::geom_vline(xintercept = 0, color = "#d7dde6", linewidth = 0.35) +
-    ggplot2::geom_point(size = 3.6, alpha = 0.92) +
+    ggplot2::geom_point(size = 3.1, alpha = 0.92) +
     ggplot2::scale_color_manual(values = color_map, drop = FALSE) +
     ggplot2::labs(
       subtitle = paste0(x$transformation[[1L]], "; ", .qc_format_number(x$n_features[[1L]]), " variable features"),
@@ -1899,16 +2132,16 @@
       axis.title = ggplot2::element_text(face = "bold"),
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "none",
-      plot.margin = ggplot2::margin(8, 34, 8, 8)
+      plot.margin = ggplot2::margin(4, 28, 4, 5)
   )
   if (requireNamespace("ggrepel", quietly = TRUE)) {
-    p <- p + ggrepel::geom_text_repel(color = "#334155", size = 2.65, max.overlaps = Inf, box.padding = 0.35, point.padding = 0.25, min.segment.length = 0, seed = 1, show.legend = FALSE)
+    p <- p + ggrepel::geom_text_repel(color = "#334155", size = 2.3, max.overlaps = Inf, box.padding = 0.25, point.padding = 0.18, min.segment.length = 0, seed = 1, show.legend = FALSE)
   } else {
     p <- p + ggplot2::geom_text(color = "#334155", size = 2.4, check_overlap = TRUE, vjust = -0.8, show.legend = FALSE)
   }
   paste0(
     "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
-    .qc_ggplot_svg(p, width = 10.4, height = 6.2, css_class = "qc-plot pca-plot")
+    .qc_ggplot_svg(p, width = 12, height = 4.1, css_class = "qc-plot pca-plot")
   )
 }
 
@@ -1979,31 +2212,48 @@
       y = NULL, fill = NULL, color = NULL,
       caption = "Violin shapes are deterministic reconstructions from saved quantile summaries; center dots and lines show the median and interquartile range."
     ) +
-    ggplot2::theme_bw(base_size = 10) +
+    ggplot2::theme_bw(base_size = 9) +
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 13),
       axis.title.x = ggplot2::element_text(face = "bold"),
-      axis.text.y = ggplot2::element_text(size = 8.5, color = "#111827"),
+      axis.text.y = ggplot2::element_text(size = 7.4, color = "#111827"),
       panel.grid.major.y = ggplot2::element_line(color = "#eef1f5", linewidth = 0.3),
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "top",
-      legend.key.height = grid::unit(3.5, "mm"),
-      legend.text = ggplot2::element_text(size = 9),
-      plot.caption = ggplot2::element_text(size = 8, color = "#64748b", hjust = 0),
-      plot.margin = ggplot2::margin(8, 12, 8, 8)
+      legend.key.height = grid::unit(2.8, "mm"),
+      legend.text = ggplot2::element_text(size = 8),
+      plot.caption = ggplot2::element_text(size = 7, color = "#64748b", hjust = 0),
+      plot.margin = ggplot2::margin(4, 8, 4, 5)
     )
   paste0(
     "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
-    .qc_ggplot_svg(p, width = width / 100, height = max(4.4, 2.1 + length(conditions) * 0.25), css_class = "qc-plot violin-plot raincloud-plot distribution-plot")
+    .qc_ggplot_svg(p, width = width / 100, height = 4.2, css_class = "qc-plot violin-plot raincloud-plot distribution-plot")
   )
 }
 
-.module1_qc_distribution_table <- function(omics_data, canonical_fps = character()) {
+.module1_qc_distribution_table <- function(omics_data,
+                                           canonical_fps = character(),
+                                           module1_dir = NULL,
+                                           project_config = NULL,
+                                           verbose = TRUE) {
   if (!is_multiomic_object(omics_data)) return(tibble::tibble())
   out <- if (is.data.frame(omics_data$qc$fp_score_distributions)) omics_data$qc$fp_score_distributions else tibble::tibble()
+  cached <- .module1_qc_read_distribution_cache(omics_data, module1_dir)
+  if (nrow(cached)) out <- dplyr::bind_rows(out, cached)
   probs <- seq(0, 1, length.out = 101L)
-  if (!nrow(out)) {
-    out <- dplyr::bind_rows(lapply(seq_len(ncol(omics_data$matrices$fp_score)), function(i) {
+  stages <- if ("stage" %in% names(out)) as.character(out$stage) else character()
+  if (!"raw" %in% stages) {
+    recovered <- .module1_qc_recover_raw_distributions(
+      omics_data,
+      module1_dir = module1_dir,
+      project_config = project_config,
+      verbose = verbose
+    )
+    if (nrow(recovered)) out <- dplyr::bind_rows(out, recovered)
+  }
+  stages <- if ("stage" %in% names(out)) as.character(out$stage) else character()
+  if (!"quantile_normalized" %in% stages) {
+    normalized <- dplyr::bind_rows(lapply(seq_len(ncol(omics_data$matrices$fp_score)), function(i) {
       values <- omics_data$matrices$fp_score[, i]
       tibble::tibble(
         condition = colnames(omics_data$matrices$fp_score)[[i]],
@@ -2013,6 +2263,11 @@
         n = length(values)
       )
     }))
+    out <- dplyr::bind_rows(out, normalized)
+  }
+  if (nrow(out)) {
+    out <- out[as.character(out$stage) != "canonical_filtered", , drop = FALSE]
+    out <- out[!duplicated(out[, c("condition", "stage", "probability")]), , drop = FALSE]
   }
   keep <- match(canonical_fps, rownames(omics_data$matrices$fp_score), nomatch = 0L)
   keep <- unique(keep[keep > 0L])
@@ -2029,6 +2284,8 @@
     }))
     out <- dplyr::bind_rows(out, filtered)
   }
+  stage_order <- match(as.character(out$stage), c("raw", "quantile_normalized", "canonical_filtered"))
+  out <- out[order(match(as.character(out$condition), colnames(omics_data$matrices$fp_score)), stage_order, out$probability), , drop = FALSE]
   tibble::as_tibble(out)
 }
 
@@ -2113,25 +2370,16 @@
   if (!is_multiomic_object(omics_data)) {
     .log_abort("`recompute_correlation_hist = TRUE` requires the matching CraftGRN multiomic object.")
   }
-  cache <- .module1_qc_read_canonical_fp_cache(module1, module1_dir = module1_dir)
+  cache <- .module1_qc_recover_canonical_fp_cache(
+    module1,
+    module1_dir = module1_dir,
+    omics_data = omics_data,
+    project_config = project_config,
+    verbose = verbose
+  )
   footprint_ids <- if (is.data.frame(cache) && "fp_id" %in% names(cache)) unique(as.character(cache$fp_id)) else character()
   if (!length(footprint_ids) && is.list(module1$high_confidence_footprints) && "fp_id" %in% names(module1$high_confidence_footprints)) {
     footprint_ids <- unique(as.character(module1$high_confidence_footprints$fp_id))
-  }
-  if (!length(footprint_ids) && !is.null(module1_dir)) {
-    config_path <- file.path(dirname(module1_dir), "project.yaml")
-    config <- .module1_relevant_config(project_config %||% if (file.exists(config_path)) config_path else NULL)
-    explorer_path <- file.path(module1_dir, "cache", "module1_qc_analysis.rds")
-    explorer <- if (file.exists(explorer_path)) tryCatch(readRDS(explorer_path), error = function(e) NULL) else NULL
-    filter_is_exact <- isTRUE(config$filter_to_canonical_bound)
-    matching_sites <- is.list(explorer) && identical(as.integer(explorer$fingerprint$n_sites), as.integer(nrow(omics_data$matrices$fp_score)))
-    prepared <- if (filter_is_exact && matching_sites) .module1_prepare_predict_omics(omics_data, verbose = FALSE) else NULL
-    matching_tfs <- is.list(prepared) && setequal(.module1_expressed_tfs(prepared), as.character(explorer$tf_names))
-    if (filter_is_exact && matching_sites && matching_tfs && length(explorer$used_site_bits)) {
-      used <- .module1_unpack_site_indices(explorer$used_site_bits, nrow(omics_data$matrices$fp_score))
-      footprint_ids <- rownames(omics_data$matrices$fp_score)[used]
-      if (isTRUE(verbose)) .log_warn("Recovered the exact legacy canonical-bound footprint population from the validated TFBS explorer cache.")
-    }
   }
   if (!length(footprint_ids)) {
     .log_abort("Cannot recompute the full correlation histogram: the exact canonical-bound footprint set was not saved. Regenerate Module 1 outputs first.")
@@ -2181,10 +2429,10 @@
     if (is.finite(r_cutoff)) paste0(">= ", format(r_cutoff, scientific = FALSE, trim = TRUE)) else "cutoff not recorded",
     if (is.finite(p_cutoff)) paste0("; p <= ", format(p_cutoff, scientific = TRUE)) else "",
     if (is.finite(fdr_cutoff)) paste0("; FDR <= ", format(fdr_cutoff, scientific = TRUE)) else "",
-    ". Gray bars are all evaluated pairs; colored bars are retained pairs."
+    ". Gray bars are all evaluated pairs. Colored retained-pair overlays are shown only for Best R because final selection uses the better of Pearson and Spearman."
   )
   paste0(
-    "<div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>View <select id=\"corr-view\"><option value=\"individual\">Pearson and Spearman</option><option value=\"best\">Best R</option></select></label><label>TF 1 <select id=\"corr-tf-1\"></select></label><label>TF 2 <select id=\"corr-tf-2\"></select></label><label>TF 3 <select id=\"corr-tf-3\"></select></label></div><p id=\"corr-population-note\" class=\"metric-note\">", .qc_html_escape(cutoff_note), "</p><div id=\"corr-grid\" class=\"correlation-grid\"></div></div>",
+    "<style>.correlation-browser:has(#corr-view option[value=individual]:checked) rect[fill=\"#2b8cbe\"],.correlation-browser:has(#corr-view option[value=individual]:checked) rect[fill=\"#e67e22\"]{display:none}</style><div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>View <select id=\"corr-view\"><option value=\"best\" selected>Best R</option><option value=\"individual\">Pearson and Spearman</option></select></label><label>TF 1 <select id=\"corr-tf-1\"></select></label><label>TF 2 <select id=\"corr-tf-2\"></select></label><label>TF 3 <select id=\"corr-tf-3\"></select></label></div><p id=\"corr-population-note\" class=\"metric-note\">", .qc_html_escape(cutoff_note), "</p><div id=\"corr-grid\" class=\"correlation-grid\"></div></div>",
     "<script>(()=>{const R=", json, ",cutoff=", cutoff_json, ",scope=document.getElementById('corr-scope'),view=document.getElementById('corr-view'),sels=[1,2,3].map(i=>document.getElementById('corr-tf-'+i)),grid=document.getElementById('corr-grid'),note=document.getElementById('corr-population-note'),base=note.textContent;[...new Set(R.map(x=>x.scope))].forEach(x=>scope.add(new Option(x,x)));function fillTFs(){const old=sels.map(x=>x.value),rows=R.filter(x=>x.scope===scope.value&&x.tf!=='Overall'),alpha=[...new Set(rows.map(x=>x.tf))].sort(),rank=[...alpha].sort((a,b)=>rows.filter(x=>x.tf===b&&x.method==='best_r').reduce((s,x)=>s+(+x.n_retained||0),0)-rows.filter(x=>x.tf===a&&x.method==='best_r').reduce((s,x)=>s+(+x.n_retained||0),0)||a.localeCompare(b));sels.forEach((s,i)=>{s.replaceChildren();alpha.forEach(x=>s.add(new Option(x,x)));s.value=alpha.includes(old[i])?old[i]:(rank[i]||alpha[i]||'')})}function hist(method,name){const rows=R.filter(x=>x.scope===scope.value&&x.method===method&&x.tf===name),w=390,h=280,l=62,b=48,t=38,pw=w-l-14,ph=h-b-t,m=Math.max(1,...rows.map(x=>+x.n_total)),lo=Math.min(...rows.map(x=>+x.bin_left),-1),hi=Math.max(...rows.map(x=>+x.bin_right),1),color=method==='pearson_r'?'#2b8cbe':method==='spearman_r'?'#e67e22':'#7b3294',label=method==='pearson_r'?'Pearson R':method==='spearman_r'?'Spearman R':'Best R';let s='<figure class=\"correlation-card\"><svg class=\"qc-plot\" viewBox=\"0 0 '+w+' '+h+'\"><text x=\"'+w/2+'\" y=\"22\" text-anchor=\"middle\" class=\"corr-title\">'+name+' - '+label+'</text>';for(let i=0;i<=2;i++){const v=m*i/2,y=t+ph-ph*i/2;s+='<line x1=\"'+l+'\" y1=\"'+y+'\" x2=\"'+(w-14)+'\" y2=\"'+y+'\" class=\"corr-gridline\"/><text x=\"'+(l-7)+'\" y=\"'+(y+4)+'\" text-anchor=\"end\" class=\"corr-tick\">'+Math.round(v).toLocaleString()+'</text>'}rows.forEach(x=>{const x1=l+(+x.bin_left-lo)/(hi-lo)*pw,x2=l+(+x.bin_right-lo)/(hi-lo)*pw,bh=ph*(+x.n_total)/m,kh=ph*(+x.n_retained)/m;s+='<rect x=\"'+x1+'\" y=\"'+(t+ph-bh)+'\" width=\"'+Math.max(1,x2-x1-.5)+'\" height=\"'+bh+'\" fill=\"#d7dce2\"><title>All evaluated: '+(+x.n_total).toLocaleString()+'</title></rect><rect x=\"'+x1+'\" y=\"'+(t+ph-kh)+'\" width=\"'+Math.max(1,x2-x1-.5)+'\" height=\"'+kh+'\" fill=\"'+color+'\"><title>Retained: '+(+x.n_retained).toLocaleString()+'</title></rect>'});if(cutoff!==null){const cx=l+(cutoff-lo)/(hi-lo)*pw;s+='<line x1=\"'+cx+'\" y1=\"'+t+'\" x2=\"'+cx+'\" y2=\"'+(t+ph)+'\" stroke=\"#b2182b\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/><text x=\"'+(cx+4)+'\" y=\"'+(t+12)+'\" class=\"corr-tick\">cutoff '+cutoff+'</text>'}[-1,-.5,0,.5,1].forEach(v=>{const x=l+(v-lo)/(hi-lo)*pw;s+='<text x=\"'+x+'\" y=\"'+(h-25)+'\" text-anchor=\"middle\" class=\"corr-tick\">'+v+'</text>'});return s+'<line x1=\"'+l+'\" y1=\"'+(t+ph)+'\" x2=\"'+(w-14)+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><line x1=\"'+l+'\" y1=\"'+t+'\" x2=\"'+l+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><text x=\"'+(l+pw/2)+'\" y=\"'+(h-3)+'\" text-anchor=\"middle\" class=\"corr-axis-title\">Correlation</text><text x=\"15\" y=\"'+(t+ph/2)+'\" transform=\"rotate(-90 15 '+(t+ph/2)+')\" text-anchor=\"middle\" class=\"corr-axis-title\">Pair count</text></svg></figure>'}function draw(){const names=['Overall',...sels.map(x=>x.value).filter(Boolean)],methods=view.value==='best'?['best_r']:['pearson_r','spearman_r'],population=[...new Set(R.filter(x=>x.scope===scope.value).map(x=>x.population))],legacy=population.some(x=>x!=='all_evaluated');note.textContent=base+(legacy?' This legacy stage contains a retained-pair sample only; gray bars do not represent the discarded population or the complete retained total.':'');grid.innerHTML=names.map(n=>methods.map(m=>hist(m,n)).join('')).join('')}scope.onchange=()=>{fillTFs();draw()};view.onchange=draw;sels.forEach(s=>s.onchange=draw);fillTFs();draw()})()</script>"
   )
 }
@@ -2250,7 +2498,7 @@ build_module1_qc_report <- function(module1,
     omics_data <- module1$omics_data
   }
   if (is.null(omics_data) && !is.null(module1_dir)) {
-    rds <- .qc_find_module1_omics_rds(module1_dir)
+    rds <- .qc_find_module1_omics_rds(module1_dir, project_config = project_config)
     if (!is.na(rds) && file.exists(rds)) omics_data <- readRDS(rds)
   }
   if (is.null(output_dir)) {
@@ -2285,7 +2533,13 @@ build_module1_qc_report <- function(module1,
   } else {
     tibble::tibble()
   }
-  canonical_fp_cache <- .module1_qc_read_canonical_fp_cache(module1, module1_dir = module1_dir)
+  canonical_fp_cache <- .module1_qc_recover_canonical_fp_cache(
+    module1,
+    module1_dir = module1_dir,
+    omics_data = omics_data,
+    project_config = project_config,
+    verbose = verbose
+  )
   canonical_fps <- if (is.data.frame(canonical_fp_cache) && nrow(canonical_fp_cache) && "fp_id" %in% names(canonical_fp_cache)) {
     as.character(canonical_fp_cache$fp_id)
   } else {
@@ -2376,7 +2630,14 @@ build_module1_qc_report <- function(module1,
   if (isTRUE(build_tfbs_explorer) && is_multiomic_object(omics_data)) {
     cache_path <- .module1_explorer_cache_path(explorer_source, file.path(output_dir, report_name))
     explorer_cache <- tryCatch(
-      .module1_build_explorer_cache(explorer_source, omics_data, cache_path, rebuild = FALSE, verbose = verbose),
+      .module1_build_explorer_cache(
+        explorer_source,
+        omics_data,
+        cache_path,
+        project_config = project_config,
+        rebuild = FALSE,
+        verbose = verbose
+      ),
       error = function(e) {
         .log_warn("Embedded Module 1 TFBS Explorer was not built: {conditionMessage(e)}")
         NULL
@@ -2463,7 +2724,13 @@ build_module1_qc_report <- function(module1,
     omics_data = omics_data,
     canonical_status = canonical_status
   )
-  distribution_table <- .module1_qc_distribution_table(omics_data, canonical_fps = canonical_fps)
+  distribution_table <- .module1_qc_distribution_table(
+    omics_data,
+    canonical_fps = canonical_fps,
+    module1_dir = module1_dir,
+    project_config = project_config,
+    verbose = verbose
+  )
   sample_ids <- if (is_multiomic_object(omics_data)) {
     unique(unlist(lapply(
       list(omics_data$matrices$gene_expr, omics_data$matrices$atac_score, omics_data$matrices$fp_score),
@@ -2574,7 +2841,8 @@ build_module1_qc_report <- function(module1,
     .qc_table_html(parameter_table, max_rows = 100L),
     "</div><aside class=\"condition-summary\"><div class=\"card-label\">Condition roster</div><div class=\"condition-count\">", .qc_format_number(n_conditions), "</div><div class=\"condition-list\">", .qc_html_escape(paste(condition_names, collapse = " | ")), "</div></aside></div></details>"
   )
-  missing_fp_stages <- setdiff(c("raw", "quantile_normalized", "canonical_filtered"), unique(as.character(distribution_table$stage)))
+  recorded_fp_stages <- if ("stage" %in% names(distribution_table)) unique(as.character(distribution_table$stage)) else character()
+  missing_fp_stages <- setdiff(c("raw", "quantile_normalized", "canonical_filtered"), recorded_fp_stages)
   distribution_notice <- if (length(missing_fp_stages)) {
     paste0("<p class=\"empty\">", .qc_html_escape(paste0(
       "Not recorded in this saved multiomic object: ", paste(gsub("_", " ", missing_fp_stages), collapse = ", "),
@@ -2615,7 +2883,7 @@ build_module1_qc_report <- function(module1,
       "<button type=\"button\" data-qc-group=\"per-condition\" data-qc-view=\"counts\" aria-selected=\"false\">Counts</button></div>",
       "<div class=\"qc-view active\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"distributions\">", distribution_views, "</div>",
       "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"pca\"><h3>PCA of samples based on the most variable ", if (has_atac) "RNA, ATAC, and filtered footprints" else "RNA and filtered footprints", "</h3>", pca_plots, "</div>",
-      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"counts\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div></div>",
+      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"counts\"><div class=\"plot-grid counts-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition", bar_height = 14L, row_gap = 5L), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition", bar_height = 14L, row_gap = 5L), "</figure></div></div></div>",
       "<details><summary>Per-condition values</summary>",
       .qc_table_html(distribution_summary, max_rows = 300L),
       .qc_table_html(condition_qc$condition_summary, max_rows = 100L), "</details>", per_condition_script
@@ -2646,7 +2914,8 @@ build_module1_qc_report <- function(module1,
     .qc_section("6. Top Predicted TFs at Motif-Containing Footprints", paste0(
       "<details class=\"qc-guide\"><summary>How to read this section</summary>", .qc_callout_html("Motif-centered review", c(
         "Select a motif to rank predicted TFs found at footprint sites carrying that motif.",
-        "The true top 20 are shown first; canonical motif TF references follow with their actual rank or not-predicted status.",
+        "The selector excludes motifs without retained binding for every annotated canonical TF.",
+        "The true top 20 are shown first; eligible canonical motif TF references follow with their actual rank.",
         "Canonical motif identity does not force a TF to rank first because broader prediction uses TF-footprint correlation evidence."
       )), "</details>",
       if (is.list(explorer_components)) explorer_components$motif else explorer_empty,

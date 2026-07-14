@@ -1276,6 +1276,11 @@ predict_tfbs <- function(omics_data,
       qc_summary = qc_summary,
       out_dir = out_dir
     )
+    distribution_path <- .module1_qc_write_distribution_cache(
+      multiomic_input$qc$fp_score_distributions,
+      multiomic_input,
+      out_dir
+    )
     if (!is.null(prediction_stats_manifest_path)) {
       reports <- c(reports, list(
         high_confidence_footprints = high_path,
@@ -1305,6 +1310,9 @@ predict_tfbs <- function(omics_data,
       stats_path <- file.path(out_dir, "module1_prediction_stats.csv.gz")
       readr::write_csv(prediction_stats, stats_path)
       reports$prediction_stats <- stats_path
+    }
+    if (length(distribution_path) && !is.na(distribution_path) && file.exists(distribution_path)) {
+      reports$fp_score_distributions <- distribution_path
     }
   }
   if (isTRUE(write_outputs) && isTRUE(write_bed)) {
