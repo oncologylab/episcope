@@ -689,14 +689,14 @@
     "header .wrap{padding-top:24px;padding-bottom:18px}",
     "h1{font-size:28px;line-height:1.12;margin:0 0 5px 0;letter-spacing:0;color:#111827;font-weight:750}",
     "h2{font-size:17px;line-height:1.25;margin:0 0 12px 0;color:#111827;font-weight:750;border-bottom:1px solid var(--line);padding-bottom:7px}",
-    "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px}",
+    "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px;min-width:0}",
     "h3{font-size:14px;line-height:1.25;margin:0 0 8px 0;color:#111827;font-weight:750}",
     ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
-    ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:16px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:8px}",
-    "table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
+    ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.run-setup>*{min-width:0}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:16px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}",
+    ".table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
     ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:10px 2px 2px}.condition-tag{font-size:11px;color:#435066;display:inline-flex;align-items:center;gap:5px}.condition-tag i{width:9px;height:9px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
@@ -705,6 +705,8 @@
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
+  body <- gsub("<table", "<div class=\"table-scroll\"><table", body, fixed = TRUE)
+  body <- gsub("</table>", "</table></div>", body, fixed = TRUE)
   html <- paste0(
     "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
     "<title>", .qc_html_escape(title), "</title><style>", css, "</style></head><body>",
@@ -1687,93 +1689,178 @@
   list(key = key, interpretation = interp, review = review)
 }
 
-.module1_qc_pca_scores <- function(mat, label, max_features = 2000L, transform = c("identity", "log2p1")) {
-  transform <- match.arg(transform)
+.module1_qc_sample_annotations <- function(omics_data, sample_ids) {
+  sample_ids <- unique(as.character(sample_ids))
+  out <- tibble::tibble(sample_id = sample_ids, display_label = sample_ids, biological_group = sample_ids, group_field = "sample_id", matched = FALSE)
+  if (!is_multiomic_object(omics_data) || !is.data.frame(omics_data$samples) || !nrow(omics_data$samples)) return(out)
+  samples <- as.data.frame(omics_data$samples, stringsAsFactors = FALSE)
+  key_priority <- c("id", "sample_id", "condition_id", "module1_condition_id", "name", "sample", "id_atac", "id_fp", "id_rna", "strict_match_rna", "broad_match_rna")
+  label_priority <- c("condition_display", "name", "condition_id", "sample", "sample_id", "id")
+  group_priority <- c("condition_base", "comparison_group", "cell_stress_type", "condition", "cell_context", "cell", "condition_id", "name")
+  columns_for <- function(keys) {
+    unlist(lapply(keys, function(key) names(samples)[tolower(names(samples)) == key]), use.names = FALSE)
+  }
+  key_columns <- unique(columns_for(key_priority))
+  label_columns <- unique(columns_for(label_priority))
+  group_columns <- unique(columns_for(group_priority))
+  for (i in seq_along(sample_ids)) {
+    row_index <- NA_integer_
+    for (column in key_columns) {
+      hit <- which(as.character(samples[[column]]) == sample_ids[[i]])
+      if (length(hit)) {
+        row_index <- hit[[1L]]
+        break
+      }
+    }
+    if (!is.finite(row_index)) next
+    first_value <- function(columns, fallback) {
+      for (column in columns) {
+        value <- as.character(samples[[column]][[row_index]])
+        if (!is.na(value) && nzchar(value)) return(list(value = value, column = column))
+      }
+      list(value = fallback, column = "sample_id")
+    }
+    label <- first_value(label_columns, sample_ids[[i]])
+    group <- first_value(group_columns, label$value)
+    out$display_label[[i]] <- label$value
+    out$biological_group[[i]] <- group$value
+    out$group_field[[i]] <- group$column
+    out$matched[[i]] <- TRUE
+  }
+  out
+}
+
+.module1_qc_transform_matrix <- function(mat, assay = c("rna", "atac", "fp")) {
+  assay <- match.arg(assay)
   mat <- .qc_as_numeric_matrix(mat)
+  if (!length(mat)) return(list(matrix = mat, transformation = "identity"))
+  row_index <- unique(round(seq(1, nrow(mat), length.out = min(nrow(mat), 10000L))))
+  probe <- as.numeric(mat[row_index, , drop = FALSE])
+  probe <- probe[is.finite(probe)]
+  has_negative <- length(probe) && any(probe < 0)
+  p99 <- if (length(probe)) as.numeric(stats::quantile(probe, 0.99, na.rm = TRUE, names = FALSE)) else NA_real_
+  use_log <- !identical(assay, "fp") && !has_negative && is.finite(p99) && p99 > 50
+  if (use_log) mat <- log2(pmax(mat, 0) + 1)
+  list(matrix = mat, transformation = if (use_log) "log2(x + 1)" else "identity")
+}
+
+.module1_qc_pca_scores <- function(mat, label, annotations = NULL, assay = c("rna", "atac", "fp"), max_features = 2000L) {
+  assay <- match.arg(assay)
+  prepared <- .module1_qc_transform_matrix(mat, assay = assay)
+  mat <- prepared$matrix
   if (nrow(mat) < 2L || ncol(mat) < 3L) return(tibble::tibble())
-  mat[!is.finite(mat)] <- 0
-  if (identical(transform, "log2p1")) mat <- log2(pmax(mat, 0) + 1)
   variance <- apply(mat, 1L, stats::var, na.rm = TRUE)
-  keep <- head(order(variance, decreasing = TRUE, na.last = NA), min(as.integer(max_features), sum(is.finite(variance) & variance > 0)))
+  keep_n <- min(as.integer(max_features), sum(is.finite(variance) & variance > 0))
+  keep <- head(order(variance, decreasing = TRUE, na.last = NA), keep_n)
   if (length(keep) < 2L) return(tibble::tibble())
-  fit <- tryCatch(stats::prcomp(t(mat[keep, , drop = FALSE]), center = TRUE, scale. = TRUE), error = function(e) NULL)
+  selected <- mat[keep, , drop = FALSE]
+  for (i in seq_len(nrow(selected))) {
+    bad <- !is.finite(selected[i, ])
+    if (any(bad)) {
+      replacement <- stats::median(selected[i, !bad], na.rm = TRUE)
+      if (!is.finite(replacement)) replacement <- 0
+      selected[i, bad] <- replacement
+    }
+  }
+  fit <- tryCatch(stats::prcomp(t(selected), center = TRUE, scale. = TRUE), error = function(e) NULL)
   if (is.null(fit) || ncol(fit$x) < 2L) return(tibble::tibble())
   explained <- 100 * fit$sdev^2 / sum(fit$sdev^2)
+  sample_id <- rownames(fit$x)
+  if (!is.data.frame(annotations) || !nrow(annotations)) {
+    annotations <- tibble::tibble(sample_id = sample_id, display_label = sample_id, biological_group = sample_id, group_field = "sample_id", matched = FALSE)
+  }
+  annotations <- annotations[match(sample_id, annotations$sample_id), , drop = FALSE]
   tibble::tibble(
-    condition = rownames(fit$x),
+    sample_id = sample_id,
+    display_label = ifelse(is.na(annotations$display_label), sample_id, annotations$display_label),
+    biological_group = ifelse(is.na(annotations$biological_group), sample_id, annotations$biological_group),
+    metadata_matched = annotations$matched %in% TRUE,
     PC1 = fit$x[, 1L],
     PC2 = fit$x[, 2L],
     panel = label,
+    transformation = prepared$transformation,
+    n_features = length(keep),
     x_label = paste0("PC1 (", round(explained[[1L]], 1), "%)"),
     y_label = paste0("PC2 (", round(explained[[2L]], 1), "%)")
   )
 }
 
-.module1_qc_pca_svg <- function(x, title, condition_levels, width = 520L, height = 390L) {
+.qc_ggplot_svg <- function(plot, width = 8, height = 5, css_class = "qc-plot") {
+  path <- tempfile(fileext = ".svg")
+  device_open <- FALSE
+  on.exit({
+    if (device_open) try(grDevices::dev.off(), silent = TRUE)
+    unlink(path)
+  }, add = TRUE)
+  rendered <- tryCatch({
+    grDevices::svg(path, width = width, height = height, bg = "white", onefile = TRUE, pointsize = 11)
+    device_open <- TRUE
+    print(plot)
+    grDevices::dev.off()
+    device_open <- FALSE
+    paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  }, error = function(e) "")
+  if (!nzchar(rendered)) return("<p class=\"empty\">Plot rendering failed.</p>")
+  start <- regexpr("<svg", rendered, fixed = TRUE)[[1L]]
+  if (start < 1L) return("<p class=\"empty\">Plot rendering failed.</p>")
+  rendered <- substr(rendered, start, nchar(rendered))
+  id_matches <- regmatches(rendered, gregexpr("id=\"[^\"]+\"", rendered, perl = TRUE))[[1L]]
+  if (length(id_matches) && !identical(id_matches, character())) {
+    ids <- unique(gsub("^id=\"|\"$", "", id_matches))
+    ids <- ids[order(nchar(ids), decreasing = TRUE)]
+    prefix <- paste0("qcsvg-", gsub("[^A-Za-z0-9]", "", basename(path)), "-")
+    for (id in ids) {
+      rendered <- gsub(paste0("id=\"", id, "\""), paste0("id=\"", prefix, id, "\""), rendered, fixed = TRUE)
+      rendered <- gsub(paste0("#", id), paste0("#", prefix, id), rendered, fixed = TRUE)
+    }
+  }
+  sub("<svg ", paste0("<svg class=\"", css_class, "\" "), rendered, fixed = TRUE)
+}
+
+.module1_qc_pca_svg <- function(x, title, color_map) {
+  PC1 <- PC2 <- biological_group <- display_label <- NULL
   if (!is.data.frame(x) || !nrow(x)) return(paste0("<h3>", .qc_html_escape(title), "</h3><p class=\"empty\">PCA requires at least three samples and two variable features.</p>"))
   x <- as.data.frame(x, stringsAsFactors = FALSE)
-  condition_levels <- unique(as.character(condition_levels))
-  colors <- grDevices::hcl.colors(max(3L, length(condition_levels)), palette = "Dark 3")
-  color_map <- stats::setNames(colors[seq_along(condition_levels)], condition_levels)
-  left <- 64L
-  right <- 24L
-  top <- 44L
-  bottom <- 58L
-  plot_w <- width - left - right
-  plot_h <- height - top - bottom
-  xr <- range(x$PC1, finite = TRUE)
-  yr <- range(x$PC2, finite = TRUE)
-  if (diff(xr) == 0) xr <- xr + c(-1, 1)
-  if (diff(yr) == 0) yr <- yr + c(-1, 1)
-  px <- left + (x$PC1 - xr[[1L]]) / diff(xr) * plot_w
-  py <- top + plot_h - (x$PC2 - yr[[1L]]) / diff(yr) * plot_h
-  grid_x <- seq(xr[[1L]], xr[[2L]], length.out = 5L)
-  grid_y <- seq(yr[[1L]], yr[[2L]], length.out = 5L)
-  x_axis <- x$x_label[[1L]] %||% "PC1"
-  y_axis <- x$y_label[[1L]] %||% "PC2"
-  grids <- c(
-    vapply(seq_along(grid_x), function(i) {
-      gx <- left + (grid_x[[i]] - xr[[1L]]) / diff(xr) * plot_w
-      paste0("<line x1=\"", gx, "\" y1=\"", top, "\" x2=\"", gx, "\" y2=\"", top + plot_h, "\" class=\"pca-grid\"/><text x=\"", gx, "\" y=\"", top + plot_h + 20L, "\" text-anchor=\"middle\" class=\"pca-tick\">", format(round(grid_x[[i]], 1), trim = TRUE), "</text>")
-    }, character(1L)),
-    vapply(seq_along(grid_y), function(i) {
-      gy <- top + plot_h - (grid_y[[i]] - yr[[1L]]) / diff(yr) * plot_h
-      paste0("<line x1=\"", left, "\" y1=\"", gy, "\" x2=\"", left + plot_w, "\" y2=\"", gy, "\" class=\"pca-grid\"/><text x=\"", left - 8L, "\" y=\"", gy + 4L, "\" text-anchor=\"end\" class=\"pca-tick\">", format(round(grid_y[[i]], 1), trim = TRUE), "</text>")
-    }, character(1L))
-  )
-  points <- vapply(seq_len(nrow(x)), function(i) {
-    condition <- as.character(x$condition[[i]])
-    fill <- unname(color_map[condition])
-    if (!length(fill) || is.na(fill) || !nzchar(fill)) fill <- "#315f97"
-    paste0(
-      "<circle cx=\"", round(px[[i]], 2), "\" cy=\"", round(py[[i]], 2), "\" r=\"6.5\" fill=\"", fill, "\" class=\"pca-point\"><title>",
-      .qc_html_escape(paste0(condition, " | ", x_axis, ": ", round(x$PC1[[i]], 2), " | ", y_axis, ": ", round(x$PC2[[i]], 2))),
-      "</title></circle>"
+  p <- ggplot2::ggplot(x, ggplot2::aes(x = PC1, y = PC2, color = biological_group, label = display_label)) +
+    ggplot2::geom_hline(yintercept = 0, color = "#d7dde6", linewidth = 0.35) +
+    ggplot2::geom_vline(xintercept = 0, color = "#d7dde6", linewidth = 0.35) +
+    ggplot2::geom_point(size = 3.2, alpha = 0.92) +
+    ggplot2::scale_color_manual(values = color_map, drop = FALSE) +
+    ggplot2::labs(
+      subtitle = paste0(x$transformation[[1L]], "; ", .qc_format_number(x$n_features[[1L]]), " variable features"),
+      x = x$x_label[[1L]], y = x$y_label[[1L]], color = "Biological group"
+    ) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::theme_bw(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 13),
+      plot.subtitle = ggplot2::element_text(size = 9, color = "#526071"),
+      axis.title = ggplot2::element_text(face = "bold"),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "none",
+      plot.margin = ggplot2::margin(8, 34, 8, 8)
     )
-  }, character(1L))
+  if (requireNamespace("ggrepel", quietly = TRUE)) {
+    p <- p + ggrepel::geom_text_repel(size = 2.5, max.overlaps = Inf, box.padding = 0.3, point.padding = 0.2, min.segment.length = 0, seed = 1, show.legend = FALSE)
+  } else {
+    p <- p + ggplot2::geom_text(size = 2.4, check_overlap = TRUE, vjust = -0.8, show.legend = FALSE)
+  }
   paste0(
-    "<svg class=\"qc-plot pca-plot\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\">",
-    "<text x=\"", width / 2, "\" y=\"24\" text-anchor=\"middle\" class=\"plot-title\">", .qc_html_escape(title), "</text>",
-    paste(grids, collapse = ""),
-    "<line x1=\"", left, "\" y1=\"", top + plot_h, "\" x2=\"", left + plot_w, "\" y2=\"", top + plot_h, "\" class=\"axis\"/>",
-    "<line x1=\"", left, "\" y1=\"", top, "\" x2=\"", left, "\" y2=\"", top + plot_h, "\" class=\"axis\"/>",
-    paste(points, collapse = ""),
-    "<text x=\"", left + plot_w / 2, "\" y=\"", height - 8L, "\" text-anchor=\"middle\" class=\"axis-title\">", .qc_html_escape(x_axis), "</text>",
-    "<text x=\"16\" y=\"", top + plot_h / 2, "\" transform=\"rotate(-90 16 ", top + plot_h / 2, ")\" text-anchor=\"middle\" class=\"axis-title\">", .qc_html_escape(y_axis), "</text></svg>"
+    "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
+    .qc_ggplot_svg(p, width = 7.2, height = 5.2, css_class = "qc-plot pca-plot")
   )
 }
 
-.module1_qc_condition_legend <- function(conditions) {
-  conditions <- unique(as.character(conditions))
-  if (!length(conditions)) return("")
-  colors <- grDevices::hcl.colors(max(3L, length(conditions)), palette = "Dark 3")[seq_along(conditions)]
-  items <- vapply(seq_along(conditions), function(i) {
-    paste0("<span class=\"condition-tag\"><i style=\"background:", colors[[i]], "\"></i>", .qc_html_escape(conditions[[i]]), "</span>")
+.module1_qc_condition_legend <- function(color_map) {
+  if (!length(color_map)) return("")
+  items <- vapply(seq_along(color_map), function(i) {
+    paste0("<span class=\"condition-tag\"><i style=\"background:", unname(color_map[[i]]), "\"></i>", .qc_html_escape(names(color_map)[[i]]), "</span>")
   }, character(1L))
   paste0("<div class=\"condition-legend\">", paste(items, collapse = ""), "</div>")
 }
 
 .module1_qc_violin_svg <- function(x, title, stage_labels = NULL, width = 900L) {
+  value <- y <- group <- stage <- q25 <- q75 <- median <- NULL
   need <- c("condition", "stage", "probability", "value")
   if (!is.data.frame(x) || !nrow(x) || !all(need %in% names(x))) return("<p class=\"empty\">Distribution data are unavailable.</p>")
   x <- as.data.frame(x, stringsAsFactors = FALSE)
@@ -1784,49 +1871,78 @@
   labels <- c(raw = "Raw", quantile_normalized = "Quantile-normalized", canonical_filtered = "Filtered", gene_expression = "Gene expression")
   if (!is.null(stage_labels)) labels[names(stage_labels)] <- stage_labels
   colors <- c(raw = "#27c1c7", quantile_normalized = "#ed8582", canonical_filtered = "#315f97", gene_expression = "#31a354")
-  left <- 220L
-  right <- 35L
-  top <- 60L
-  row_h <- max(34L, 22L + 13L * length(stages))
-  bottom <- 52L
-  height <- top + length(conditions) * row_h + bottom
-  plot_w <- width - left - right
-  central <- x[x$probability >= 0.01 & x$probability <= 0.99, , drop = FALSE]
-  value_range <- range(central$value, finite = TRUE)
-  if (diff(value_range) == 0) value_range <- value_range + c(-0.5, 0.5)
-  sx <- function(v) left + (v - value_range[[1L]]) / diff(value_range) * plot_w
-  paths <- list()
+  pseudo_parts <- list()
+  density_parts <- list()
+  summary_parts <- list()
   k <- 1L
+  stage_offset <- stats::setNames((seq_along(stages) - (length(stages) + 1) / 2) * 0.24, stages)
   for (ci in seq_along(conditions)) {
     condition <- conditions[[ci]]
-    base_y <- top + (ci - 0.5) * row_h
-    paths[[k]] <- paste0("<text x=\"", left - 12L, "\" y=\"", base_y + 4L, "\" text-anchor=\"end\" class=\"violin-label\">", .qc_html_escape(.qc_truncate_label(condition, 32L)), "</text>")
-    k <- k + 1L
+    base_y <- length(conditions) - ci + 1L
     for (si in seq_along(stages)) {
       stage <- stages[[si]]
       d <- x[x$condition == condition & x$stage == stage, , drop = FALSE]
       d <- d[order(d$probability), , drop = FALSE]
       if (nrow(d) < 5L) next
-      probs <- seq(0.005, 0.995, length.out = 401L)
+      probs <- seq(0.005, 0.995, length.out = 201L)
       sample_values <- stats::approx(d$probability, d$value, xout = probs, rule = 2, ties = "ordered")$y
-      den <- tryCatch(stats::density(sample_values, n = 96L, from = value_range[[1L]], to = value_range[[2L]], na.rm = TRUE), error = function(e) NULL)
+      center <- base_y + stage_offset[[stage]]
+      point_index <- unique(round(seq(1L, length(sample_values), length.out = min(81L, length(sample_values)))))
+      pseudo_parts[[k]] <- tibble::tibble(
+        condition = condition,
+        stage = stage,
+        value = sample_values[point_index],
+        y = center - 0.035 - ((seq_along(point_index) * 37L) %% 13L) / 13 * 0.11
+      )
+      den <- tryCatch(stats::density(sample_values, n = 128L, na.rm = TRUE), error = function(e) NULL)
       if (is.null(den) || !length(den$y) || max(den$y) <= 0) next
-      center <- base_y + (si - (length(stages) + 1) / 2) * 13L
-      half <- 5.2 * den$y / max(den$y)
-      xp <- sx(den$x)
-      poly_x <- c(xp, rev(xp))
-      poly_y <- c(center - half, rev(center + half))
-      points <- paste(paste0(round(poly_x, 2), ",", round(poly_y, 2)), collapse = " ")
-      median <- stats::approx(d$probability, d$value, xout = 0.5, rule = 2)$y
-      fill <- colors[[stage]] %||% "#64748b"
-      paths[[k]] <- paste0("<polygon points=\"", points, "\" fill=\"", fill, "\" class=\"violin-shape\"><title>", .qc_html_escape(paste0(condition, " | ", labels[[stage]] %||% stage)), "</title></polygon><line x1=\"", sx(median), "\" y1=\"", center - 5.5, "\" x2=\"", sx(median), "\" y2=\"", center + 5.5, "\" class=\"violin-median\"/>")
+      density_parts[[k]] <- tibble::tibble(
+        condition = condition,
+        stage = stage,
+        group = paste(condition, stage, sep = "::"),
+        value = c(den$x, rev(den$x)),
+        y = c(center + 0.19 * den$y / max(den$y), rep(center, length(den$x)))
+      )
+      quartiles <- stats::approx(d$probability, d$value, xout = c(0.25, 0.5, 0.75), rule = 2, ties = "ordered")$y
+      summary_parts[[k]] <- tibble::tibble(condition = condition, stage = stage, y = center, q25 = quartiles[[1L]], median = quartiles[[2L]], q75 = quartiles[[3L]])
       k <- k + 1L
     }
   }
-  ticks <- seq(value_range[[1L]], value_range[[2L]], length.out = 5L)
-  tick_svg <- vapply(ticks, function(v) paste0("<line x1=\"", sx(v), "\" y1=\"", top - 8L, "\" x2=\"", sx(v), "\" y2=\"", height - bottom, "\" class=\"violin-grid\"/><text x=\"", sx(v), "\" y=\"", height - 18L, "\" text-anchor=\"middle\" class=\"pca-tick\">", format(signif(v, 3), trim = TRUE), "</text>"), character(1L))
-  legend <- paste(vapply(seq_along(stages), function(i) paste0("<rect x=\"", left + (i - 1L) * 150L, "\" y=\"32\" width=\"12\" height=\"12\" fill=\"", colors[[stages[[i]]]] %||% "#64748b", "\"/><text x=\"", left + 18L + (i - 1L) * 150L, "\" y=\"42\" class=\"pca-tick\">", .qc_html_escape(labels[[stages[[i]]]] %||% stages[[i]]), "</text>"), character(1L)), collapse = "")
-  paste0("<svg class=\"qc-plot violin-plot\" viewBox=\"0 0 ", width, " ", height, "\" role=\"img\"><text x=\"0\" y=\"22\" class=\"plot-title\">", .qc_html_escape(title), "</text>", legend, paste(tick_svg, collapse = ""), paste(paths, collapse = ""), "</svg>")
+  density_data <- dplyr::bind_rows(density_parts)
+  pseudo_data <- dplyr::bind_rows(pseudo_parts)
+  summary_data <- dplyr::bind_rows(summary_parts)
+  if (!nrow(density_data)) return("<p class=\"empty\">Distribution data are unavailable.</p>")
+  stage_labels <- stats::setNames(unname(labels[stages]), stages)
+  stage_colors <- stats::setNames(vapply(stages, function(stage) colors[[stage]] %||% "#64748b", character(1L)), stages)
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_polygon(data = density_data, ggplot2::aes(x = value, y = y, group = group, fill = stage), color = "#374151", linewidth = 0.2, alpha = 0.82) +
+    ggplot2::geom_point(data = pseudo_data, ggplot2::aes(x = value, y = y, color = stage), size = 0.65, alpha = 0.28) +
+    ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = q25, xend = q75, y = y, yend = y, color = stage), linewidth = 1.5) +
+    ggplot2::geom_point(data = summary_data, ggplot2::aes(x = median, y = y, fill = stage), shape = 21, color = "#111827", stroke = 0.35, size = 2.2) +
+    ggplot2::scale_y_continuous(breaks = rev(seq_along(conditions)), labels = conditions, expand = ggplot2::expansion(add = c(0.35, 0.5))) +
+    ggplot2::scale_fill_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
+    ggplot2::scale_color_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
+    ggplot2::labs(
+      x = if (identical(stages, "gene_expression")) "Expression value" else "Footprint score",
+      y = NULL, fill = NULL, color = NULL,
+      caption = "Half violins and points are deterministic reconstructions from saved quantile summaries; points are not individual observations."
+    ) +
+    ggplot2::theme_bw(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 13),
+      axis.title.x = ggplot2::element_text(face = "bold"),
+      axis.text.y = ggplot2::element_text(size = 8.5, color = "#111827"),
+      panel.grid.major.y = ggplot2::element_line(color = "#eef1f5", linewidth = 0.3),
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = "top",
+      legend.text = ggplot2::element_text(size = 9),
+      plot.caption = ggplot2::element_text(size = 8, color = "#64748b", hjust = 0),
+      plot.margin = ggplot2::margin(8, 12, 8, 8)
+    )
+  paste0(
+    "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
+    .qc_ggplot_svg(p, width = width / 100, height = max(4.2, 1.8 + length(conditions) * 0.34), css_class = "qc-plot violin-plot raincloud-plot")
+  )
 }
 
 .module1_qc_distribution_table <- function(omics_data, canonical_fps = character()) {
@@ -1913,8 +2029,9 @@
 #'
 #' Builds a comprehensive HTML report for Module 1 run parameters, input gates,
 #' motif-supported canonical support, prediction output integrity, correlation
-#' diagnostics, condition-level CraftGRN multiomic input QC, footprint alignment summaries,
-#' warning checks, and related QC artifacts. The report can consume a
+#' diagnostics, condition-level CraftGRN multiomic input QC, metadata-aware PCA,
+#' footprint alignment summaries, warning checks, and interactive Binding,
+#' Co-binding, and Motif review. The report can consume a
 #' `predict_tfbs()` result, a step-by-step Module 1 result list, or a Module 1
 #' output directory.
 #'
@@ -2134,6 +2251,20 @@ build_module1_qc_report <- function(module1,
     canonical_status = canonical_status
   )
   distribution_table <- .module1_qc_distribution_table(omics_data, canonical_fps = canonical_fps)
+  sample_ids <- if (is_multiomic_object(omics_data)) {
+    unique(unlist(lapply(
+      list(omics_data$matrices$gene_expr, omics_data$matrices$atac_score, omics_data$matrices$fp_score),
+      colnames
+    ), use.names = FALSE))
+  } else {
+    character()
+  }
+  sample_annotations <- .module1_qc_sample_annotations(omics_data, sample_ids)
+  display_map <- stats::setNames(sample_annotations$display_label, sample_annotations$sample_id)
+  if (nrow(distribution_table)) {
+    readable <- unname(display_map[as.character(distribution_table$condition)])
+    distribution_table$condition <- ifelse(is.na(readable) | !nzchar(readable), as.character(distribution_table$condition), readable)
+  }
   correlation_browser <- .module1_qc_correlation_browser(
     canonical_stats,
     prediction_stats,
@@ -2143,48 +2274,60 @@ build_module1_qc_report <- function(module1,
   if (nrow(distribution_summary)) distribution_summary$condition_stage <- paste(distribution_summary$condition, distribution_summary$stage, sep = " | ")
   gene_distribution <- if (is_multiomic_object(omics_data)) {
     probs <- seq(0, 1, length.out = 101L)
-    dplyr::bind_rows(lapply(seq_len(ncol(omics_data$matrices$gene_expr)), function(i) {
-      values <- log2(pmax(suppressWarnings(as.numeric(omics_data$matrices$gene_expr[, i])), 0) + 1)
+    gene_prepared <- .module1_qc_transform_matrix(omics_data$matrices$gene_expr, assay = "rna")
+    dplyr::bind_rows(lapply(seq_len(ncol(gene_prepared$matrix)), function(i) {
+      values <- suppressWarnings(as.numeric(gene_prepared$matrix[, i]))
       values <- values[is.finite(values)]
+      sample_id <- colnames(gene_prepared$matrix)[[i]]
+      readable <- unname(display_map[sample_id])
+      if (!length(readable) || is.na(readable) || !nzchar(readable)) readable <- sample_id
       tibble::tibble(
-        condition = colnames(omics_data$matrices$gene_expr)[[i]],
+        condition = readable,
         stage = "gene_expression",
         probability = probs,
         value = as.numeric(stats::quantile(values, probs, names = FALSE)),
-        n = length(values)
+        n = length(values),
+        transformation = gene_prepared$transformation
       )
     }))
   } else {
     tibble::tibble()
   }
-  pca_rna <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$gene_expr, "RNA PCA", transform = "log2p1") else tibble::tibble()
-  pca_atac <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$atac_score, "ATAC PCA", transform = "identity") else tibble::tibble()
+  pca_rna <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$gene_expr, "RNA PCA", annotations = sample_annotations, assay = "rna") else tibble::tibble()
+  pca_atac <- if (is_multiomic_object(omics_data)) .module1_qc_pca_scores(omics_data$matrices$atac_score, "ATAC PCA", annotations = sample_annotations, assay = "atac") else tibble::tibble()
   filtered_idx <- if (is_multiomic_object(omics_data)) match(canonical_fps, rownames(omics_data$matrices$fp_score), nomatch = 0L) else integer()
   filtered_idx <- unique(filtered_idx[filtered_idx > 0L])
   pca_fp <- if (is_multiomic_object(omics_data) && length(filtered_idx)) {
-    .module1_qc_pca_scores(omics_data$matrices$fp_score[filtered_idx, , drop = FALSE], "Filtered FP PCA", transform = "identity")
+    .module1_qc_pca_scores(omics_data$matrices$fp_score[filtered_idx, , drop = FALSE], "Filtered FP PCA", annotations = sample_annotations, assay = "fp")
   } else {
     tibble::tibble()
   }
-  condition_levels <- if (is_multiomic_object(omics_data)) colnames(omics_data$matrices$fp_score) else character()
+  pca_groups <- sort(unique(unlist(lapply(list(pca_rna, pca_atac, pca_fp), function(x) {
+    if (is.data.frame(x) && "biological_group" %in% names(x)) as.character(x$biological_group) else character()
+  }), use.names = FALSE)))
+  pca_groups <- pca_groups[!is.na(pca_groups) & nzchar(pca_groups)]
+  pca_colors <- stats::setNames(grDevices::hcl.colors(max(3L, length(pca_groups)), palette = "Dark 3")[seq_along(pca_groups)], pca_groups)
   pca_plots <- paste0(
     "<div class=\"plot-grid-three\">",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", condition_levels), "</figure>",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", condition_levels), "</figure>",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", condition_levels), "</figure></div>",
-    .module1_qc_condition_legend(condition_levels)
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", pca_colors), "</figure>",
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", pca_colors), "</figure>",
+    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", pca_colors), "</figure></div>",
+    .module1_qc_condition_legend(pca_colors)
   )
   filtered_by_condition <- if (is_multiomic_object(omics_data) && length(filtered_idx)) {
+    condition_ids <- colnames(omics_data$matrices$fp_bound)
+    readable <- unname(display_map[condition_ids])
     tibble::tibble(
-      condition = colnames(omics_data$matrices$fp_bound),
+      condition = ifelse(is.na(readable) | !nzchar(readable), condition_ids, readable),
       n_filtered_fp = as.numeric(colSums(omics_data$matrices$fp_bound[filtered_idx, , drop = FALSE] > 0, na.rm = TRUE))
     )
   } else {
     tibble::tibble()
   }
   predicted_by_condition <- if (is.list(explorer_cache) && !is.null(explorer_cache$tf_counts)) {
+    readable <- unname(display_map[explorer_cache$conditions])
     tibble::tibble(
-      condition = explorer_cache$conditions,
+      condition = ifelse(is.na(readable) | !nzchar(readable), explorer_cache$conditions, readable),
       n_predicted_tfbs = as.numeric(colSums(explorer_cache$tf_counts[, explorer_cache$conditions, drop = FALSE]))
     )
   } else {
@@ -2211,12 +2354,12 @@ build_module1_qc_report <- function(module1,
   sections <- list(
     .qc_section("1. Run Summary", paste0(
       explorer_style,
-      "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a><a href=\"#per-condition-qc\">Per-condition QC</a><a href=\"#correlation-summary\">Correlations</a><a href=\"#predicted-binding-sites-per-tf\">Binding</a><a href=\"#co-binding-summary\">Co-binding</a><a href=\"#top-predicted-bound-tf-per-motif\">Motifs</a></nav>",
+      "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a><a href=\"#per-condition-qc\">Per-condition QC</a><a href=\"#correlation-summary\">Correlations</a><a href=\"#predicted-binding-sites-per-tf\">Binding</a><a href=\"#co-binding-summary\">Co-binding</a><a href=\"#top-predicted-tfs-at-motif-containing-footprints\">Motifs</a></nav>",
       "<div class=\"report-row\">", setup_html, "</div>",
       "<div class=\"report-row\">", .qc_cards_html(cards), "<p class=\"subtitle\">Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p></div>"
     )),
     .qc_section("2. Per-Condition QC", paste0(
-      "<div class=\"report-row\">", distribution_notice, "<div class=\"plot-grid\"><figure class=\"plot-card\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition"), "</figure><figure class=\"plot-card\">", .module1_qc_violin_svg(gene_distribution, "Gene expression distribution per condition"), "</figure></div></div>",
+      "<div class=\"report-row\">", distribution_notice, "<figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition", width = 1200L), "</figure><figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(gene_distribution, paste0("Gene expression distribution per condition (", if (nrow(gene_distribution)) gene_distribution$transformation[[1L]] else "unavailable", ")"), width = 1200L), "</figure></div>",
       "<div class=\"report-row\"><h3>PCA of samples based on the most variable RNA, ATAC, and filtered footprints</h3>", pca_plots, "</div>",
       "<div class=\"report-row\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div>",
       "<details><summary>Per-condition values</summary>",
@@ -2246,10 +2389,11 @@ build_module1_qc_report <- function(module1,
       )),
       if (is.list(explorer_components)) explorer_components$cobinding else explorer_empty
     )),
-    .qc_section("6. Top Predicted Bound TF per Motif", paste0(
+    .qc_section("6. Top Predicted TFs at Motif-Containing Footprints", paste0(
       .qc_callout_html("Motif-centered review", c(
-        "Select a motif to rank up to 20 predicted TFs by bound-site count.",
-        "The TF mapped to the motif is emphasized without TF-family cluster colors."
+        "Select a motif to rank predicted TFs found at footprint sites carrying that motif.",
+        "The true top 20 are shown first; canonical motif TF references follow with their actual rank or not-predicted status.",
+        "Canonical motif identity does not force a TF to rank first because broader prediction uses TF-footprint correlation evidence."
       )),
       if (is.list(explorer_components)) explorer_components$motif else explorer_empty,
       if (is.list(explorer_components)) explorer_components$script else ""

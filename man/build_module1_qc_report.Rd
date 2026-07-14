@@ -55,8 +55,9 @@ Normalized path to the HTML report.
 \description{
 Builds a comprehensive HTML report for Module 1 run parameters, input gates,
 motif-supported canonical support, prediction output integrity, correlation
-diagnostics, condition-level CraftGRN multiomic input QC, footprint alignment summaries,
-warning checks, and related QC artifacts. The report can consume a
+diagnostics, condition-level CraftGRN multiomic input QC, metadata-aware PCA,
+footprint alignment summaries, warning checks, and interactive Binding,
+Co-binding, and Motif review. The report can consume a
 `predict_tfbs()` result, a step-by-step Module 1 result list, or a Module 1
 output directory.
 }

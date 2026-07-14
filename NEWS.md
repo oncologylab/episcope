@@ -3,8 +3,11 @@
 * Added Module 1 condition-comparison, TF-TF co-binding, and interactive TFBS
   UMAP visualization utilities, plus a provenance-aware QC Run Summary.
 * Redesigned the Module 1 QC report to match the report plan, with exact run
-  metrics, per-condition violins and PCA, threshold-colored correlations, and
-  Binding, Co-binding, and Motif explorers embedded in one HTML file.
+  metrics, full-width raincloud distributions, metadata-aware labeled PCA,
+  threshold-colored correlations, and responsive Binding, Co-binding, and
+  Motif explorers embedded in one HTML file. Motif rankings now retain the
+  true top 20 and report canonical TF references with their actual rank or
+  not-predicted status.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

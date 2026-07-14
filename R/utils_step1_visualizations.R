@@ -515,6 +515,12 @@ build_tfbs_umap_report <- function(module1,
   unique(out[!is.na(fp_id) & nzchar(fp_id) & !is.na(motif) & nzchar(motif)])
 }
 
+.module1_tf_identity_key <- function(x) {
+  key <- toupper(trimws(as.character(x)))
+  key[key == "TBET"] <- "TBX21"
+  key
+}
+
 .module1_explorer_correlation_hist <- function(module1, bins = 40L, r_cutoff = NULL) {
   parts <- list()
   cutoff <- if (!is.null(r_cutoff)) {
@@ -594,7 +600,7 @@ build_tfbs_umap_report <- function(module1,
     sum(suppressWarnings(as.numeric(source$manifest$n_rows)), na.rm = TRUE)
   } else if (is.data.frame(source$data)) nrow(source$data) else NA_real_
   fingerprint <- list(
-    schema = "module1_qc_analysis_v5",
+    schema = "module1_qc_analysis_v6",
     n_sites = nrow(omics$matrices$fp_score),
     conditions = colnames(omics$matrices$fp_score),
     r_cutoff = r_cutoff,
@@ -624,6 +630,16 @@ build_tfbs_umap_report <- function(module1,
     motif_map[, .(canonical_tf = paste(sort(unique(canonical_tf[!is.na(canonical_tf) & nzchar(canonical_tf)])), collapse = ";")), by = motif]
   } else {
     data.table::data.table(motif = character(), canonical_tf = character())
+  }
+  canonical_members <- if (nrow(motif_map)) {
+    members <- unique(motif_map[!is.na(canonical_tf) & nzchar(canonical_tf), .(
+      motif,
+      canonical_display = canonical_tf,
+      tf_key = .module1_tf_identity_key(canonical_tf)
+    )])
+    members[, .(canonical_display = paste(sort(unique(canonical_display)), collapse = ";")), by = .(motif, tf_key)]
+  } else {
+    data.table::data.table(motif = character(), tf_key = character(), canonical_display = character())
   }
   motif_sites <- if (nrow(motif_map)) unique(motif_map[, .(fp_id, motif)]) else motif_map[, .(fp_id, motif)]
   motif_parts <- list()
@@ -676,10 +692,41 @@ build_tfbs_umap_report <- function(module1,
   } else {
     data.table::data.table(motif = character(), tf = character(), n = integer())
   }
-  motif_counts <- canonical_by_motif[motif_counts, on = "motif"]
   if (nrow(motif_counts)) {
+    motif_counts[, tf_key := .module1_tf_identity_key(tf)]
     data.table::setorderv(motif_counts, c("motif", "n", "tf"), order = c(1L, -1L, 1L))
-    motif_counts <- motif_counts[, head(.SD, 20L), by = motif]
+    motif_counts[, rank := seq_len(.N), by = motif]
+    motif_counts[, top20 := rank <= 20L]
+    canonical_keys <- paste(canonical_members$motif, canonical_members$tf_key, sep = "\r")
+    motif_counts[, is_canonical := paste(motif, tf_key, sep = "\r") %in% canonical_keys]
+    motif_counts[, canonical_status := ifelse(is_canonical & top20, "top_20", "")]
+    top_rows <- motif_counts[top20 == TRUE]
+    canonical_rows <- merge(
+      canonical_members,
+      motif_counts[, .(motif, tf_key, tf, n, rank, top20, is_canonical)],
+      by = c("motif", "tf_key"), all.x = TRUE, sort = FALSE
+    )
+    canonical_rows <- canonical_rows[is.na(top20) | !top20]
+    if (nrow(canonical_rows)) {
+      canonical_rows[is.na(tf) | !nzchar(tf), tf := canonical_display]
+      canonical_rows[is.na(n), n := 0]
+      canonical_rows[, `:=`(
+        top20 = FALSE,
+        is_canonical = TRUE,
+        canonical_status = ifelse(is.na(rank), "not_predicted", "predicted_outside_top20")
+      )]
+      canonical_rows <- canonical_rows[, .(motif, tf, n, tf_key, rank, top20, is_canonical, canonical_status)]
+      motif_counts <- data.table::rbindlist(list(top_rows, canonical_rows), use.names = TRUE, fill = TRUE)
+    } else {
+      motif_counts <- top_rows
+    }
+    motif_counts <- canonical_by_motif[motif_counts, on = "motif"]
+    data.table::setorderv(motif_counts, c("motif", "top20", "rank", "tf"), order = c(1L, -1L, 1L, 1L), na.last = TRUE)
+  } else {
+    motif_counts <- data.table::data.table(
+      motif = character(), canonical_tf = character(), tf = character(), n = integer(),
+      tf_key = character(), rank = integer(), top20 = logical(), is_canonical = logical(), canonical_status = character()
+    )
   }
   used_site_bits <- if (length(tf_bits)) {
     Reduce(function(a, b) as.raw(bitwOr(as.integer(a), as.integer(b))), tf_bits)
@@ -727,44 +774,53 @@ build_tfbs_umap_report <- function(module1,
 
 .module1_tfbs_explorer_components <- function(cache, default_condition, standalone = FALSE) {
   if (!is.list(cache) || !length(cache$tf_names)) return(NULL)
-  encode <- function(x) jsonlite::base64_enc(x)
   motif_rows <- split(as.data.frame(cache$motif_counts, stringsAsFactors = FALSE), as.character(cache$motif_counts$motif))
   payload <- list(
     tfs = cache$tf_names,
     conditions = cache$conditions,
     defaultCondition = default_condition,
-    tfBits = unname(vapply(cache$tf_bits, encode, character(1L))),
-    boundBits = unname(vapply(cache$bound_bits, encode, character(1L))),
-    geneOn = unname(lapply(seq_len(nrow(cache$gene_on)), function(i) as.integer(cache$gene_on[i, ]))),
+    tfCounts = unname(lapply(seq_len(nrow(cache$tf_counts)), function(i) as.integer(cache$tf_counts[i, ]))),
     motifs = motif_rows
   )
   payload_json <- jsonlite::toJSON(payload, auto_unbox = TRUE, dataframe = "rows", na = "null")
   payload_json <- gsub("</", "<\\/", payload_json, fixed = TRUE)
+  binary_payload <- list(
+    nBytes = if (length(cache$tf_bits)) length(cache$tf_bits[[1L]]) else 0L,
+    tfBits = gsub("[\r\n]", "", jsonlite::base64_enc(do.call(c, cache$tf_bits))),
+    boundBits = gsub("[\r\n]", "", jsonlite::base64_enc(do.call(c, cache$bound_bits))),
+    geneOn = unname(lapply(seq_len(nrow(cache$gene_on)), function(i) as.integer(cache$gene_on[i, ])))
+  )
+  binary_payload_b64 <- .module2_report_browser_encode_browser_json_deflate_base64(binary_payload)
   css <- paste(
     ".m1-tabs{display:flex;gap:6px;margin:20px 0}.m1-tab{border:1px solid var(--line);background:var(--soft);padding:9px 14px;border-radius:5px;cursor:pointer;font-weight:700}.m1-tab.active{background:#e8f0f8;border-color:#8aa8c8;color:#173d69}",
-    ".m1-panel.standalone{display:none}.m1-panel.standalone.active{display:block}.m1-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:end;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:4px;margin:12px 0}.m1-control{display:grid;gap:4px}.m1-control label{font-size:12px;font-weight:700;color:#475569}.m1-controls select,.m1-controls button{font:inherit;border:1px solid #b9c6d6;border-radius:4px;background:#fff;padding:7px 9px}.m1-controls select[multiple]{min-width:220px;height:100px}.m1-controls button{cursor:pointer}",
-    ".m1-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.m1-plot-card{border:1px solid var(--line);border-radius:4px;padding:14px;overflow:hidden}.m1-plot-card h3{margin:0 0 8px;font-size:15px}.m1-chart{width:100%;min-height:420px}.m1-bar{fill:#315f97;cursor:pointer}.m1-bar.co{fill:#16847a}.m1-bar.rest{fill:#dbe5ef}.m1-bar.highlight,.m1-dot.highlight{stroke:#b2182b;stroke-width:3}.m1-axis-label{font-size:12px;fill:#334155}.m1-value{font-size:12px;font-weight:700;fill:#172033}.m1-canonical{font-size:12px;font-weight:800;fill:#b2182b}.m1-stem{stroke:#315f97;stroke-width:2.2}.m1-dot{fill:#6486af;cursor:pointer}",
-    "@media(max-width:800px){.m1-grid{grid-template-columns:1fr}.m1-tabs{overflow:auto}.m1-chart{min-height:360px}}",
+    ".m1-panel.standalone{display:none}.m1-panel.standalone.active{display:block}.m1-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:end;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:4px;margin:12px 0}.m1-control{display:grid;gap:4px}.m1-control label{font-size:12px;font-weight:700;color:#475569}.m1-controls select,.m1-controls input,.m1-controls button{font:inherit;border:1px solid #b9c6d6;border-radius:4px;background:#fff;padding:7px 9px}.m1-controls input{min-width:230px}.m1-controls button{cursor:pointer}.m1-controls button.primary{background:#173d69;color:#fff;border-color:#173d69}.m1-controls button:disabled{opacity:.5;cursor:not-allowed}",
+    ".m1-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.m1-plot-card{border:1px solid var(--line);border-radius:4px;padding:14px;overflow:hidden}.m1-plot-card h3{margin:0 0 8px;font-size:15px}.m1-chart{width:100%;min-height:420px}.m1-bar{fill:#315f97;cursor:pointer}.m1-bar.co{fill:#16847a}.m1-bar.rest{fill:#dbe5ef}.m1-bar.reference{fill:#fff;stroke:#b2182b;stroke-width:2}.m1-bar.highlight,.m1-dot.highlight{stroke:#b2182b;stroke-width:3}.m1-axis-label{font-size:12px;fill:#334155}.m1-value{font-size:12px;font-weight:700;fill:#172033}.m1-canonical{font-size:12px;font-weight:800;fill:#b2182b}.m1-reference-line{stroke:#9ca3af;stroke-width:1;stroke-dasharray:4 4}.m1-stem{stroke:#315f97;stroke-width:2.2}.m1-dot{fill:#6486af;cursor:pointer}.m1-status{font-size:12px;color:#526071;margin:8px 0}.m1-status.error{color:#a33b20}.m1-selected{display:flex;flex-wrap:wrap;gap:6px;min-height:30px;align-items:center}.m1-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid #9fb4cc;background:#eef4fa;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:700}.m1-chip button{border:0;background:transparent;padding:0;color:#7f1d1d;font-weight:800}",
+    "@media(max-width:800px){.m1-grid{grid-template-columns:1fr}.m1-tabs{overflow:auto}.m1-chart{min-height:360px}.m1-control{min-width:0;max-width:100%}.m1-controls input{min-width:0;width:100%}}",
     sep = "\n"
   )
+  worker_source <- paste0(
+    "let P=null,tfBits=null,boundBits=null;const pop=Uint8Array.from({length:256},(_,i)=>{let n=i,c=0;while(n){c+=n&1;n>>=1}return c});",
+    "const b64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));async function decode(s){const bytes=b64(s),stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));return JSON.parse(await new Response(stream).text())}",
+    "const count=a=>{let n=0;for(const x of a)n+=pop[x];return n};const seg=(a,i)=>a.subarray(i*P.nBytes,(i+1)*P.nBytes);",
+    "onmessage=async e=>{const m=e.data;if(m.type==='init'){try{P=await decode(m.payload);tfBits=b64(P.tfBits);boundBits=b64(P.boundBits);postMessage({type:'ready'})}catch(err){postMessage({type:'error',message:String(err&&err.message||err)})}return}if(m.type!=='query'||!P)return;const ci=m.condition==='Overall'?-1:m.conditionIndex,n=P.nBytes,mask=new Uint8Array(n);mask.fill(255);for(const ti of m.selected){const src=seg(tfBits,ti);if(ci>=0&&!P.geneOn[ti][ci]){mask.fill(0);break}const bound=ci>=0?seg(boundBits,ci):null;for(let j=0;j<n;j++)mask[j]&=src[j]&(bound?bound[j]:255)}const total=new Array(m.nTfs),co=new Array(m.nTfs);for(let ti=0;ti<m.nTfs;ti++){const src=seg(tfBits,ti);if(ci>=0&&!P.geneOn[ti][ci]){total[ti]=0;co[ti]=0;continue}const bound=ci>=0?seg(boundBits,ci):null;let nt=0,nc=0;for(let j=0;j<n;j++){const v=src[j]&(bound?bound[j]:255);nt+=pop[v];nc+=pop[v&mask[j]]}total[ti]=nt;co[ti]=nc}postMessage({type:'result',token:m.token,total,co})}"
+  )
+  worker_json <- jsonlite::toJSON(worker_source, auto_unbox = TRUE)
   js <- paste0(
     "(()=>{const D=", payload_json, ";",
-    "const dec=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));D.tfBits=D.tfBits.map(dec);D.boundBits=D.boundBits.map(dec);",
-    "const pop=Uint8Array.from({length:256},(_,i)=>{let n=i,c=0;while(n){c+=n&1;n>>=1}return c});",
-    "const count=a=>{let n=0;for(const x of a)n+=pop[x];return n};const andCount=(a,b)=>{let n=0;for(let i=0;i<a.length;i++)n+=pop[a[i]&b[i]];return n};",
-    "const tfIndex=new Map(D.tfs.map((x,i)=>[x,i])),condIndex=new Map(D.conditions.map((x,i)=>[x,i]));",
-    "const active=(ti,cond)=>{const src=D.tfBits[ti];if(cond==='Overall')return src;const ci=condIndex.get(cond);if(!D.geneOn[ti][ci])return new Uint8Array(src.length);const b=D.boundBits[ci];return Uint8Array.from(src,(x,i)=>x&b[i])};",
-    "const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));let selectedTf='';",
-    "function bars(el,rows,stack=false,lollipop=false){const w=620,rh=27,left=150,right=82,h=Math.max(180,rows.length*rh+45),mx=Math.max(1,...rows.map(x=>x.total));let s='<svg viewBox=\"0 0 '+w+' '+h+'\">';rows.forEach((d,i)=>{const y=12+i*rh,bw=(w-left-right)*d.total/mx,cw=(w-left-right)*(d.co||0)/mx,lc=d.canonical?'m1-canonical':'m1-axis-label';s+='<text x=\"'+(left-8)+'\" y=\"'+(y+15)+'\" text-anchor=\"end\" class=\"'+lc+'\">'+esc(d.tf)+'</text>';if(stack)s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"m1-bar rest\"/><rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+cw+'\" height=\"18\" class=\"m1-bar co\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.co+' co-bound of '+d.total+'</title></rect>';else if(lollipop)s+='<line x1=\"'+left+'\" y1=\"'+(y+9)+'\" x2=\"'+(left+bw)+'\" y2=\"'+(y+9)+'\" class=\"m1-stem\"/><circle cx=\"'+(left+bw)+'\" cy=\"'+(y+9)+'\" r=\"6\" class=\"m1-dot\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></circle>';else s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"m1-bar\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></rect>';s+='<text x=\"'+(left+bw+9)+'\" y=\"'+(y+15)+'\" class=\"m1-value\">'+d.total.toLocaleString()+'</text>'});el.innerHTML=s+'</svg>';el.querySelectorAll('[data-tf]').forEach(x=>x.onclick=()=>highlight(x.dataset.tf))}",
+    "const tfIndex=new Map(D.tfs.map((x,i)=>[x,i])),condIndex=new Map(D.conditions.map((x,i)=>[x,i]));const esc=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));let selectedTf='',selectedFocals=[],workerReady=false,queryToken=0,lastCobind=null;",
+    "function bars(el,rows,stack=false,lollipop=false){const w=680,rh=28,left=175,right=115,h=Math.max(180,rows.length*rh+45),mx=Math.max(1,...rows.map(x=>x.total));let s='<svg viewBox=\"0 0 '+w+' '+h+'\">',referenceSeen=false;rows.forEach((d,i)=>{const y=12+i*rh,bw=(w-left-right)*d.total/mx,cw=(w-left-right)*(d.co||0)/mx,lc=d.canonical?'m1-canonical':'m1-axis-label';if(d.reference&&!referenceSeen){s+='<line x1=\"8\" y1=\"'+(y-5)+'\" x2=\"'+(w-8)+'\" y2=\"'+(y-5)+'\" class=\"m1-reference-line\"/>';referenceSeen=true}s+='<text x=\"'+(left-8)+'\" y=\"'+(y+15)+'\" text-anchor=\"end\" class=\"'+lc+'\">'+esc(d.tf)+'</text>';if(stack)s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+bw+'\" height=\"18\" class=\"m1-bar rest\"/><rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+cw+'\" height=\"18\" class=\"m1-bar co\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.co+' co-bound of '+d.total+'</title></rect>';else if(lollipop)s+='<line x1=\"'+left+'\" y1=\"'+(y+9)+'\" x2=\"'+(left+bw)+'\" y2=\"'+(y+9)+'\" class=\"m1-stem\"/><circle cx=\"'+(left+bw)+'\" cy=\"'+(y+9)+'\" r=\"6\" class=\"m1-dot\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></circle>';else s+='<rect x=\"'+left+'\" y=\"'+y+'\" width=\"'+Math.max(d.reference?1:bw,0)+'\" height=\"18\" class=\"m1-bar'+(d.reference?' reference':'')+'\" data-tf=\"'+esc(d.tf)+'\"><title>'+esc(d.tf)+': '+d.total+'</title></rect>';const value=d.valueLabel||d.total.toLocaleString();s+='<text x=\"'+Math.min(w-right/2,left+bw+9)+'\" y=\"'+(y+15)+'\" class=\"m1-value\">'+esc(value)+'</text>'});el.innerHTML=s+'</svg>';el.querySelectorAll('[data-tf]').forEach(x=>x.onclick=()=>highlight(x.dataset.tf))}",
     "function highlight(tf){selectedTf=tf;document.querySelectorAll('[data-tf]').forEach(x=>x.classList.toggle('highlight',x.dataset.tf===tf))}const n=id=>+document.getElementById(id).value;",
-    "const counts=cond=>D.tfs.map((tf,i)=>({tf,total:count(active(i,cond))})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf));",
+    "const counts=cond=>{const ci=cond==='Overall'?0:condIndex.get(cond)+1;return D.tfs.map((tf,i)=>({tf,total:+D.tfCounts[i][ci]||0})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf))};",
     "function drawBinding(){bars(document.getElementById('binding-overall'),counts('Overall').slice(0,n('binding-n')),false,true);bars(document.getElementById('binding-condition'),counts(document.getElementById('binding-cond').value).slice(0,n('binding-n')),false,true);if(selectedTf)highlight(selectedTf)}",
-    "function drawCobinding(){const names=Array.from(document.getElementById('focal').selectedOptions).map(x=>x.value);if(!names.length)return;const cond=document.getElementById('cobind-cond').value;let mask=null;for(const tf of names){const b=active(tfIndex.get(tf),cond);mask=mask?Uint8Array.from(mask,(x,i)=>x&b[i]):Uint8Array.from(b)}const rows=D.tfs.filter(tf=>!names.includes(tf)).map(tf=>{const b=active(tfIndex.get(tf),cond);return{tf,total:count(b),co:andCount(mask,b)}}).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true)}",
-    "function drawMotif(){const rows=(D.motifs[document.getElementById('motif-select').value]||[]).map(x=>({tf:x.tf,total:+x.n,canonical:String(x.canonical_tf||'').split(/[,:;]/).map(y=>y.trim().toUpperCase()).includes(String(x.tf).toUpperCase())})).sort((a,b)=>b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,20);bars(document.getElementById('motif-chart'),rows)}",
+    "function renderCobinding(result){const selected=new Set(result.names),rows=D.tfs.map((tf,i)=>({tf,total:+result.total[i]||0,co:+result.co[i]||0})).filter(x=>!selected.has(x.tf)).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true);document.getElementById('cobind-status').textContent=result.names.join(' + ')+' | '+result.condition+' | '+rows.length+' partners';lastCobind=result}",
+    "function applyCobinding(){if(!selectedFocals.length){document.getElementById('cobind-status').textContent='Add at least one focal TF.';return}if(!workerReady){document.getElementById('cobind-status').textContent='Preparing exact co-binding data...';return}const condition=document.getElementById('cobind-cond').value,key=condition+'::'+selectedFocals.slice().sort().join('|'),cached=cobindCache.get(key);if(cached){renderCobinding(cached);return}const token=++queryToken;document.getElementById('cobind-status').textContent='Calculating exact co-binding...';worker.postMessage({type:'query',token,condition,conditionIndex:condIndex.get(condition),selected:selectedFocals.map(x=>tfIndex.get(x)),nTfs:D.tfs.length});pending.set(token,{key,names:selectedFocals.slice(),condition})}",
+    "function drawMotif(){const motif=document.getElementById('motif-search').value,raw=D.motifs[motif]||[];if(!raw.length)return;const rows=raw.map(x=>{const reference=!x.top20&&x.is_canonical,status=String(x.canonical_status||'');let valueLabel=(+x.n||0).toLocaleString();if(status==='predicted_outside_top20')valueLabel+=' | rank '+x.rank;if(status==='not_predicted')valueLabel='not predicted';return{tf:x.tf,total:+x.n||0,canonical:!!x.is_canonical,reference,valueLabel}});const canonical=raw.filter(x=>x.is_canonical).map(x=>x.tf+': '+(x.canonical_status==='top_20'?'top 20, rank '+x.rank:x.canonical_status==='predicted_outside_top20'?'rank '+x.rank:'not predicted'));document.getElementById('motif-status').textContent='Canonical motif TF reference: '+canonical.join('; ');bars(document.getElementById('motif-chart'),rows)}",
     "window.exportSvg=function(id,name){const svg=document.querySelector('#'+id+' svg');if(!svg)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));a.download=name+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)};",
-    "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const f=document.getElementById('focal');D.tfs.forEach(x=>f.add(new Option(x,x)));f.options[0].selected=true;const m=document.getElementById('motif-select');Object.keys(D.motifs).sort().forEach(x=>m.add(new Option(x,x)))}",
+    "function renderFocals(){const el=document.getElementById('focal-selected');el.innerHTML=selectedFocals.map(tf=>'<span class=\"m1-chip\">'+esc(tf)+'<button type=\"button\" data-remove=\"'+esc(tf)+'\" aria-label=\"Remove '+esc(tf)+'\">x</button></span>').join('');el.querySelectorAll('[data-remove]').forEach(x=>x.onclick=()=>{selectedFocals=selectedFocals.filter(tf=>tf!==x.dataset.remove);renderFocals()})}function addFocal(){const input=document.getElementById('focal-search'),tf=input.value;if(tfIndex.has(tf)&&!selectedFocals.includes(tf)){selectedFocals.push(tf);renderFocals()}input.value=''}",
+    "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const tfList=document.getElementById('tf-options');D.tfs.forEach(x=>tfList.appendChild(new Option('',x)));selectedFocals=[D.tfs[0]];renderFocals();const motifList=document.getElementById('motif-options'),motifs=Object.keys(D.motifs).sort();motifs.forEach(x=>motifList.appendChild(new Option('',x)));document.getElementById('motif-search').value=motifs[0]||''}",
     "function tab(id){document.querySelectorAll('.m1-tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));document.querySelectorAll('.m1-panel.standalone').forEach(x=>x.classList.toggle('active',x.dataset.panel===id));history.replaceState(null,'','#'+id)}document.querySelectorAll('.m1-tab').forEach(x=>x.onclick=()=>tab(x.dataset.tab));",
-    "fill();['binding-cond','binding-n','focal','cobind-cond','cobind-n','motif-select'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{drawBinding();drawCobinding();drawMotif()}));drawBinding();drawCobinding();drawMotif();if(document.querySelector('.m1-tab'))tab(['binding','cobinding','motif'].includes(location.hash.slice(1))?location.hash.slice(1):'binding')})()"
+    "const cobindCache=new Map(),pending=new Map(),worker=new Worker(URL.createObjectURL(new Blob([", worker_json, "],{type:'text/javascript'})));worker.onmessage=e=>{const m=e.data;if(m.type==='ready'){workerReady=true;document.getElementById('cobind-apply').disabled=false;document.getElementById('cobind-status').textContent='Exact co-binding data ready.'}else if(m.type==='error'){const s=document.getElementById('cobind-status');s.textContent='Co-binding unavailable: '+m.message;s.classList.add('error')}else if(m.type==='result'){const q=pending.get(m.token);pending.delete(m.token);if(!q)return;const result={names:q.names,condition:q.condition,total:m.total,co:m.co};cobindCache.set(q.key,result);if(m.token===queryToken)renderCobinding(result)}};",
+    "fill();document.getElementById('binding-cond').addEventListener('change',drawBinding);document.getElementById('binding-n').addEventListener('change',drawBinding);document.getElementById('motif-search').addEventListener('change',()=>{if(D.motifs[document.getElementById('motif-search').value])drawMotif()});document.getElementById('focal-add').addEventListener('click',addFocal);document.getElementById('focal-search').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addFocal()}});document.getElementById('cobind-apply').addEventListener('click',applyCobinding);document.getElementById('cobind-n').addEventListener('change',()=>{if(lastCobind)renderCobinding(lastCobind)});drawBinding();drawMotif();if(!('DecompressionStream' in window)){const s=document.getElementById('cobind-status');s.textContent='Co-binding requires a current Chrome, Edge, Firefox, or Safari browser.';s.classList.add('error')}else worker.postMessage({type:'init',payload:'", binary_payload_b64, "'});if(document.querySelector('.m1-tab'))tab(['binding','cobinding','motif'].includes(location.hash.slice(1))?location.hash.slice(1):'binding')})()"
   )
   panel_class <- if (isTRUE(standalone)) "m1-panel standalone" else "m1-panel"
   binding <- paste0(
@@ -772,11 +828,11 @@ build_tfbs_umap_report <- function(module1,
     "<div class=\"m1-grid\"><div class=\"m1-plot-card\"><h3>Overall</h3><div id=\"binding-overall\" class=\"m1-chart\"></div></div><div class=\"m1-plot-card\"><h3>Selected condition</h3><div id=\"binding-condition\" class=\"m1-chart\"></div></div></div>"
   )
   cobinding <- paste0(
-    "<p class=\"subtitle\">With multiple focal TFs, co-bound sites must be shared by every selected TF.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"focal\">Focal TFs</label><select id=\"focal\" multiple></select></div><div class=\"m1-control\"><label for=\"cobind-cond\">Scope</label><select id=\"cobind-cond\"></select></div><div class=\"m1-control\"><label for=\"cobind-n\">Top N</label><select id=\"cobind-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button onclick=\"exportSvg('cobind-chart','tfbs_cobinding')\">Export SVG</button></div>",
+    "<p class=\"subtitle\">With multiple focal TFs, co-bound sites must be shared by every selected TF.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"focal-search\">Add focal TF</label><input id=\"focal-search\" list=\"tf-options\" placeholder=\"Type a TF\"><datalist id=\"tf-options\"></datalist></div><button id=\"focal-add\" type=\"button\">Add TF</button><div class=\"m1-control\"><label for=\"cobind-cond\">Scope</label><select id=\"cobind-cond\"></select></div><div class=\"m1-control\"><label for=\"cobind-n\">Top N</label><select id=\"cobind-n\"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div><button id=\"cobind-apply\" class=\"primary\" type=\"button\" disabled>Apply</button><button onclick=\"exportSvg('cobind-chart','tfbs_cobinding')\">Export SVG</button></div><div id=\"focal-selected\" class=\"m1-selected\"></div><div id=\"cobind-status\" class=\"m1-status\">Preparing exact co-binding data...</div>",
     "<div class=\"m1-plot-card\"><div id=\"cobind-chart\" class=\"m1-chart\"></div></div>"
   )
   motif <- paste0(
-    "<p class=\"subtitle\">Canonical motif-matched TFs are bold and red. Rankings show at most 20 TFs.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"motif-select\">Motif</label><select id=\"motif-select\"></select></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div>",
+    "<p class=\"subtitle\">The chart shows the true top 20 predicted TFs at footprint sites containing the selected motif, followed by canonical TF references when needed.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"motif-search\">Motif</label><input id=\"motif-search\" list=\"motif-options\" placeholder=\"Type a motif\"><datalist id=\"motif-options\"></datalist></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div><div id=\"motif-status\" class=\"m1-status\"></div>",
     "<div class=\"m1-plot-card\"><div id=\"motif-chart\" class=\"m1-chart\"></div></div>"
   )
   list(css = css, script = paste0("<script>", js, "</script>"), binding = binding, cobinding = cobinding, motif = motif, panel_class = panel_class)
@@ -786,6 +842,8 @@ build_tfbs_umap_report <- function(module1,
 #'
 #' Builds an explicitly requested standalone HTML explorer. Standard
 #' `predict_tfbs()` runs embed the same controls in the Module 1 QC report.
+#' Exact co-binding queries run in a browser worker, and motif rankings show
+#' the true top 20 plus canonical TF references at their actual rank.
 #'
 #' @param module1 A `predict_tfbs()` result, Module 1 output directory,
 #'   predicted TFBS table, table path, or manifest path.
@@ -831,7 +889,7 @@ build_module1_tfbs_explorer <- function(module1,
     "<nav class=\"m1-tabs\"><button class=\"m1-tab\" data-tab=\"binding\">Binding</button><button class=\"m1-tab\" data-tab=\"cobinding\">Co-binding</button><button class=\"m1-tab\" data-tab=\"motif\">Motif</button></nav>",
     "<section class=\"", x$panel_class, "\" data-panel=\"binding\"><h2>Predicted binding sites per TF</h2>", x$binding, "</section>",
     "<section class=\"", x$panel_class, "\" data-panel=\"cobinding\"><h2>TF co-binding summary</h2>", x$cobinding, "</section>",
-    "<section class=\"", x$panel_class, "\" data-panel=\"motif\"><h2>Top predicted bound TF per motif</h2>", x$motif, "</section>",
+    "<section class=\"", x$panel_class, "\" data-panel=\"motif\"><h2>Top predicted TFs at motif-containing footprints</h2>", x$motif, "</section>",
     "</main>", x$script, "</body></html>"
   )
   dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)

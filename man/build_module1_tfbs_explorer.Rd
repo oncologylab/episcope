@@ -37,4 +37,6 @@ Normalized path to the HTML report.
 \description{
 Builds an explicitly requested standalone HTML explorer. Standard
 `predict_tfbs()` runs embed the same controls in the Module 1 QC report.
+Exact co-binding queries run in a browser worker, and motif rankings show
+the true top 20 plus canonical TF references at their actual rank.
 }

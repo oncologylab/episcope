@@ -151,10 +151,64 @@ test_that("TFBS Explorer writes compact exact co-binding controls", {
   expect_match(page, "Motif", fixed = TRUE)
   expect_match(page, "multiple focal TFs", fixed = TRUE)
   expect_match(page, "Export SVG", fixed = TRUE)
+  expect_match(page, "focal-search", fixed = TRUE)
+  expect_match(page, "motif-search", fixed = TRUE)
+  expect_match(page, "DecompressionStream", fixed = TRUE)
+  expect_match(page, "new Worker", fixed = TRUE)
+  expect_false(grepl("D.tfBits=D.tfBits.map", page, fixed = TRUE))
   expect_equal(sum(popcount[shared_with_c + 1L]), 1L)
+  expect_equal(cache$fingerprint$schema, "module1_qc_analysis_v6")
   expect_equal(cache$tf_counts["TF_A", "Overall"], 2)
   expect_equal(sum(cache$tf_counts[, "Overall"]), nrow(unique(predicted[c("tf", "fp_id")])))
   expect_true(sum(cache$tf_counts[, cache$conditions, drop = FALSE]) != sum(cache$tf_counts[, "Overall"]))
+})
+
+test_that("Module 1 PCA maps assay IDs and preserves transformed RNA", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  compact$samples <- tibble::tibble(
+    id = paste0("raw_", 1:4),
+    condition_id = paste0("cond_", letters[1:4]),
+    condition_base = c("group_1", "group_1", "group_2", "group_2")
+  )
+  annotation <- craftgrn:::.module1_qc_sample_annotations(compact, c("raw_1", "cond_b"))
+  expect_equal(annotation$display_label, c("cond_a", "cond_b"))
+  expect_equal(annotation$biological_group, c("group_1", "group_1"))
+  expect_true(all(annotation$matched))
+
+  normalized <- matrix(c(-1, 0, 1, 2, 2, 3, 4, 5), nrow = 2)
+  transformed <- craftgrn:::.module1_qc_transform_matrix(normalized, assay = "rna")
+  expect_equal(transformed$transformation, "identity")
+  expect_equal(transformed$matrix, normalized)
+
+  counts <- matrix(c(0, 100, 1000, 10000), nrow = 2)
+  transformed_counts <- craftgrn:::.module1_qc_transform_matrix(counts, assay = "rna")
+  expect_equal(transformed_counts$transformation, "log2(x + 1)")
+  expect_equal(transformed_counts$matrix, log2(counts + 1))
+})
+
+test_that("Motif explorer retains truthful canonical TF references", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  fp <- rownames(compact$matrices$fp_score)[[1L]]
+  compact$features$fp_motif <- tibble::tibble(
+    fp_id = c(fp, fp, fp),
+    motif = c("REFERENCE_MOTIF", "REFERENCE_MOTIF", "ABSENT_MOTIF"),
+    tf = c("ZZZ", "ABSENT", "ABSENT")
+  )
+  predicted <- tibble::tibble(tf = c(sprintf("TF%02d", 1:24), "ZZZ"), fp_id = fp)
+  out <- tempfile(fileext = ".html")
+
+  build_module1_tfbs_explorer(predicted, multiomic_data = compact, output_file = out, verbose = FALSE)
+  cache <- readRDS(file.path(dirname(out), "module1_qc_analysis.rds"))
+  reference <- cache$motif_counts[cache$motif_counts$motif == "REFERENCE_MOTIF", ]
+  absent <- cache$motif_counts[cache$motif_counts$motif == "ABSENT_MOTIF", ]
+
+  expect_equal(sum(reference$top20), 20L)
+  expect_equal(reference$rank[reference$tf == "ZZZ"], 25L)
+  expect_equal(reference$canonical_status[reference$tf == "ZZZ"], "predicted_outside_top20")
+  expect_equal(reference$canonical_status[reference$tf == "ABSENT"], "not_predicted")
+  expect_equal(absent$canonical_status[absent$tf == "ABSENT"], "not_predicted")
 })
 
 test_that("Module 1 config provenance keeps relevant values", {
