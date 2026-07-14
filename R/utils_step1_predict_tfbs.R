@@ -582,7 +582,8 @@
                                                      rna_rank,
                                                      cutoffs,
                                                      min_non_na = 3L,
-                                                     cores = 1L) {
+                                                     cores = 1L,
+                                                     emit_stats = TRUE) {
   worker <- function(i) {
     pearson <- .module1_cor_matrix_vector(fp_mat, rna_mat[i, ], min_non_na = min_non_na)
     spearman <- .module1_cor_matrix_vector(fp_rank, rna_rank[i, ], min_non_na = min_non_na)
@@ -601,14 +602,28 @@
       best_method = best$best_method
     )
     stats_i <- .module1_apply_tfbs_cutoffs(stats_i, cutoffs)
-    stats_i[stats_i$pass %in% TRUE, , drop = FALSE]
+    list(
+      stats = if (isTRUE(emit_stats)) stats_i[stats_i$pass %in% TRUE, , drop = FALSE] else tibble::tibble(),
+      histogram = .module1_correlation_histogram(
+        stats_i,
+        scope = "Full prediction",
+        population = "all_evaluated"
+      )
+    )
   }
   idx <- seq_along(tfs)
-  if (.Platform$OS.type != "windows" && cores > 1L && length(idx) > 1L) {
-    dplyr::bind_rows(parallel::mclapply(idx, worker, mc.cores = min(cores, length(idx))))
+  results <- if (.Platform$OS.type != "windows" && cores > 1L && length(idx) > 1L) {
+    parallel::mclapply(idx, worker, mc.cores = min(cores, length(idx)))
   } else {
-    dplyr::bind_rows(lapply(idx, worker))
+    lapply(idx, worker)
   }
+  list(
+    stats = dplyr::bind_rows(lapply(results, `[[`, "stats")),
+    histogram = .module1_finalize_correlation_histogram(
+      dplyr::bind_rows(lapply(results, `[[`, "histogram")),
+      scope = "Full prediction"
+    )
+  )
 }
 
 .module1_compute_prediction_stats_cpp <- function(high,
@@ -619,7 +634,8 @@
                                                    rna_rank,
                                                    cutoffs,
                                                    cores = 1L,
-                                                   tf_chunk_size = NULL) {
+                                                   tf_chunk_size = NULL,
+                                                   emit_stats = TRUE) {
   cpp_fun <- get0(".dense_prediction_stats_cpp", envir = asNamespace("craftgrn"), mode = "function")
   if (!is.function(cpp_fun)) return(NULL)
   if (!nrow(fp_mat) || !nrow(rna_mat) || ncol(fp_mat) != ncol(rna_mat)) return(NULL)
@@ -636,7 +652,7 @@
   idx <- seq_along(tfs)
   chunks <- split(idx, ceiling(idx / tf_chunk_size))
   out <- lapply(chunks, function(ii) {
-    tibble::as_tibble(cpp_fun(
+    result <- cpp_fun(
       fp = fp_mat,
       tf = rna_mat[ii, , drop = FALSE],
       fp_rank = fp_rank,
@@ -647,10 +663,22 @@
       r_cutoff = cutoffs$r,
       p_cutoff = cutoffs$p,
       fdr_cutoff = cutoffs$fdr,
-      n_threads = min(as.integer(cores)[[1L]], length(ii))
-    ))
+      n_threads = min(as.integer(cores)[[1L]], length(ii)),
+      emit_stats = isTRUE(emit_stats),
+      hist_bins = 40L
+    )
+    list(
+      stats = tibble::as_tibble(result$stats),
+      histogram = tibble::as_tibble(result$histogram)
+    )
   })
-  dplyr::bind_rows(out)
+  list(
+    stats = dplyr::bind_rows(lapply(out, `[[`, "stats")),
+    histogram = .module1_finalize_correlation_histogram(
+      dplyr::bind_rows(lapply(out, `[[`, "histogram")),
+      scope = "Full prediction"
+    )
+  )
 }
 
 .module1_predict_tfbs_streamed <- function(omics_data,
@@ -662,6 +690,7 @@
                                             min_non_na = 3L,
                                             cores = NULL,
                                             return_prediction_stats = TRUE,
+                                            emit_prediction_stats = TRUE,
                                             prediction_stats_out_dir = NULL,
                                             output_format = c("csv", "parquet", "auto"),
                                             verbose = TRUE) {
@@ -682,7 +711,7 @@
   high <- high_confidence_footprints[!duplicated(high_confidence_footprints$fp_id), need_high, drop = FALSE]
   tfs <- .module1_expressed_tfs(omics_data, tf_subset = tf_subset)
   pair_count <- as.double(nrow(high)) * as.double(length(tfs))
-  stream_prediction_stats <- isFALSE(return_prediction_stats) && !is.null(prediction_stats_out_dir)
+  stream_prediction_stats <- isTRUE(emit_prediction_stats) && isFALSE(return_prediction_stats) && !is.null(prediction_stats_out_dir)
 
   make_empty <- function() {
     empty_stats <- .module1_build_prediction_stats(
@@ -703,7 +732,8 @@
       prediction_stats_manifest = NULL,
       prediction_stats_manifest_path = NULL,
       n_prediction_stats = 0L,
-      predicted_tfs = character()
+      predicted_tfs = character(),
+      correlation_histogram = .module1_finalize_correlation_histogram(tibble::tibble())
     )
   }
   if (!nrow(high) || !length(tfs)) return(make_empty())
@@ -737,6 +767,7 @@
   chunks <- split(seq_along(tfs), ceiling(seq_along(tfs) / tf_chunk_size))
   prediction_stats_chunks <- if (stream_prediction_stats) NULL else vector("list", length(chunks))
   manifest_chunks <- vector("list", length(chunks))
+  histogram_chunks <- vector("list", length(chunks))
   predicted_tfs <- character()
 
   for (chunk_i in seq_along(chunks)) {
@@ -744,7 +775,7 @@
     if (isTRUE(verbose) && length(chunks) > 1L) {
       .log_inform("Module 1 prediction chunk {chunk_i}/{length(chunks)}: {length(ii)} TF(s).")
     }
-    prediction_stats_i <- tryCatch(
+    prediction_bundle_i <- tryCatch(
       .module1_compute_prediction_stats_cpp(
         high = high,
         tfs = tfs[ii],
@@ -754,12 +785,13 @@
         rna_rank = rna_rank[ii, , drop = FALSE],
         cutoffs = cutoffs,
         cores = cores,
-        tf_chunk_size = length(ii)
+        tf_chunk_size = length(ii),
+        emit_stats = isTRUE(emit_prediction_stats)
       ),
       error = function(e) NULL
     )
-    if (is.null(prediction_stats_i)) {
-      prediction_stats_i <- .module1_compute_prediction_stats_by_tf(
+    if (is.null(prediction_bundle_i)) {
+      prediction_bundle_i <- .module1_compute_prediction_stats_by_tf(
         high = high,
         tfs = tfs[ii],
         fp_mat = fp_mat,
@@ -768,14 +800,20 @@
         rna_rank = rna_rank[ii, , drop = FALSE],
         cutoffs = cutoffs,
         min_non_na = min_non_na,
-        cores = cores
+        cores = cores,
+        emit_stats = isTRUE(emit_prediction_stats)
       )
     }
-    prediction_stats_i <- .module1_build_prediction_stats(
-      correlation_stats = prediction_stats_i,
-      high_confidence_footprints = high,
-      omics_data = omics_data
-    )
+    histogram_chunks[[chunk_i]] <- prediction_bundle_i$histogram
+    prediction_stats_i <- if (isTRUE(emit_prediction_stats)) {
+      .module1_build_prediction_stats(
+        correlation_stats = prediction_bundle_i$stats,
+        high_confidence_footprints = high,
+        omics_data = omics_data
+      )
+    } else {
+      tibble::tibble()
+    }
     predicted_tfs <- union(predicted_tfs, as.character(prediction_stats_i$tf))
     if (stream_prediction_stats) {
       manifest_chunks[[chunk_i]] <- .module1_write_prediction_stats_chunk(
@@ -787,10 +825,18 @@
     } else {
       prediction_stats_chunks[[chunk_i]] <- prediction_stats_i
     }
-    rm(prediction_stats_i)
+    rm(prediction_stats_i, prediction_bundle_i)
   }
 
-  if (stream_prediction_stats) {
+  if (!isTRUE(emit_prediction_stats)) {
+    prediction_stats <- tibble::tibble()
+    prediction_stats_manifest <- NULL
+    prediction_stats_manifest_path <- NULL
+    n_prediction_stats <- sum(vapply(histogram_chunks, function(x) {
+      if (!is.data.frame(x) || !nrow(x)) return(0)
+      sum(x$n_retained[x$method == "best_r" & x$tf != "Overall"], na.rm = TRUE)
+    }, numeric(1L)))
+  } else if (stream_prediction_stats) {
     prediction_stats_manifest <- dplyr::bind_rows(manifest_chunks)
     prediction_stats_manifest_path <- .module1_write_prediction_stats_manifest(prediction_stats_manifest, prediction_stats_out_dir)
     prediction_stats <- tibble::tibble(
@@ -818,8 +864,55 @@
     prediction_stats_manifest = prediction_stats_manifest,
     prediction_stats_manifest_path = prediction_stats_manifest_path,
     n_prediction_stats = n_prediction_stats,
-    predicted_tfs = sort(unique(predicted_tfs))
+    predicted_tfs = sort(unique(predicted_tfs)),
+    correlation_histogram = .module1_finalize_correlation_histogram(
+      dplyr::bind_rows(histogram_chunks),
+      scope = "Full prediction",
+      population = "all_evaluated"
+    )
   )
+}
+
+.module1_recompute_prediction_correlation_histogram <- function(omics_data,
+                                                                 footprint_ids,
+                                                                 r_cutoff,
+                                                                 p_cutoff = NULL,
+                                                                 fdr_cutoff = NULL,
+                                                                 min_non_na = 3L,
+                                                                 cores = NULL,
+                                                                 tf_subset = NULL,
+                                                                 verbose = TRUE) {
+  prepared <- .module1_prepare_predict_omics(omics_data, verbose = FALSE)
+  footprint_ids <- unique(as.character(footprint_ids))
+  footprint_ids <- footprint_ids[!is.na(footprint_ids) & nzchar(footprint_ids)]
+  annotation <- prepared$fp_annotation
+  annotation <- annotation[!duplicated(annotation$fp_peak), c("fp_peak", "atac_peak"), drop = FALSE]
+  annotation <- annotation[match(footprint_ids, annotation$fp_peak, nomatch = 0L), , drop = FALSE]
+  if (!nrow(annotation) || nrow(annotation) != length(footprint_ids)) {
+    .log_abort("Cannot recompute the Module 1 correlation histogram because the saved footprint population does not match the multiomic object.")
+  }
+  coordinates <- .module1_parse_fp_coordinates(annotation$fp_peak)
+  footprints <- tibble::tibble(
+    fp_id = as.character(annotation$fp_peak),
+    chr = as.character(coordinates$chr),
+    start = as.integer(coordinates$start),
+    end = as.integer(coordinates$end),
+    atac_peak = as.character(annotation$atac_peak)
+  )
+  result <- .module1_predict_tfbs_streamed(
+    omics_data = prepared,
+    high_confidence_footprints = footprints,
+    r_cutoff = r_cutoff,
+    p_cutoff = p_cutoff,
+    fdr_cutoff = fdr_cutoff,
+    tf_subset = tf_subset,
+    min_non_na = min_non_na,
+    cores = cores,
+    return_prediction_stats = FALSE,
+    emit_prediction_stats = FALSE,
+    verbose = verbose
+  )
+  result$correlation_histogram
 }
 #' Predict transcription factor binding sites from matched footprint and RNA data
 #'
@@ -964,6 +1057,11 @@ predict_tfbs <- function(omics_data,
     p_cutoff = p_cutoff,
     fdr_cutoff = fdr_cutoff
   )
+  canonical_correlation_histogram <- .module1_correlation_histogram(
+    motif_supported_correlations,
+    scope = "Canonical motif-supported",
+    population = "all_evaluated"
+  )
   high_confidence_footprints <- .module1_select_high_confidence_footprints(
     motif_supported_correlations = motif_supported_correlations,
     r_cutoff = r_cutoff,
@@ -1041,6 +1139,11 @@ predict_tfbs <- function(omics_data,
       p_cutoff = p_cutoff,
       fdr_cutoff = fdr_cutoff
     )
+    prediction_correlation_histogram <- .module1_correlation_histogram(
+      prediction_stats,
+      scope = "Full prediction",
+      population = "all_evaluated"
+    )
     prediction_stats <- .module1_build_prediction_stats(
       correlation_stats = prediction_stats,
       high_confidence_footprints = prediction_footprints,
@@ -1070,6 +1173,7 @@ predict_tfbs <- function(omics_data,
     prediction_stats_manifest_path <- streamed$prediction_stats_manifest_path
     n_prediction_stats <- streamed$n_prediction_stats
     predicted_tfs <- streamed$predicted_tfs
+    prediction_correlation_histogram <- streamed$correlation_histogram
     if (isTRUE(verbose)) {
       .log_inform("Module 1 TFBS prediction: {streamed$prediction_pair_count} prediction FP-TF pair(s) evaluated without materializing all pairs.")
     }
@@ -1077,6 +1181,10 @@ predict_tfbs <- function(omics_data,
   if (!exists("predicted_tfs", inherits = FALSE)) {
     predicted_tfs <- sort(unique(as.character(prediction_stats$tf)))
   }
+  correlation_histogram <- dplyr::bind_rows(
+    canonical_correlation_histogram,
+    prediction_correlation_histogram
+  )
 
   predicted_tfbs_paths <- NULL
   if (!is.null(prediction_stats_manifest_path) && !isTRUE(keep_prediction_stats)) {
@@ -1148,11 +1256,21 @@ predict_tfbs <- function(omics_data,
     high_path <- file.path(out_dir, "module1_high_confidence_footprints.csv")
     canonical_stats_path <- file.path(out_dir, "module1_canonical_prediction_stats.csv.gz")
     qc_summary_path <- file.path(out_dir, "module1_qc_summary.csv")
+    correlation_histogram_path <- file.path(out_dir, "module1_correlation_histogram.csv")
+    run_parameters_path <- file.path(out_dir, "module1_run_parameters.csv")
     links_path <- file.path(out_dir, "module1_prediction_stats.csv.gz")
     if (is.null(predicted_tfbs_paths)) predicted_tfbs_paths <- .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format)
     readr::write_csv(high_confidence_footprints, high_path)
     readr::write_csv(motif_supported_correlations, canonical_stats_path)
     readr::write_csv(tibble::tibble(metric = names(qc_summary), value = as.numeric(unlist(qc_summary, use.names = FALSE))), qc_summary_path)
+    readr::write_csv(correlation_histogram, correlation_histogram_path)
+    run_parameter_table <- .module1_qc_parameter_provenance(
+      list(parameters = parameters),
+      multiomic_input,
+      project_config = project_config,
+      scan_predicted_tfbs = isTRUE(qc_report_scan)
+    )
+    readr::write_csv(run_parameter_table, run_parameters_path)
     cache_reports <- .module1_write_canonical_support_cache(
       high_confidence_footprints = high_confidence_footprints,
       qc_summary = qc_summary,
@@ -1163,6 +1281,8 @@ predict_tfbs <- function(omics_data,
         high_confidence_footprints = high_path,
         canonical_correlation_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
+        correlation_histogram = correlation_histogram_path,
+        run_parameters = run_parameters_path,
         predicted_tfbs = predicted_tfbs_paths$path,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         prediction_stats_manifest = prediction_stats_manifest_path,
@@ -1174,6 +1294,8 @@ predict_tfbs <- function(omics_data,
         high_confidence_footprints = high_path,
         canonical_correlation_stats = canonical_stats_path,
         qc_summary = qc_summary_path,
+        correlation_histogram = correlation_histogram_path,
+        run_parameters = run_parameters_path,
         predicted_tfbs = predicted_tfbs_paths$path,
         predicted_tfbs_manifest = predicted_tfbs_paths$manifest,
         correlation_stats = links_path
@@ -1202,6 +1324,7 @@ predict_tfbs <- function(omics_data,
         prediction_stats = prediction_stats,
         predicted_tfbs = predicted_tfbs,
         prediction_stats_manifest = prediction_stats_manifest,
+        correlation_histogram = correlation_histogram,
         reports = reports,
         parameters = parameters
       ),
@@ -1221,6 +1344,7 @@ predict_tfbs <- function(omics_data,
     prediction_stats = prediction_stats,
     predicted_tfbs = predicted_tfbs,
     prediction_stats_manifest = prediction_stats_manifest,
+    correlation_histogram = correlation_histogram,
     reports = reports,
     parameters = parameters
   )

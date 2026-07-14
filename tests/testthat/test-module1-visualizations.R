@@ -159,7 +159,7 @@ test_that("TFBS Explorer writes compact exact co-binding controls", {
   expect_match(page, "Exact co-binding data ready.';applyCobinding()", fixed = TRUE)
   expect_false(grepl("D.tfBits=D.tfBits.map", page, fixed = TRUE))
   expect_equal(sum(popcount[shared_with_c + 1L]), 1L)
-  expect_equal(cache$fingerprint$schema, "module1_qc_analysis_v6")
+  expect_equal(cache$fingerprint$schema, "module1_qc_analysis_v7")
   expect_equal(cache$tf_counts["TF_A", "Overall"], 2)
   expect_equal(sum(cache$tf_counts[, "Overall"]), nrow(unique(predicted[c("tf", "fp_id")])))
   expect_true(sum(cache$tf_counts[, cache$conditions, drop = FALSE]) != sum(cache$tf_counts[, "Overall"]))

@@ -159,7 +159,50 @@ module1_predict_tfbs_from_correlations <- function(module1_inputs, prediction_fo
     predicted_tfbs <- build_predicted_tfbs(streamed$prediction_stats)
     pred_paths <- if (isTRUE(write_outputs)) .write_predicted_tfbs_table(predicted_tfbs, out_dir = out_dir, output_format = output_format) else NULL
   }
-  list(prediction_stats = streamed$prediction_stats, prediction_stats_manifest = streamed$prediction_stats_manifest, prediction_stats_manifest_path = streamed$prediction_stats_manifest_path, predicted_tfbs = predicted_tfbs, predicted_tfbs_paths = pred_paths, prediction_pair_count = streamed$prediction_pair_count, n_prediction_stats = streamed$n_prediction_stats)
+  histogram_path <- NULL
+  run_parameters_path <- NULL
+  if (isTRUE(write_outputs) && nrow(streamed$correlation_histogram)) {
+    histogram_path <- file.path(out_dir, "module1_correlation_histogram.csv")
+    readr::write_csv(streamed$correlation_histogram, histogram_path)
+  }
+  if (isTRUE(write_outputs)) {
+    run_parameters_path <- file.path(out_dir, "module1_run_parameters.csv")
+    command_values <- c(
+      as.character(r_cutoff),
+      if (is.null(p_cutoff)) "" else as.character(p_cutoff),
+      if (is.null(fdr_cutoff)) "" else as.character(fdr_cutoff),
+      as.character(min_non_na)
+    )
+    readr::write_csv(
+      tibble::tibble(
+        parameter = c("r_cutoff", "p_cutoff", "fdr_cutoff", "min_non_na"),
+        yaml_value = "",
+        command_value = command_values,
+        effective_value = command_values,
+        source = "command/default"
+      ),
+      run_parameters_path
+    )
+  }
+  list(
+    prediction_stats = streamed$prediction_stats,
+    prediction_stats_manifest = streamed$prediction_stats_manifest,
+    prediction_stats_manifest_path = streamed$prediction_stats_manifest_path,
+    predicted_tfbs = predicted_tfbs,
+    predicted_tfbs_paths = pred_paths,
+    prediction_pair_count = streamed$prediction_pair_count,
+    n_prediction_stats = streamed$n_prediction_stats,
+    correlation_histogram = streamed$correlation_histogram,
+    correlation_histogram_path = histogram_path,
+    run_parameters_path = run_parameters_path,
+    parameters = list(
+      r_cutoff = as.numeric(r_cutoff),
+      p_cutoff = p_cutoff,
+      fdr_cutoff = fdr_cutoff,
+      min_non_na = as.integer(min_non_na),
+      expressed_tfs = module1_inputs$expressed_tfs
+    )
+  )
 }
 
 #' Predict full TFBS for all expressed TFs

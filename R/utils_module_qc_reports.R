@@ -903,7 +903,7 @@
     label = c("Conditions", "Run-GRN conditions", "Median bound FPs", "Median expressed genes"),
     value = c(
       .qc_format_number(nrow(condition_summary)),
-      .qc_format_number(sum(run_vals %in% TRUE, na.rm = TRUE)),
+      if (all(is.na(run_vals))) "Not recorded" else .qc_format_number(sum(run_vals %in% TRUE, na.rm = TRUE)),
       .qc_format_number(stats::median(condition_summary$n_bound_fp, na.rm = TRUE)),
       .qc_format_number(stats::median(condition_summary$n_expressed_gene, na.rm = TRUE))
     )
@@ -2042,39 +2042,150 @@
     tibble::as_tibble()
 }
 
-.module1_qc_correlation_browser <- function(canonical_stats, prediction_stats, bins = 40L, hist_rows = NULL) {
-  parts <- list()
-  add_scope <- function(x, scope) {
-    if (!is.data.frame(x) || !nrow(x) || !"tf" %in% names(x)) return()
-    for (method in c("pearson_r", "spearman_r")) {
-      if (!method %in% names(x)) next
-      pass <- if ("pass" %in% names(x)) x$pass %in% TRUE else suppressWarnings(as.numeric(x[[method]])) >= 0.5
-      dt <- data.table::data.table(tf = as.character(x$tf), value = suppressWarnings(as.numeric(x[[method]])), pass = pass)
-      dt <- dt[is.finite(value) & value >= -1 & value <= 1]
-      if (!nrow(dt)) next
-      dt[, bin := pmin(bins - 1L, pmax(0L, floor((value + 1) / 2 * bins)))]
-      per_tf <- dt[, .(n = .N, n_pass = sum(pass)), by = .(tf, bin)]
-      overall <- dt[, .(n = .N, n_pass = sum(pass)), by = bin][, tf := "Overall"]
-      out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE)
-      out[, `:=`(scope = scope, method = method)]
-      parts[[length(parts) + 1L]] <<- out[, .(scope, method, tf, bin, n, n_pass)]
+.module1_qc_read_run_parameters <- function(module1, module1_dir = NULL) {
+  if (is.list(module1) && is.list(module1$parameters) && length(module1$parameters)) {
+    return(.module1_qc_parameter_provenance(module1, module1$omics_data, scan_predicted_tfbs = FALSE))
+  }
+  path <- if (!is.null(module1_dir)) file.path(module1_dir, "module1_run_parameters.csv") else ""
+  if (nzchar(path) && file.exists(path)) {
+    return(readr::read_csv(path, show_col_types = FALSE))
+  }
+  tibble::tibble()
+}
+
+.module1_qc_parameter_value <- function(parameters, name) {
+  if (!is.data.frame(parameters) || !nrow(parameters) || !all(c("parameter", "effective_value") %in% names(parameters))) return(NULL)
+  value <- parameters$effective_value[match(name, parameters$parameter)]
+  if (!length(value) || is.na(value[[1L]]) || !nzchar(as.character(value[[1L]]))) return(NULL)
+  value[[1L]]
+}
+
+.module1_qc_correlation_cutoffs <- function(module1, module1_dir = NULL, project_config = NULL, omics_data = NULL) {
+  run_parameters <- .module1_qc_read_run_parameters(module1, module1_dir)
+  config <- .module1_relevant_config(project_config)
+  embedded <- if (is_multiomic_object(omics_data) && is.list(omics_data$project$config)) omics_data$project$config else list()
+  resolve <- function(parameter, config_name) {
+    in_memory <- if (is.list(module1$parameters)) module1$parameters[[parameter]] else NULL
+    saved <- .module1_qc_parameter_value(run_parameters, parameter)
+    candidates <- list(in_memory, saved, config[[config_name]], embedded[[config_name]])
+    sources <- c("in-memory run result", "saved run metadata", "project YAML", "embedded project config")
+    for (i in seq_along(candidates)) {
+      value <- suppressWarnings(as.numeric(candidates[[i]]))
+      if (length(value) && is.finite(value[[1L]])) return(list(value = value[[1L]], source = sources[[i]]))
+    }
+    list(value = NA_real_, source = "not recorded")
+  }
+  list(
+    r = resolve("r_cutoff", "threshold_fp_tf_corr_r"),
+    p = resolve("p_cutoff", "threshold_fp_tf_corr_p"),
+    fdr = resolve("fdr_cutoff", "threshold_fp_tf_corr_fdr"),
+    parameters = run_parameters
+  )
+}
+
+.module1_qc_read_correlation_histogram <- function(module1,
+                                                    module1_dir = NULL,
+                                                    canonical_stats = NULL,
+                                                    prediction_stats = NULL) {
+  rows <- if (is.list(module1) && is.data.frame(module1$correlation_histogram)) module1$correlation_histogram else NULL
+  path <- if (!is.null(module1_dir)) file.path(module1_dir, "module1_correlation_histogram.csv") else ""
+  if ((!is.data.frame(rows) || !nrow(rows)) && nzchar(path) && file.exists(path)) {
+    rows <- readr::read_csv(path, show_col_types = FALSE)
+  }
+  required <- c("scope", "population", "method", "tf", "bin", "bin_left", "bin_right", "n_total", "n_retained")
+  if (is.data.frame(rows) && nrow(rows) && all(required %in% names(rows))) return(tibble::as_tibble(rows))
+
+  fallback <- dplyr::bind_rows(
+    .module1_correlation_histogram(canonical_stats, "Canonical motif-supported", "all_evaluated"),
+    .module1_correlation_histogram(prediction_stats, "Full prediction", "retained_sample")
+  )
+  fallback
+}
+
+.module1_qc_recompute_correlation_histogram <- function(module1,
+                                                         module1_dir,
+                                                         omics_data,
+                                                         canonical_stats,
+                                                         cutoffs,
+                                                         project_config = NULL,
+                                                         cores = NULL,
+                                                         verbose = TRUE) {
+  if (!is_multiomic_object(omics_data)) {
+    .log_abort("`recompute_correlation_hist = TRUE` requires the matching CraftGRN multiomic object.")
+  }
+  cache <- .module1_qc_read_canonical_fp_cache(module1, module1_dir = module1_dir)
+  footprint_ids <- if (is.data.frame(cache) && "fp_id" %in% names(cache)) unique(as.character(cache$fp_id)) else character()
+  if (!length(footprint_ids) && is.list(module1$high_confidence_footprints) && "fp_id" %in% names(module1$high_confidence_footprints)) {
+    footprint_ids <- unique(as.character(module1$high_confidence_footprints$fp_id))
+  }
+  if (!length(footprint_ids) && !is.null(module1_dir)) {
+    config_path <- file.path(dirname(module1_dir), "project.yaml")
+    config <- .module1_relevant_config(project_config %||% if (file.exists(config_path)) config_path else NULL)
+    explorer_path <- file.path(module1_dir, "cache", "module1_qc_analysis.rds")
+    explorer <- if (file.exists(explorer_path)) tryCatch(readRDS(explorer_path), error = function(e) NULL) else NULL
+    filter_is_exact <- isTRUE(config$filter_to_canonical_bound)
+    matching_sites <- is.list(explorer) && identical(as.integer(explorer$fingerprint$n_sites), as.integer(nrow(omics_data$matrices$fp_score)))
+    prepared <- if (filter_is_exact && matching_sites) .module1_prepare_predict_omics(omics_data, verbose = FALSE) else NULL
+    matching_tfs <- is.list(prepared) && setequal(.module1_expressed_tfs(prepared), as.character(explorer$tf_names))
+    if (filter_is_exact && matching_sites && matching_tfs && length(explorer$used_site_bits)) {
+      used <- .module1_unpack_site_indices(explorer$used_site_bits, nrow(omics_data$matrices$fp_score))
+      footprint_ids <- rownames(omics_data$matrices$fp_score)[used]
+      if (isTRUE(verbose)) .log_warn("Recovered the exact legacy canonical-bound footprint population from the validated TFBS explorer cache.")
     }
   }
-  if (is.data.frame(hist_rows) && nrow(hist_rows)) {
-    rows <- data.table::as.data.table(hist_rows)
-  } else {
-    add_scope(canonical_stats, "Canonical motif-supported")
-    add_scope(prediction_stats, "Full prediction")
-    if (!length(parts)) return("<p class=\"empty\">Correlation histograms are unavailable in this saved run.</p>")
-    rows <- data.table::rbindlist(parts, use.names = TRUE)
+  if (!length(footprint_ids)) {
+    .log_abort("Cannot recompute the full correlation histogram: the exact canonical-bound footprint set was not saved. Regenerate Module 1 outputs first.")
   }
-  if (!"n_pass" %in% names(rows)) rows[, n_pass := 0]
-  rows[, n_pass := pmin(as.numeric(n), pmax(0, as.numeric(n_pass)))]
+  if (!is.finite(cutoffs$r$value)) {
+    .log_abort("Cannot recompute the correlation histogram because the run correlation cutoff was not recorded. Supply the original `project_config`.")
+  }
+  prediction <- .module1_recompute_prediction_correlation_histogram(
+    omics_data = omics_data,
+    footprint_ids = footprint_ids,
+    r_cutoff = cutoffs$r$value,
+    p_cutoff = if (is.finite(cutoffs$p$value)) cutoffs$p$value else NULL,
+    fdr_cutoff = if (is.finite(cutoffs$fdr$value)) cutoffs$fdr$value else NULL,
+    cores = cores,
+    verbose = verbose
+  )
+  rows <- dplyr::bind_rows(
+    .module1_correlation_histogram(canonical_stats, "Canonical motif-supported", "all_evaluated"),
+    prediction
+  )
+  if (!is.null(module1_dir)) readr::write_csv(rows, file.path(module1_dir, "module1_correlation_histogram.csv"))
+  rows
+}
+
+.module1_qc_correlation_browser <- function(canonical_stats = NULL,
+                                             prediction_stats = NULL,
+                                             bins = 40L,
+                                             hist_rows = NULL,
+                                             r_cutoff = NA_real_,
+                                             p_cutoff = NA_real_,
+                                             fdr_cutoff = NA_real_) {
+  n_total <- n_retained <- NULL
+  rows <- data.table::as.data.table(hist_rows)
+  required <- c("scope", "population", "method", "tf", "bin", "bin_left", "bin_right", "n_total", "n_retained")
+  if (!nrow(rows) || !all(required %in% names(rows))) {
+    return("<p class=\"empty\">Correlation histograms are unavailable in this saved run.</p>")
+  }
+  rows[, `:=`(
+    n_total = pmax(0, as.numeric(n_total)),
+    n_retained = pmin(pmax(0, as.numeric(n_retained)), pmax(0, as.numeric(n_total)))
+  )]
   json <- jsonlite::toJSON(rows, dataframe = "rows", auto_unbox = TRUE)
   json <- gsub("</", "<\\/", json, fixed = TRUE)
+  cutoff_json <- if (is.finite(r_cutoff)) format(r_cutoff, scientific = FALSE, trim = TRUE) else "null"
+  cutoff_note <- paste0(
+    "Selection: best(Pearson R, Spearman R) ",
+    if (is.finite(r_cutoff)) paste0(">= ", format(r_cutoff, scientific = FALSE, trim = TRUE)) else "cutoff not recorded",
+    if (is.finite(p_cutoff)) paste0("; p <= ", format(p_cutoff, scientific = TRUE)) else "",
+    if (is.finite(fdr_cutoff)) paste0("; FDR <= ", format(fdr_cutoff, scientific = TRUE)) else "",
+    ". Gray bars are all evaluated pairs; colored bars are retained pairs."
+  )
   paste0(
-    "<div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>TF 1 <select id=\"corr-tf-1\"></select></label><label>TF 2 <select id=\"corr-tf-2\"></select></label><label>TF 3 <select id=\"corr-tf-3\"></select></label></div><div id=\"corr-grid\" class=\"correlation-grid\"></div></div>",
-    "<script>(()=>{const R=", json, ",scope=document.getElementById('corr-scope'),sels=[1,2,3].map(i=>document.getElementById('corr-tf-'+i)),grid=document.getElementById('corr-grid');const scopes=[...new Set(R.map(x=>x.scope))],alpha=[...new Set(R.filter(x=>x.tf!=='Overall').map(x=>x.tf))].sort(),rank=[...alpha].sort((a,b)=>R.filter(x=>x.tf===b).reduce((s,x)=>s+(+x.n_pass||0),0)-R.filter(x=>x.tf===a).reduce((s,x)=>s+(+x.n_pass||0),0)||a.localeCompare(b));scopes.forEach(x=>scope.add(new Option(x,x)));sels.forEach((s,i)=>{alpha.forEach(x=>s.add(new Option(x,x)));s.value=rank[Math.min(i,rank.length-1)]||alpha[i]||''});function hist(method,name){const rows=R.filter(x=>x.scope===scope.value&&x.method===method&&x.tf===name),w=360,h=285,l=58,b=52,t=42,pw=w-l-12,ph=h-b-t,m=Math.max(1,...rows.map(x=>+x.n)),color=method==='pearson_r'?'#67a9cf':'#ef8a62',title=name+' '+(method==='pearson_r'?'Pearson R':'Spearman R');let s='<figure class=\"correlation-card\"><svg class=\"qc-plot\" viewBox=\"0 0 '+w+' '+h+'\"><text x=\"'+(w/2)+'\" y=\"22\" text-anchor=\"middle\" class=\"corr-title\">'+title+'</text>';for(let i=0;i<=2;i++){const v=m*i/2,y=t+ph-ph*i/2;s+='<line x1=\"'+l+'\" y1=\"'+y+'\" x2=\"'+(w-12)+'\" y2=\"'+y+'\" class=\"corr-gridline\"/><text x=\"'+(l-7)+'\" y=\"'+(y+4)+'\" text-anchor=\"end\" class=\"corr-tick\">'+Math.round(v).toLocaleString()+'</text>'}rows.forEach(x=>{const bw=pw/40,px=l+(+x.bin)*bw,bh=ph*(+x.n)/m,passh=ph*(+x.n_pass||0)/m;s+='<rect x=\"'+px+'\" y=\"'+(t+ph-bh)+'\" width=\"'+Math.max(1,bw-.5)+'\" height=\"'+bh+'\" fill=\"#dddddd\"><title>Total: '+(+x.n).toLocaleString()+'</title></rect><rect x=\"'+px+'\" y=\"'+(t+ph-passh)+'\" width=\"'+Math.max(1,bw-.5)+'\" height=\"'+passh+'\" fill=\"'+color+'\"><title>Passing: '+(+x.n_pass||0).toLocaleString()+'</title></rect>'});[-1,-.5,0,.5,1].forEach(v=>{const x=l+(v+1)/2*pw;s+='<text x=\"'+x+'\" y=\"'+(h-29)+'\" text-anchor=\"middle\" class=\"corr-tick\">'+v+'</text>'});s+='<line x1=\"'+l+'\" y1=\"'+(t+ph)+'\" x2=\"'+(w-12)+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><line x1=\"'+l+'\" y1=\"'+t+'\" x2=\"'+l+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><text x=\"'+(l+pw/2)+'\" y=\"'+(h-5)+'\" text-anchor=\"middle\" class=\"corr-axis-title\">R value</text><text x=\"15\" y=\"'+(t+ph/2)+'\" transform=\"rotate(-90 15 '+(t+ph/2)+')\" text-anchor=\"middle\" class=\"corr-axis-title\">Count</text></svg></figure>';return s}function distinct(){const used=new Set();sels.forEach(s=>{if(used.has(s.value)){const next=alpha.find(x=>!used.has(x));if(next)s.value=next}used.add(s.value)})}function draw(){distinct();const names=['Overall',...sels.map(s=>s.value)];grid.innerHTML=names.map(n=>hist('pearson_r',n)+hist('spearman_r',n)).join('')}scope.addEventListener('change',draw);sels.forEach(s=>s.addEventListener('change',draw));draw()})()</script>"
+    "<div class=\"correlation-browser\"><div class=\"correlation-controls\"><label>Stage <select id=\"corr-scope\"></select></label><label>View <select id=\"corr-view\"><option value=\"individual\">Pearson and Spearman</option><option value=\"best\">Best R</option></select></label><label>TF 1 <select id=\"corr-tf-1\"></select></label><label>TF 2 <select id=\"corr-tf-2\"></select></label><label>TF 3 <select id=\"corr-tf-3\"></select></label></div><p id=\"corr-population-note\" class=\"metric-note\">", .qc_html_escape(cutoff_note), "</p><div id=\"corr-grid\" class=\"correlation-grid\"></div></div>",
+    "<script>(()=>{const R=", json, ",cutoff=", cutoff_json, ",scope=document.getElementById('corr-scope'),view=document.getElementById('corr-view'),sels=[1,2,3].map(i=>document.getElementById('corr-tf-'+i)),grid=document.getElementById('corr-grid'),note=document.getElementById('corr-population-note'),base=note.textContent;[...new Set(R.map(x=>x.scope))].forEach(x=>scope.add(new Option(x,x)));function fillTFs(){const old=sels.map(x=>x.value),rows=R.filter(x=>x.scope===scope.value&&x.tf!=='Overall'),alpha=[...new Set(rows.map(x=>x.tf))].sort(),rank=[...alpha].sort((a,b)=>rows.filter(x=>x.tf===b&&x.method==='best_r').reduce((s,x)=>s+(+x.n_retained||0),0)-rows.filter(x=>x.tf===a&&x.method==='best_r').reduce((s,x)=>s+(+x.n_retained||0),0)||a.localeCompare(b));sels.forEach((s,i)=>{s.replaceChildren();alpha.forEach(x=>s.add(new Option(x,x)));s.value=alpha.includes(old[i])?old[i]:(rank[i]||alpha[i]||'')})}function hist(method,name){const rows=R.filter(x=>x.scope===scope.value&&x.method===method&&x.tf===name),w=390,h=280,l=62,b=48,t=38,pw=w-l-14,ph=h-b-t,m=Math.max(1,...rows.map(x=>+x.n_total)),lo=Math.min(...rows.map(x=>+x.bin_left),-1),hi=Math.max(...rows.map(x=>+x.bin_right),1),color=method==='pearson_r'?'#2b8cbe':method==='spearman_r'?'#e67e22':'#7b3294',label=method==='pearson_r'?'Pearson R':method==='spearman_r'?'Spearman R':'Best R';let s='<figure class=\"correlation-card\"><svg class=\"qc-plot\" viewBox=\"0 0 '+w+' '+h+'\"><text x=\"'+w/2+'\" y=\"22\" text-anchor=\"middle\" class=\"corr-title\">'+name+' - '+label+'</text>';for(let i=0;i<=2;i++){const v=m*i/2,y=t+ph-ph*i/2;s+='<line x1=\"'+l+'\" y1=\"'+y+'\" x2=\"'+(w-14)+'\" y2=\"'+y+'\" class=\"corr-gridline\"/><text x=\"'+(l-7)+'\" y=\"'+(y+4)+'\" text-anchor=\"end\" class=\"corr-tick\">'+Math.round(v).toLocaleString()+'</text>'}rows.forEach(x=>{const x1=l+(+x.bin_left-lo)/(hi-lo)*pw,x2=l+(+x.bin_right-lo)/(hi-lo)*pw,bh=ph*(+x.n_total)/m,kh=ph*(+x.n_retained)/m;s+='<rect x=\"'+x1+'\" y=\"'+(t+ph-bh)+'\" width=\"'+Math.max(1,x2-x1-.5)+'\" height=\"'+bh+'\" fill=\"#d7dce2\"><title>All evaluated: '+(+x.n_total).toLocaleString()+'</title></rect><rect x=\"'+x1+'\" y=\"'+(t+ph-kh)+'\" width=\"'+Math.max(1,x2-x1-.5)+'\" height=\"'+kh+'\" fill=\"'+color+'\"><title>Retained: '+(+x.n_retained).toLocaleString()+'</title></rect>'});if(cutoff!==null){const cx=l+(cutoff-lo)/(hi-lo)*pw;s+='<line x1=\"'+cx+'\" y1=\"'+t+'\" x2=\"'+cx+'\" y2=\"'+(t+ph)+'\" stroke=\"#b2182b\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/><text x=\"'+(cx+4)+'\" y=\"'+(t+12)+'\" class=\"corr-tick\">cutoff '+cutoff+'</text>'}[-1,-.5,0,.5,1].forEach(v=>{const x=l+(v-lo)/(hi-lo)*pw;s+='<text x=\"'+x+'\" y=\"'+(h-25)+'\" text-anchor=\"middle\" class=\"corr-tick\">'+v+'</text>'});return s+'<line x1=\"'+l+'\" y1=\"'+(t+ph)+'\" x2=\"'+(w-14)+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><line x1=\"'+l+'\" y1=\"'+t+'\" x2=\"'+l+'\" y2=\"'+(t+ph)+'\" class=\"corr-axis\"/><text x=\"'+(l+pw/2)+'\" y=\"'+(h-3)+'\" text-anchor=\"middle\" class=\"corr-axis-title\">Correlation</text><text x=\"15\" y=\"'+(t+ph/2)+'\" transform=\"rotate(-90 15 '+(t+ph/2)+')\" text-anchor=\"middle\" class=\"corr-axis-title\">Pair count</text></svg></figure>'}function draw(){const names=['Overall',...sels.map(x=>x.value).filter(Boolean)],methods=view.value==='best'?['best_r']:['pearson_r','spearman_r'],population=[...new Set(R.filter(x=>x.scope===scope.value).map(x=>x.population))],legacy=population.some(x=>x!=='all_evaluated');note.textContent=base+(legacy?' This legacy stage contains a retained-pair sample only; gray bars do not represent the discarded population or the complete retained total.':'');grid.innerHTML=names.map(n=>methods.map(m=>hist(m,n)).join('')).join('')}scope.onchange=()=>{fillTFs();draw()};view.onchange=draw;sels.forEach(s=>s.onchange=draw);fillTFs();draw()})()</script>"
   )
 }
 
@@ -2106,6 +2217,12 @@
 #'   Co-binding, and Motif explorer sections in the QC report.
 #' @param default_condition Optional initial condition for TFBS report previews
 #'   and the linked explorer.
+#' @param recompute_correlation_hist Logical; recompute the all-evaluated
+#'   correlation histogram for a legacy run that predates the compact histogram
+#'   artifact. This requires the matching multiomic object and exact saved
+#'   canonical-bound footprint set.
+#' @param correlation_hist_cores Optional worker count for legacy histogram
+#'   recomputation.
 #' @param verbose Emit concise progress messages.
 #' @return Normalized path to the HTML report.
 #' @export
@@ -2119,7 +2236,10 @@ build_module1_qc_report <- function(module1,
                                     project_date = NULL,
                                     build_tfbs_explorer = TRUE,
                                     default_condition = NULL,
+                                    recompute_correlation_hist = FALSE,
+                                    correlation_hist_cores = NULL,
                                     verbose = TRUE) {
+  n_total <- n_retained <- scope <- population <- NULL
   module1_input <- module1
   module1_dir <- NULL
   if (is.character(module1) && length(module1) == 1L) {
@@ -2192,6 +2312,31 @@ build_module1_qc_report <- function(module1,
   }
   canonical_corr <- .module1_qc_corr_summary(canonical_stats, label = "Motif-supported FP-TF correlations")
   prediction_corr <- .module1_qc_corr_summary(prediction_stats, label = "Prediction FP-TF correlations")
+  correlation_cutoffs <- .module1_qc_correlation_cutoffs(
+    module1,
+    module1_dir = module1_dir,
+    project_config = project_config,
+    omics_data = omics_data
+  )
+  correlation_histogram <- if (isTRUE(recompute_correlation_hist)) {
+    .module1_qc_recompute_correlation_histogram(
+      module1 = module1,
+      module1_dir = module1_dir,
+      omics_data = omics_data,
+      canonical_stats = canonical_stats,
+      cutoffs = correlation_cutoffs,
+      project_config = project_config,
+      cores = correlation_hist_cores,
+      verbose = verbose
+    )
+  } else {
+    .module1_qc_read_correlation_histogram(
+      module1,
+      module1_dir = module1_dir,
+      canonical_stats = canonical_stats,
+      prediction_stats = prediction_stats
+    )
+  }
   motif_complexity <- .module1_qc_motif_complexity(omics_data)
   alignment_summary <- .module1_qc_alignment_summary(omics_data)
   legacy_coverage <- .module1_qc_legacy_summary_coverage(alignment_summary)
@@ -2215,7 +2360,15 @@ build_module1_qc_report <- function(module1,
   }
   legacy_raw_unavailable <- !is.finite(raw_fp_known) && !is.null(module1_dir)
   cards <- .module1_qc_run_cards(qc_summary, omics_data, predicted_scan, predicted_rows, legacy_raw_unavailable = legacy_raw_unavailable)
-  parameter_table <- .module1_qc_parameter_provenance(module1, omics_data, project_config, scan_predicted_tfbs)
+  parameter_table <- if (!is.null(module1_dir) && nrow(correlation_cutoffs$parameters)) {
+    correlation_cutoffs$parameters
+  } else {
+    .module1_qc_parameter_provenance(module1, omics_data, project_config, scan_predicted_tfbs)
+  }
+  if (!is.null(module1_dir) && nrow(parameter_table)) {
+    run_parameters_path <- file.path(module1_dir, "module1_run_parameters.csv")
+    if (!file.exists(run_parameters_path)) readr::write_csv(parameter_table, run_parameters_path)
+  }
   report_date <- .module1_qc_report_date(module1, omics_data, project_config, project_date)
   report_title <- paste0("Module 1 QC Report (", report_date, ")")
   explorer_source <- if (!is.null(module1_dir)) module1_dir else module1_input
@@ -2234,15 +2387,11 @@ build_module1_qc_report <- function(module1,
     if (file.exists(cache_path)) explorer_cache <- tryCatch(readRDS(cache_path), error = function(e) NULL)
   }
   if (is.list(explorer_cache)) {
-    if (!length(canonical_fps) && length(explorer_cache$used_site_bits) && is_multiomic_object(omics_data)) {
-      used_idx <- .module1_unpack_site_indices(explorer_cache$used_site_bits, nrow(omics_data$matrices$fp_score))
-      canonical_fps <- rownames(omics_data$matrices$fp_score)[used_idx]
-    }
     predicted_rows <- sum(explorer_cache$tf_counts[, "Overall"], na.rm = TRUE)
-    cards$value[cards$label == "Filtered footprints"] <- .qc_format_number(length(canonical_fps))
+    if (length(canonical_fps)) cards$value[cards$label == "Filtered footprints"] <- .qc_format_number(length(canonical_fps))
     cards$value[cards$label == "Predicted unique TFBS"] <- .qc_format_number(predicted_rows)
     cards$value[cards$label == "TFs with predicted binding"] <- .qc_format_number(length(explorer_cache$tf_names))
-    if (!is.finite(.qc_metric_value(qc_summary, "n_canonical_bound_fps"))) {
+    if (length(canonical_fps) && !is.finite(.qc_metric_value(qc_summary, "n_canonical_bound_fps"))) {
       qc_summary <- dplyr::bind_rows(qc_summary, tibble::tibble(metric = "n_canonical_bound_fps", value = length(canonical_fps)))
     }
     if (!is.finite(.qc_metric_value(qc_summary, "n_tfs_with_predicted_binding"))) {
@@ -2330,10 +2479,21 @@ build_module1_qc_report <- function(module1,
     distribution_table$condition <- ifelse(is.na(readable) | !nzchar(readable), as.character(distribution_table$condition), readable)
   }
   correlation_browser <- .module1_qc_correlation_browser(
-    canonical_stats,
-    prediction_stats,
-    hist_rows = if (is.list(explorer_cache)) explorer_cache$correlation_hist else NULL
+    hist_rows = correlation_histogram,
+    r_cutoff = correlation_cutoffs$r$value,
+    p_cutoff = correlation_cutoffs$p$value,
+    fdr_cutoff = correlation_cutoffs$fdr$value
   )
+  correlation_summary_table <- if (is.data.frame(correlation_histogram) && nrow(correlation_histogram)) {
+    data.table::as.data.table(correlation_histogram)[tf == "Overall", .(
+      evaluated_pairs = sum(n_total, na.rm = TRUE),
+      retained_pairs = sum(n_retained, na.rm = TRUE),
+      retained_percent = if (sum(n_total, na.rm = TRUE) > 0) round(100 * sum(n_retained, na.rm = TRUE) / sum(n_total, na.rm = TRUE), 2) else NA_real_
+    ), by = .(scope, population, method)] |>
+      tibble::as_tibble()
+  } else {
+    tibble::tibble()
+  }
   distribution_summary <- .module1_qc_distribution_summary(distribution_table)
   if (nrow(distribution_summary)) distribution_summary$condition_stage <- paste(distribution_summary$condition, distribution_summary$stage, sep = " | ")
   gene_distribution <- if (is_multiomic_object(omics_data)) {
@@ -2463,7 +2623,7 @@ build_module1_qc_report <- function(module1,
     .qc_section("3. Correlation Summary", paste0(
       correlation_browser,
       "<details><summary>Correlation values</summary>",
-      .qc_table_html(dplyr::bind_rows(canonical_corr$summary, prediction_corr$summary), max_rows = 20L),
+      .qc_table_html(correlation_summary_table, max_rows = 20L),
       .qc_table_html(canonical_corr$top_tf, max_rows = top_n), "</details>"
     )),
     .qc_section("4. Predicted Binding Sites per TF", paste0(

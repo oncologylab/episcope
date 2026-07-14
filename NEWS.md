@@ -15,6 +15,9 @@
 * Made the Module 1 ATAC master input optional, retained raw-footprint
   provenance for regenerated QC reports, and added responsive 1080p and 4K
   report layouts with ATAC-aware diagnostics.
+* Corrected Module 1 correlation QC to persist all-evaluated Pearson, Spearman,
+  and best-R histograms with the actual run cutoffs, including negative
+  correlations and an explicit legacy recomputation path.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

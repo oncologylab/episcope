@@ -15,6 +15,8 @@ build_module1_qc_report(
   project_date = NULL,
   build_tfbs_explorer = TRUE,
   default_condition = NULL,
+  recompute_correlation_hist = FALSE,
+  correlation_hist_cores = NULL,
   verbose = TRUE
 )
 }
@@ -46,6 +48,14 @@ Co-binding, and Motif explorer sections in the QC report.}
 
 \item{default_condition}{Optional initial condition for TFBS report previews
 and the linked explorer.}
+
+\item{recompute_correlation_hist}{Logical; recompute the all-evaluated
+correlation histogram for a legacy run that predates the compact histogram
+artifact. This requires the matching multiomic object and exact saved
+canonical-bound footprint set.}
+
+\item{correlation_hist_cores}{Optional worker count for legacy histogram
+recomputation.}
 
 \item{verbose}{Emit concise progress messages.}
 }

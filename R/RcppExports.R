@@ -5,8 +5,8 @@
     .Call(`_craftgrn_sparse_pair_correlations_cpp`, fp, tf, fp_rank, tf_rank, fp_index, tf_index, n_threads)
 }
 
-.dense_prediction_stats_cpp <- function(fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads = 1L) {
-    .Call(`_craftgrn_dense_prediction_stats_cpp`, fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads)
+.dense_prediction_stats_cpp <- function(fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads = 1L, emit_stats = TRUE, hist_bins = 40L) {
+    .Call(`_craftgrn_dense_prediction_stats_cpp`, fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads, emit_stats, hist_bins)
 }
 
 .craftgrn_warplda_fit_cpp <- function(dtm, K, iterations = 1000L, alpha = 0.1, beta = 0.1, seed = 1L, convergence_tol = 1e-3, n_check_convergence = 10L, n_iter_inference = 10L, n_threads = 1L, sampler = "warp_omp", ref_topic = NULL, ref_proposal = NULL, ref_seeds = NULL) {

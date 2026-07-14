@@ -38,6 +38,86 @@
   list(r = r_cutoff, p = p_cutoff, fdr = fdr_cutoff)
 }
 
+.module1_correlation_histogram <- function(x,
+                                           scope,
+                                           population = "all_evaluated",
+                                           bins = 40L) {
+  bin <- bin_left <- bin_right <- n_total <- n_retained <- NULL
+  empty <- tibble::tibble(
+    scope = character(), population = character(), method = character(),
+    tf = character(), bin = integer(), bin_left = numeric(), bin_right = numeric(),
+    n_total = numeric(), n_retained = numeric()
+  )
+  if (!is.data.frame(x) || !nrow(x) || !"tf" %in% names(x)) return(empty)
+  bins <- suppressWarnings(as.integer(bins)[[1L]])
+  if (!is.finite(bins) || bins < 1L) .log_abort("`bins` must be a positive integer.")
+  if (!"best_r" %in% names(x) && all(c("pearson_r", "spearman_r") %in% names(x))) {
+    best <- .module1_best_corr(x$pearson_r, x$spearman_r)
+    x$best_r <- best$best_r
+  }
+  retained <- if ("pass" %in% names(x)) x$pass %in% TRUE else rep(TRUE, nrow(x))
+  parts <- list()
+  for (method in intersect(c("pearson_r", "spearman_r", "best_r"), names(x))) {
+    dt <- data.table::data.table(
+      tf = as.character(x$tf),
+      value = suppressWarnings(as.numeric(x[[method]])),
+      retained = retained
+    )
+    dt <- dt[!is.na(tf) & nzchar(tf) & is.finite(value) & value >= -1 & value <= 1]
+    if (!nrow(dt)) next
+    dt[, bin := pmin(bins - 1L, pmax(0L, floor((value + 1) * 0.5 * bins)))]
+    per_tf <- dt[, .(n_total = .N, n_retained = sum(retained)), by = .(tf, bin)]
+    overall <- dt[, .(n_total = .N, n_retained = sum(retained)), by = bin][, tf := "Overall"]
+    out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE)
+    out[, `:=`(
+      scope = as.character(scope),
+      population = as.character(population),
+      method = method,
+      bin_left = -1 + 2 * bin / bins,
+      bin_right = -1 + 2 * (bin + 1L) / bins
+    )]
+    parts[[length(parts) + 1L]] <- out
+  }
+  if (!length(parts)) return(empty)
+  data.table::rbindlist(parts, use.names = TRUE, fill = TRUE)[
+    , .(scope, population, method, tf, bin, bin_left, bin_right, n_total, n_retained)
+  ] |>
+    tibble::as_tibble()
+}
+
+.module1_finalize_correlation_histogram <- function(x,
+                                                    scope = "Full prediction",
+                                                    population = "all_evaluated") {
+  bin <- bin_left <- bin_right <- n_total <- n_retained <- NULL
+  empty <- .module1_correlation_histogram(tibble::tibble(), scope = scope)
+  if (!is.data.frame(x) || !nrow(x)) return(empty)
+  need <- c("tf", "method", "bin", "bin_left", "bin_right", "n_total", "n_retained")
+  if (!all(need %in% names(x))) .log_abort("Correlation histogram rows are missing required columns.")
+  dt <- data.table::as.data.table(x[, need, drop = FALSE])
+  dt[, `:=`(
+    tf = as.character(tf), method = as.character(method), bin = as.integer(bin),
+    n_total = as.numeric(n_total), n_retained = as.numeric(n_retained)
+  )]
+  dt <- dt[!is.na(tf) & nzchar(tf) & !is.na(method) & nzchar(method) & is.finite(n_total) & n_total >= 0]
+  per_tf <- dt[, .(
+    bin_left = min(bin_left, na.rm = TRUE),
+    bin_right = max(bin_right, na.rm = TRUE),
+    n_total = sum(n_total, na.rm = TRUE),
+    n_retained = sum(n_retained, na.rm = TRUE)
+  ), by = .(method, tf, bin)]
+  overall <- per_tf[tf != "Overall", .(
+    bin_left = min(bin_left, na.rm = TRUE),
+    bin_right = max(bin_right, na.rm = TRUE),
+    n_total = sum(n_total, na.rm = TRUE),
+    n_retained = sum(n_retained, na.rm = TRUE)
+  ), by = .(method, bin)][, tf := "Overall"]
+  per_tf <- per_tf[tf != "Overall"]
+  out <- data.table::rbindlist(list(overall, per_tf), use.names = TRUE, fill = TRUE)
+  out[, `:=`(scope = as.character(scope), population = as.character(population))]
+  data.table::setorderv(out, c("scope", "method", "tf", "bin"))
+  tibble::as_tibble(out[, .(scope, population, method, tf, bin, bin_left, bin_right, n_total, n_retained)])
+}
+
 .module1_apply_tfbs_cutoffs <- function(x, cutoffs) {
   if (!is.data.frame(x)) .log_abort("`x` must be a data.frame.")
   if (!all(c("best_r", "best_method") %in% names(x))) {

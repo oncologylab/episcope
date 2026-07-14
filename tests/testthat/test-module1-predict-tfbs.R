@@ -23,6 +23,7 @@ test_that("predict_tfbs returns the public Module 1 contract", {
       "prediction_stats",
       "predicted_tfbs",
       "prediction_stats_manifest",
+      "correlation_histogram",
       "reports",
       "parameters"
     )
@@ -41,6 +42,30 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   expect_named(result$parameters$qc_summary, c("n_conditions", "n_raw_atac_peaks", "n_raw_footprints", "n_aligned_footprints", "n_fp_input", "n_fp_bound_accessible", "n_expressed_tfs", "n_motif_supported_pairs", "n_canonical_pairs_pass", "n_canonical_bound_fps", "n_prediction_fps", "n_prediction_pairs", "n_prediction_stats", "n_predicted_tfbs", "n_tfs_with_predicted_binding"))
   expect_equal(result$parameters$qc_summary$n_prediction_fps, nrow(result$high_confidence_footprints))
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
+  full_overall <- result$correlation_histogram |>
+    dplyr::filter(.data$scope == "Full prediction", .data$tf == "Overall", .data$method == "best_r")
+  expect_lte(sum(full_overall$n_total), result$parameters$qc_summary$n_prediction_pairs)
+  expect_gt(sum(full_overall$n_total), sum(full_overall$n_retained))
+  expect_equal(sum(full_overall$n_retained), result$parameters$qc_summary$n_prediction_stats)
+  expect_true(any(result$correlation_histogram$bin_right <= 0 & result$correlation_histogram$n_total > 0))
+})
+
+test_that("Module 1 correlation histograms retain boundary bins and selection counts", {
+  x <- tibble::tibble(
+    tf = rep("TF_A", 5),
+    pearson_r = c(-1, -0.3, 0, 0.3, 1),
+    spearman_r = c(-1, -0.2, 0, 0.2, 1),
+    best_r = c(-1, -0.2, 0, 0.3, 1),
+    pass = c(FALSE, FALSE, FALSE, TRUE, TRUE)
+  )
+  histogram <- craftgrn:::.module1_correlation_histogram(x, "test", bins = 40L)
+  best <- histogram[histogram$method == "best_r" & histogram$tf == "Overall", ]
+
+  expect_equal(sum(best$n_total), 5)
+  expect_equal(sum(best$n_retained), 2)
+  expect_true(any(best$bin == 0L))
+  expect_true(any(best$bin == 39L))
+  expect_equal(sum(best$n_retained[best$bin_left >= 0.3]), 2)
 })
 
 test_that("Module 1 preparation persists raw footprint provenance without ATAC", {
@@ -314,6 +339,20 @@ test_that("sparse C++ pair correlations match the R fallback", {
   expect_equal(cpp_stats$spearman_p, r_stats$spearman_p, tolerance = 1e-10)
 })
 
+test_that("dense C++ correlation histograms match the R fallback", {
+  fixture <- module1_tiny_fixture()
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+  cpp <- predict_tfbs(compact, r_cutoff = 0.3, p_cutoff = 0.5, write_outputs = FALSE, verbose = FALSE)
+  fallback <- with_mocked_bindings(
+    predict_tfbs(compact, r_cutoff = 0.3, p_cutoff = 0.5, write_outputs = FALSE, verbose = FALSE),
+    .module1_compute_prediction_stats_cpp = function(...) NULL
+  )
+  order_hist <- function(x) x[order(x$scope, x$method, x$tf, x$bin), ]
+
+  expect_equal(order_hist(cpp$correlation_histogram), order_hist(fallback$correlation_histogram), tolerance = 1e-10)
+  expect_equal(nrow(cpp$prediction_stats), nrow(fallback$prediction_stats))
+})
+
 test_that("predict_tfbs streams large link outputs when return_prediction_stats is disabled", {
   fixture <- module1_tiny_fixture()
   out_dir <- file.path(tempdir(), paste0("craftgrn-module1-stream-", as.integer(stats::runif(1L, 1, 1e9))))
@@ -335,6 +374,8 @@ test_that("predict_tfbs streams large link outputs when return_prediction_stats 
   expect_true(all(file.exists(result$prediction_stats_manifest$path)))
   expect_true(file.exists(result$reports$canonical_correlation_stats))
   expect_true(file.exists(result$reports$qc_summary))
+  expect_true(file.exists(result$reports$correlation_histogram))
+  expect_true(file.exists(result$reports$run_parameters))
   expect_true(file.exists(result$reports$predicted_tfbs_manifest))
   pred_manifest <- readr::read_csv(result$reports$predicted_tfbs_manifest, show_col_types = FALSE)
   expect_true(all(file.exists(pred_manifest$path)))

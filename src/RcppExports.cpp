@@ -28,8 +28,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // dense_prediction_stats_cpp
-DataFrame dense_prediction_stats_cpp(NumericMatrix fp, NumericMatrix tf, NumericMatrix fp_rank, NumericMatrix tf_rank, CharacterVector fp_id, CharacterVector atac_peak, CharacterVector tf_name, double r_cutoff, double p_cutoff, double fdr_cutoff, int n_threads);
-RcppExport SEXP _craftgrn_dense_prediction_stats_cpp(SEXP fpSEXP, SEXP tfSEXP, SEXP fp_rankSEXP, SEXP tf_rankSEXP, SEXP fp_idSEXP, SEXP atac_peakSEXP, SEXP tf_nameSEXP, SEXP r_cutoffSEXP, SEXP p_cutoffSEXP, SEXP fdr_cutoffSEXP, SEXP n_threadsSEXP) {
+List dense_prediction_stats_cpp(NumericMatrix fp, NumericMatrix tf, NumericMatrix fp_rank, NumericMatrix tf_rank, CharacterVector fp_id, CharacterVector atac_peak, CharacterVector tf_name, double r_cutoff, double p_cutoff, double fdr_cutoff, int n_threads, bool emit_stats, int hist_bins);
+RcppExport SEXP _craftgrn_dense_prediction_stats_cpp(SEXP fpSEXP, SEXP tfSEXP, SEXP fp_rankSEXP, SEXP tf_rankSEXP, SEXP fp_idSEXP, SEXP atac_peakSEXP, SEXP tf_nameSEXP, SEXP r_cutoffSEXP, SEXP p_cutoffSEXP, SEXP fdr_cutoffSEXP, SEXP n_threadsSEXP, SEXP emit_statsSEXP, SEXP hist_binsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -44,7 +44,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type p_cutoff(p_cutoffSEXP);
     Rcpp::traits::input_parameter< double >::type fdr_cutoff(fdr_cutoffSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(dense_prediction_stats_cpp(fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads));
+    Rcpp::traits::input_parameter< bool >::type emit_stats(emit_statsSEXP);
+    Rcpp::traits::input_parameter< int >::type hist_bins(hist_binsSEXP);
+    rcpp_result_gen = Rcpp::wrap(dense_prediction_stats_cpp(fp, tf, fp_rank, tf_rank, fp_id, atac_peak, tf_name, r_cutoff, p_cutoff, fdr_cutoff, n_threads, emit_stats, hist_bins));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -75,7 +77,7 @@ END_RCPP
 
 static const R_CallMethodDef CallEntries[] = {
     {"_craftgrn_sparse_pair_correlations_cpp", (DL_FUNC) &_craftgrn_sparse_pair_correlations_cpp, 7},
-    {"_craftgrn_dense_prediction_stats_cpp", (DL_FUNC) &_craftgrn_dense_prediction_stats_cpp, 11},
+    {"_craftgrn_dense_prediction_stats_cpp", (DL_FUNC) &_craftgrn_dense_prediction_stats_cpp, 13},
     {"_craftgrn_craftgrn_warplda_fit_cpp", (DL_FUNC) &_craftgrn_craftgrn_warplda_fit_cpp, 14},
     {NULL, NULL, 0}
 };

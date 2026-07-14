@@ -133,7 +133,7 @@ DataFrame sparse_pair_correlations_cpp(NumericMatrix fp,
 // to keep R-side memory usage bounded.
 // [[Rcpp::plugins(openmp)]]
 // [[Rcpp::export(.dense_prediction_stats_cpp)]]
-DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
+List dense_prediction_stats_cpp(NumericMatrix fp,
                                      NumericMatrix tf,
                                      NumericMatrix fp_rank,
                                      NumericMatrix tf_rank,
@@ -143,7 +143,9 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
                                      double r_cutoff,
                                      double p_cutoff,
                                      double fdr_cutoff,
-                                     int n_threads = 1) {
+                                     int n_threads = 1,
+                                     bool emit_stats = true,
+                                     int hist_bins = 40) {
   const int nfp = fp.nrow();
   const int ntf = tf.nrow();
   const int ncond = fp.ncol();
@@ -151,6 +153,7 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
       tf_rank.nrow() != ntf || tf_rank.ncol() != ncond) {
     stop("Input matrices have inconsistent dimensions.");
   }
+  if (hist_bins < 1) stop("hist_bins must be positive.");
   NumericMatrix pearson(nfp, ntf), spearman(nfp, ntf), pearson_p(nfp, ntf), spearman_p(nfp, ntf);
 #ifdef _OPENMP
   if (n_threads < 1) n_threads = 1;
@@ -174,6 +177,19 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
     spearman_adj[j] = bh_adjust_column(spearman_p, j);
   }
 
+  const int n_methods = 3;
+  const std::size_t hist_size = static_cast<std::size_t>(ntf) * n_methods * hist_bins;
+  std::vector<double> hist_total(hist_size, 0.0), hist_retained(hist_size, 0.0);
+  const auto add_hist = [&](int tf_index, int method_index, double value, bool retained) {
+    if (!R_finite(value) || value < -1.0 || value > 1.0) return;
+    int bin = static_cast<int>(std::floor((value + 1.0) * 0.5 * hist_bins));
+    if (bin < 0) bin = 0;
+    if (bin >= hist_bins) bin = hist_bins - 1;
+    const std::size_t index = (static_cast<std::size_t>(tf_index) * n_methods + method_index) * hist_bins + bin;
+    hist_total[index] += 1.0;
+    if (retained) hist_retained[index] += 1.0;
+  };
+
   std::size_t n_pass = 0;
   for (int j = 0; j < ntf; ++j) {
     for (int i = 0; i < nfp; ++i) {
@@ -189,17 +205,23 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
       const bool pass_r = R_finite(best) && best >= r_cutoff;
       const bool pass_p = !R_finite(p_cutoff) || (R_finite(bp) && bp <= p_cutoff);
       const bool pass_f = !R_finite(fdr_cutoff) || (R_finite(bf) && bf <= fdr_cutoff);
-      if (pass_r && pass_p && pass_f) ++n_pass;
+      const bool retained = pass_r && pass_p && pass_f;
+      if (retained) ++n_pass;
+      add_hist(j, 0, pearson(i, j), retained);
+      add_hist(j, 1, spearman(i, j), retained);
+      add_hist(j, 2, best, retained);
     }
   }
 
-  CharacterVector out_fp(n_pass), out_peak(n_pass), out_tf(n_pass), out_method(n_pass);
-  NumericVector out_pr(n_pass), out_pp(n_pass), out_ppa(n_pass), out_sr(n_pass), out_sp(n_pass), out_spa(n_pass);
-  NumericVector out_best(n_pass), out_bp(n_pass), out_bf(n_pass);
-  LogicalVector out_pass_r(n_pass), out_pass_p(n_pass), out_pass_f(n_pass), out_pass(n_pass);
+  const std::size_t output_size = emit_stats ? n_pass : 0;
+  CharacterVector out_fp(output_size), out_peak(output_size), out_tf(output_size), out_method(output_size);
+  NumericVector out_pr(output_size), out_pp(output_size), out_ppa(output_size), out_sr(output_size), out_sp(output_size), out_spa(output_size);
+  NumericVector out_best(output_size), out_bp(output_size), out_bf(output_size);
+  LogicalVector out_pass_r(output_size), out_pass_p(output_size), out_pass_f(output_size), out_pass(output_size);
   std::size_t k = 0;
-  for (int j = 0; j < ntf; ++j) {
-    for (int i = 0; i < nfp; ++i) {
+  if (emit_stats) {
+    for (int j = 0; j < ntf; ++j) {
+      for (int i = 0; i < nfp; ++i) {
       double best = pearson(i, j);
       bool use_s = false;
       const double sr = spearman(i, j);
@@ -230,10 +252,12 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
       out_pass_p[k] = pass_p;
       out_pass_f[k] = pass_f;
       out_pass[k] = true;
-      ++k;
+        ++k;
+      }
     }
   }
-  return DataFrame::create(
+
+  DataFrame stats = DataFrame::create(
     _["fp_id"] = out_fp,
     _["atac_peak"] = out_peak,
     _["tf"] = out_tf,
@@ -253,4 +277,41 @@ DataFrame dense_prediction_stats_cpp(NumericMatrix fp,
     _["pass"] = out_pass,
     _["stringsAsFactors"] = false
   );
+
+  std::size_t n_hist_rows = 0;
+  for (std::size_t index = 0; index < hist_size; ++index) {
+    if (hist_total[index] > 0.0) ++n_hist_rows;
+  }
+  CharacterVector hist_tf(n_hist_rows), hist_method(n_hist_rows);
+  IntegerVector hist_bin(n_hist_rows);
+  NumericVector hist_left(n_hist_rows), hist_right(n_hist_rows), hist_n(n_hist_rows), hist_keep(n_hist_rows);
+  const char* method_names[] = {"pearson_r", "spearman_r", "best_r"};
+  std::size_t h = 0;
+  for (int j = 0; j < ntf; ++j) {
+    for (int method = 0; method < n_methods; ++method) {
+      for (int bin = 0; bin < hist_bins; ++bin) {
+        const std::size_t index = (static_cast<std::size_t>(j) * n_methods + method) * hist_bins + bin;
+        if (hist_total[index] <= 0.0) continue;
+        hist_tf[h] = tf_name[j];
+        hist_method[h] = method_names[method];
+        hist_bin[h] = bin;
+        hist_left[h] = -1.0 + 2.0 * bin / hist_bins;
+        hist_right[h] = -1.0 + 2.0 * (bin + 1) / hist_bins;
+        hist_n[h] = hist_total[index];
+        hist_keep[h] = hist_retained[index];
+        ++h;
+      }
+    }
+  }
+  DataFrame histogram = DataFrame::create(
+    _["tf"] = hist_tf,
+    _["method"] = hist_method,
+    _["bin"] = hist_bin,
+    _["bin_left"] = hist_left,
+    _["bin_right"] = hist_right,
+    _["n_total"] = hist_n,
+    _["n_retained"] = hist_keep,
+    _["stringsAsFactors"] = false
+  );
+  return List::create(_["stats"] = stats, _["histogram"] = histogram);
 }
