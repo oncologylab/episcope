@@ -43,6 +43,82 @@ test_that("predict_tfbs returns the public Module 1 contract", {
   expect_false("TF_E" %in% result$motif_supported_correlations$tf)
 })
 
+test_that("Module 1 preparation persists raw footprint provenance without ATAC", {
+  fixture <- module1_tiny_fixture()
+  conditions <- setdiff(names(fixture$omics_data$fp_score_condition_qn), "peak_ID")
+  fp_sites <- fixture$omics_data$fp_annotation |>
+    dplyr::transmute(
+      peak_ID = .data$fp_peak,
+      atac_peak = .data$atac_peak,
+      motifs_all = .data$motifs,
+      source_fp_peaks = c(
+        "chr1:101-111;chr1:102-112", "chr1:102-112;chr1:201-211",
+        "chr1:301-311", "chr2:101-111", "chr2:221-231", "chr3:501-511"
+      ),
+      n_source_fp_peaks = c(2L, 2L, 1L, 1L, 1L, 1L)
+    )
+  fp_aligned <- list(
+    fp_score = fixture$omics_data$fp_score_condition_qn,
+    fp_bound = fixture$omics_data$fp_bound_condition,
+    fp_annotation = fixture$omics_data$fp_annotation,
+    fp_sites = fp_sites,
+    id_map = tibble::tibble()
+  )
+  metadata <- tibble::tibble(id = conditions, condition = conditions)
+  compact <- load_prep_multiomic_data(
+    fp_aligned = fp_aligned,
+    atac_data = NULL,
+    rna_tbl = fixture$omics_data$rna_condition,
+    metadata = metadata,
+    label_col = "condition",
+    tf_list = fixture$omics_data$tf_list,
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    use_parallel = FALSE,
+    verbose = FALSE
+  )
+
+  expect_false(compact$qc$input_presence$atac)
+  expect_null(compact$matrices$atac_score)
+  expect_null(compact$matrices$atac_open)
+  expect_equal(compact$qc$input_counts$n_raw_footprints, 7)
+  expect_equal(compact$qc$input_counts$n_aligned_footprints, 6)
+  expected_bound <- as.matrix(fixture$omics_data$fp_bound_condition[
+    match(rownames(compact$matrices$fp_bound), fixture$omics_data$fp_bound_condition$peak_ID),
+    conditions,
+    drop = FALSE
+  ]) > 0
+  expect_equal(unname(compact$matrices$fp_bound), unname(expected_bound))
+
+  result <- predict_tfbs(
+    compact,
+    r_cutoff = 0.8,
+    write_outputs = FALSE,
+    verbose = FALSE
+  )
+  expect_equal(result$parameters$qc_summary$n_raw_footprints, 7)
+  expect_true(is.na(result$parameters$qc_summary$n_raw_atac_peaks))
+  expect_gt(nrow(result$prediction_stats), 0L)
+})
+
+test_that("raw footprint counting deduplicates source coordinates", {
+  aligned <- list(
+    id_map = tibble::tibble(
+      peak_ID = c("p1", "p1", "p2"),
+      source_fp_peak = c("s1", "s2", "s2")
+    )
+  )
+  expect_equal(craftgrn:::.module1_raw_footprint_count(aligned), 2)
+
+  aligned <- list(
+    fp_sites = tibble::tibble(
+      source_fp_peaks = c("s1;s2", "s2;s3"),
+      n_source_fp_peaks = c(2L, 2L)
+    )
+  )
+  expect_equal(craftgrn:::.module1_raw_footprint_count(aligned), 3)
+})
+
 test_that("predict_tfbs defaults do not write to the working directory", {
   expect_null(formals(predict_tfbs)$out_dir)
   expect_false(formals(predict_tfbs)$write_outputs)

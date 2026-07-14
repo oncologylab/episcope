@@ -684,24 +684,24 @@
   css <- paste(
     ":root{--ink:#17202a;--muted:#5d6673;--line:#d8dee8;--panel:#ffffff;--soft:#f7f9fb;--accent:#2166ac;--accent2:#1b9e77;--navy:#172a45;--paper-red:#b2182b;--paper-gold:#c99400;--warn:#9a5b00;--skip:#6b7280}",
     "*{box-sizing:border-box}body{margin:0;background:#ffffff;color:var(--ink);font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5}",
-    ".wrap{max-width:1160px;margin:0 auto;padding:24px 30px}",
+    ".wrap{width:min(96vw,1920px);max-width:none;margin:0 auto;padding:24px 30px}",
     "header{background:#fff;border-bottom:1px solid #cfd6df}",
     "header .wrap{padding-top:24px;padding-bottom:18px}",
     "h1{font-size:28px;line-height:1.12;margin:0 0 5px 0;letter-spacing:0;color:#111827;font-weight:750}",
     "h2{font-size:17px;line-height:1.25;margin:0 0 12px 0;color:#111827;font-weight:750;border-bottom:1px solid var(--line);padding-bottom:7px}",
     "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px;min-width:0}",
     "h3{font-size:14px;line-height:1.25;margin:0 0 8px 0;color:#111827;font-weight:750}",
-    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
+    ".subtitle{color:var(--muted);font-size:13px}.metric-note{margin:7px 0 0;color:var(--muted);font-size:11px}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
     ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.run-setup>*{min-width:0}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:12px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px;padding:4px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:7px 11px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 8px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 12px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:6px 9px;font-size:12px}.qc-guide .callout{margin-top:8px}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-grid .plot-card,.plot-card-wide{margin-top:12px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px;padding:4px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:7px 11px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 8px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 12px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:6px 9px;font-size:12px}.qc-guide .callout{margin-top:8px}",
     ".table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
     ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:10px 2px 2px}.condition-tag{font-size:11px;color:#435066;display:inline-flex;align-items:center;gap:5px}.condition-tag i{width:9px;height:9px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
     ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;border-radius:4px;padding:8px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
-    "@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
+    "@media(min-width:1600px){.cards{grid-template-columns:repeat(8,minmax(0,1fr))}.correlation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}section{padding:18px 22px 22px}}@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{width:100%;padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
@@ -886,9 +886,12 @@
   conditions <- .qc_condition_columns(omics_data)
   if (!length(conditions)) return(empty)
   mats <- omics_data$matrices
+  has_atac <- .module1_qc_has_atac(omics_data)
   condition_summary <- .qc_condition_metadata(omics_data, conditions)
   condition_summary$n_bound_fp <- as.numeric(.qc_col_count_positive(mats$fp_bound, conditions, condition_meta = condition_summary))
-  condition_summary$n_open_atac <- as.numeric(.qc_col_count_positive(mats$atac_open, conditions, condition_meta = condition_summary))
+  if (has_atac) {
+    condition_summary$n_open_atac <- as.numeric(.qc_col_count_positive(mats$atac_open, conditions, condition_meta = condition_summary))
+  }
   condition_summary$n_expressed_gene <- as.numeric(.qc_col_count_positive(mats$gene_on, conditions, condition_meta = condition_summary))
   condition_summary <- condition_summary[order(condition_summary$condition), , drop = FALSE]
   run_vals <- if ("run_grn" %in% names(condition_summary)) {
@@ -897,15 +900,21 @@
     rep(NA, nrow(condition_summary))
   }
   cards <- tibble::tibble(
-    label = c("Conditions", "Run-GRN conditions", "Median bound FPs", "Median open ATAC", "Median expressed genes"),
+    label = c("Conditions", "Run-GRN conditions", "Median bound FPs", "Median expressed genes"),
     value = c(
       .qc_format_number(nrow(condition_summary)),
       .qc_format_number(sum(run_vals %in% TRUE, na.rm = TRUE)),
       .qc_format_number(stats::median(condition_summary$n_bound_fp, na.rm = TRUE)),
-      .qc_format_number(stats::median(condition_summary$n_open_atac, na.rm = TRUE)),
       .qc_format_number(stats::median(condition_summary$n_expressed_gene, na.rm = TRUE))
     )
   )
+  if (has_atac) {
+    cards <- dplyr::bind_rows(
+      cards[1:3, , drop = FALSE],
+      tibble::tibble(label = "Median open ATAC", value = .qc_format_number(stats::median(condition_summary$n_open_atac, na.rm = TRUE))),
+      cards[4, , drop = FALSE]
+    )
+  }
   design_rows <- list()
   design_cols <- intersect(c("cell", "stress_type", "run_grn"), names(condition_summary))
   for (nm in design_cols) {
@@ -969,8 +978,9 @@
   fp_motif <- omics_data$features$fp_motif
   atac <- omics_data$features$atac
   gene <- omics_data$features$gene
+  has_atac <- .module1_qc_has_atac(omics_data)
   n_aligned <- if (is.data.frame(fp)) nrow(fp) else nrow(omics_data$matrices$fp_score)
-  n_atac <- if (is.data.frame(atac)) nrow(atac) else nrow(omics_data$matrices$atac_score)
+  n_atac <- if (!has_atac) NA_real_ else if (is.data.frame(atac)) nrow(atac) else nrow(omics_data$matrices$atac_score)
   n_gene <- if (is.data.frame(gene)) nrow(gene) else nrow(omics_data$matrices$gene_expr)
   n_fm <- if (is.data.frame(fp_motif)) nrow(fp_motif) else NA_integer_
   n_fm_fp <- if (is.data.frame(fp_motif) && "fp_id" %in% names(fp_motif)) length(unique(fp_motif$fp_id)) else NA_integer_
@@ -999,7 +1009,7 @@
     note = c(
       if (length(group_values)) "computed from features$fp$group_size" else "not retained in this CraftGRN multiomic object",
       "compact aligned FP site count",
-      "compact ATAC feature count",
+      if (has_atac) "compact ATAC feature count" else "ATAC master table not provided",
       "compact RNA feature count",
       "one row per FP-motif support row",
       "unique FP ids in the FP-motif table",
@@ -1169,22 +1179,22 @@
 .module1_qc_input_metrics <- function(omics_data) {
   if (!is_multiomic_object(omics_data)) return(tibble::tibble(label = character(), value = character()))
   mats <- omics_data$matrices
+  has_atac <- .module1_qc_has_atac(omics_data)
   n_tf <- NA_integer_
   if (is.data.frame(omics_data$features$gene) && "is_tf" %in% names(omics_data$features$gene)) {
     n_tf <- sum(omics_data$features$gene$is_tf %in% TRUE, na.rm = TRUE)
   }
-  tibble::tibble(
-    label = c("Conditions", "Aligned FPs", "Bound FPs", "ATAC peaks", "Genes", "Expressed genes", "TF genes"),
-    value = c(
-      .qc_format_number(ncol(mats$fp_score)),
-      .qc_format_number(nrow(mats$fp_score)),
-      .qc_format_number(sum(rowSums(mats$fp_bound > 0, na.rm = TRUE) > 0)),
-      .qc_format_number(if (is.null(mats$atac_score)) NA_real_ else nrow(mats$atac_score)),
-      .qc_format_number(nrow(mats$gene_expr)),
-      .qc_format_number(sum(rowSums(mats$gene_on > 0, na.rm = TRUE) > 0)),
-      .qc_format_number(n_tf)
-    )
+  labels <- c("Conditions", "Aligned FPs", "Bound FPs", "Genes", "Expressed genes", "TF genes")
+  values <- c(
+    ncol(mats$fp_score), nrow(mats$fp_score),
+    sum(rowSums(mats$fp_bound > 0, na.rm = TRUE) > 0),
+    nrow(mats$gene_expr), sum(rowSums(mats$gene_on > 0, na.rm = TRUE) > 0), n_tf
   )
+  if (has_atac) {
+    labels <- append(labels, "ATAC peaks", after = 3L)
+    values <- append(values, nrow(mats$atac_score), after = 3L)
+  }
+  tibble::tibble(label = labels, value = .qc_format_number(values))
 }
 
 .module1_qc_motif_complexity <- function(omics_data) {
@@ -1348,9 +1358,52 @@
   format(parsed, "%Y-%m-%d")
 }
 
-.module1_qc_run_cards <- function(qc_summary, omics_data, predicted_scan, predicted_rows) {
+.module1_qc_has_atac <- function(omics_data) {
+  if (!is_multiomic_object(omics_data)) return(FALSE)
+  presence <- omics_data$qc$input_presence$atac
+  if (is.logical(presence) && length(presence) == 1L && !is.na(presence)) return(isTRUE(presence))
+  is.matrix(omics_data$matrices$atac_score) && nrow(omics_data$matrices$atac_score) > 0L
+}
+
+.module1_qc_raw_footprint_recovery <- function(omics_data, module1_dir = NULL, project_config = NULL) {
+  direct_paths <- character()
+  if (is_multiomic_object(omics_data) && is.list(omics_data$paths)) {
+    direct_paths <- unlist(omics_data$paths[intersect(c("fp_sites", "id_map"), names(omics_data$paths))], use.names = FALSE)
+  }
+  config <- .module1_relevant_config(project_config)
+  cache_dirs <- c(config$fp_cache_dir)
+  if (!is.null(config$base_dir) && nzchar(config$base_dir)) cache_dirs <- c(cache_dirs, file.path(config$base_dir, "cache"))
+  if (!is.null(module1_dir) && nzchar(module1_dir)) cache_dirs <- c(cache_dirs, file.path(module1_dir, "cache"), file.path(dirname(module1_dir), "cache"))
+  cache_dirs <- unique(as.character(cache_dirs))
+  cache_dirs <- cache_dirs[!is.na(cache_dirs) & nzchar(cache_dirs)]
+  tags <- unique(as.character(c(config$fp_cache_tag, config$db)))
+  tags <- tags[!is.na(tags) & nzchar(tags)]
+  cache_paths <- character()
+  for (cache_dir in cache_dirs) {
+    for (tag in tags) {
+      cache_paths <- c(
+        cache_paths,
+        file.path(cache_dir, paste0("fp_sites_", tag, c(".parquet", ".csv"))),
+        file.path(cache_dir, paste0("fp_id_map_", tag, c(".parquet", ".csv")))
+      )
+    }
+  }
+  paths <- unique(c(as.character(direct_paths), cache_paths))
+  paths <- paths[!is.na(paths) & nzchar(paths) & file.exists(paths)]
+  for (path in paths) {
+    columns <- if (grepl("fp_id_map_", basename(path), fixed = TRUE)) "source_fp_peak" else c("source_fp_peaks", "n_source_fp_peaks")
+    table <- tryCatch(.qc_read_table_file(path, columns = columns), error = function(e) tibble::tibble())
+    aligned <- if ("source_fp_peak" %in% names(table)) list(id_map = table) else list(fp_sites = table)
+    count <- .module1_raw_footprint_count(aligned)
+    if (is.finite(count)) return(list(count = count, path = path))
+  }
+  list(count = NA_real_, path = NA_character_)
+}
+
+.module1_qc_run_cards <- function(qc_summary, omics_data, predicted_scan, predicted_rows, legacy_raw_unavailable = FALSE) {
   input_counts <- if (is_multiomic_object(omics_data) && is.list(omics_data$qc$input_counts)) omics_data$qc$input_counts else list()
-  atac_fallback <- if (is_multiomic_object(omics_data) && is.data.frame(omics_data$features$atac)) nrow(omics_data$features$atac) else NA_real_
+  has_atac <- .module1_qc_has_atac(omics_data)
+  atac_fallback <- if (has_atac && is.data.frame(omics_data$features$atac)) nrow(omics_data$features$atac) else NA_real_
   n_raw_atac <- .qc_metric_value(qc_summary, "n_raw_atac_peaks", default = input_counts$n_raw_atac_peaks %||% atac_fallback)
   n_raw_fp <- .qc_metric_value(qc_summary, "n_raw_footprints", default = input_counts$n_raw_footprints %||% NA_real_)
   n_aligned <- .qc_metric_value(qc_summary, "n_aligned_footprints", default = if (is_multiomic_object(omics_data)) nrow(omics_data$matrices$fp_score) else NA_real_)
@@ -1365,14 +1418,22 @@
   n_expressed <- .qc_metric_value(qc_summary, "n_expressed_tfs", default = expressed_fallback)
   scanned_tf_n <- if (is.data.frame(predicted_scan$tf_summary_all) && nrow(predicted_scan$tf_summary_all)) nrow(predicted_scan$tf_summary_all) else NA_real_
   n_pred_tfs <- .qc_metric_value(qc_summary, "n_tfs_with_predicted_binding", default = scanned_tf_n)
-  values <- c(n_raw_atac, n_raw_fp, n_aligned, n_filtered, predicted_rows, n_expressed, n_pred_tfs)
+  format_value <- function(value, missing = "Not recorded") {
+    if (is.finite(suppressWarnings(as.numeric(value)))) .qc_format_number(value) else missing
+  }
+  values <- c(
+    if (has_atac) format_value(n_raw_atac) else "Not provided",
+    format_value(n_raw_fp, if (isTRUE(legacy_raw_unavailable)) "Unavailable for legacy run" else "Not recorded"),
+    format_value(n_aligned), format_value(n_filtered), format_value(predicted_rows),
+    format_value(n_expressed), format_value(n_pred_tfs)
+  )
   tibble::tibble(
     label = c(
       "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
-      "Filtered footprints (same as canonical-bound)", "Predicted unique TFBS",
+      "Filtered footprints", "Predicted unique TFBS",
       "Expressed TFs", "TFs with predicted binding"
     ),
-    value = ifelse(is.finite(suppressWarnings(as.numeric(values))), .qc_format_number(values), "Not recorded")
+    value = values
   )
 }
 
@@ -2142,7 +2203,18 @@ build_module1_qc_report <- function(module1,
   predicted_rows <- if (nrow(pred_manifest)) sum(suppressWarnings(as.numeric(pred_manifest$n_rows)), na.rm = TRUE) else .qc_metric_value(qc_summary, "n_predicted_tfbs")
   canonical_status <- .module1_qc_canonical_status(support_check, canonical_stats, qc_summary)
 
-  cards <- .module1_qc_run_cards(qc_summary, omics_data, predicted_scan, predicted_rows)
+  input_counts <- if (is_multiomic_object(omics_data) && is.list(omics_data$qc$input_counts)) omics_data$qc$input_counts else list()
+  raw_fp_known <- .qc_metric_value(qc_summary, "n_raw_footprints", default = input_counts$n_raw_footprints %||% NA_real_)
+  raw_recovery <- list(count = NA_real_, path = NA_character_)
+  if (!is.finite(raw_fp_known)) {
+    raw_recovery <- .module1_qc_raw_footprint_recovery(omics_data, module1_dir = module1_dir, project_config = project_config)
+    if (is.finite(raw_recovery$count)) {
+      qc_summary <- dplyr::bind_rows(qc_summary, tibble::tibble(metric = "n_raw_footprints", value = raw_recovery$count))
+      raw_fp_known <- raw_recovery$count
+    }
+  }
+  legacy_raw_unavailable <- !is.finite(raw_fp_known) && !is.null(module1_dir)
+  cards <- .module1_qc_run_cards(qc_summary, omics_data, predicted_scan, predicted_rows, legacy_raw_unavailable = legacy_raw_unavailable)
   parameter_table <- .module1_qc_parameter_provenance(module1, omics_data, project_config, scan_predicted_tfbs)
   report_date <- .module1_qc_report_date(module1, omics_data, project_config, project_date)
   report_title <- paste0("Module 1 QC Report (", report_date, ")")
@@ -2167,7 +2239,7 @@ build_module1_qc_report <- function(module1,
       canonical_fps <- rownames(omics_data$matrices$fp_score)[used_idx]
     }
     predicted_rows <- sum(explorer_cache$tf_counts[, "Overall"], na.rm = TRUE)
-    cards$value[cards$label == "Filtered footprints (same as canonical-bound)"] <- .qc_format_number(length(canonical_fps))
+    cards$value[cards$label == "Filtered footprints"] <- .qc_format_number(length(canonical_fps))
     cards$value[cards$label == "Predicted unique TFBS"] <- .qc_format_number(predicted_rows)
     cards$value[cards$label == "TFs with predicted binding"] <- .qc_format_number(length(explorer_cache$tf_names))
     if (!is.finite(.qc_metric_value(qc_summary, "n_canonical_bound_fps"))) {
@@ -2294,6 +2366,7 @@ build_module1_qc_report <- function(module1,
   } else {
     tibble::tibble()
   }
+  has_atac <- .module1_qc_has_atac(omics_data)
   pca_groups <- sort(unique(unlist(lapply(list(pca_rna, pca_atac, pca_fp), function(x) {
     if (is.data.frame(x) && "biological_group" %in% names(x)) as.character(x$biological_group) else character()
   }), use.names = FALSE)))
@@ -2302,10 +2375,10 @@ build_module1_qc_report <- function(module1,
   pca_plots <- paste0(
     "<div class=\"qc-tabset\"><div class=\"qc-view-tabs\" role=\"tablist\" aria-label=\"PCA assay\">",
     "<button type=\"button\" class=\"active\" data-qc-group=\"pca\" data-qc-view=\"rna\" aria-selected=\"true\">RNA</button>",
-    "<button type=\"button\" data-qc-group=\"pca\" data-qc-view=\"atac\" aria-selected=\"false\">ATAC</button>",
+    if (has_atac) "<button type=\"button\" data-qc-group=\"pca\" data-qc-view=\"atac\" aria-selected=\"false\">ATAC</button>" else "",
     "<button type=\"button\" data-qc-group=\"pca\" data-qc-view=\"fp\" aria-selected=\"false\">Filtered footprints</button></div>",
     "<div class=\"qc-view active\" data-qc-panel-group=\"pca\" data-qc-panel=\"rna\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", pca_colors), "</figure></div>",
-    "<div class=\"qc-view\" data-qc-panel-group=\"pca\" data-qc-panel=\"atac\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", pca_colors), "</figure></div>",
+    if (has_atac) paste0("<div class=\"qc-view\" data-qc-panel-group=\"pca\" data-qc-panel=\"atac\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", pca_colors), "</figure></div>") else "",
     "<div class=\"qc-view\" data-qc-panel-group=\"pca\" data-qc-panel=\"fp\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", pca_colors), "</figure></div></div>",
     .module1_qc_condition_legend(pca_colors)
   )
@@ -2355,7 +2428,7 @@ build_module1_qc_report <- function(module1,
     "<button type=\"button\" class=\"active\" data-qc-group=\"distribution\" data-qc-view=\"footprints\" aria-selected=\"true\">Footprint scores</button>",
     "<button type=\"button\" data-qc-group=\"distribution\" data-qc-view=\"expression\" aria-selected=\"false\">Gene expression</button></div>",
     "<div class=\"qc-view active\" data-qc-panel-group=\"distribution\" data-qc-panel=\"footprints\">", distribution_notice,
-    "<figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition", width = 1200L), "</figure></div>",
+    "<figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(distribution_table, if (has_atac) "ATAC-aligned footprint score distribution per condition" else "Footprint score distribution per condition", width = 1200L), "</figure></div>",
     "<div class=\"qc-view\" data-qc-panel-group=\"distribution\" data-qc-panel=\"expression\"><figure class=\"plot-card plot-card-wide\">",
     .module1_qc_violin_svg(gene_distribution, paste0("Gene expression distribution per condition (", if (nrow(gene_distribution)) gene_distribution$transformation[[1L]] else "unavailable", ")"), width = 1200L),
     "</figure></div></div>"
@@ -2369,7 +2442,10 @@ build_module1_qc_report <- function(module1,
     .qc_section("1. Run Summary", paste0(
       explorer_style,
       "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a><a href=\"#per-condition-qc\">Per-condition QC</a><a href=\"#correlation-summary\">Correlations</a><a href=\"#predicted-binding-sites-per-tf\">Binding</a><a href=\"#co-binding-summary\">Co-binding</a><a href=\"#top-predicted-tfs-at-motif-containing-footprints\">Motifs</a></nav>",
-      "<div class=\"report-row\">", .qc_cards_html(summary_cards), "<p class=\"subtitle\">Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p></div>",
+      "<div class=\"report-row\">", .qc_cards_html(summary_cards),
+      "<p class=\"metric-note\">Filtered footprints are the canonical-bound footprint set. Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p>",
+      if (has_atac) "" else "<p class=\"metric-note\">ATAC master table not provided; footprint-bound calls and footprint scores were used without an ATAC-open gate.</p>",
+      "</div>",
       "<div class=\"report-row\">", setup_html, "</div>"
     )),
     .qc_section("2. Per-Condition QC", paste0(
@@ -2378,7 +2454,7 @@ build_module1_qc_report <- function(module1,
       "<button type=\"button\" data-qc-group=\"per-condition\" data-qc-view=\"pca\" aria-selected=\"false\">PCA</button>",
       "<button type=\"button\" data-qc-group=\"per-condition\" data-qc-view=\"counts\" aria-selected=\"false\">Counts</button></div>",
       "<div class=\"qc-view active\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"distributions\">", distribution_views, "</div>",
-      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"pca\"><h3>PCA of samples based on the most variable RNA, ATAC, and filtered footprints</h3>", pca_plots, "</div>",
+      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"pca\"><h3>PCA of samples based on the most variable ", if (has_atac) "RNA, ATAC, and filtered footprints" else "RNA and filtered footprints", "</h3>", pca_plots, "</div>",
       "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"counts\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div></div>",
       "<details><summary>Per-condition values</summary>",
       .qc_table_html(distribution_summary, max_rows = 300L),

@@ -85,9 +85,10 @@ test_that("Module 1 Run Summary does not report zero TFs when scanning is skippe
 
   expect_equal(cards$value[cards$label == "TFs with predicted binding"], "Not recorded")
   expect_equal(cards$value[cards$label == "Expressed TFs"], "5")
+  expect_equal(cards$value[cards$label == "Raw ATAC peaks"], "Not provided")
   expect_equal(cards$label, c(
     "Raw ATAC peaks", "Raw footprints", "Aligned footprints",
-    "Filtered footprints (same as canonical-bound)", "Predicted unique TFBS",
+    "Filtered footprints", "Predicted unique TFBS",
     "Expressed TFs", "TFs with predicted binding"
   ))
 })

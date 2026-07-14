@@ -288,6 +288,20 @@ validate_multiomic_object <- function(omics_data) {
   if (!identical(colnames(mats$gene_expr), colnames(mats$gene_on))) {
     .log_abort("Gene expression and gene-on condition columns must match.")
   }
+  has_atac_score <- is.matrix(mats$atac_score)
+  has_atac_open <- is.matrix(mats$atac_open)
+  if (xor(has_atac_score, has_atac_open)) {
+    .log_abort("ATAC score and open matrices must either both be matrices or both be NULL.")
+  }
+  if (has_atac_score) {
+    if (!is.data.frame(feats$atac) || !"atac_peak" %in% names(feats$atac)) {
+      .log_abort("`features$atac` must include atac_peak when ATAC matrices are present.")
+    }
+    if (!identical(rownames(mats$atac_score), as.character(feats$atac$atac_peak)) ||
+        !identical(rownames(mats$atac_open), as.character(feats$atac$atac_peak))) {
+      .log_abort("ATAC matrix rownames must match `features$atac$atac_peak`.")
+    }
+  }
   invisible(omics_data)
 }
 

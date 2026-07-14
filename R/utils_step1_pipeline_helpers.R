@@ -43,12 +43,36 @@ NULL
   invisible(out_path)
 }
 
+.module1_raw_footprint_count <- function(fp_aligned) {
+  if (!is.list(fp_aligned)) return(NA_real_)
+  source_ids <- character()
+  if (is.data.frame(fp_aligned$id_map) && "source_fp_peak" %in% names(fp_aligned$id_map)) {
+    source_ids <- as.character(fp_aligned$id_map$source_fp_peak)
+  } else if (is.data.frame(fp_aligned$fp_sites) && "source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
+    encoded <- as.character(fp_aligned$fp_sites$source_fp_peaks)
+    encoded <- encoded[!is.na(encoded) & nzchar(encoded)]
+    if (length(encoded)) {
+      source_ids <- unlist(strsplit(encoded, ";", fixed = TRUE), use.names = FALSE)
+    }
+  }
+  source_ids <- trimws(source_ids)
+  source_ids <- unique(source_ids[!is.na(source_ids) & nzchar(source_ids)])
+  if (length(source_ids)) return(as.numeric(length(source_ids)))
+  if (is.data.frame(fp_aligned$fp_sites) && "n_source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
+    counts <- suppressWarnings(as.numeric(fp_aligned$fp_sites$n_source_fp_peaks))
+    counts <- counts[is.finite(counts) & counts >= 0]
+    if (length(counts)) return(sum(counts))
+  }
+  NA_real_
+}
+
 #' Load and prepare the Module 1 multi-omic object
 #'
 #' Build the rebuilt Module 1 data object from cached aligned footprints or from
-#' raw footprint overview files plus ATAC, RNA, and sample metadata inputs. The
-#' returned object is the canonical input for downstream Step 1 TFBS
-#' correlation.
+#' raw footprint overview files plus RNA and sample metadata inputs. ATAC is
+#' optional; when it is absent, footprint-bound calls and footprint scores are
+#' used without an accessibility gate. The returned object is the canonical
+#' input for downstream Step 1 TFBS correlation.
 #'
 #' @param config Optional YAML config path.
 #' @param project_date Optional project date stored for reproducible reports.
@@ -74,7 +98,8 @@ NULL
 #' @param write_fp_score_qn_csv Logical; if `TRUE` and `write_outputs = TRUE`,
 #'   also save quantile-normalized footprint scores as
 #'   `01_fp_scores_qn_<db>.csv` under the Module 1 output directory.
-#' @param atac_data,rna_tbl,metadata Optional in-memory input tables.
+#' @param atac_data,rna_tbl,metadata Optional in-memory input tables. ATAC may
+#'   be omitted; RNA and metadata remain required.
 #' @param atac_data_path,rna_path,metadata_path Optional explicit file paths for
 #'   the input tables.
 #' @param step1_out_dir_name Output folder name under `base_dir`.
@@ -310,10 +335,19 @@ load_prep_multiomic_data <- function(
 
   if (is.null(atac_data)) {
     path <- resolve_path(atac_data_path, c("atac_master", "atac_data_path", "atac_master_path"))
-    if (is.null(path) || !file.exists(path)) {
-      .log_abort("Missing `atac_data` and no valid configured path.")
+    if (!is.null(path) && nzchar(path)) {
+      if (!file.exists(path)) {
+        .log_abort("Configured ATAC input does not exist: {path}")
+      }
+      atac_data <- readr::read_csv(path, show_col_types = FALSE)
     }
-    atac_data <- readr::read_csv(path, show_col_types = FALSE)
+  }
+  has_atac_input <- is.data.frame(atac_data)
+  if (!is.null(atac_data) && !has_atac_input) {
+    .log_abort("`atac_data` must be a data.frame or NULL.")
+  }
+  if (!has_atac_input && isTRUE(verbose)) {
+    .log_inform("No ATAC master table was provided; using footprint evidence without an ATAC-open gate.")
   }
 
   if (is.null(rna_tbl)) {
@@ -330,16 +364,14 @@ load_prep_multiomic_data <- function(
     }
   }
 
-  raw_atac_peaks <- if (is.data.frame(atac_data)) nrow(atac_data) else NA_integer_
-  raw_footprints <- NA_integer_
-  if (is.data.frame(fp_aligned$id_map) && "source_fp_peak" %in% names(fp_aligned$id_map)) {
-    source_ids <- unique(as.character(fp_aligned$id_map$source_fp_peak))
-    raw_footprints <- length(source_ids[!is.na(source_ids) & nzchar(source_ids)])
-  } else if (is.data.frame(fp_aligned$fp_sites) && "n_source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
-    raw_footprints <- sum(suppressWarnings(as.numeric(fp_aligned$fp_sites$n_source_fp_peaks)), na.rm = TRUE)
-  }
+  raw_atac_peaks <- if (has_atac_input) nrow(atac_data) else NA_real_
+  raw_footprints <- .module1_raw_footprint_count(fp_aligned)
   aligned_footprints <- if (is.data.frame(fp_aligned$fp_score)) nrow(fp_aligned$fp_score) else NA_integer_
-  atac_out <- load_atac(atac_data, sort_peaks = TRUE)
+  atac_out <- if (has_atac_input) {
+    load_atac(atac_data, sort_peaks = TRUE)
+  } else {
+    list(score = NULL, overlap = NULL)
+  }
 
   grn_set <- build_grn_set(
     fp_score = fp_aligned$fp_score,
@@ -392,6 +424,18 @@ load_prep_multiomic_data <- function(
     n_raw_footprints = raw_footprints,
     n_aligned_footprints = aligned_footprints
   )
+  compact$qc$input_presence <- list(atac = has_atac_input)
+  if (!is.null(fp_cache_dir) && nzchar(fp_cache_dir) && !is.null(fp_cache_tag) && nzchar(fp_cache_tag)) {
+    cache_info <- .aligned_fp_cache_choose_format(fp_cache_dir, fp_cache_tag, "auto")
+    if (isTRUE(cache_info$exists)) {
+      for (key in c("fp_sites", "id_map")) {
+        path <- cache_info$paths[[key]]
+        if (!is.null(path) && file.exists(path)) {
+          compact$paths[[key]] <- normalizePath(path, winslash = "/", mustWork = FALSE)
+        }
+      }
+    }
+  }
 
   if (isTRUE(write_outputs)) {
     out_dir <- file.path(base_dir_cfg, step1_out_dir_name_use)

@@ -225,8 +225,9 @@ make_fp_bound_condition <- function(
 ) {
   if (!"peak_ID" %in% names(fp_bound_tbl)) .log_abort("`fp_bound_tbl` needs peak_ID.")
   if (!"peak_ID" %in% names(fp_score_tbl)) .log_abort("`fp_score_tbl` needs peak_ID.")
-  if (!"atac_peak" %in% names(atac_overlap_tbl)) .log_abort("`atac_overlap_tbl` needs atac_peak.")
-  if (!all(c("fp_peak", "atac_peak") %in% names(fp_annotation_tbl))) {
+  has_atac <- is.data.frame(atac_overlap_tbl)
+  if (has_atac && !"atac_peak" %in% names(atac_overlap_tbl)) .log_abort("`atac_overlap_tbl` needs atac_peak.")
+  if (has_atac && !all(c("fp_peak", "atac_peak") %in% names(fp_annotation_tbl))) {
     .log_abort("`fp_annotation_tbl` needs fp_peak and atac_peak.")
   }
   if (!is.data.frame(metadata) || !"id" %in% names(metadata)) .log_abort("`metadata` must include an id column.")
@@ -238,13 +239,20 @@ make_fp_bound_condition <- function(
 
   ids_bound <- setdiff(names(fp_bound_tbl), "peak_ID")
   ids_score <- setdiff(names(fp_score_tbl), "peak_ID")
-  ids_atac <- setdiff(names(atac_overlap_tbl), "atac_peak")
+  ids_atac <- if (has_atac) setdiff(names(atac_overlap_tbl), "atac_peak") else character()
   meta_use <- metadata[, c("id", label_col), drop = FALSE]
   meta_use <- meta_use[!is.na(meta_use$id) & !is.na(meta_use[[label_col]]), , drop = FALSE]
   meta_use <- meta_use[!duplicated(meta_use$id), , drop = FALSE]
-  ids_use <- intersect(meta_use$id, intersect(ids_bound, intersect(ids_score, ids_atac)))
+  ids_use <- if (has_atac) {
+    intersect(meta_use$id, intersect(ids_bound, intersect(ids_score, ids_atac)))
+  } else {
+    intersect(meta_use$id, intersect(ids_bound, ids_score))
+  }
   if (!length(ids_use)) {
-    .log_abort("No overlapping ids across fp_bound, fp_score, atac_overlap, and metadata.")
+    if (has_atac) {
+      .log_abort("No overlapping ids across fp_bound, fp_score, atac_overlap, and metadata.")
+    }
+    .log_abort("No overlapping ids across fp_bound, fp_score, and metadata.")
   }
   meta_use <- meta_use[meta_use$id %in% ids_use, , drop = FALSE]
   cond_levels <- unique(meta_use[[label_col]])
@@ -269,21 +277,24 @@ make_fp_bound_condition <- function(
   bound_mat <- bound_mat > 0 & score_mat >= threshold_fp_score
   storage.mode(bound_mat) <- "integer"
 
-  map_fp_atac <- dplyr::distinct(fp_annotation_tbl, .data$fp_peak, .data$atac_peak)
-  dup <- map_fp_atac |>
-    dplyr::count(.data$fp_peak, name = "n") |>
-    dplyr::filter(.data$n > 1)
-  if (nrow(dup)) .log_abort("Each fp_peak must map to a single atac_peak.")
+  atac_mat <- NULL
+  if (has_atac) {
+    map_fp_atac <- dplyr::distinct(fp_annotation_tbl, .data$fp_peak, .data$atac_peak)
+    dup <- map_fp_atac |>
+      dplyr::count(.data$fp_peak, name = "n") |>
+      dplyr::filter(.data$n > 1)
+    if (nrow(dup)) .log_abort("Each fp_peak must map to a single atac_peak.")
 
-  idx_fp <- match(fp_bound_tbl$peak_ID, map_fp_atac$fp_peak)
-  if (anyNA(idx_fp)) .log_abort("Some fp_bound peak_ID are not found in fp_annotation fp_peak.")
-  atac_peaks <- map_fp_atac$atac_peak[idx_fp]
-  idx_atac <- match(atac_peaks, atac_overlap_tbl$atac_peak)
-  if (anyNA(idx_atac)) .log_abort("Mapped atac_peak is missing in atac_overlap.")
-  atac_tbl <- atac_overlap_tbl[idx_atac, ids_use, drop = FALSE]
-  atac_mat <- as.matrix(atac_tbl)
-  atac_mat[is.na(atac_mat)] <- 0L
-  atac_mat <- atac_mat > 0
+    idx_fp <- match(fp_bound_tbl$peak_ID, map_fp_atac$fp_peak)
+    if (anyNA(idx_fp)) .log_abort("Some fp_bound peak_ID are not found in fp_annotation fp_peak.")
+    atac_peaks <- map_fp_atac$atac_peak[idx_fp]
+    idx_atac <- match(atac_peaks, atac_overlap_tbl$atac_peak)
+    if (anyNA(idx_atac)) .log_abort("Mapped atac_peak is missing in atac_overlap.")
+    atac_tbl <- atac_overlap_tbl[idx_atac, ids_use, drop = FALSE]
+    atac_mat <- as.matrix(atac_tbl)
+    atac_mat[is.na(atac_mat)] <- 0L
+    atac_mat <- atac_mat > 0
+  }
 
   out <- tibble::tibble(peak_ID = fp_bound_tbl$peak_ID)
   if (single_sample) {
@@ -295,7 +306,9 @@ make_fp_bound_condition <- function(
         next
       }
       id <- ids_cond[[1L]]
-      out[[cond]] <- as.integer(bound_mat[, id, drop = FALSE] > 0 & atac_mat[, id, drop = FALSE] > 0)
+      keep <- bound_mat[, id, drop = FALSE] > 0
+      if (has_atac) keep <- keep & atac_mat[, id, drop = FALSE] > 0
+      out[[cond]] <- as.integer(keep)
     }
   } else {
     for (cond in cond_levels) {
@@ -306,8 +319,11 @@ make_fp_bound_condition <- function(
         next
       }
       b_ok <- rowSums(bound_mat[, ids_cond, drop = FALSE], na.rm = TRUE) >= min_samples
-      a_ok <- rowSums(atac_mat[, ids_cond, drop = FALSE], na.rm = TRUE) > 0L
-      out[[cond]] <- as.integer(b_ok & a_ok)
+      if (has_atac) {
+        a_ok <- rowSums(atac_mat[, ids_cond, drop = FALSE], na.rm = TRUE) > 0L
+        b_ok <- b_ok & a_ok
+      }
+      out[[cond]] <- as.integer(b_ok)
     }
   }
   out

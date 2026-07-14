@@ -82,7 +82,8 @@ cache under `predict_tf_binding_sites/`.}
 also save quantile-normalized footprint scores as
 `01_fp_scores_qn_<db>.csv` under the Module 1 output directory.}
 
-\item{atac_data, rna_tbl, metadata}{Optional in-memory input tables.}
+\item{atac_data, rna_tbl, metadata}{Optional in-memory input tables. ATAC may
+be omitted; RNA and metadata remain required.}
 
 \item{atac_data_path, rna_path, metadata_path}{Optional explicit file paths for
 the input tables.}
@@ -113,9 +114,10 @@ A rebuilt Module 1 multi-omic object.
 }
 \description{
 Build the rebuilt Module 1 data object from cached aligned footprints or from
-raw footprint overview files plus ATAC, RNA, and sample metadata inputs. The
-returned object is the canonical input for downstream Step 1 TFBS
-correlation.
+raw footprint overview files plus RNA and sample metadata inputs. ATAC is
+optional; when it is absent, footprint-bound calls and footprint scores are
+used without an accessibility gate. The returned object is the canonical
+input for downstream Step 1 TFBS correlation.
 }
 \examples{
 \donttest{

@@ -58,8 +58,12 @@ build_grn_set <- function(
 ) {
   if (!"peak_ID" %in% names(fp_score)) .log_abort("`fp_score` needs 'peak_ID'.")
   if (!"peak_ID" %in% names(fp_bound)) .log_abort("`fp_bound` needs 'peak_ID'.")
-  if (!"atac_peak" %in% names(atac_score)) .log_abort("`atac_score` needs 'atac_peak'.")
-  if (!"atac_peak" %in% names(atac_overlap)) .log_abort("`atac_overlap` needs 'atac_peak'.")
+  has_atac <- is.data.frame(atac_score) || is.data.frame(atac_overlap)
+  if (xor(is.data.frame(atac_score), is.data.frame(atac_overlap))) {
+    .log_abort("`atac_score` and `atac_overlap` must either both be data.frames or both be NULL.")
+  }
+  if (has_atac && !"atac_peak" %in% names(atac_score)) .log_abort("`atac_score` needs 'atac_peak'.")
+  if (has_atac && !"atac_peak" %in% names(atac_overlap)) .log_abort("`atac_overlap` needs 'atac_peak'.")
   if (!all(c("ensembl_gene_id", "HGNC") %in% names(rna))) {
     .log_abort("`rna` needs 'ensembl_gene_id' and 'HGNC'.")
   }
@@ -81,13 +85,13 @@ build_grn_set <- function(
 
   fp_ids <- as.character(meta_use[[id_col_fp]])
   rna_ids <- as.character(meta_use[[id_col_rna]])
-  atac_ids <- as.character(meta_use[[id_col_atac]])
+  atac_ids <- if (has_atac) as.character(meta_use[[id_col_atac]]) else rep(NA_character_, nrow(meta_use))
 
   miss_fp_score <- meta_use$id[is.na(fp_ids) | !(fp_ids %in% names(fp_score))]
   miss_fp_bound <- meta_use$id[is.na(fp_ids) | !(fp_ids %in% names(fp_bound))]
   miss_rna <- meta_use$id[is.na(rna_ids) | !(rna_ids %in% names(rna))]
-  miss_atac_sc <- meta_use$id[is.na(atac_ids) | !(atac_ids %in% names(atac_score))]
-  miss_atac_ol <- meta_use$id[is.na(atac_ids) | !(atac_ids %in% names(atac_overlap))]
+  miss_atac_sc <- if (has_atac) meta_use$id[is.na(atac_ids) | !(atac_ids %in% names(atac_score))] else character()
+  miss_atac_ol <- if (has_atac) meta_use$id[is.na(atac_ids) | !(atac_ids %in% names(atac_overlap))] else character()
 
   if (length(miss_fp_score)) .log_warn("Dropping {length(miss_fp_score)} id(s) missing in `fp_score` via {id_col_fp}.")
   if (length(miss_fp_bound)) .log_warn("Dropping {length(miss_fp_bound)} id(s) missing in `fp_bound` via {id_col_fp}.")
@@ -113,7 +117,7 @@ build_grn_set <- function(
     .log_warn("Aligned sample count is {length(keep_ids)} but expected {expected_n}.")
   }
 
-  if (isTRUE(filter_atac_by_fp_annotation)) {
+  if (has_atac && isTRUE(filter_atac_by_fp_annotation)) {
     peaks_keep_atac <- unique(fp_annotation$atac_peak)
     peaks_keep_atac <- peaks_keep_atac[!is.na(peaks_keep_atac)]
     if (!length(peaks_keep_atac)) {
@@ -139,32 +143,35 @@ build_grn_set <- function(
   names(fp_bound_sub)[-1] <- keep_ids
   fp_bound_sub <- tibble::as_tibble(fp_bound_sub)
 
-  atac_keep_ok <- !is.na(keep_atac_ids) &
-    (keep_atac_ids %in% names(atac_score)) &
-    (keep_atac_ids %in% names(atac_overlap))
-  if (!all(atac_keep_ok)) {
-    bad <- keep_ids[!atac_keep_ok]
-    if (length(bad)) {
-      .log_warn("Dropping {length(bad)} id(s) missing ATAC source columns after mapping.")
+  if (has_atac) {
+    atac_keep_ok <- !is.na(keep_atac_ids) &
+      (keep_atac_ids %in% names(atac_score)) &
+      (keep_atac_ids %in% names(atac_overlap))
+    if (!all(atac_keep_ok)) {
+      bad <- keep_ids[!atac_keep_ok]
+      if (length(bad)) {
+        .log_warn("Dropping {length(bad)} id(s) missing ATAC source columns after mapping.")
+      }
+      keep_ids <- keep_ids[atac_keep_ok]
+      keep_fp_ids <- keep_fp_ids[atac_keep_ok]
+      keep_rna_ids <- keep_rna_ids[atac_keep_ok]
+      keep_atac_ids <- keep_atac_ids[atac_keep_ok]
+      fp_score_sub <- fp_score_sub[, c("peak_ID", keep_ids), drop = FALSE]
+      fp_bound_sub <- fp_bound_sub[, c("peak_ID", keep_ids), drop = FALSE]
     }
-    keep_ids <- keep_ids[atac_keep_ok]
-    keep_fp_ids <- keep_fp_ids[atac_keep_ok]
-    keep_rna_ids <- keep_rna_ids[atac_keep_ok]
-    keep_atac_ids <- keep_atac_ids[atac_keep_ok]
-    fp_score_sub <- fp_score_sub[, c("peak_ID", keep_ids), drop = FALSE]
-    fp_bound_sub <- fp_bound_sub[, c("peak_ID", keep_ids), drop = FALSE]
+    if (!length(keep_ids)) {
+      .log_abort("No overlapping ids across fp, rna, and atac after mapping checks.")
+    }
+    atac_score_sub <- atac_score[, c("atac_peak", keep_atac_ids), drop = FALSE]
+    names(atac_score_sub)[-1] <- keep_ids
+    atac_score_sub <- tibble::as_tibble(atac_score_sub)
+    atac_overlap_sub <- atac_overlap[, c("atac_peak", keep_atac_ids), drop = FALSE]
+    names(atac_overlap_sub)[-1] <- keep_ids
+    atac_overlap_sub <- tibble::as_tibble(atac_overlap_sub)
+  } else {
+    atac_score_sub <- NULL
+    atac_overlap_sub <- NULL
   }
-  if (!length(keep_ids)) {
-    .log_abort("No overlapping ids across fp, rna, and atac after mapping checks.")
-  }
-
-  atac_score_sub <- atac_score[, c("atac_peak", keep_atac_ids), drop = FALSE]
-  names(atac_score_sub)[-1] <- keep_ids
-  atac_score_sub <- tibble::as_tibble(atac_score_sub)
-
-  atac_overlap_sub <- atac_overlap[, c("atac_peak", keep_atac_ids), drop = FALSE]
-  names(atac_overlap_sub)[-1] <- keep_ids
-  atac_overlap_sub <- tibble::as_tibble(atac_overlap_sub)
 
   rna_sub <- rna[, c("ensembl_gene_id", "HGNC", keep_rna_ids), drop = FALSE]
   names(rna_sub)[-(1:2)] <- keep_ids

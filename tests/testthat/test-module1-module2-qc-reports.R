@@ -34,15 +34,17 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("# Conditions", page, fixed = TRUE))
   expect_true(grepl("Raw ATAC peaks", page, fixed = TRUE))
   expect_true(grepl("Raw footprints", page, fixed = TRUE))
-  expect_true(grepl("Filtered footprints (same as canonical-bound)", page, fixed = TRUE))
+  expect_true(grepl("Filtered footprints", page, fixed = TRUE))
+  expect_true(grepl("Filtered footprints are the canonical-bound footprint set", page, fixed = TRUE))
   expect_true(grepl("Predicted unique TFBS", page, fixed = TRUE))
   expect_true(grepl("TFs with predicted binding", page, fixed = TRUE))
   expect_true(grepl("command override", page, fixed = TRUE))
   expect_true(grepl("2. Per-Condition QC", page, fixed = TRUE))
-  expect_true(grepl("ATAC-aligned footprint score distribution per condition", page, fixed = TRUE))
+  expect_true(grepl("Footprint score distribution per condition", page, fixed = TRUE))
+  expect_true(grepl("ATAC master table not provided", page, fixed = TRUE))
   expect_true(grepl("Gene expression distribution per condition", page, fixed = TRUE))
   expect_true(grepl("RNA PCA", page, fixed = TRUE))
-  expect_true(grepl("ATAC PCA", page, fixed = TRUE))
+  expect_false(grepl("ATAC PCA", page, fixed = TRUE))
   expect_true(grepl("Total filtered footprints detected per condition", page, fixed = TRUE))
   expect_true(grepl("Total predicted TFBS per condition", page, fixed = TRUE))
   expect_true(grepl("3. Correlation Summary", page, fixed = TRUE))
@@ -73,6 +75,8 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("data-qc-group=\"per-condition\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"distribution\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"pca\"", page, fixed = TRUE))
+  expect_true(grepl("width:min(96vw,1920px)", page, fixed = TRUE))
+  expect_true(grepl("@media(min-width:1600px)", page, fixed = TRUE))
   expect_true(grepl("How to read this section", page, fixed = TRUE))
   expect_true(grepl("Canonical motif TF reference", page, fixed = TRUE))
   expect_true(grepl("cobind-apply", page, fixed = TRUE))
@@ -110,6 +114,34 @@ test_that("Module 1 QC reads chunked prediction statistics", {
   expect_equal(nrow(loaded), 2L)
   expect_equal(loaded$tf, c("TF_A", "TF_B"))
   expect_true(all(loaded$pass))
+})
+
+test_that("Module 1 QC recovers legacy raw footprint counts from compact caches", {
+  cache_dir <- tempfile("module1-legacy-fp-cache-")
+  dir.create(cache_dir, recursive = TRUE)
+  readr::write_csv(
+    tibble::tibble(
+      peak_ID = c("p1", "p2"),
+      source_fp_peaks = c("s1;s2", "s2;s3"),
+      n_source_fp_peaks = c(2L, 2L)
+    ),
+    file.path(cache_dir, "fp_sites_TEST.csv")
+  )
+  compact <- craftgrn:::as_multiomic_object(module1_tiny_fixture()$omics_data, verbose = FALSE)
+  recovered <- craftgrn:::.module1_qc_raw_footprint_recovery(
+    compact,
+    project_config = list(fp_cache_dir = cache_dir, db = "TEST")
+  )
+  expect_equal(recovered$count, 3)
+
+  cards <- craftgrn:::.module1_qc_run_cards(
+    tibble::tibble(metric = character(), value = numeric()),
+    compact,
+    list(tf_summary_all = tibble::tibble()),
+    predicted_rows = 1,
+    legacy_raw_unavailable = TRUE
+  )
+  expect_equal(cards$value[cards$label == "Raw footprints"], "Unavailable for legacy run")
 })
 
 test_that("QC metric reader accepts one-row integrity tables", {

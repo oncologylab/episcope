@@ -12,6 +12,9 @@
   count review modes, cleaner violin summaries, full-width PCA panels, larger
   correlation plots, compact guidance, and an automatically populated
   co-binding view.
+* Made the Module 1 ATAC master input optional, retained raw-footprint
+  provenance for regenerated QC reports, and added responsive 1080p and 4K
+  report layouts with ATAC-aware diagnostics.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths
