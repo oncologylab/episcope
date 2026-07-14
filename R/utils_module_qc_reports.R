@@ -691,17 +691,17 @@
     "h2{font-size:17px;line-height:1.25;margin:0 0 12px 0;color:#111827;font-weight:750;border-bottom:1px solid var(--line);padding-bottom:7px}",
     "section{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;padding:16px 18px 18px 18px;min-width:0}",
     "h3{font-size:14px;line-height:1.25;margin:0 0 8px 0;color:#111827;font-weight:750}",
-    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
+    ".subtitle{color:var(--muted);font-size:13px}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin-top:4px;border:1px solid var(--line);border-bottom:0;border-right:0}",
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
     ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.run-setup>*{min-width:0}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:2px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:16px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px;align-items:start;margin-top:10px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:14px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:14px 16px;overflow:hidden;max-width:620px;width:100%}.plot-card-wide{margin-top:12px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:10px}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px;padding:4px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:7px 11px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 8px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 12px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:6px 9px;font-size:12px}.qc-guide .callout{margin-top:8px}",
     ".table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
     ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:10px 2px 2px}.condition-tag{font-size:11px;color:#435066;display:inline-flex;align-items:center;gap:5px}.condition-tag i{width:9px;height:9px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
     ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
-    ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;padding:6px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
-    "@media(max-width:1100px){.correlation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}}@media(max-width:760px){.wrap{padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
+    ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;border-radius:4px;padding:8px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
+    "@media(max-width:900px){.plot-grid-three{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{padding:18px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
@@ -1824,7 +1824,7 @@
   p <- ggplot2::ggplot(x, ggplot2::aes(x = PC1, y = PC2, color = biological_group, label = display_label)) +
     ggplot2::geom_hline(yintercept = 0, color = "#d7dde6", linewidth = 0.35) +
     ggplot2::geom_vline(xintercept = 0, color = "#d7dde6", linewidth = 0.35) +
-    ggplot2::geom_point(size = 3.2, alpha = 0.92) +
+    ggplot2::geom_point(size = 3.6, alpha = 0.92) +
     ggplot2::scale_color_manual(values = color_map, drop = FALSE) +
     ggplot2::labs(
       subtitle = paste0(x$transformation[[1L]], "; ", .qc_format_number(x$n_features[[1L]]), " variable features"),
@@ -1839,15 +1839,15 @@
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "none",
       plot.margin = ggplot2::margin(8, 34, 8, 8)
-    )
+  )
   if (requireNamespace("ggrepel", quietly = TRUE)) {
-    p <- p + ggrepel::geom_text_repel(size = 2.5, max.overlaps = Inf, box.padding = 0.3, point.padding = 0.2, min.segment.length = 0, seed = 1, show.legend = FALSE)
+    p <- p + ggrepel::geom_text_repel(color = "#334155", size = 2.65, max.overlaps = Inf, box.padding = 0.35, point.padding = 0.25, min.segment.length = 0, seed = 1, show.legend = FALSE)
   } else {
-    p <- p + ggplot2::geom_text(size = 2.4, check_overlap = TRUE, vjust = -0.8, show.legend = FALSE)
+    p <- p + ggplot2::geom_text(color = "#334155", size = 2.4, check_overlap = TRUE, vjust = -0.8, show.legend = FALSE)
   }
   paste0(
     "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
-    .qc_ggplot_svg(p, width = 7.2, height = 5.2, css_class = "qc-plot pca-plot")
+    .qc_ggplot_svg(p, width = 10.4, height = 6.2, css_class = "qc-plot pca-plot")
   )
 }
 
@@ -1871,11 +1871,11 @@
   labels <- c(raw = "Raw", quantile_normalized = "Quantile-normalized", canonical_filtered = "Filtered", gene_expression = "Gene expression")
   if (!is.null(stage_labels)) labels[names(stage_labels)] <- stage_labels
   colors <- c(raw = "#27c1c7", quantile_normalized = "#ed8582", canonical_filtered = "#315f97", gene_expression = "#31a354")
-  pseudo_parts <- list()
   density_parts <- list()
   summary_parts <- list()
   k <- 1L
-  stage_offset <- stats::setNames((seq_along(stages) - (length(stages) + 1) / 2) * 0.24, stages)
+  stage_offset <- stats::setNames((seq_along(stages) - (length(stages) + 1) / 2) * 0.22, stages)
+  violin_half_height <- if (length(stages) == 1L) 0.27 else 0.085
   for (ci in seq_along(conditions)) {
     condition <- conditions[[ci]]
     base_y <- length(conditions) - ci + 1L
@@ -1887,21 +1887,15 @@
       probs <- seq(0.005, 0.995, length.out = 201L)
       sample_values <- stats::approx(d$probability, d$value, xout = probs, rule = 2, ties = "ordered")$y
       center <- base_y + stage_offset[[stage]]
-      point_index <- unique(round(seq(1L, length(sample_values), length.out = min(81L, length(sample_values)))))
-      pseudo_parts[[k]] <- tibble::tibble(
-        condition = condition,
-        stage = stage,
-        value = sample_values[point_index],
-        y = center - 0.035 - ((seq_along(point_index) * 37L) %% 13L) / 13 * 0.11
-      )
       den <- tryCatch(stats::density(sample_values, n = 128L, na.rm = TRUE), error = function(e) NULL)
       if (is.null(den) || !length(den$y) || max(den$y) <= 0) next
+      scaled_density <- violin_half_height * den$y / max(den$y)
       density_parts[[k]] <- tibble::tibble(
         condition = condition,
         stage = stage,
         group = paste(condition, stage, sep = "::"),
         value = c(den$x, rev(den$x)),
-        y = c(center + 0.19 * den$y / max(den$y), rep(center, length(den$x)))
+        y = c(center + scaled_density, rev(center - scaled_density))
       )
       quartiles <- stats::approx(d$probability, d$value, xout = c(0.25, 0.5, 0.75), rule = 2, ties = "ordered")$y
       summary_parts[[k]] <- tibble::tibble(condition = condition, stage = stage, y = center, q25 = quartiles[[1L]], median = quartiles[[2L]], q75 = quartiles[[3L]])
@@ -1909,23 +1903,20 @@
     }
   }
   density_data <- dplyr::bind_rows(density_parts)
-  pseudo_data <- dplyr::bind_rows(pseudo_parts)
   summary_data <- dplyr::bind_rows(summary_parts)
   if (!nrow(density_data)) return("<p class=\"empty\">Distribution data are unavailable.</p>")
   stage_labels <- stats::setNames(unname(labels[stages]), stages)
   stage_colors <- stats::setNames(vapply(stages, function(stage) colors[[stage]] %||% "#64748b", character(1L)), stages)
   p <- ggplot2::ggplot() +
-    ggplot2::geom_polygon(data = density_data, ggplot2::aes(x = value, y = y, group = group, fill = stage), color = "#374151", linewidth = 0.2, alpha = 0.82) +
-    ggplot2::geom_point(data = pseudo_data, ggplot2::aes(x = value, y = y, color = stage), size = 0.65, alpha = 0.28) +
-    ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = q25, xend = q75, y = y, yend = y, color = stage), linewidth = 1.5) +
-    ggplot2::geom_point(data = summary_data, ggplot2::aes(x = median, y = y, fill = stage), shape = 21, color = "#111827", stroke = 0.35, size = 2.2) +
+    ggplot2::geom_polygon(data = density_data, ggplot2::aes(x = value, y = y, group = group, fill = stage), color = "#ffffff", linewidth = 0.25, alpha = 0.72) +
+    ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = q25, xend = q75, y = y, yend = y), color = "#172033", linewidth = 1.2) +
+    ggplot2::geom_point(data = summary_data, ggplot2::aes(x = median, y = y, fill = stage), shape = 21, color = "#172033", stroke = 0.4, size = 2.1) +
     ggplot2::scale_y_continuous(breaks = rev(seq_along(conditions)), labels = conditions, expand = ggplot2::expansion(add = c(0.35, 0.5))) +
     ggplot2::scale_fill_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
-    ggplot2::scale_color_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
     ggplot2::labs(
       x = if (identical(stages, "gene_expression")) "Expression value" else "Footprint score",
       y = NULL, fill = NULL, color = NULL,
-      caption = "Half violins and points are deterministic reconstructions from saved quantile summaries; points are not individual observations."
+      caption = "Violin shapes are deterministic reconstructions from saved quantile summaries; center dots and lines show the median and interquartile range."
     ) +
     ggplot2::theme_bw(base_size = 10) +
     ggplot2::theme(
@@ -1935,13 +1926,14 @@
       panel.grid.major.y = ggplot2::element_line(color = "#eef1f5", linewidth = 0.3),
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "top",
+      legend.key.height = grid::unit(3.5, "mm"),
       legend.text = ggplot2::element_text(size = 9),
       plot.caption = ggplot2::element_text(size = 8, color = "#64748b", hjust = 0),
       plot.margin = ggplot2::margin(8, 12, 8, 8)
     )
   paste0(
     "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
-    .qc_ggplot_svg(p, width = width / 100, height = max(4.2, 1.8 + length(conditions) * 0.34), css_class = "qc-plot violin-plot raincloud-plot")
+    .qc_ggplot_svg(p, width = width / 100, height = max(4.4, 2.1 + length(conditions) * 0.25), css_class = "qc-plot violin-plot raincloud-plot distribution-plot")
   )
 }
 
@@ -2308,10 +2300,13 @@ build_module1_qc_report <- function(module1,
   pca_groups <- pca_groups[!is.na(pca_groups) & nzchar(pca_groups)]
   pca_colors <- stats::setNames(grDevices::hcl.colors(max(3L, length(pca_groups)), palette = "Dark 3")[seq_along(pca_groups)], pca_groups)
   pca_plots <- paste0(
-    "<div class=\"plot-grid-three\">",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", pca_colors), "</figure>",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", pca_colors), "</figure>",
-    "<figure class=\"plot-card\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", pca_colors), "</figure></div>",
+    "<div class=\"qc-tabset\"><div class=\"qc-view-tabs\" role=\"tablist\" aria-label=\"PCA assay\">",
+    "<button type=\"button\" class=\"active\" data-qc-group=\"pca\" data-qc-view=\"rna\" aria-selected=\"true\">RNA</button>",
+    "<button type=\"button\" data-qc-group=\"pca\" data-qc-view=\"atac\" aria-selected=\"false\">ATAC</button>",
+    "<button type=\"button\" data-qc-group=\"pca\" data-qc-view=\"fp\" aria-selected=\"false\">Filtered footprints</button></div>",
+    "<div class=\"qc-view active\" data-qc-panel-group=\"pca\" data-qc-panel=\"rna\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_rna, "RNA PCA", pca_colors), "</figure></div>",
+    "<div class=\"qc-view\" data-qc-panel-group=\"pca\" data-qc-panel=\"atac\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_atac, "ATAC PCA", pca_colors), "</figure></div>",
+    "<div class=\"qc-view\" data-qc-panel-group=\"pca\" data-qc-panel=\"fp\"><figure class=\"plot-card plot-card-wide\">", .module1_qc_pca_svg(pca_fp, "Filtered FP PCA", pca_colors), "</figure></div></div>",
     .module1_qc_condition_legend(pca_colors)
   )
   filtered_by_condition <- if (is_multiomic_object(omics_data) && length(filtered_idx)) {
@@ -2337,10 +2332,14 @@ build_module1_qc_report <- function(module1,
   explorer_style <- if (is.list(explorer_components)) paste0("<style>", explorer_components$css, "</style>") else ""
   n_conditions <- if (is_multiomic_object(omics_data)) ncol(omics_data$matrices$fp_score) else .qc_metric_value(qc_summary, "n_conditions")
   condition_names <- if (is_multiomic_object(omics_data)) colnames(omics_data$matrices$fp_score) else character()
+  summary_cards <- dplyr::bind_rows(
+    tibble::tibble(label = "# Conditions", value = .qc_format_number(n_conditions)),
+    cards
+  )
   setup_html <- paste0(
-    "<div class=\"run-setup\"><div><h3>Input parameters</h3><p class=\"subtitle\">Effective YAML and command-line values with their provenance.</p>",
+    "<details><summary>Input parameters and condition roster</summary><div class=\"run-setup\"><div><h3>Input parameters</h3><p class=\"subtitle\">Effective YAML and command-line values with their provenance.</p>",
     .qc_table_html(parameter_table, max_rows = 100L),
-    "</div><aside class=\"condition-summary\"><div class=\"card-label\"># Conditions</div><div class=\"condition-count\">", .qc_format_number(n_conditions), "</div><div class=\"condition-list\">", .qc_html_escape(paste(condition_names, collapse = " | ")), "</div></aside></div>"
+    "</div><aside class=\"condition-summary\"><div class=\"card-label\">Condition roster</div><div class=\"condition-count\">", .qc_format_number(n_conditions), "</div><div class=\"condition-list\">", .qc_html_escape(paste(condition_names, collapse = " | ")), "</div></aside></div></details>"
   )
   missing_fp_stages <- setdiff(c("raw", "quantile_normalized", "canonical_filtered"), unique(as.character(distribution_table$stage)))
   distribution_notice <- if (length(missing_fp_stages)) {
@@ -2351,20 +2350,39 @@ build_module1_qc_report <- function(module1,
   } else {
     ""
   }
+  distribution_views <- paste0(
+    "<div class=\"qc-tabset\"><div class=\"qc-view-tabs\" role=\"tablist\" aria-label=\"Distribution assay\">",
+    "<button type=\"button\" class=\"active\" data-qc-group=\"distribution\" data-qc-view=\"footprints\" aria-selected=\"true\">Footprint scores</button>",
+    "<button type=\"button\" data-qc-group=\"distribution\" data-qc-view=\"expression\" aria-selected=\"false\">Gene expression</button></div>",
+    "<div class=\"qc-view active\" data-qc-panel-group=\"distribution\" data-qc-panel=\"footprints\">", distribution_notice,
+    "<figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition", width = 1200L), "</figure></div>",
+    "<div class=\"qc-view\" data-qc-panel-group=\"distribution\" data-qc-panel=\"expression\"><figure class=\"plot-card plot-card-wide\">",
+    .module1_qc_violin_svg(gene_distribution, paste0("Gene expression distribution per condition (", if (nrow(gene_distribution)) gene_distribution$transformation[[1L]] else "unavailable", ")"), width = 1200L),
+    "</figure></div></div>"
+  )
+  per_condition_script <- paste0(
+    "<script>(()=>{document.querySelectorAll('[data-qc-view]').forEach(button=>button.addEventListener('click',()=>{",
+    "const group=button.dataset.qcGroup,view=button.dataset.qcView;document.querySelectorAll('[data-qc-view]').forEach(x=>{if(x.dataset.qcGroup===group){const active=x.dataset.qcView===view;x.classList.toggle('active',active);x.setAttribute('aria-selected',active?'true':'false')}});",
+    "document.querySelectorAll('[data-qc-panel]').forEach(x=>{if(x.dataset.qcPanelGroup===group)x.classList.toggle('active',x.dataset.qcPanel===view)})}))})()</script>"
+  )
   sections <- list(
     .qc_section("1. Run Summary", paste0(
       explorer_style,
       "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a><a href=\"#per-condition-qc\">Per-condition QC</a><a href=\"#correlation-summary\">Correlations</a><a href=\"#predicted-binding-sites-per-tf\">Binding</a><a href=\"#co-binding-summary\">Co-binding</a><a href=\"#top-predicted-tfs-at-motif-containing-footprints\">Motifs</a></nav>",
-      "<div class=\"report-row\">", setup_html, "</div>",
-      "<div class=\"report-row\">", .qc_cards_html(cards), "<p class=\"subtitle\">Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p></div>"
+      "<div class=\"report-row\">", .qc_cards_html(summary_cards), "<p class=\"subtitle\">Predicted unique TFBS counts distinct TF-footprint pairs across the union of all conditions; each pair is counted once.</p></div>",
+      "<div class=\"report-row\">", setup_html, "</div>"
     )),
     .qc_section("2. Per-Condition QC", paste0(
-      "<div class=\"report-row\">", distribution_notice, "<figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(distribution_table, "ATAC-aligned footprint score distribution per condition", width = 1200L), "</figure><figure class=\"plot-card plot-card-wide\">", .module1_qc_violin_svg(gene_distribution, paste0("Gene expression distribution per condition (", if (nrow(gene_distribution)) gene_distribution$transformation[[1L]] else "unavailable", ")"), width = 1200L), "</figure></div>",
-      "<div class=\"report-row\"><h3>PCA of samples based on the most variable RNA, ATAC, and filtered footprints</h3>", pca_plots, "</div>",
-      "<div class=\"report-row\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div>",
+      "<p class=\"qc-view-intro\">Choose one review mode to keep dense condition-level diagnostics readable.</p><div class=\"qc-tabset\"><div class=\"qc-view-tabs\" role=\"tablist\" aria-label=\"Per-condition QC review mode\">",
+      "<button type=\"button\" class=\"active\" data-qc-group=\"per-condition\" data-qc-view=\"distributions\" aria-selected=\"true\">Distributions</button>",
+      "<button type=\"button\" data-qc-group=\"per-condition\" data-qc-view=\"pca\" aria-selected=\"false\">PCA</button>",
+      "<button type=\"button\" data-qc-group=\"per-condition\" data-qc-view=\"counts\" aria-selected=\"false\">Counts</button></div>",
+      "<div class=\"qc-view active\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"distributions\">", distribution_views, "</div>",
+      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"pca\"><h3>PCA of samples based on the most variable RNA, ATAC, and filtered footprints</h3>", pca_plots, "</div>",
+      "<div class=\"qc-view\" data-qc-panel-group=\"per-condition\" data-qc-panel=\"counts\"><div class=\"plot-grid\"><figure class=\"plot-card\">", .qc_bar_svg(filtered_by_condition, "condition", "n_filtered_fp", title = "Total filtered footprints detected per condition"), "</figure><figure class=\"plot-card\">", .qc_bar_svg(predicted_by_condition, "condition", "n_predicted_tfbs", title = "Total predicted TFBS per condition"), "</figure></div></div></div>",
       "<details><summary>Per-condition values</summary>",
       .qc_table_html(distribution_summary, max_rows = 300L),
-      .qc_table_html(condition_qc$condition_summary, max_rows = 100L), "</details>"
+      .qc_table_html(condition_qc$condition_summary, max_rows = 100L), "</details>", per_condition_script
     )),
     .qc_section("3. Correlation Summary", paste0(
       correlation_browser,
@@ -2373,28 +2391,28 @@ build_module1_qc_report <- function(module1,
       .qc_table_html(canonical_corr$top_tf, max_rows = top_n), "</details>"
     )),
     .qc_section("4. Predicted Binding Sites per TF", paste0(
-      .qc_callout_html("Overall vs condition", c(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>", .qc_callout_html("Overall vs condition", c(
         "Overall counts include unique predicted TF-footprint pairs.",
         paste0("The initial condition is ", default_condition_use, "; condition-specific counts require a bound footprint and expressed TF."),
         "Change condition or top N and click a TF to highlight it across both panels."
-      )),
+      )), "</details>",
       if (is.list(explorer_components)) explorer_components$binding else explorer_empty,
       "<details><summary>Prediction summary values</summary>", .qc_table_html(tf_overview, max_rows = 20L), "</details>"
     )),
     .qc_section("5. Co-binding Summary", paste0(
-      .qc_callout_html("Exact co-binding", c(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>", .qc_callout_html("Exact co-binding", c(
         "The explorer supports overall or condition-specific co-binding.",
         "For multiple focal TFs, a site must be shared by every selected TF.",
         "Stacked bars separate co-bound sites from the remainder of each partner TF total."
-      )),
+      )), "</details>",
       if (is.list(explorer_components)) explorer_components$cobinding else explorer_empty
     )),
     .qc_section("6. Top Predicted TFs at Motif-Containing Footprints", paste0(
-      .qc_callout_html("Motif-centered review", c(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>", .qc_callout_html("Motif-centered review", c(
         "Select a motif to rank predicted TFs found at footprint sites carrying that motif.",
         "The true top 20 are shown first; canonical motif TF references follow with their actual rank or not-predicted status.",
         "Canonical motif identity does not force a TF to rank first because broader prediction uses TF-footprint correlation evidence."
-      )),
+      )), "</details>",
       if (is.list(explorer_components)) explorer_components$motif else explorer_empty,
       if (is.list(explorer_components)) explorer_components$script else ""
     )),

@@ -8,6 +8,10 @@
   Motif explorers embedded in one HTML file. Motif rankings now retain the
   true top 20 and report canonical TF references with their actual rank or
   not-predicted status.
+* Refined the Module 1 QC visual hierarchy with focused distribution, PCA, and
+  count review modes, cleaner violin summaries, full-width PCA panels, larger
+  correlation plots, compact guidance, and an automatically populated
+  co-binding view.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths
