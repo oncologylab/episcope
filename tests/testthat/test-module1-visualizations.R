@@ -159,7 +159,7 @@ test_that("TFBS Explorer writes compact exact co-binding controls", {
   expect_match(page, "Exact co-binding data ready.';applyCobinding()", fixed = TRUE)
   expect_false(grepl("D.tfBits=D.tfBits.map", page, fixed = TRUE))
   expect_equal(sum(popcount[shared_with_c + 1L]), 1L)
-  expect_equal(cache$fingerprint$schema, "module1_qc_analysis_v8")
+  expect_equal(cache$fingerprint$schema, "module1_qc_analysis_v9")
   expect_equal(cache$tf_counts["TF_A", "Overall"], 2)
   expect_equal(sum(cache$tf_counts[, "Overall"]), nrow(unique(predicted[c("tf", "fp_id")])))
   expect_true(sum(cache$tf_counts[, cache$conditions, drop = FALSE]) != sum(cache$tf_counts[, "Overall"]))
@@ -189,16 +189,16 @@ test_that("Module 1 PCA maps assay IDs and preserves transformed RNA", {
   expect_equal(transformed_counts$matrix, log2(counts + 1))
 })
 
-test_that("Motif explorer excludes motifs without retained canonical TF binding", {
+test_that("Motif explorer excludes unexpressed canonical TFs before plotting", {
   fixture <- module1_tiny_fixture()
   compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
   fp <- rownames(compact$matrices$fp_score)[[1L]]
   compact$features$fp_motif <- tibble::tibble(
     fp_id = c(fp, fp),
     motif = c("REFERENCE_MOTIF", "ABSENT_MOTIF"),
-    tf = c("ZZZ", "ABSENT")
+    tf = c("TF_A", "TF_ABSENT")
   )
-  predicted <- tibble::tibble(tf = c(sprintf("TF%02d", 1:24), "ZZZ"), fp_id = fp)
+  predicted <- tibble::tibble(tf = c("TF_A", "TF_B", "TF_NO_PASS", "TF_ABSENT"), fp_id = fp)
   out <- tempfile(fileext = ".html")
 
   build_module1_tfbs_explorer(predicted, multiomic_data = compact, output_file = out, verbose = FALSE)
@@ -207,13 +207,14 @@ test_that("Motif explorer excludes motifs without retained canonical TF binding"
   reference <- cache$motif_counts[cache$motif_counts$motif == "REFERENCE_MOTIF", ]
   absent <- cache$motif_counts[cache$motif_counts$motif == "ABSENT_MOTIF", ]
 
-  expect_equal(sum(reference$top20), 20L)
-  expect_equal(reference$rank[reference$tf == "ZZZ"], 25L)
-  expect_equal(reference$canonical_status[reference$tf == "ZZZ"], "predicted_outside_top20")
+  expect_equal(sum(reference$top20), 3L)
+  expect_equal(reference$rank[reference$tf == "TF_A"], 1L)
+  expect_equal(reference$canonical_status[reference$tf == "TF_A"], "top_20")
   expect_equal(nrow(absent), 0L)
+  expect_false("TF_ABSENT" %in% cache$tf_names)
   expect_equal(cache$motif_summary, list(total = 2L, eligible = 1L, excluded = 1L))
   expect_false(grepl("not predicted", page, fixed = TRUE))
-  expect_match(page, "excluded without retained canonical TF binding", fixed = TRUE)
+  expect_match(page, "not expressed or lacked retained binding", fixed = TRUE)
 })
 
 test_that("Explorer cutoff prefers saved Module 1 run metadata", {

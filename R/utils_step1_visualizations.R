@@ -625,7 +625,7 @@ build_tfbs_umap_report <- function(module1,
     sum(suppressWarnings(as.numeric(source$manifest$n_rows)), na.rm = TRUE)
   } else if (is.data.frame(source$data)) nrow(source$data) else NA_real_
   fingerprint <- list(
-    schema = "module1_qc_analysis_v8",
+    schema = "module1_qc_analysis_v9",
     n_sites = nrow(omics$matrices$fp_score),
     conditions = colnames(omics$matrices$fp_score),
     r_cutoff = r_cutoff,
@@ -653,6 +653,9 @@ build_tfbs_umap_report <- function(module1,
   fp_index <- stats::setNames(seq_along(fp_ids), fp_ids)
   n_sites <- length(fp_ids)
   n_bytes <- ceiling(n_sites / 8)
+  expressed_tf_keys <- .module1_tf_identity_key(
+    rownames(omics$matrices$gene_on)[rowSums(omics$matrices$gene_on > 0, na.rm = TRUE) > 0]
+  )
   tf_bits <- list()
   motif_map <- .module1_explorer_motif_map(omics)
   canonical_by_motif <- if (nrow(motif_map)) {
@@ -676,6 +679,8 @@ build_tfbs_umap_report <- function(module1,
     if (!all(c("tf", "fp_id") %in% names(x)) || !nrow(x)) return()
     dt <- unique(data.table::data.table(tf = as.character(x$tf), fp_id = as.character(x$fp_id)))
     dt <- dt[!is.na(tf) & nzchar(tf) & !is.na(fp_id) & nzchar(fp_id)]
+    dt[, tf_key := .module1_tf_identity_key(tf)]
+    dt <- dt[tf_key %in% expressed_tf_keys]
     dt[, site_index := unname(fp_index[fp_id])]
     dt <- dt[!is.na(site_index)]
     if (!nrow(dt)) return()
@@ -727,8 +732,9 @@ build_tfbs_umap_report <- function(module1,
     motif_counts[, rank := seq_len(.N), by = motif]
     motif_counts[, top20 := rank <= 20L]
     observed_keys <- paste(motif_counts$motif, motif_counts$tf_key, sep = "\r")
+    canonical_members[, expressed := tf_key %in% expressed_tf_keys]
     canonical_members[, predicted := paste(motif, tf_key, sep = "\r") %in% observed_keys]
-    eligible_motifs <- canonical_members[, .(eligible = length(predicted) > 0L && all(predicted)), by = motif][eligible == TRUE, motif]
+    eligible_motifs <- canonical_members[, .(eligible = length(predicted) > 0L && all(expressed & predicted)), by = motif][eligible == TRUE, motif]
     all_motifs <- sort(unique(canonical_members$motif))
     motif_summary <- list(
       total = length(all_motifs),
@@ -737,7 +743,7 @@ build_tfbs_umap_report <- function(module1,
     )
     motif_counts <- motif_counts[motif %in% eligible_motifs]
     canonical_members <- canonical_members[motif %in% eligible_motifs]
-    canonical_members[, predicted := NULL]
+    canonical_members[, c("expressed", "predicted") := NULL]
     canonical_by_motif <- canonical_by_motif[motif %in% eligible_motifs]
     canonical_keys <- paste(canonical_members$motif, canonical_members$tf_key, sep = "\r")
     motif_counts[, is_canonical := paste(motif, tf_key, sep = "\r") %in% canonical_keys]
@@ -858,7 +864,7 @@ build_tfbs_umap_report <- function(module1,
     "function drawBinding(){bars(document.getElementById('binding-overall'),counts('Overall').slice(0,n('binding-n')),false,true);bars(document.getElementById('binding-condition'),counts(document.getElementById('binding-cond').value).slice(0,n('binding-n')),false,true);if(selectedTf)highlight(selectedTf)}",
     "function renderCobinding(result){const selected=new Set(result.names),rows=D.tfs.map((tf,i)=>({tf,total:+result.total[i]||0,co:+result.co[i]||0})).filter(x=>!selected.has(x.tf)).sort((a,b)=>b.co-a.co||b.total-a.total||a.tf.localeCompare(b.tf)).slice(0,n('cobind-n'));bars(document.getElementById('cobind-chart'),rows,true);document.getElementById('cobind-status').textContent=result.names.join(' + ')+' | '+result.condition+' | '+rows.length+' partners';lastCobind=result}",
     "function applyCobinding(){if(!selectedFocals.length){document.getElementById('cobind-status').textContent='Add at least one focal TF.';return}if(!workerReady){document.getElementById('cobind-status').textContent='Preparing exact co-binding data...';return}const condition=document.getElementById('cobind-cond').value,key=condition+'::'+selectedFocals.slice().sort().join('|'),cached=cobindCache.get(key);if(cached){renderCobinding(cached);return}const token=++queryToken;document.getElementById('cobind-status').textContent='Calculating exact co-binding...';worker.postMessage({type:'query',token,condition,conditionIndex:condIndex.get(condition),selected:selectedFocals.map(x=>tfIndex.get(x)),nTfs:D.tfs.length});pending.set(token,{key,names:selectedFocals.slice(),condition})}",
-    "function drawMotif(){const motif=document.getElementById('motif-search').value,raw=D.motifs[motif]||[],statusEl=document.getElementById('motif-status'),chart=document.getElementById('motif-chart');statusEl.classList.remove('error');if(!raw.length){chart.replaceChildren();statusEl.textContent='No motif with retained canonical TF binding is available.';statusEl.classList.add('error');return}const rows=raw.map(x=>{const reference=!x.top20&&x.is_canonical,status=String(x.canonical_status||''),valueLabel=(+x.n||0).toLocaleString()+(status==='predicted_outside_top20'?' | rank '+x.rank:'');return{tf:x.tf,total:+x.n||0,canonical:!!x.is_canonical,reference,valueLabel}});const canonical=raw.filter(x=>x.is_canonical).map(x=>x.tf+': '+(x.canonical_status==='top_20'?'top 20, rank '+x.rank:'rank '+x.rank)),summary=D.motifSummary||{};statusEl.textContent='Canonical motif TF reference: '+canonical.join('; ')+' | '+(+summary.eligible||Object.keys(D.motifs).length)+' eligible motifs; '+(+summary.excluded||0)+' excluded without retained canonical TF binding.';bars(chart,rows)}",
+    "function drawMotif(){const motif=document.getElementById('motif-search').value,raw=D.motifs[motif]||[],statusEl=document.getElementById('motif-status'),chart=document.getElementById('motif-chart');statusEl.classList.remove('error');if(!raw.length){chart.replaceChildren();statusEl.textContent='No motif with an expressed canonical TF and retained binding is available.';statusEl.classList.add('error');return}const rows=raw.map(x=>{const reference=!x.top20&&x.is_canonical,status=String(x.canonical_status||''),valueLabel=(+x.n||0).toLocaleString()+(status==='predicted_outside_top20'?' | rank '+x.rank:'');return{tf:x.tf,total:+x.n||0,canonical:!!x.is_canonical,reference,valueLabel}});const canonical=raw.filter(x=>x.is_canonical).map(x=>x.tf+': '+(x.canonical_status==='top_20'?'top 20, rank '+x.rank:'rank '+x.rank)),summary=D.motifSummary||{};statusEl.textContent='Canonical motif TF reference: '+canonical.join('; ')+' | '+(+summary.eligible||Object.keys(D.motifs).length)+' eligible motifs; '+(+summary.excluded||0)+' excluded because a canonical TF was not expressed or lacked retained binding.';bars(chart,rows)}",
     "window.exportSvg=function(id,name){const svg=document.querySelector('#'+id+' svg');if(!svg)return;const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));a.download=name+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500)};",
     "function renderFocals(){const el=document.getElementById('focal-selected');el.innerHTML=selectedFocals.map(tf=>'<span class=\"m1-chip\">'+esc(tf)+'<button type=\"button\" data-remove=\"'+esc(tf)+'\" aria-label=\"Remove '+esc(tf)+'\">x</button></span>').join('');el.querySelectorAll('[data-remove]').forEach(x=>x.onclick=()=>{selectedFocals=selectedFocals.filter(tf=>tf!==x.dataset.remove);renderFocals()})}function addFocal(){const input=document.getElementById('focal-search'),tf=input.value,status=document.getElementById('cobind-status');status.classList.remove('error');if(!tfIndex.has(tf)){status.textContent='Choose a TF from the available list.';status.classList.add('error')}else if(selectedFocals.includes(tf)){status.textContent=tf+' is already selected.'}else{selectedFocals.push(tf);renderFocals();status.textContent='Added '+tf+'. Click Apply to recalculate.'}input.value=''}",
     "function fill(){for(const id of ['binding-cond','cobind-cond']){const s=document.getElementById(id);['Overall',...D.conditions].forEach(x=>s.add(new Option(x,x)));s.value=id==='binding-cond'?D.defaultCondition:'Overall'}const tfList=document.getElementById('tf-options');D.tfs.forEach(x=>tfList.appendChild(new Option('',x)));selectedFocals=[D.tfs[0]];renderFocals();const motifList=document.getElementById('motif-options'),motifs=Object.keys(D.motifs).sort();motifs.forEach(x=>motifList.appendChild(new Option('',x)));document.getElementById('motif-search').value=motifs[0]||''}",
@@ -876,7 +882,7 @@ build_tfbs_umap_report <- function(module1,
     "<div class=\"m1-plot-card\"><div id=\"cobind-chart\" class=\"m1-chart\"></div></div>"
   )
   motif <- paste0(
-    "<p class=\"subtitle\">The selector includes motifs with retained binding for every annotated canonical TF. The chart shows the true top 20 predicted TFs followed by canonical references outside the top 20.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"motif-search\">Motif</label><input id=\"motif-search\" list=\"motif-options\" placeholder=\"Type a motif\"><datalist id=\"motif-options\"></datalist></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div><div id=\"motif-status\" class=\"m1-status\"></div>",
+    "<p class=\"subtitle\">The selector excludes motifs with an unexpressed canonical TF and requires retained binding for every annotated canonical TF. The chart shows the true top 20 predicted TFs followed by canonical references outside the top 20.</p><div class=\"m1-controls\"><div class=\"m1-control\"><label for=\"motif-search\">Motif</label><input id=\"motif-search\" list=\"motif-options\" placeholder=\"Type a motif\"><datalist id=\"motif-options\"></datalist></div><button onclick=\"exportSvg('motif-chart','motif_predicted_tf')\">Export SVG</button></div><div id=\"motif-status\" class=\"m1-status\"></div>",
     "<div class=\"m1-plot-card\"><div id=\"motif-chart\" class=\"m1-chart\"></div></div>"
   )
   list(css = css, script = paste0("<script>", js, "</script>"), binding = binding, cobinding = cobinding, motif = motif, panel_class = panel_class)
