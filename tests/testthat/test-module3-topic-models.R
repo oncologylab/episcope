@@ -2013,6 +2013,10 @@ test_that("raw theta document heatmap hides dense row labels by default", {
 
 test_that("document theta UMAP writes condition and selected TF metadata", {
   skip_if_not_installed("uwot")
+  configured_colors <- .module3_topic_condition_colors(list(
+    report = list(condition_colors = list(CondA = "#112233", CondB = "#aabbcc"))
+  ))
+  expect_equal(configured_colors, c(CondA = "#112233", CondB = "#AABBCC"))
   theta <- matrix(
     c(
       0.85, 0.10, 0.05,
@@ -2042,7 +2046,8 @@ test_that("document theta UMAP writes condition and selected TF metadata", {
       doc_design = "condition",
       selected_tfs = c("TF1", "TF3"),
       seed = 17L,
-      n_neighbors = 3L
+      n_neighbors = 3L,
+      condition_colors = configured_colors
     ),
     out
   )
@@ -2052,7 +2057,10 @@ test_that("document theta UMAP writes condition and selected TF metadata", {
   expect_equal(sort(unique(coords$group_label)), c("CondA", "CondB"))
   expect_equal(sort(coords[selected_tf == TRUE, unique(tf_display)]), c("TF1", "TF3"))
   expect_equal(sort(selected[selected == TRUE, tf_display]), c("TF1", "TF3"))
-  expect_true(all(c("UMAP1", "UMAP2", "primary_topic", "primary_theta") %in% names(coords)))
+  expect_true(all(c("UMAP1", "UMAP2", "primary_topic", "primary_theta", "condition_color", "topic_color") %in% names(coords)))
+  expect_equal(unique(coords[group_label == "CondA", condition_color]), "#112233")
+  expect_equal(unique(coords[group_label == "CondB", condition_color]), "#AABBCC")
+  expect_equal(unique(coords[primary_topic == "Topic1", topic_color]), "#E15759")
   qpdf <- Sys.which("qpdf")
   if (nzchar(qpdf)) {
     expect_equal(trimws(system2(qpdf, c("--show-npages", out), stdout = TRUE)), "1")

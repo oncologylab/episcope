@@ -2844,6 +2844,36 @@ make_topic_report_args_simple <- function(thrP,
   invisible(out_file)
 }
 
+.module3_topic_condition_colors <- function(cfg) {
+  report <- cfg$report %||% cfg$report_state %||% list()
+  if (!is.list(report)) .log_abort("report in the project config must be a mapping.")
+  colors <- report$condition_colors %||% cfg$condition_colors %||% list()
+  if (is.list(colors)) colors <- unlist(colors, use.names = TRUE)
+  if (!length(colors)) return(character())
+  color_names <- names(colors)
+  colors <- stats::setNames(as.character(unname(colors)), color_names)
+  if (is.null(color_names) || any(!nzchar(color_names))) {
+    .log_abort("condition_colors must be a named mapping of condition IDs to hex colors.")
+  }
+  if (any(!grepl("^#[0-9A-Fa-f]{6}$", colors))) {
+    .log_abort("condition_colors values must be six-digit hex colors such as #4E79A7.")
+  }
+  stats::setNames(toupper(colors), color_names)
+}
+
+.module3_bright_topic_palette <- function(topics) {
+  topics <- unique(as.character(topics[!is.na(topics) & nzchar(topics)]))
+  if (!length(topics)) return(character())
+  colors <- c(
+    "#E15759", "#4E79A7", "#59A14F", "#F28E2B", "#B07AA1",
+    "#00A6D6", "#EDC948", "#9C755F", "#FF5DA2", "#00A878",
+    "#D95F02", "#7655C5", "#E7298A", "#66A61E", "#E6AB02",
+    "#A6761D", "#1F78B4", "#33A02C", "#E31A1C", "#6A3D9A",
+    "#B15928", "#17BECF", "#BCBD22", "#F05A9D"
+  )
+  stats::setNames(rep(colors, length.out = length(topics)), topics)
+}
+
 .plot_document_theta_umap <- function(theta,
                                       out_file,
                                       doc_design = c("comparison", "condition"),
@@ -2851,6 +2881,7 @@ make_topic_report_args_simple <- function(thrP,
                                       top_n_tfs = 12L,
                                       seed = 123L,
                                       n_neighbors = 30L,
+                                      condition_colors = NULL,
                                       title_prefix = NULL) {
   if (!requireNamespace("uwot", quietly = TRUE)) {
     .log_warn("Skipping document theta UMAP because package {.pkg uwot} is not installed.")
@@ -2948,6 +2979,25 @@ make_topic_report_args_simple <- function(thrP,
   coords[, selected_tf := tf_display %in% selected_tfs]
   coords <- merge(coords, tf_scores, by = "tf_display", all.x = TRUE, sort = FALSE)
 
+  group_colors <- .topic_factor_palette(coords$group_label)
+  if (!is.null(condition_colors) && length(condition_colors)) {
+    if (is.list(condition_colors)) condition_colors <- unlist(condition_colors, use.names = TRUE)
+    color_names <- names(condition_colors)
+    condition_colors <- stats::setNames(as.character(unname(condition_colors)), color_names)
+    if (is.null(color_names) || any(!nzchar(color_names))) {
+      .log_abort("condition_colors must be a named mapping of condition IDs to hex colors.")
+    }
+    if (any(!grepl("^#[0-9A-Fa-f]{6}$", condition_colors))) {
+      .log_abort("condition_colors values must be six-digit hex colors such as #4E79A7.")
+    }
+    matched_groups <- intersect(names(group_colors), names(condition_colors))
+    group_colors[matched_groups] <- toupper(condition_colors[matched_groups])
+  }
+  coords[, condition_color := unname(group_colors[as.character(group_label)])]
+  topic_levels <- colnames(theta)
+  topic_colors <- .module3_bright_topic_palette(topic_levels)
+  coords[, topic_color := unname(topic_colors[as.character(primary_topic)])]
+
   dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
   csv_file <- sub("[.]pdf$", ".csv", out_file, ignore.case = TRUE)
   selected_file <- sub("[.]pdf$", "_selected_tfs.csv", out_file, ignore.case = TRUE)
@@ -2963,7 +3013,6 @@ make_topic_report_args_simple <- function(thrP,
     sprintf("Document theta UMAP K%d", ncol(theta))
   }
   title_base <- paste(strwrap(title_base, width = 95L), collapse = "\n")
-  group_colors <- .topic_factor_palette(coords$group_label)
   common_theme <- ggplot2::theme_minimal(base_family = "Helvetica", base_size = 9) +
     ggplot2::theme(
       text = ggplot2::element_text(face = "bold", color = "black", size = 9),
@@ -2986,11 +3035,10 @@ make_topic_report_args_simple <- function(thrP,
   centroids <- coords[, .(UMAP1 = mean(UMAP1), UMAP2 = mean(UMAP2)), by = group_label]
   p_condition <- ggplot2::ggplot(coords, ggplot2::aes(UMAP1, UMAP2, color = group_label)) +
     ggplot2::geom_point(size = 0.32, alpha = 0.62) +
-    ggplot2::geom_point(data = centroids, size = 2.2, shape = 4, stroke = 0.8) +
     ggplot2::scale_color_manual(values = group_colors, guide = "none") +
     ggplot2::labs(
       title = "Colored by condition",
-      subtitle = "Crosses and labels mark condition centroids",
+      subtitle = "Labels mark condition centroids",
       x = "UMAP 1",
       y = "UMAP 2"
     ) +
@@ -3007,7 +3055,7 @@ make_topic_report_args_simple <- function(thrP,
       size = 2.25,
       box.padding = 0.28,
       point.padding = 0.2,
-      min.segment.length = 0,
+      segment.color = "white",
       max.overlaps = Inf,
       seed = seed,
       show.legend = FALSE
@@ -3026,17 +3074,14 @@ make_topic_report_args_simple <- function(thrP,
     )
   }
 
-  topic_levels <- colnames(theta)
   coords[, primary_topic := factor(primary_topic, levels = topic_levels)]
-  topic_colors <- .topic_factor_palette(topic_levels)
   topic_centroids <- coords[, .(UMAP1 = mean(UMAP1), UMAP2 = mean(UMAP2)), by = primary_topic]
   p_topic <- ggplot2::ggplot(coords[order(primary_theta)], ggplot2::aes(UMAP1, UMAP2, color = primary_topic)) +
     ggplot2::geom_point(size = 0.32, alpha = 0.62) +
-    ggplot2::geom_point(data = topic_centroids, size = 2.2, shape = 4, stroke = 0.8) +
     ggplot2::scale_color_manual(values = topic_colors, drop = FALSE, guide = "none") +
     ggplot2::labs(
       title = "Colored by primary topic",
-      subtitle = "Crosses and labels mark primary-topic centroids",
+      subtitle = "Labels mark primary-topic centroids",
       x = "UMAP 1",
       y = "UMAP 2"
     ) +
@@ -3053,7 +3098,7 @@ make_topic_report_args_simple <- function(thrP,
       size = 2.25,
       box.padding = 0.28,
       point.padding = 0.2,
-      min.segment.length = 0,
+      segment.color = "white",
       max.overlaps = Inf,
       seed = seed,
       show.legend = FALSE
@@ -8543,6 +8588,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               theta_umap_top_n_tfs = 12L,
                                               theta_umap_seed = 123L,
                                               theta_umap_n_neighbors = 30L,
+                                              theta_umap_condition_colors = NULL,
                                               run_topic_term_heatmap = TRUE,
                                               run_topic_by_comparison_heatmaps = TRUE,
                                               run_intertopic_distance_map = TRUE,
@@ -8845,6 +8891,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           top_n_tfs = theta_umap_top_n_tfs,
           seed = theta_umap_seed,
           n_neighbors = theta_umap_n_neighbors,
+          condition_colors = theta_umap_condition_colors,
           title_prefix = title_prefix
         )
       }

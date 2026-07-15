@@ -4709,6 +4709,7 @@ run_regulatory_topics <- function(filtered_dir,
       topic_tf_membership_cutoff = topic_tf_membership_cutoff,
       topic_tf_primary_margin_cutoff = topic_tf_primary_margin_cutoff,
       pathway_species = pathway_species,
+      theta_umap_condition_colors = .module3_topic_condition_colors(cfg),
       run_raw_theta_document_heatmap = run_raw_theta_document_heatmap
     ),
     benchmark = list(
