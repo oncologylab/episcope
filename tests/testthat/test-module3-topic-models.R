@@ -2011,6 +2011,54 @@ test_that("raw theta document heatmap hides dense row labels by default", {
   expect_false(formals(.plot_raw_theta_document_heatmap)$show_rownames)
 })
 
+test_that("document theta UMAP writes condition and selected TF metadata", {
+  skip_if_not_installed("uwot")
+  theta <- matrix(
+    c(
+      0.85, 0.10, 0.05,
+      0.75, 0.20, 0.05,
+      0.10, 0.80, 0.10,
+      0.15, 0.75, 0.10,
+      0.05, 0.15, 0.80,
+      0.10, 0.20, 0.70,
+      0.60, 0.10, 0.30,
+      0.20, 0.60, 0.20
+    ),
+    nrow = 8L,
+    byrow = TRUE,
+    dimnames = list(
+      c(
+        "CondA::TF1", "CondB::TF1", "CondA::TF2", "CondB::TF2",
+        "CondA::TF3", "CondB::TF3", "CondA::TF4", "CondB::TF4"
+      ),
+      paste0("Topic", 1:3)
+    )
+  )
+  out <- file.path(tempdir(), "document_theta_umap_K3.pdf")
+  expect_equal(
+    .plot_document_theta_umap(
+      theta,
+      out_file = out,
+      doc_design = "condition",
+      selected_tfs = c("TF1", "TF3"),
+      seed = 17L,
+      n_neighbors = 3L
+    ),
+    out
+  )
+  expect_true(file.exists(out))
+  coords <- data.table::fread(sub("[.]pdf$", ".csv", out))
+  selected <- data.table::fread(sub("[.]pdf$", "_selected_tfs.csv", out))
+  expect_equal(sort(unique(coords$group_label)), c("CondA", "CondB"))
+  expect_equal(sort(coords[selected_tf == TRUE, unique(tf_display)]), c("TF1", "TF3"))
+  expect_equal(sort(selected[selected == TRUE, tf_display]), c("TF1", "TF3"))
+  expect_true(all(c("UMAP1", "UMAP2", "primary_topic", "primary_theta") %in% names(coords)))
+  qpdf <- Sys.which("qpdf")
+  if (nzchar(qpdf)) {
+    expect_equal(trimws(system2(qpdf, c("--show-npages", out), stdout = TRUE)), "1")
+  }
+})
+
 test_that("topic-term assignment writer keeps dense term-topic assignment outputs", {
   score_mat <- matrix(
     c(

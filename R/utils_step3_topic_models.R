@@ -38,6 +38,7 @@ if (!exists(".log_abort", mode = "function")) {
     "link_efdr_summary",
     "tf_topic_assignment",
     "raw_theta_documents",
+    "document_theta_umap",
     "topic_term_heatmap",
     "topic_by_comparison",
     "pathway",
@@ -59,6 +60,7 @@ if (!exists(".log_abort", mode = "function")) {
       "topic_links",
       "gammafit_summary",
       "tf_topic_assignment",
+      "document_theta_umap",
       "topic_term_heatmap",
       "topic_by_comparison",
       "pathway"
@@ -67,12 +69,13 @@ if (!exists(".log_abort", mode = "function")) {
     plots = c(
       "gammafit_summary",
       "tf_topic_assignment",
+      "document_theta_umap",
       "topic_term_heatmap",
       "topic_by_comparison",
       "intertopic_distance"
     ),
     heatmaps = c("tf_topic_assignment", "topic_term_heatmap", "topic_by_comparison"),
-    reports = c("gammafit_summary", "tf_topic_assignment", "topic_term_heatmap", "topic_by_comparison", "pathway")
+    reports = c("gammafit_summary", "tf_topic_assignment", "document_theta_umap", "topic_term_heatmap", "topic_by_comparison", "pathway")
   )
   expanded <- unlist(lapply(steps, function(step) {
     if (step %in% names(aliases)) aliases[[step]] else step
@@ -2302,6 +2305,7 @@ make_topic_report_args_simple <- function(thrP,
     max_pathways = Inf,
     run_pathway_enrichment = .topic_step_enabled(extraction_steps, "pathway", isTRUE(modules$pathway)),
     run_raw_theta_document_heatmap = .topic_step_enabled(extraction_steps, "raw_theta_documents", FALSE),
+    run_document_theta_umap = .topic_step_enabled(extraction_steps, "document_theta_umap", TRUE),
     run_topic_term_heatmap = .topic_step_enabled(extraction_steps, "topic_term_heatmap", TRUE),
     run_topic_by_comparison_heatmaps = .topic_step_enabled(extraction_steps, "topic_by_comparison", isTRUE(modules$topic_by_comparison)),
     run_intertopic_distance_map = .topic_step_enabled(extraction_steps, "intertopic_distance", isTRUE(modules$intertopic_distance))
@@ -2835,6 +2839,250 @@ make_topic_report_args_simple <- function(thrP,
   )
   grid::grid.newpage()
   grid::grid.draw(ph$gtable)
+  grDevices::dev.off()
+  device_open <- FALSE
+  invisible(out_file)
+}
+
+.plot_document_theta_umap <- function(theta,
+                                      out_file,
+                                      doc_design = c("comparison", "condition"),
+                                      selected_tfs = NULL,
+                                      top_n_tfs = 12L,
+                                      seed = 123L,
+                                      n_neighbors = 30L,
+                                      title_prefix = NULL) {
+  if (!requireNamespace("uwot", quietly = TRUE)) {
+    .log_warn("Skipping document theta UMAP because package {.pkg uwot} is not installed.")
+    return(invisible(NULL))
+  }
+  .assert_pkg("data.table")
+  .assert_pkg("ggplot2")
+  doc_design <- match.arg(doc_design)
+  theta <- as.matrix(theta)
+  if (nrow(theta) < 4L || ncol(theta) < 2L) {
+    return(invisible(NULL))
+  }
+  if (is.null(rownames(theta)) || any(!nzchar(rownames(theta)))) {
+    .log_abort("theta must have non-empty rownames containing document IDs.")
+  }
+  storage.mode(theta) <- "double"
+  theta[!is.finite(theta) | theta < 0] <- 0
+  row_total <- rowSums(theta)
+  keep <- is.finite(row_total) & row_total > 0
+  theta <- theta[keep, , drop = FALSE]
+  row_total <- row_total[keep]
+  if (nrow(theta) < 4L) return(invisible(NULL))
+  theta <- theta / row_total
+
+  doc_info <- .parse_doc_id(rownames(theta), doc_design = doc_design)
+  meta <- data.table::data.table(doc_id = rownames(theta))
+  meta <- cbind(meta, doc_info)
+  meta[, tf := as.character(tf_doc)]
+  meta[, tf_display := .module3_tf_display_label(tf)]
+  meta[, group_label := as.character(comparison_id)]
+  if (identical(doc_design, "comparison")) {
+    has_direction <- !is.na(direction) & nzchar(direction)
+    meta[has_direction, group_label := paste(comparison_id, direction, sep = " | ")]
+  }
+
+  top_n_tfs <- suppressWarnings(as.integer(top_n_tfs[[1L]]))
+  if (!is.finite(top_n_tfs) || top_n_tfs < 1L) top_n_tfs <- 12L
+  theta_dt <- data.table::as.data.table(theta)
+  theta_dt[, tf_display := meta$tf_display]
+  topic_cols <- setdiff(names(theta_dt), "tf_display")
+  tf_scores <- theta_dt[!is.na(tf_display) & nzchar(tf_display), {
+    values <- as.matrix(.SD)
+    score <- if (nrow(values) > 1L) sum(apply(values, 2L, stats::var), na.rm = TRUE) else 0
+    .(theta_variation = as.numeric(score), n_documents = .N)
+  }, by = tf_display, .SDcols = topic_cols]
+  data.table::setorder(tf_scores, -theta_variation, -n_documents, tf_display)
+
+  available_tfs <- sort(unique(meta$tf_display[!is.na(meta$tf_display) & nzchar(meta$tf_display)]))
+  if (is.null(selected_tfs) || !length(selected_tfs)) {
+    selected_tfs <- head(tf_scores$tf_display, top_n_tfs)
+  } else {
+    requested <- unique(as.character(selected_tfs))
+    matched <- match(toupper(requested), toupper(available_tfs))
+    selected_tfs <- available_tfs[stats::na.omit(matched)]
+    missing_tfs <- requested[is.na(matched)]
+    if (length(missing_tfs)) {
+      .log_warn("Ignoring selected TFs absent from theta documents: {paste(missing_tfs, collapse = ', ')}.")
+    }
+  }
+  selected_tfs <- unique(selected_tfs)
+
+  n_neighbors <- suppressWarnings(as.integer(n_neighbors[[1L]]))
+  if (!is.finite(n_neighbors)) n_neighbors <- 30L
+  n_neighbors <- max(2L, min(n_neighbors, nrow(theta) - 1L))
+  seed <- suppressWarnings(as.integer(seed[[1L]]))
+  if (!is.finite(seed)) seed <- 123L
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = .GlobalEnv)
+    } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+      rm(".Random.seed", envir = .GlobalEnv)
+    }
+  }, add = TRUE)
+  set.seed(seed)
+  coords <- uwot::umap(
+    sqrt(theta),
+    n_neighbors = n_neighbors,
+    min_dist = 0.15,
+    metric = "euclidean",
+    n_components = 2L,
+    n_threads = 1L,
+    ret_model = FALSE,
+    verbose = FALSE
+  )
+  coords <- data.table::data.table(
+    doc_id = rownames(theta),
+    UMAP1 = as.numeric(coords[, 1L]),
+    UMAP2 = as.numeric(coords[, 2L])
+  )
+  coords <- cbind(coords, meta[, .(group_label, comparison_id, direction, tf, tf_display)])
+  coords[, primary_topic := colnames(theta)[max.col(theta, ties.method = "first")]]
+  coords[, primary_theta := apply(theta, 1L, max)]
+  coords[, selected_tf := tf_display %in% selected_tfs]
+  coords <- merge(coords, tf_scores, by = "tf_display", all.x = TRUE, sort = FALSE)
+
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  csv_file <- sub("[.]pdf$", ".csv", out_file, ignore.case = TRUE)
+  selected_file <- sub("[.]pdf$", "_selected_tfs.csv", out_file, ignore.case = TRUE)
+  data.table::fwrite(coords, csv_file)
+  data.table::fwrite(
+    tf_scores[, selected := tf_display %in% selected_tfs][order(-selected, -theta_variation, tf_display)],
+    selected_file
+  )
+
+  title_base <- if (!is.null(title_prefix) && nzchar(title_prefix)) {
+    paste(title_prefix, sprintf("document theta UMAP K%d", ncol(theta)), sep = " | ")
+  } else {
+    sprintf("Document theta UMAP K%d", ncol(theta))
+  }
+  title_base <- paste(strwrap(title_base, width = 95L), collapse = "\n")
+  group_colors <- .topic_factor_palette(coords$group_label)
+  common_theme <- ggplot2::theme_minimal(base_family = "Helvetica", base_size = 9) +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold", color = "black", size = 9),
+      axis.title = ggplot2::element_text(face = "bold", size = 9),
+      axis.text = ggplot2::element_text(face = "bold", size = 8, color = "black"),
+      plot.title = ggplot2::element_text(face = "bold", size = 11, hjust = 0.5),
+      plot.subtitle = ggplot2::element_text(face = "bold", size = 8, hjust = 0.5),
+      strip.text = ggplot2::element_text(face = "bold", size = 9),
+      panel.grid.minor = ggplot2::element_blank(),
+      plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      panel.background = ggplot2::element_rect(fill = "white", color = NA),
+      plot.margin = ggplot2::margin(8, 10, 8, 10)
+    )
+  x_range <- range(coords$UMAP1, na.rm = TRUE)
+  y_range <- range(coords$UMAP2, na.rm = TRUE)
+  x_pad <- max(diff(x_range) * 0.04, 0.1)
+  y_pad <- max(diff(y_range) * 0.04, 0.1)
+  x_limits <- x_range + c(-x_pad, x_pad)
+  y_limits <- y_range + c(-y_pad, y_pad)
+  centroids <- coords[, .(UMAP1 = mean(UMAP1), UMAP2 = mean(UMAP2)), by = group_label]
+  p_condition <- ggplot2::ggplot(coords, ggplot2::aes(UMAP1, UMAP2, color = group_label)) +
+    ggplot2::geom_point(size = 0.32, alpha = 0.62) +
+    ggplot2::geom_point(data = centroids, size = 2.2, shape = 4, stroke = 0.8) +
+    ggplot2::scale_color_manual(values = group_colors, guide = "none") +
+    ggplot2::labs(
+      title = "Colored by condition",
+      subtitle = "Crosses and labels mark condition centroids",
+      x = "UMAP 1",
+      y = "UMAP 2"
+    ) +
+    ggplot2::coord_fixed(xlim = x_limits, ylim = y_limits, ratio = 1, clip = "off") +
+    common_theme
+  if (requireNamespace("ggrepel", quietly = TRUE)) {
+    p_condition <- p_condition + ggrepel::geom_label_repel(
+      data = centroids,
+      ggplot2::aes(label = group_label),
+      color = "black",
+      fill = "white",
+      fontface = "bold",
+      family = "Helvetica",
+      size = 2.25,
+      box.padding = 0.28,
+      point.padding = 0.2,
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      seed = seed,
+      show.legend = FALSE
+    )
+  } else {
+    .log_warn("Package ggrepel is unavailable; condition UMAP labels cannot be repelled.")
+    p_condition <- p_condition + ggplot2::geom_label(
+      data = centroids,
+      ggplot2::aes(label = group_label),
+      color = "black",
+      fill = "white",
+      fontface = "bold",
+      size = 2.25,
+      linewidth = 0.25,
+      show.legend = FALSE
+    )
+  }
+
+  topic_levels <- colnames(theta)
+  coords[, primary_topic := factor(primary_topic, levels = topic_levels)]
+  topic_colors <- .topic_factor_palette(topic_levels)
+  topic_centroids <- coords[, .(UMAP1 = mean(UMAP1), UMAP2 = mean(UMAP2)), by = primary_topic]
+  p_topic <- ggplot2::ggplot(coords[order(primary_theta)], ggplot2::aes(UMAP1, UMAP2, color = primary_topic)) +
+    ggplot2::geom_point(size = 0.32, alpha = 0.62) +
+    ggplot2::geom_point(data = topic_centroids, size = 2.2, shape = 4, stroke = 0.8) +
+    ggplot2::scale_color_manual(values = topic_colors, drop = FALSE, guide = "none") +
+    ggplot2::labs(
+      title = "Colored by primary topic",
+      subtitle = "Crosses and labels mark primary-topic centroids",
+      x = "UMAP 1",
+      y = "UMAP 2"
+    ) +
+    ggplot2::coord_fixed(xlim = x_limits, ylim = y_limits, ratio = 1, clip = "off") +
+    common_theme
+  if (requireNamespace("ggrepel", quietly = TRUE)) {
+    p_topic <- p_topic + ggrepel::geom_label_repel(
+      data = topic_centroids,
+      ggplot2::aes(label = primary_topic),
+      color = "black",
+      fill = "white",
+      fontface = "bold",
+      family = "Helvetica",
+      size = 2.25,
+      box.padding = 0.28,
+      point.padding = 0.2,
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      seed = seed,
+      show.legend = FALSE
+    )
+  } else {
+    p_topic <- p_topic + ggplot2::geom_label(
+      data = topic_centroids,
+      ggplot2::aes(label = primary_topic),
+      color = "black",
+      fill = "white",
+      fontface = "bold",
+      size = 2.25,
+      linewidth = 0.25,
+      show.legend = FALSE
+    )
+  }
+
+  combined <- gridExtra::arrangeGrob(
+    p_condition,
+    p_topic,
+    ncol = 2L,
+    widths = c(1, 1),
+    top = grid::textGrob(title_base, gp = grid::gpar(fontfamily = "Helvetica", fontface = "bold", fontsize = 14))
+  )
+  grDevices::pdf(out_file, width = 16, height = 9, family = "Helvetica", useDingbats = FALSE, bg = "white")
+  device_open <- TRUE
+  on.exit(if (isTRUE(device_open)) grDevices::dev.off(), add = TRUE)
+  grid::grid.newpage()
+  grid::grid.draw(combined)
   grDevices::dev.off()
   device_open <- FALSE
   invisible(out_file)
@@ -8290,6 +8538,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               topic_tf_membership_cutoff = 0.3,
                                               topic_tf_primary_margin_cutoff = 0.1,
                                               run_raw_theta_document_heatmap = FALSE,
+                                              run_document_theta_umap = TRUE,
+                                              theta_umap_selected_tfs = NULL,
+                                              theta_umap_top_n_tfs = 12L,
+                                              theta_umap_seed = 123L,
+                                              theta_umap_n_neighbors = 30L,
                                               run_topic_term_heatmap = TRUE,
                                               run_topic_by_comparison_heatmaps = TRUE,
                                               run_intertopic_distance_map = TRUE,
@@ -8333,6 +8586,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     run_pathway_enrichment <- .topic_step_enabled(extraction_steps, "pathway", TRUE)
     run_tf_topic_assignment <- .topic_step_enabled(extraction_steps, "tf_topic_assignment", TRUE)
     run_raw_theta_document_heatmap <- .topic_step_enabled(extraction_steps, "raw_theta_documents", FALSE)
+    run_document_theta_umap <- .topic_step_enabled(extraction_steps, "document_theta_umap", TRUE)
     run_topic_term_heatmap <- .topic_step_enabled(extraction_steps, "topic_term_heatmap", TRUE)
     run_topic_by_comparison_heatmaps <- .topic_step_enabled(extraction_steps, "topic_by_comparison", TRUE)
     run_intertopic_distance_map <- .topic_step_enabled(extraction_steps, "intertopic_distance", TRUE)
@@ -8573,6 +8827,24 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           theta = topic_base$theta,
           out_file = raw_theta_path,
           doc_design = doc_design,
+          title_prefix = title_prefix
+        )
+      }
+    )
+  }
+  if (isTRUE(run_document_theta_umap)) {
+    .record_step(
+      "document_theta_umap",
+      {
+        theta_umap_path <- file.path(out_dir, sprintf("document_theta_umap_K%d.pdf", ncol(topic_base$theta)))
+        .plot_document_theta_umap(
+          theta = topic_base$theta,
+          out_file = theta_umap_path,
+          doc_design = doc_design,
+          selected_tfs = theta_umap_selected_tfs,
+          top_n_tfs = theta_umap_top_n_tfs,
+          seed = theta_umap_seed,
+          n_neighbors = theta_umap_n_neighbors,
           title_prefix = title_prefix
         )
       }
@@ -11217,6 +11489,7 @@ extract_regulatory_topics <- function(k,
       run_link_efdr_summary = TRUE,
       run_pathway_enrichment = FALSE,
       run_raw_theta_document_heatmap = FALSE,
+      run_document_theta_umap = TRUE,
       run_topic_by_comparison_heatmaps = TRUE,
       run_intertopic_distance_map = TRUE,
       topic_by_comparison_label_cleaner = wrap_comp_label
