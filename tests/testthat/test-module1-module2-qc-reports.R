@@ -74,7 +74,7 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(grepl("binding-overall", page, fixed = TRUE))
   expect_true(grepl("cobind-chart", page, fixed = TRUE))
   expect_true(grepl("motif-chart", page, fixed = TRUE))
-  expect_true(grepl("raincloud-plot", page, fixed = TRUE))
+  expect_true(grepl("vertical-violin-plot", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"per-condition\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"distribution\"", page, fixed = TRUE))
   expect_true(grepl("data-qc-group=\"pca\"", page, fixed = TRUE))

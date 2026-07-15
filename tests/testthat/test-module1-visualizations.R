@@ -158,6 +158,8 @@ test_that("TFBS Explorer writes compact exact co-binding controls", {
   expect_match(page, "new Worker", fixed = TRUE)
   expect_match(page, "Exact co-binding data ready.';applyCobinding()", fixed = TRUE)
   expect_false(grepl("D.tfBits=D.tfBits.map", page, fixed = TRUE))
+  expect_match(page, "Math.floor(el.clientWidth||760)", fixed = TRUE)
+  expect_match(page, "max-height:520px", fixed = TRUE)
   expect_match(page, "Math.max(bw,1)", fixed = TRUE)
   expect_false(grepl("d.reference?1:bw", page, fixed = TRUE))
   expect_equal(sum(popcount[shared_with_c + 1L]), 1L)

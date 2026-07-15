@@ -2154,7 +2154,7 @@
 }
 
 .module1_qc_violin_svg <- function(x, title, stage_labels = NULL, width = 900L) {
-  value <- y <- group <- stage <- q25 <- q75 <- median <- NULL
+  value <- x_position <- group <- stage <- q25 <- q75 <- median <- NULL
   need <- c("condition", "stage", "probability", "value")
   if (!is.data.frame(x) || !nrow(x) || !all(need %in% names(x))) return("<p class=\"empty\">Distribution data are unavailable.</p>")
   x <- as.data.frame(x, stringsAsFactors = FALSE)
@@ -2168,11 +2168,11 @@
   density_parts <- list()
   summary_parts <- list()
   k <- 1L
-  stage_offset <- stats::setNames((seq_along(stages) - (length(stages) + 1) / 2) * 0.22, stages)
-  violin_half_height <- if (length(stages) == 1L) 0.27 else 0.085
+  stage_offset <- stats::setNames((seq_along(stages) - (length(stages) + 1) / 2) * 0.24, stages)
+  violin_half_width <- if (length(stages) == 1L) 0.31 else 0.105
   for (ci in seq_along(conditions)) {
     condition <- conditions[[ci]]
-    base_y <- length(conditions) - ci + 1L
+    base_x <- ci
     for (si in seq_along(stages)) {
       stage <- stages[[si]]
       d <- x[x$condition == condition & x$stage == stage, , drop = FALSE]
@@ -2180,54 +2180,62 @@
       if (nrow(d) < 5L) next
       probs <- seq(0.005, 0.995, length.out = 201L)
       sample_values <- stats::approx(d$probability, d$value, xout = probs, rule = 2, ties = "ordered")$y
-      center <- base_y + stage_offset[[stage]]
+      center <- base_x + stage_offset[[stage]]
       den <- tryCatch(stats::density(sample_values, n = 128L, na.rm = TRUE), error = function(e) NULL)
       if (is.null(den) || !length(den$y) || max(den$y) <= 0) next
-      scaled_density <- violin_half_height * den$y / max(den$y)
+      scaled_density <- violin_half_width * den$y / max(den$y)
       density_parts[[k]] <- tibble::tibble(
         condition = condition,
         stage = stage,
         group = paste(condition, stage, sep = "::"),
-        value = c(den$x, rev(den$x)),
-        y = c(center + scaled_density, rev(center - scaled_density))
+        x_position = c(center + scaled_density, rev(center - scaled_density)),
+        value = c(den$x, rev(den$x))
       )
       quartiles <- stats::approx(d$probability, d$value, xout = c(0.25, 0.5, 0.75), rule = 2, ties = "ordered")$y
-      summary_parts[[k]] <- tibble::tibble(condition = condition, stage = stage, y = center, q25 = quartiles[[1L]], median = quartiles[[2L]], q75 = quartiles[[3L]])
+      summary_parts[[k]] <- tibble::tibble(condition = condition, stage = stage, x_position = center, q25 = quartiles[[1L]], median = quartiles[[2L]], q75 = quartiles[[3L]])
       k <- k + 1L
     }
   }
   density_data <- dplyr::bind_rows(density_parts)
   summary_data <- dplyr::bind_rows(summary_parts)
   if (!nrow(density_data)) return("<p class=\"empty\">Distribution data are unavailable.</p>")
+  central_values <- x$value[x$probability >= 0.01 & x$probability <= 0.99 & is.finite(x$value)]
+  display_limits <- range(central_values, na.rm = TRUE)
+  if (!all(is.finite(display_limits)) || display_limits[[1L]] == display_limits[[2L]]) display_limits <- range(density_data$value, na.rm = TRUE)
+  display_padding <- 0.03 * diff(display_limits)
+  display_limits <- display_limits + c(-display_padding, display_padding)
   stage_labels <- stats::setNames(unname(labels[stages]), stages)
   stage_colors <- stats::setNames(vapply(stages, function(stage) colors[[stage]] %||% "#64748b", character(1L)), stages)
   p <- ggplot2::ggplot() +
-    ggplot2::geom_polygon(data = density_data, ggplot2::aes(x = value, y = y, group = group, fill = stage), color = "#ffffff", linewidth = 0.25, alpha = 0.72) +
-    ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = q25, xend = q75, y = y, yend = y), color = "#172033", linewidth = 1.2) +
-    ggplot2::geom_point(data = summary_data, ggplot2::aes(x = median, y = y, fill = stage), shape = 21, color = "#172033", stroke = 0.4, size = 2.1) +
-    ggplot2::scale_y_continuous(breaks = rev(seq_along(conditions)), labels = conditions, expand = ggplot2::expansion(add = c(0.35, 0.5))) +
+    ggplot2::geom_polygon(data = density_data, ggplot2::aes(x = x_position, y = value, group = group, fill = stage), color = "#ffffff", linewidth = 0.25, alpha = 0.76) +
+    ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = x_position, xend = x_position, y = q25, yend = q75), color = "#172033", linewidth = 1.05) +
+    ggplot2::geom_point(data = summary_data, ggplot2::aes(x = x_position, y = median, fill = stage), shape = 21, color = "#172033", stroke = 0.35, size = 1.9) +
+    ggplot2::scale_x_continuous(breaks = seq_along(conditions), labels = conditions, expand = ggplot2::expansion(add = c(0.55, 0.55))) +
     ggplot2::scale_fill_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
+    ggplot2::coord_cartesian(ylim = display_limits) +
     ggplot2::labs(
-      x = if (identical(stages, "gene_expression")) "Expression value" else "Footprint score",
-      y = NULL, fill = NULL, color = NULL,
-      caption = "Violin shapes are deterministic reconstructions from saved quantile summaries; center dots and lines show the median and interquartile range."
+      x = NULL,
+      y = if (identical(stages, "gene_expression")) "Expression value" else "Footprint score",
+      fill = NULL, color = NULL,
+      caption = "Violin shapes are reconstructed from saved quantile summaries; dots and lines show the median and interquartile range. The display focuses on the 1st-99th percentile; full summaries remain in the table below."
     ) +
     ggplot2::theme_bw(base_size = 9) +
     ggplot2::theme(
       plot.title = ggplot2::element_text(face = "bold", size = 13),
-      axis.title.x = ggplot2::element_text(face = "bold"),
-      axis.text.y = ggplot2::element_text(size = 7.4, color = "#111827"),
-      panel.grid.major.y = ggplot2::element_line(color = "#eef1f5", linewidth = 0.3),
+      axis.title.y = ggplot2::element_text(face = "bold"),
+      axis.text.x = ggplot2::element_text(size = 7, color = "#111827", angle = 48, hjust = 1, vjust = 1),
+      panel.grid.major.x = ggplot2::element_blank(),
+      panel.grid.major.y = ggplot2::element_line(color = "#e8edf3", linewidth = 0.3),
       panel.grid.minor = ggplot2::element_blank(),
       legend.position = "top",
       legend.key.height = grid::unit(2.8, "mm"),
       legend.text = ggplot2::element_text(size = 8),
       plot.caption = ggplot2::element_text(size = 7, color = "#64748b", hjust = 0),
-      plot.margin = ggplot2::margin(4, 8, 4, 5)
+      plot.margin = ggplot2::margin(4, 8, 2, 5)
     )
   paste0(
     "<div class=\"plot-heading\"><h3>", .qc_html_escape(title), "</h3></div>",
-    .qc_ggplot_svg(p, width = width / 100, height = 4.2, css_class = "qc-plot violin-plot raincloud-plot distribution-plot")
+    .qc_ggplot_svg(p, width = width / 100, height = 5.0, css_class = "qc-plot violin-plot vertical-violin-plot distribution-plot")
   )
 }
 
