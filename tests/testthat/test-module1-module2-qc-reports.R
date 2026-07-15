@@ -94,6 +94,14 @@ test_that("Module 1 QC report writes an HTML summary", {
   expect_true(file.exists(file.path(out_dir, "cache", "module1_qc_analysis.rds")))
 })
 
+test_that("Module 1 violin stages place quantile normalization last", {
+  stages <- craftgrn:::.module1_qc_violin_stage_order(c(
+    "quantile_normalized", "raw", "canonical_filtered"
+  ))
+
+  expect_equal(stages, c("raw", "canonical_filtered", "quantile_normalized"))
+})
+
 test_that("Module 1 QC reads chunked prediction statistics", {
   out_dir <- tempfile("module1-qc-stats-")
   chunk_dir <- file.path(out_dir, "module1_prediction_stats_chunks")

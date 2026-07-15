@@ -2153,6 +2153,15 @@
   paste0("<div class=\"condition-legend\">", paste(items, collapse = ""), "</div>")
 }
 
+.module1_qc_violin_stage_order <- function(stages) {
+  available <- unique(as.character(stages))
+  c(
+    intersect(c("raw", "canonical_filtered", "gene_expression"), available),
+    setdiff(available, c("raw", "canonical_filtered", "gene_expression", "quantile_normalized")),
+    intersect("quantile_normalized", available)
+  )
+}
+
 .module1_qc_violin_svg <- function(x, title, stage_labels = NULL, width = 900L) {
   value <- x_position <- group <- stage <- q25 <- q75 <- median <- NULL
   need <- c("condition", "stage", "probability", "value")
@@ -2160,7 +2169,7 @@
   x <- as.data.frame(x, stringsAsFactors = FALSE)
   x <- x[is.finite(x$probability) & is.finite(x$value), , drop = FALSE]
   conditions <- unique(as.character(x$condition))
-  stages <- unique(as.character(x$stage))
+  stages <- .module1_qc_violin_stage_order(x$stage)
   if (!length(conditions) || !length(stages)) return("<p class=\"empty\">Distribution data are unavailable.</p>")
   labels <- c(raw = "Raw", quantile_normalized = "Quantile-normalized", canonical_filtered = "Filtered", gene_expression = "Gene expression")
   if (!is.null(stage_labels)) labels[names(stage_labels)] <- stage_labels
@@ -2211,7 +2220,7 @@
     ggplot2::geom_segment(data = summary_data, ggplot2::aes(x = x_position, xend = x_position, y = q25, yend = q75), color = "#172033", linewidth = 1.05) +
     ggplot2::geom_point(data = summary_data, ggplot2::aes(x = x_position, y = median, fill = stage), shape = 21, color = "#172033", stroke = 0.35, size = 1.9) +
     ggplot2::scale_x_continuous(breaks = seq_along(conditions), labels = conditions, expand = ggplot2::expansion(add = c(0.55, 0.55))) +
-    ggplot2::scale_fill_manual(values = stage_colors, labels = stage_labels, drop = FALSE) +
+    ggplot2::scale_fill_manual(values = stage_colors, breaks = stages, labels = stage_labels, drop = FALSE) +
     ggplot2::coord_cartesian(ylim = display_limits) +
     ggplot2::labs(
       x = NULL,
