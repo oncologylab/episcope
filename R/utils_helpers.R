@@ -178,9 +178,9 @@ NULL
   genes <- .canonicalize_pathway_genes(genes, pathway_species = pathway_species)
   universe <- if (is.null(universe)) NULL else .canonicalize_pathway_genes(universe, pathway_species = pathway_species)
   db_cache_dir <- .enrichly_db_cache_dir(cache_dir)
-  enrichly_download <- getExportedValue("enrichly", "enrichly_download")
-  enrichly_load <- getExportedValue("enrichly", "enrichly_load")
-  enrichly_enrich <- getExportedValue("enrichly", "enrichly_enrich")
+  enrichly_download <- enrichly::enrichly_download
+  enrichly_load <- enrichly::enrichly_load
+  enrichly_enrich <- enrichly::enrichly_enrich
   manifest <- enrichly_download(
     databases = dbs,
     cache_dir = db_cache_dir,

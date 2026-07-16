@@ -78,7 +78,8 @@ test_that("pkgdown reference uses publication-facing Module 1 and Module 2 names
     "export_predicted_tfbs_bed",
     "plot_tfbs_condition_comparison",
     "plot_tf_tf_cobinding_heatmap",
-    "build_tfbs_umap_report"
+    "build_tfbs_umap_report",
+    "build_module1_tfbs_explorer"
   ))
   expect_equal(module2$contents, c(
     "predict_tf_targets",
@@ -113,6 +114,7 @@ test_that("pkgdown reference uses clean Module 3 public API names", {
   expect_equal(module3$contents, c(
     "run_topic_modeling",
     "module3_prepare_differential_links",
+    "module3_prepare_condition_links",
     "module3_construct_docs",
     "module3_train_topic_models",
     "module3_extract_topics",

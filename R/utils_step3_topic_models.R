@@ -439,6 +439,49 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
   files[file.exists(files)]
 }
 
+.module3_topic_input_signature <- function(input_dir,
+                                           input_source,
+                                           sample_subset = NULL,
+                                           settings = list()) {
+  .assert_pkg("data.table")
+  .assert_pkg("digest")
+  input_source <- match.arg(input_source, c("differential_links", "condition_links"))
+  sample_subset <- sort(unique(as.character(sample_subset)))
+  sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
+  files <- if (identical(input_source, "condition_links")) {
+    manifest_path <- .module3_condition_link_manifest_path(input_dir)
+    manifest <- data.table::fread(manifest_path, showProgress = FALSE)
+    if (!all(c("condition_id", "path") %in% names(manifest))) {
+      .log_abort("Condition-link manifest must include condition_id and path for cache validation.")
+    }
+    if (length(sample_subset)) manifest <- manifest[condition_id %in% sample_subset]
+    paths <- as.character(manifest$path)
+    paths[!grepl("^/", paths)] <- file.path(dirname(manifest_path), paths[!grepl("^/", paths)])
+    c(manifest_path, paths)
+  } else {
+    manifest_path <- file.path(input_dir, "filtered_links_manifest.csv")
+    c(if (file.exists(manifest_path)) manifest_path else character(), .module3_filtered_link_files(input_dir))
+  }
+  files <- sort(unique(normalizePath(files[file.exists(files)], winslash = "/", mustWork = TRUE)))
+  info <- file.info(files)
+  file_rows <- data.table::data.table(
+    path = files,
+    size = as.numeric(info$size),
+    mtime = as.numeric(info$mtime)
+  )
+  digest::digest(
+    list(
+      signature_version = 1L,
+      input_source = input_source,
+      sample_subset = sample_subset,
+      files = file_rows,
+      settings = settings
+    ),
+    algo = "xxhash64",
+    serialize = TRUE
+  )
+}
+
 #' Load Module 3 differential links
 #'
 #' Load filtered differential-link files produced by
@@ -684,27 +727,96 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   .warplda_default_threads(threads_per_model)
 }
 
-.format_bytes <- function(bytes) {
-  bytes <- suppressWarnings(as.numeric(bytes[[1L]]))
-  if (!is.finite(bytes) || bytes < 0) return("unknown")
-  units <- c("B", "KB", "MB", "GB", "TB")
-  unit_i <- 1L
-  while (bytes >= 1024 && unit_i < length(units)) {
-    bytes <- bytes / 1024
-    unit_i <- unit_i + 1L
+.module3_memory_policy <- function(memory_safety = getOption("craftgrn.module3.memory_safety", "strict"),
+                                   memory_max_fraction = getOption("craftgrn.module3.memory_max_fraction", 0.8)) {
+  memory_safety <- match.arg(as.character(memory_safety)[[1L]], c("strict", "adaptive", "off"))
+  memory_max_fraction <- suppressWarnings(as.numeric(memory_max_fraction)[[1L]])
+  if (!is.finite(memory_max_fraction) || memory_max_fraction < 0.1 || memory_max_fraction > 0.9) {
+    .log_abort("memory_max_fraction must be between 0.1 and 0.9.")
   }
-  sprintf("%.2f %s", bytes, units[[unit_i]])
+  list(mode = memory_safety, max_fraction = memory_max_fraction)
 }
 
-.available_memory_bytes <- function() {
-  meminfo <- "/proc/meminfo"
-  if (!file.exists(meminfo)) return(NA_real_)
-  lines <- readLines(meminfo, warn = FALSE)
-  mem_avail <- grep("^MemAvailable:", lines, value = TRUE)
-  if (!length(mem_avail)) return(NA_real_)
-  kb <- suppressWarnings(as.numeric(gsub("[^0-9.]", "", mem_avail[[1L]])))
-  if (!is.finite(kb) || kb <= 0) return(NA_real_)
-  kb * 1024
+.module3_memory_preflight <- function(estimated_bytes,
+                                      stage,
+                                      memory_safety = getOption("craftgrn.module3.memory_safety", "strict"),
+                                      memory_max_fraction = getOption("craftgrn.module3.memory_max_fraction", 0.8),
+                                      available_bytes = .available_memory_bytes(),
+                                      verbose = TRUE) {
+  policy <- .module3_memory_policy(memory_safety, memory_max_fraction)
+  estimated_bytes <- suppressWarnings(as.numeric(estimated_bytes)[[1L]])
+  available_bytes <- suppressWarnings(as.numeric(available_bytes)[[1L]])
+  budget_bytes <- if (is.finite(available_bytes) && available_bytes > 0) {
+    available_bytes * policy$max_fraction
+  } else {
+    NA_real_
+  }
+  result <- list(
+    stage = as.character(stage)[[1L]],
+    mode = policy$mode,
+    max_fraction = policy$max_fraction,
+    estimated_bytes = estimated_bytes,
+    available_bytes = available_bytes,
+    budget_bytes = budget_bytes,
+    allowed = TRUE
+  )
+  if (identical(policy$mode, "off")) return(result)
+  if (!is.finite(available_bytes) || available_bytes <= 0) {
+    result$allowed <- !identical(policy$mode, "strict")
+    if (!result$allowed) {
+      .log_abort("Module 3 strict memory preflight could not measure available RAM for stage: {stage}.")
+    }
+    .log_warn("Module 3 could not measure available RAM for stage {stage}; continuing in adaptive mode with one worker.")
+    return(result)
+  }
+  if (!is.finite(estimated_bytes) || estimated_bytes <= 0) {
+    result$allowed <- !identical(policy$mode, "strict")
+    if (!result$allowed) {
+      .log_abort("Module 3 strict memory preflight has no valid peak estimate for stage: {stage}.")
+    }
+    return(result)
+  }
+  if (isTRUE(verbose)) {
+    .log_inform(
+      "Module 3 memory preflight [{stage}]: estimate {(.format_bytes(estimated_bytes))}; available {(.format_bytes(available_bytes))}; budget {(.format_bytes(budget_bytes))} ({round(100 * policy$max_fraction)}%)."
+    )
+  }
+  if (estimated_bytes > budget_bytes) {
+    result$allowed <- FALSE
+    .log_abort(c(
+      "Module 3 memory preflight refused an unsafe allocation.",
+      i = paste0("Stage: ", stage),
+      i = paste0("Estimated peak: ", .format_bytes(estimated_bytes)),
+      i = paste0("Current safe budget: ", .format_bytes(budget_bytes))
+    ))
+  }
+  result
+}
+
+.cap_warplda_token_counts <- function(counts, max_tokens = 1.9e9) {
+  counts <- suppressWarnings(as.numeric(counts))
+  counts[!is.finite(counts) | counts < 0] <- 0
+  raw_tokens <- sum(counts)
+  if (raw_tokens <= max_tokens) {
+    return(list(counts = as.integer(counts), raw_tokens = raw_tokens, tokens = raw_tokens, scale_factor = 1))
+  }
+  positive <- counts > 0
+  lo <- 0
+  hi <- 1
+  for (i in seq_len(40L)) {
+    mid <- (lo + hi) / 2
+    candidate <- ifelse(positive, pmax(1, floor(counts * mid)), 0)
+    if (sum(candidate) > max_tokens) hi <- mid else lo <- mid
+  }
+  adjusted <- ifelse(positive, pmax(1, floor(counts * lo)), 0)
+  tokens <- sum(adjusted)
+  if (tokens > max_tokens) .log_abort("Unable to cap WarpLDA expanded token counts below the supported limit.")
+  list(
+    counts = as.integer(adjusted),
+    raw_tokens = raw_tokens,
+    tokens = tokens,
+    scale_factor = lo
+  )
 }
 
 .warplda_memory_estimate <- function(dtm,
@@ -922,6 +1034,8 @@ run_warplda_models <- function(dtm,
                                threads_per_model = NULL,
                                sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                metrics_file = NULL,
+                               memory_safety = getOption("craftgrn.module3.memory_safety", "strict"),
+                               memory_max_fraction = getOption("craftgrn.module3.memory_max_fraction", 0.8),
                                verbose = TRUE) {
   .assert_pkg("cli")
   .assert_pkg("data.table")
@@ -979,6 +1093,14 @@ run_warplda_models <- function(dtm,
     if (isTRUE(verbose)) {
       .log_inform("WarpLDA: fitting K={K}, iterations={iterations}, alpha={signif(a, 4)}, beta={beta_display}, seed={seed}")
     }
+    one_memory <- .warplda_memory_estimate(dtm, K = K, n_threads = threads_per_model)
+    .module3_memory_preflight(
+      one_memory$estimated_peak_bytes,
+      stage = paste0("WarpLDA K=", K),
+      memory_safety = memory_safety,
+      memory_max_fraction = memory_max_fraction,
+      verbose = verbose
+    )
     fit <- tryCatch(
       fit_warplda_one(
         dtm,
@@ -1036,11 +1158,14 @@ run_warplda_models <- function(dtm,
     )
     if (is.finite(available_bytes)) {
       .log_inform("WarpLDA memory available now: {available_memory_label}.")
-      if (concurrent_peak_bytes > 0.8 * available_bytes) {
-        .log_warn(
-          "WarpLDA estimated concurrent peak uses >80% of currently available memory; reduce workers or threads_per_model if this is not intentional."
-        )
-      }
+      .module3_memory_preflight(
+        concurrent_peak_bytes,
+        stage = "WarpLDA model grid",
+        memory_safety = memory_safety,
+        memory_max_fraction = memory_max_fraction,
+        available_bytes = available_bytes,
+        verbose = FALSE
+      )
     }
   }
 
@@ -1604,6 +1729,65 @@ binarize_topics <- function(score_mat,
   do.call(rbind, out_list)
 }
 
+.assign_topic_terms <- function(raw_phi,
+                                score_mat,
+                                candidate_terms,
+                                method = c("max_phi", "gammafit")) {
+  method <- match.arg(method)
+  raw_phi <- as.matrix(raw_phi)
+  score_mat <- as.matrix(score_mat)
+  if (!identical(dim(raw_phi), dim(score_mat))) {
+    .log_abort("raw_phi and score_mat must have identical dimensions for topic-term assignment.")
+  }
+  if (is.null(rownames(raw_phi))) rownames(raw_phi) <- paste0("Topic", seq_len(nrow(raw_phi)))
+  if (is.null(colnames(raw_phi))) colnames(raw_phi) <- paste0("term_", seq_len(ncol(raw_phi)))
+  if (is.null(rownames(score_mat))) rownames(score_mat) <- rownames(raw_phi)
+  if (is.null(colnames(score_mat))) colnames(score_mat) <- colnames(raw_phi)
+  if (!identical(rownames(raw_phi), rownames(score_mat)) ||
+      !identical(colnames(raw_phi), colnames(score_mat))) {
+    .log_abort("raw_phi and score_mat dimnames must match for topic-term assignment.")
+  }
+
+  out <- data.table::as.data.table(candidate_terms)
+  required <- c("topic", "term_id", "score", "in_topic")
+  missing <- setdiff(required, names(out))
+  if (length(missing)) {
+    .log_abort("candidate_terms is missing required columns: {paste(missing, collapse = ', ')}.")
+  }
+  out[, topic_num := suppressWarnings(as.integer(gsub("^Topic", "", as.character(topic))))]
+  out[, term_group := .term_group(term_id)]
+  out[, assignment_method := if (identical(method, "max_phi")) {
+    data.table::fifelse(term_group %in% c("GENE", "PEAK"), "max_phi", "gammafit")
+  } else {
+    "gammafit"
+  }]
+  topic_index <- match(out$topic_num, seq_len(nrow(raw_phi)))
+  term_index <- match(out$term_id, colnames(raw_phi))
+  valid <- is.finite(topic_index) & is.finite(term_index)
+  out[, phi := 0]
+  out$phi[valid] <- raw_phi[cbind(topic_index[valid], term_index[valid])]
+  out[!is.finite(phi) | phi < 0, phi := 0]
+
+  if (identical(method, "max_phi")) {
+    phi_clean <- raw_phi
+    phi_clean[!is.finite(phi_clean) | phi_clean < 0] <- 0
+    max_index <- max.col(t(phi_clean), ties.method = "first")
+    max_topic <- stats::setNames(seq_len(nrow(phi_clean))[max_index], colnames(phi_clean))
+    eligible <- out$term_group %in% c("GENE", "PEAK") & out$term_id %in% names(max_topic)
+    out[eligible, in_topic := topic_num == unname(max_topic[term_id])]
+  }
+  out[, in_topic := .as_logical_flag(in_topic)]
+  data.table::setcolorder(out, c(
+    "topic", "topic_num", "term_id", "term_group", "score", "phi",
+    "in_topic", "assignment_method",
+    setdiff(names(out), c(
+      "topic", "topic_num", "term_id", "term_group", "score", "phi",
+      "in_topic", "assignment_method"
+    ))
+  ))
+  out[]
+}
+
 # Gamma-fit diagnostic plots (cisTopic-like)
 plot_gammafit_binarize <- function(score_mat,
                                    out_file,
@@ -1696,11 +1880,17 @@ plot_gammafit_binarize <- function(score_mat,
     br
   }
 
-  par_opts <- graphics::par(no.readonly = TRUE)
   grDevices::pdf(out_file, width = 15, height = 15)
+  device_id <- grDevices::dev.cur()
+  par_opts <- graphics::par(no.readonly = TRUE)
+  device_open <- TRUE
   on.exit({
-    grDevices::dev.off()
-    suppressWarnings(graphics::par(par_opts))
+    open_devices <- grDevices::dev.list()
+    if (isTRUE(device_open) && !is.null(open_devices) && device_id %in% open_devices) {
+      grDevices::dev.set(device_id)
+      suppressWarnings(graphics::par(par_opts))
+      grDevices::dev.off(device_id)
+    }
   }, add = TRUE)
 
   if (nrow(coverage_tbl)) {
@@ -1828,6 +2018,11 @@ plot_gammafit_binarize <- function(score_mat,
       }
     }
   }
+
+  grDevices::dev.set(device_id)
+  suppressWarnings(graphics::par(par_opts))
+  grDevices::dev.off(device_id)
+  device_open <- FALSE
 
   invisible(list(peaks_gamma_cutoff = peak_cutoffs, gene_gamma_cutoff = gene_cutoffs))
 }
@@ -2568,6 +2763,8 @@ make_topic_report_args_simple <- function(thrP,
     max_score_topic = topic_names[max_idx],
     in_any_topic = FALSE,
     primary_topic = NA_character_,
+    primary_phi = NA_real_,
+    assignment_method = NA_character_,
     assigned_topics = NA_character_
   )
 
@@ -2591,14 +2788,20 @@ make_topic_report_args_simple <- function(thrP,
     tt[, topic_label := topic_names[as.integer(topic_num)]]
     tt[, term_score := score_mat[cbind(match(topic_label, topic_names), match(term_id, terms))]]
     tt[, term_score := .safe_num(term_score)]
+    if (!"phi" %in% names(tt)) tt[, phi := NA_real_]
+    if (!"assignment_method" %in% names(tt)) tt[, assignment_method := NA_character_]
     data.table::setorder(tt, term_id, -term_score, topic_num)
     primary <- tt[, .(
       primary_topic = topic_label[[1L]],
+      primary_phi = .safe_num(phi[[1L]]),
+      assignment_method = as.character(assignment_method[[1L]]),
       assigned_topics = paste(unique(topic_label), collapse = ";")
     ), by = term_id]
     out[primary, `:=`(
       in_any_topic = TRUE,
       primary_topic = i.primary_topic,
+      primary_phi = i.primary_phi,
+      assignment_method = i.assignment_method,
       assigned_topics = i.assigned_topics
     ), on = "term_id"]
   }
@@ -2702,6 +2905,17 @@ make_topic_report_args_simple <- function(thrP,
   heatmap_colors <- grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101)
   heatmap_breaks <- seq(0, 1, length.out = 102)
 
+  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
+  device_id <- grDevices::dev.cur()
+  device_open <- TRUE
+  on.exit({
+    open_devices <- grDevices::dev.list()
+    if (isTRUE(device_open) && !is.null(open_devices) && device_id %in% open_devices) {
+      grDevices::dev.off(device_id)
+    }
+  }, add = TRUE)
+
   ph_score <- pheatmap::pheatmap(
     score_display,
     color = heatmap_colors,
@@ -2721,15 +2935,11 @@ make_topic_report_args_simple <- function(thrP,
     silent = TRUE
   )
 
-  dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
-  grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
-  tryCatch(
-    {
-      grid::grid.newpage()
-      grid::grid.draw(ph_score$gtable)
-    },
-    finally = grDevices::dev.off()
-  )
+  grDevices::dev.set(device_id)
+  grid::grid.newpage()
+  grid::grid.draw(ph_score$gtable)
+  grDevices::dev.off(device_id)
+  device_open <- FALSE
   invisible(out_file)
 }
 
@@ -2815,8 +3025,14 @@ make_topic_report_args_simple <- function(thrP,
   fontsize_col <- if (k > 30L) 5.8 else if (k > 18L) 6.8 else 8
   dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
   grDevices::pdf(out_file, width = width, height = height, family = "Helvetica", useDingbats = FALSE)
+  device_id <- grDevices::dev.cur()
   device_open <- TRUE
-  on.exit(if (isTRUE(device_open)) grDevices::dev.off(), add = TRUE)
+  on.exit({
+    open_devices <- grDevices::dev.list()
+    if (isTRUE(device_open) && !is.null(open_devices) && device_id %in% open_devices) {
+      grDevices::dev.off(device_id)
+    }
+  }, add = TRUE)
   ph <- pheatmap::pheatmap(
     mat,
     color = grDevices::colorRampPalette(c("#f7fbff", "#d6e5f3", "#8fb9d9", "#3478b6", "#08306b"))(101),
@@ -2837,9 +3053,10 @@ make_topic_report_args_simple <- function(thrP,
     angle_col = 45,
     silent = TRUE
   )
+  grDevices::dev.set(device_id)
   grid::grid.newpage()
   grid::grid.draw(ph$gtable)
-  grDevices::dev.off()
+  grDevices::dev.off(device_id)
   device_open <- FALSE
   invisible(out_file)
 }
@@ -4144,6 +4361,16 @@ plot_topic_by_comparison_heatmaps <- function(theta,
 
   .draw_topic_pheatmap <- function(mat, out_file, main_title, width, height) {
     ann_row <- .topic_gene_annotation(rownames(mat))
+    dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+    grDevices::pdf(out_file, width = width, height = height, family = "Helvetica")
+    device_id <- grDevices::dev.cur()
+    device_open <- TRUE
+    on.exit({
+      open_devices <- grDevices::dev.list()
+      if (isTRUE(device_open) && !is.null(open_devices) && device_id %in% open_devices) {
+        grDevices::dev.off(device_id)
+      }
+    }, add = TRUE)
     ph <- pheatmap::pheatmap(
       mat,
       cluster_rows = nrow(mat) > 1L,
@@ -4226,10 +4453,11 @@ plot_topic_by_comparison_heatmaps <- function(theta,
       g
     }
     ph$gtable <- .bold_text_grobs(ph$gtable)
-    grDevices::pdf(out_file, width = width, height = height, family = "Helvetica")
-    on.exit(grDevices::dev.off(), add = TRUE)
+    grDevices::dev.set(device_id)
     grid::grid.newpage()
     grid::grid.draw(ph$gtable)
+    grDevices::dev.off(device_id)
+    device_open <- FALSE
     invisible(out_file)
   }
 
@@ -8518,6 +8746,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                                                "opt3_gene_fc_expr", "joint"),
                                               direction_by = c("gene", "fp", "none"),
                                               topic_score_method = c("normtop_specificity", "rowmax_phi"),
+                                              topic_term_assignment_method = c("max_phi", "gammafit"),
                                               binarize_method = c("gammafit", "topn"),
                                               gammafit_scope = c("topic_term_group", "global_term_group"),
                                               thrP = 0.975,
@@ -8558,6 +8787,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_enrichr_n_cores = NULL,
                                               pathway_backend = NULL,
                                               pathway_species = NULL,
+                                              pathway_databases = NULL,
                                               run_link_topic_scores = FALSE,
                                               fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                               link_topic_gate_mode = "none",
@@ -8600,6 +8830,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   doc_design <- match.arg(doc_design)
   direction_by <- match.arg(direction_by)
   topic_score_method <- match.arg(topic_score_method)
+  topic_term_assignment_method <- match.arg(topic_term_assignment_method)
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   pathway_tf_link_mode <- match.arg(pathway_tf_link_mode)
@@ -8612,7 +8843,13 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
   pathway_species <- .normalize_pathway_species_mode(pathway_species)
-  pathway_dbs <- .default_pathway_databases(pathway_species)
+  pathway_dbs <- if (is.null(pathway_databases)) {
+    .default_pathway_databases(pathway_species)
+  } else {
+    unique(as.character(pathway_databases))
+  }
+  pathway_dbs <- pathway_dbs[!is.na(pathway_dbs) & nzchar(pathway_dbs)]
+  if (!length(pathway_dbs)) .log_abort("pathway_databases must contain at least one database.")
   pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
   if (!is.finite(pathway_topic_term_theta_min)) {
     pathway_topic_term_theta_min <- .safe_num(topic_tf_membership_cutoff)
@@ -8703,7 +8940,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     "score_terms",
     score_terms_normtop(phi, method = topic_score_method)
   )
-  topic_terms <- .record_step(
+  candidate_topic_terms <- .record_step(
     "binarize_topics",
     binarize_topics(
       score_mat,
@@ -8714,15 +8951,25 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       gammafit_scope = gammafit_scope
     )
   )
+  topic_terms <- .record_step(
+    "assign_topic_terms",
+    .assign_topic_terms(
+      raw_phi = phi,
+      score_mat = score_mat,
+      candidate_terms = candidate_topic_terms,
+      method = topic_term_assignment_method
+    )
+  )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
   .save_all(out_dir, "topic_term_scores_normtop", score_mat)
   .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
   writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
+  writeLines(topic_term_assignment_method, file.path(out_dir, "topic_term_assignment_method.txt"))
   if (identical(binarize_method, "gammafit")) {
     gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
       score_mat,
-      topic_terms = topic_terms,
+      topic_terms = candidate_topic_terms,
       topic_score_method = topic_score_method,
       thrP = thrP,
       min_terms = in_topic_min_terms,
@@ -8858,6 +9105,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
             topic_terms = topic_terms_tbl,
             topic_links = topic_links_tbl,
             item_coverage = item_coverage_tbl,
+            show_gammafit_pages = identical(topic_term_assignment_method, "gammafit"),
             show_peak_expanded_link_coverage = identical(fp_term_mode, "unique")
           )
         }
@@ -9157,6 +9405,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           seed = 123,
                                           # topic definition
                                           topic_score_method = c("normtop_specificity", "rowmax_phi"),
+                                          topic_term_assignment_method = c("max_phi", "gammafit"),
                                           binarize_method = c("gammafit", "topn"),
                                           gammafit_scope = c("topic_term_group", "global_term_group"),
                                           thrP = 0.975,
@@ -9196,6 +9445,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_enrichr_n_cores = NULL,
                                           pathway_backend = NULL,
                                           pathway_species = NULL,
+                                          pathway_databases = NULL,
                                           run_link_topic_scores = FALSE,
                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
                                           link_topic_gate_mode = "none",
@@ -9224,6 +9474,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   joint_balance <- match.arg(joint_balance)
   sampler <- match.arg(sampler)
   topic_score_method <- match.arg(topic_score_method)
+  topic_term_assignment_method <- match.arg(topic_term_assignment_method)
   binarize_method <- match.arg(binarize_method)
   gammafit_scope <- match.arg(gammafit_scope)
   gsea_peak_gene_agg <- match.arg(gsea_peak_gene_agg)
@@ -9236,7 +9487,13 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     pathway_enrichr_cache_dir <- .module3_default_enrichr_cache_dir(out_dir, backend = pathway_backend)
   }
   pathway_species <- .normalize_pathway_species_mode(pathway_species)
-  pathway_dbs <- .default_pathway_databases(pathway_species)
+  pathway_dbs <- if (is.null(pathway_databases)) {
+    .default_pathway_databases(pathway_species)
+  } else {
+    unique(as.character(pathway_databases))
+  }
+  pathway_dbs <- pathway_dbs[!is.na(pathway_dbs) & nzchar(pathway_dbs)]
+  if (!length(pathway_dbs)) .log_abort("pathway_databases must contain at least one database.")
   pathway_topic_term_theta_min <- .safe_num(pathway_tf_min_theta)
   if (!is.finite(pathway_topic_term_theta_min)) {
     pathway_topic_term_theta_min <- .safe_num(topic_tf_membership_cutoff)
@@ -9289,6 +9546,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     topic_definition = list(
       NormTop = TRUE,
       topic_score_method = topic_score_method,
+      topic_term_assignment_method = topic_term_assignment_method,
       binarize_method = binarize_method,
       gammafit_scope = gammafit_scope,
       thrP = as.numeric(thrP),
@@ -9488,7 +9746,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
   phi <- topic_base$phi
 
   score_mat <- score_terms_normtop(phi, method = topic_score_method)
-  topic_terms <- binarize_topics(
+  candidate_topic_terms <- binarize_topics(
     score_mat,
     method = binarize_method,
     thrP = thrP,
@@ -9496,14 +9754,21 @@ run_tfdocs_warplda_one_option <- function(edges_all,
     min_terms = in_topic_min_terms,
     gammafit_scope = gammafit_scope
   )
+  topic_terms <- .assign_topic_terms(
+    raw_phi = phi,
+    score_mat = score_mat,
+    candidate_terms = candidate_topic_terms,
+    method = topic_term_assignment_method
+  )
   data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
   .save_all(out_dir, "topic_terms", topic_terms)
   .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
   writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
+  writeLines(topic_term_assignment_method, file.path(out_dir, "topic_term_assignment_method.txt"))
   if (identical(binarize_method, "gammafit")) {
     gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
       score_mat,
-      topic_terms = topic_terms,
+      topic_terms = candidate_topic_terms,
       topic_score_method = topic_score_method,
       thrP = thrP,
       min_terms = in_topic_min_terms,
@@ -10889,6 +11154,11 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #'   instead of adding a long analysis-specific subdirectory. This is intended
 #'   for standard package runs; benchmarks keep the nested layout.
 #' @param local_threads Optional local thread count for data.table, BLAS, and native WarpLDA. NULL uses all available cores. Set options(craftgrn.warplda.max_threads = n) or CRAFTGRN_WARPLDA_MAX_THREADS to cap automatic thread use.
+#' @param memory_safety Module 3 memory policy: `"strict"` fails closed,
+#'   `"adaptive"` reduces concurrency where possible, and `"off"` disables
+#'   memory preflight checks.
+#' @param memory_max_fraction Maximum fraction of currently available memory
+#'   that a Module 3 stage may use. Defaults to `0.8`.
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #'   The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
 #'   audits.
@@ -10942,6 +11212,8 @@ train_topic_models <- function(Kgrid,
                                save_full_doc_term_csv = FALSE,
                                flat_output = FALSE,
                                local_threads = NULL,
+                               memory_safety = c("strict", "adaptive", "off"),
+                               memory_max_fraction = 0.8,
                                check_repeated_values = FALSE,
                                binarize_method = "gammafit",
                                thrP = 0.9,
@@ -10950,6 +11222,8 @@ train_topic_models <- function(Kgrid,
                                topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("cli")
+  memory_safety <- match.arg(memory_safety)
+  .module3_memory_policy(memory_safety, memory_max_fraction)
   local_threads <- .warplda_default_threads(local_threads)
   data.table::setDTthreads(local_threads)
   Sys.setenv(
@@ -10980,6 +11254,45 @@ train_topic_models <- function(Kgrid,
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
   sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
   sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
+  input_signature <- .module3_topic_input_signature(
+    input_dir = input_dir,
+    input_source = input_source,
+    sample_subset = sample_subset,
+    settings = list(
+      doc_mode = doc_mode,
+      doc_design = doc_design,
+      fp_term_mode = fp_term_mode,
+      gene_term_mode = gene_term_mode,
+      count_method = count_method,
+      count_scale = as.numeric(count_scale),
+      count_input_effective = count_input_effective,
+      threshold_gene_expr = threshold_gene_expr,
+      threshold_fp_score = threshold_fp_score,
+      threshold_tf_expr = threshold_tf_expr,
+      include_tf_terms = isTRUE(include_tf_terms),
+      top_terms_per_doc = top_terms_per_doc,
+      min_df = min_df,
+      abs_log2fc_fp_min = abs_log2fc_fp_min,
+      abs_delta_fp_min = abs_delta_fp_min,
+      abs_log2fc_gene_min = abs_log2fc_gene_min,
+      require_fp_bound_either = isTRUE(require_fp_bound_either),
+      require_tf_expr_either = isTRUE(require_tf_expr_either),
+      require_gene_expr_either = isTRUE(require_gene_expr_either),
+      direction_consistency = direction_consistency,
+      tf_exclude = sort(unique(toupper(as.character(tf_exclude)))),
+      analysis_label = as.character(analysis_label),
+      backend = backend,
+      warplda_sampler = warplda_sampler,
+      warplda_iterations = warplda_iterations,
+      warplda_beta = warplda_beta,
+      vae_variant = vae_variant,
+      vae_epochs = vae_epochs,
+      vae_batch_size = vae_batch_size,
+      vae_hidden = vae_hidden,
+      vae_lr = vae_lr,
+      vae_seed = vae_seed
+    )
+  )
   if (identical(input_source, "condition_links")) {
     .log_inform("Loading condition-native links from {input_dir}.")
     edges_dt <- .module3_read_condition_links(input_dir, conditions = sample_subset)
@@ -11132,6 +11445,21 @@ train_topic_models <- function(Kgrid,
     }
     .log_inform("{analysis_id}: doc_term has {nrow(doc_term)} row(s), {data.table::uniqueN(doc_term$doc_id)} document(s), and {data.table::uniqueN(doc_term$term_id)} term(s).")
 
+    token_cap <- list(
+      raw_tokens = as.double(sum(.safe_num(doc_term[[count_input_effective]]), na.rm = TRUE)),
+      tokens = as.double(sum(.safe_num(doc_term[[count_input_effective]]), na.rm = TRUE)),
+      scale_factor = 1
+    )
+    if (identical(backend, "warplda")) {
+      token_cap <- .cap_warplda_token_counts(doc_term[[count_input_effective]])
+      if (token_cap$scale_factor < 1) {
+        doc_term[, (count_input_effective) := token_cap$counts]
+        .log_warn(
+          "{analysis_id}: reduced WarpLDA expanded tokens from {format(token_cap$raw_tokens, scientific = FALSE)} to {format(token_cap$tokens, scientific = FALSE)} (scale factor {signif(token_cap$scale_factor, 4)}) to stay below the native integer index limit."
+        )
+      }
+    }
+
     local_topic_args <- modifyList(list(
       binarize_method = binarize_method,
       thrP = thrP,
@@ -11149,8 +11477,18 @@ train_topic_models <- function(Kgrid,
       )
     }
     dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+    if (identical(doc_design, "condition")) {
+      .write_module3_document_term_qc(
+        doc_term = doc_term,
+        output_dir = out_dir,
+        count_column = count_input_effective,
+        title = paste0("Module 3 document-term QC - ", analysis_id),
+        verbose = TRUE
+      )
+    }
     topic_input_summary <- data.table::data.table(
       analysis_label = analysis_id,
+      input_signature = input_signature,
       input_source = input_source,
       doc_design = doc_design,
       doc_mode = doc_mode,
@@ -11159,13 +11497,15 @@ train_topic_models <- function(Kgrid,
       count_scale = as.numeric(count_scale),
       count_input_requested = count_input_requested,
       count_input_effective = count_input_effective,
+      n_model_tokens_raw = as.double(token_cap$raw_tokens),
+      token_scale_factor = as.double(token_cap$scale_factor),
       n_link_rows_after_filter = as.double(nrow(edges_filt)),
       n_document_edge_rows = as.double(nrow(edges_docs)),
       n_doc_term_rows = as.double(nrow(doc_term)),
       n_documents = as.double(data.table::uniqueN(doc_term$doc_id)),
       n_terms = as.double(data.table::uniqueN(doc_term$term_id)),
       n_nonzero = as.double(sum(.safe_num(doc_term[[count_input_effective]]) > 0, na.rm = TRUE)),
-      n_model_tokens = as.double(sum(.safe_num(doc_term[[count_input_effective]]), na.rm = TRUE))
+      n_model_tokens = as.double(token_cap$tokens)
     )
     data.table::fwrite(topic_input_summary, file.path(out_dir, "topic_input_summary.csv"))
     metrics_path <- file.path(out_dir, "model_metrics.csv")
@@ -11177,14 +11517,25 @@ train_topic_models <- function(Kgrid,
       .log_inform("{analysis_id}: cleared existing topic model artifacts because reuse_if_exists = FALSE.")
     }
     metrics_have_required_k <- FALSE
+    model_metadata_ok <- !file.exists(metrics_path)
     if (file.exists(metrics_path)) {
       old_metrics <- tryCatch(data.table::fread(metrics_path), error = function(e) data.table::data.table())
       if (nrow(old_metrics) && "K" %in% names(old_metrics)) {
+        model_metadata_ok <- all(c("count_method", "count_input_effective", "input_signature") %in% names(old_metrics)) &&
+          all(as.character(old_metrics$count_method) == count_method) &&
+          all(as.character(old_metrics$count_input_effective) == count_input_effective) &&
+          all(as.character(old_metrics$input_signature) == input_signature)
+        if (identical(backend, "warplda")) {
+          model_metadata_ok <- model_metadata_ok &&
+            "sampler" %in% names(old_metrics) &&
+            all(as.character(old_metrics$sampler) == warplda_sampler)
+        }
         metrics_have_required_k <- all(required_k %in% as.integer(old_metrics$K))
         old_required <- old_metrics[as.integer(old_metrics$K) %in% required_k]
-        count_metadata_ok <- all(c("count_method", "count_input_effective") %in% names(old_required)) &&
+        count_metadata_ok <- all(c("count_method", "count_input_effective", "input_signature") %in% names(old_required)) &&
           all(as.character(old_required$count_method) == count_method) &&
-          all(as.character(old_required$count_input_effective) == count_input_effective)
+          all(as.character(old_required$count_input_effective) == count_input_effective) &&
+          all(as.character(old_required$input_signature) == input_signature)
         metrics_have_required_k <- metrics_have_required_k && isTRUE(count_metadata_ok)
         if (identical(backend, "warplda")) {
           if ("sampler" %in% names(old_metrics)) {
@@ -11195,6 +11546,13 @@ train_topic_models <- function(Kgrid,
           }
         }
       }
+    }
+    if (isTRUE(reuse_if_exists) && !isTRUE(model_metadata_ok)) {
+      reset_invalid <- .reset_topic_model_artifacts(out_dir, backend, reuse_if_exists = FALSE)
+      if (isTRUE(reset_invalid)) {
+        .log_warn("{analysis_id}: cleared topic model artifacts because the input or model settings changed.")
+      }
+      metrics_have_required_k <- FALSE
     }
     model_files_have_required_k <- if (dir.exists(models_dir)) {
       all(file.exists(file.path(models_dir, sprintf("theta_K%d.csv", required_k)))) &&
@@ -11240,6 +11598,7 @@ train_topic_models <- function(Kgrid,
       if (file.exists(metrics_path)) {
         metrics_tbl <- data.table::fread(metrics_path, showProgress = FALSE)
         metrics_tbl[, `:=`(
+          input_signature = input_signature,
           count_method = count_method,
           count_scale = as.numeric(count_scale),
           count_input_requested = count_input_requested,
@@ -11289,11 +11648,14 @@ train_topic_models <- function(Kgrid,
         workers = 1L,
         threads_per_model = local_threads,
         sampler = warplda_sampler,
-        metrics_file = file.path(out_dir, "model_metrics.csv")
+        metrics_file = file.path(out_dir, "model_metrics.csv"),
+        memory_safety = memory_safety,
+        memory_max_fraction = memory_max_fraction
       )
       .log_inform("{analysis_id}: finished WarpLDA model fits in {round(proc.time()[['elapsed']] - t_model, 1)} sec.")
       metrics_tbl <- data.table::as.data.table(fits_out$metrics)
       metrics_tbl[, `:=`(
+        input_signature = input_signature,
         count_method = count_method,
         count_scale = as.numeric(count_scale),
         count_input_requested = count_input_requested,
@@ -11399,6 +11761,7 @@ extract_regulatory_topics <- function(k,
                                       weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr", "peak_score_gene_expr"),
                                       flatten_single_output = FALSE,
                                       topic_score_method = NULL,
+                                      topic_term_assignment_method = NULL,
                                       topic_report_args = list()) {
   .assert_pkg("data.table")
   .assert_pkg("readr")
@@ -11412,6 +11775,12 @@ extract_regulatory_topics <- function(k,
     topic_report_args$topic_score_method <- match.arg(
       topic_score_method,
       choices = c("normtop_specificity", "rowmax_phi")
+    )
+  }
+  if (!is.null(topic_term_assignment_method)) {
+    topic_report_args$topic_term_assignment_method <- match.arg(
+      topic_term_assignment_method,
+      choices = c("max_phi", "gammafit")
     )
   }
   report_doc_design <- if (identical(weight_label, "peak_score_gene_expr")) "condition" else "comparison"
@@ -11485,6 +11854,7 @@ extract_regulatory_topics <- function(k,
   defaults <- list(
       binarize_method = "gammafit",
       topic_score_method = "normtop_specificity",
+      topic_term_assignment_method = "max_phi",
       thrP = 0.9,
       top_n_terms = 500L,
       in_topic_min_terms = 1L,
@@ -11729,8 +12099,10 @@ extract_regulatory_topics <- function(k,
 #' topic-link tables, direction-specific TF-to-topic assignment tables, and
 #' review outputs from trained Module 3 topic models.
 #'
-#' Topic assignment uses unit-specific evidence. Terms are assigned from `phi`
-#' after the selected topic-term score method and GammaFit cutoffs. TFs are
+#' Topic assignment uses unit-specific evidence. By default, each Gene and Peak
+#' term is assigned to exactly one topic using its maximum raw model `phi`
+#' probability. The legacy `"gammafit"` assignment can retain a term in zero or
+#' multiple topics after specificity scoring and GammaFit cutoffs. TFs are
 #' assigned from raw document-topic `theta` with the TF membership and primary
 #' margin cutoffs. Per-comparison pathway gene sets are built from model
 #' outputs only: documents with theta above the TF membership cutoff intersect
@@ -11747,6 +12119,9 @@ extract_regulatory_topics <- function(k,
 #' @param topic_score_method Topic-term score method. `"normtop_specificity"`
 #'   is the default for new extractions; `"rowmax_phi"` preserves the legacy
 #'   row-maximum-scaled phi score.
+#' @param topic_term_assignment_method Term-to-topic assignment. `"max_phi"`
+#'   assigns every Gene and Peak term to exactly one topic from raw model `phi`;
+#'   `"gammafit"` retains the legacy score-and-cutoff membership behavior.
 #' @param k_workers Number of K values to extract concurrently. `NULL` selects
 #'   workers adaptively from current memory and CPU headroom.
 #' @param k_max_workers Maximum concurrent K workers in adaptive mode.
@@ -11766,6 +12141,7 @@ module3_extract_topics <- function(k,
                                    output_dir,
                                    flatten_single_output = TRUE,
                                    topic_score_method = c("normtop_specificity", "rowmax_phi"),
+                                   topic_term_assignment_method = c("max_phi", "gammafit"),
                                    k_workers = NULL,
                                    k_max_workers = 4L,
                                    k_memory_gb = NULL,
@@ -11777,6 +12153,7 @@ module3_extract_topics <- function(k,
   k <- k[is.finite(k) & k > 1L]
   if (!length(k)) .log_abort("k must contain at least one integer greater than 1.")
   topic_score_method <- match.arg(topic_score_method)
+  topic_term_assignment_method <- match.arg(topic_term_assignment_method)
   dots <- list(...)
   if (length(k) == 1L) {
     return(extract_regulatory_topics(
@@ -11785,6 +12162,7 @@ module3_extract_topics <- function(k,
       output_dir = output_dir,
       flatten_single_output = flatten_single_output,
       topic_score_method = topic_score_method,
+      topic_term_assignment_method = topic_term_assignment_method,
       ...
     ))
   }
@@ -11816,7 +12194,8 @@ module3_extract_topics <- function(k,
         model_dir = model_dir,
         output_dir = task$output_dir,
         flatten_single_output = TRUE,
-        topic_score_method = topic_score_method
+        topic_score_method = topic_score_method,
+        topic_term_assignment_method = topic_term_assignment_method
       ), dots)
     )
   }
@@ -12853,6 +13232,145 @@ build_doc_term_condition_union <- function(edges_condition,
   }
 
   out
+}
+
+.module3_document_term_qc_summary <- function(doc_term, count_column = NULL) {
+  dt <- data.table::as.data.table(doc_term)
+  .topic_assert_has_cols(dt, c("doc_id", "term_id"), context = "document-term QC")
+  count_column <- as.character(count_column %||% "")
+  if (!length(count_column) || !nzchar(count_column) || !count_column %in% names(dt)) {
+    count_column <- if ("count" %in% names(dt)) "count" else if ("weight" %in% names(dt)) "weight" else NULL
+  }
+  dt <- dt[startsWith(term_id, "GENE:") | startsWith(term_id, "PEAK:")]
+  if (!nrow(dt)) return(data.table::data.table())
+  dt[, `:=`(
+    condition_id = sub("::[^:]+$", "", as.character(doc_id)),
+    term_type = ifelse(startsWith(term_id, "GENE:"), "Gene", "Peak"),
+    term_value = if (is.null(count_column)) 1 else .topic_safe_num(get(count_column))
+  )]
+  dt[!is.finite(term_value) | term_value < 0, term_value := 0]
+  dt[, .(
+    n_terms = data.table::uniqueN(term_id),
+    term_mass = sum(term_value, na.rm = TRUE)
+  ), by = .(condition_id, doc_id, term_type)]
+}
+
+.write_module3_document_term_qc <- function(doc_term,
+                                            output_dir,
+                                            count_column = NULL,
+                                            title = "Module 3 document-term QC",
+                                            verbose = TRUE) {
+  .assert_pkg("ggplot2")
+  summary <- .module3_document_term_qc_summary(doc_term, count_column = count_column)
+  if (!nrow(summary)) {
+    if (isTRUE(verbose)) .log_warn("Document-term QC skipped because no gene or peak terms were available.")
+    return(invisible(NULL))
+  }
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  summary_path <- file.path(output_dir, "document_term_qc_summary.csv")
+  pdf_path <- file.path(output_dir, "document_term_qc.pdf")
+  data.table::fwrite(summary, summary_path)
+  condition_levels <- unique(summary$condition_id)
+  title <- paste(strwrap(as.character(title[[1L]]), width = 82L), collapse = "\n")
+  summary[, condition_id := factor(condition_id, levels = condition_levels)]
+  summary[, term_type := factor(term_type, levels = c("Gene", "Peak"))]
+  colors <- c(Gene = "#4477AA", Peak = "#EE7733")
+  ncol_facets <- ceiling(sqrt(length(condition_levels)))
+  base_theme <- ggplot2::theme_bw(base_size = 9, base_family = "Helvetica") +
+    ggplot2::theme(
+      text = ggplot2::element_text(face = "bold", color = "#111111"),
+      axis.title = ggplot2::element_text(size = 10, face = "bold"),
+      axis.text = ggplot2::element_text(size = 9, face = "bold", color = "#111111"),
+      strip.text = ggplot2::element_text(size = 9, face = "bold"),
+      plot.title = ggplot2::element_text(size = 12, face = "bold"),
+      plot.subtitle = ggplot2::element_text(size = 9, face = "bold"),
+      legend.position = "bottom",
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major.x = ggplot2::element_blank(),
+      panel.spacing = grid::unit(8, "pt"),
+      aspect.ratio = 1,
+      plot.background = ggplot2::element_rect(fill = "white", color = NA),
+      panel.background = ggplot2::element_rect(fill = "white", color = NA)
+    )
+  distribution_plot <- ggplot2::ggplot(
+    summary,
+    ggplot2::aes(x = term_type, y = n_terms, fill = term_type)
+  )
+  smallest_group <- min(summary[, .N, by = .(condition_id, term_type)]$N)
+  if (smallest_group >= 2L) {
+    distribution_plot <- distribution_plot + ggplot2::geom_violin(
+      width = 0.82,
+      trim = TRUE,
+      color = "#222222",
+      linewidth = 0.35,
+      alpha = 0.82
+    )
+  } else {
+    distribution_plot <- distribution_plot + ggplot2::geom_point(
+      position = ggplot2::position_jitter(width = 0.08, height = 0),
+      shape = 21,
+      size = 2,
+      color = "#222222",
+      alpha = 0.82
+    )
+  }
+  distribution_plot <- distribution_plot +
+    ggplot2::geom_boxplot(width = 0.22, outlier.shape = NA, fill = "white", color = "#111111", linewidth = 0.45) +
+    ggplot2::stat_summary(fun = stats::median, geom = "point", shape = 21, size = 2.2, fill = "#111111", color = "white") +
+    ggplot2::facet_wrap(~condition_id, ncol = ncol_facets, scales = "free_y") +
+    ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
+    ggplot2::labs(
+      title = title,
+      subtitle = "Term counts per TF document; each condition uses its own y-axis",
+      x = "Term type",
+      y = "Distinct terms per document",
+      fill = "Term type"
+    ) +
+    base_theme
+  balance <- summary[, .(
+    documents = as.double(data.table::uniqueN(doc_id)),
+    document_term_rows = sum(as.double(n_terms)),
+    median_terms_per_document = as.double(stats::median(n_terms)),
+    total_term_mass = sum(as.double(term_mass))
+  ), by = .(condition_id, term_type)]
+  balance_plot <- ggplot2::ggplot(
+    balance,
+    ggplot2::aes(x = term_type, y = document_term_rows, fill = term_type)
+  ) +
+    ggplot2::geom_col(width = 0.68, color = "#222222", linewidth = 0.35) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = format(document_term_rows, big.mark = ",", scientific = FALSE)),
+      vjust = -0.25,
+      size = 3.1,
+      family = "Helvetica",
+      fontface = "bold"
+    ) +
+    ggplot2::facet_wrap(~condition_id, ncol = ncol_facets, scales = "free_y") +
+    ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.16))) +
+    ggplot2::labs(
+      title = paste0(title, " - condition and modality balance"),
+      subtitle = "Total distinct document-term rows after all document filters",
+      x = "Term type",
+      y = "Document-term rows",
+      fill = "Term type"
+    ) +
+    base_theme
+  grDevices::cairo_pdf(
+    pdf_path,
+    width = max(8, 4.8 * ncol_facets),
+    height = max(5.5, 4.8 * ceiling(length(condition_levels) / ncol_facets)),
+    family = "Helvetica",
+    bg = "white",
+    onefile = TRUE
+  )
+  on.exit(grDevices::dev.off(), add = TRUE)
+  print(distribution_plot)
+  print(balance_plot)
+  grDevices::dev.off()
+  on.exit(NULL, add = FALSE)
+  if (isTRUE(verbose)) .log_inform("Wrote document-term QC: {pdf_path}")
+  invisible(list(pdf = pdf_path, summary = summary_path, balance = balance))
 }
 
 write_doc_term_cache <- function(doc_term,

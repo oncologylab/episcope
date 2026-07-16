@@ -1361,10 +1361,6 @@
   data.table::fwrite(link_assignment, file.path(csv_dir, "topic_setup_link_assignment_counts.csv"))
   data.table::fwrite(pass, file.path(csv_dir, "topic_setup_pass_state_counts.csv"))
   data.table::fwrite(shared, file.path(csv_dir, "topic_setup_shared_topic_counts.csv"))
-  data.table::fwrite(item_coverage, file.path(csv_dir, "tf_std_six_setups_item_coverage_counts.csv"))
-  data.table::fwrite(link_assignment, file.path(csv_dir, "tf_std_six_setups_link_assignment_counts.csv"))
-  data.table::fwrite(pass, file.path(csv_dir, "tf_std_six_setups_pass_state_counts.csv"))
-  data.table::fwrite(shared, file.path(csv_dir, "tf_std_six_setups_shared_topic_counts.csv"))
   list(pass = pass, shared = shared, item_coverage = item_coverage, link_assignment = link_assignment)
 }
 
@@ -1415,172 +1411,6 @@
 .m3tb_setup_label <- function(x) {
   x <- sub("[|].*$", "", as.character(x))
   trimws(x)
-}
-
-.m3tb_prepare_pass_counts <- function(pass_dt) {
-  dt <- data.table::copy(data.table::as.data.table(pass_dt))
-  if (!nrow(dt)) return(dt)
-  if (!"count_basis" %in% names(dt)) dt[, count_basis := "Unique links"]
-  if (!"unit" %in% names(dt)) dt[, unit := "Links"]
-  dt[, `:=`(
-    gammafit_scope_label = "All topic links",
-    setup_label = .m3tb_setup_label(method_setup),
-    method_label = .m3tb_method_label(model_label),
-    unit_label = as.character(unit),
-    status = factor(as.character(status), levels = c("Pass", "Fail")),
-    selected_k = as.integer(selected_k),
-    count = as.numeric(count)
-  )]
-  dt[, model_k := paste(method_label, paste0("K", selected_k))]
-  dt[, model_k_short := paste0(substr(method_label, 1L, 1L), " K", selected_k)]
-  dt[, model_k_short := factor(model_k_short, levels = unique(model_k_short[order(method_label, selected_k)]))]
-  dt[, setup_label := factor(setup_label, levels = unique(setup_label[order(method_order, setup_label)]))]
-  dt[, method_setup_label := factor(as.character(method_setup), levels = unique(as.character(method_setup[order(method_order)])))]
-  dt[, k_label := factor(paste0("K", selected_k), levels = paste0("K", sort(unique(selected_k))))]
-  unit_levels <- c("Terms", "Genes", "TFs", "Links", "Pathways")
-  unit_levels <- c(unit_levels[unit_levels %in% unique(dt$unit_label)], setdiff(unique(dt$unit_label), unit_levels))
-  dt[, unit_label := factor(unit_label, levels = unit_levels)]
-  drop_cols <- intersect(c("total", "fraction"), names(dt))
-  if (length(drop_cols)) dt[, (drop_cols) := NULL]
-  totals <- dt[, .(total = sum(count, na.rm = TRUE)), by = .(gammafit_scope_label, setup_label, model_k_short, unit_label)]
-  dt <- merge(dt, totals, by = c("gammafit_scope_label", "setup_label", "model_k_short", "unit_label"), all.x = TRUE, sort = FALSE)
-  dt[, fraction := data.table::fifelse(total > 0, count / total, NA_real_)]
-  dt[]
-}
-
-.m3tb_pass_state_counts_plot <- function(pass_dt) {
-  if (!requireNamespace("ggplot2", quietly = TRUE) || !requireNamespace("scales", quietly = TRUE)) return(NULL)
-  dt <- .m3tb_prepare_pass_counts(pass_dt)
-  if (!nrow(dt)) return(NULL)
-  basis_text <- paste(unique(as.character(dt$count_basis)), collapse = "; ")
-  ggplot2::ggplot(dt, ggplot2::aes(k_label, fraction, fill = status)) +
-    ggplot2::geom_col(width = 0.78, na.rm = TRUE, position = ggplot2::position_stack(reverse = TRUE)) +
-    ggplot2::facet_grid(unit_label + method_setup_label ~ ., drop = TRUE) +
-    ggplot2::scale_fill_manual(values = c(Pass = "#2c7fb8", Fail = "#bdbdbd"), drop = FALSE) +
-    ggplot2::scale_y_continuous(labels = scales::label_percent(accuracy = 1), limits = c(0, 1), expand = c(0, 0.01)) +
-    ggplot2::labs(
-      title = "TF standard six setups - item topic coverage by method and K",
-      subtitle = paste0("Pass: item assigned to at least one topic. Bars are normalized within item type x setup x method x K. Count basis: ", basis_text, "."),
-      x = "K",
-      y = "Fraction of items",
-      fill = "Status"
-    ) +
-    .m3tb_review_theme(8.5) +
-    ggplot2::theme(
-      axis.text.x = ggplot2::element_text(size = 7.3, angle = 45, hjust = 1, vjust = 1),
-      axis.text.y = ggplot2::element_text(size = 7.5),
-      strip.text.y = ggplot2::element_text(size = 7.8),
-      legend.position = "bottom",
-      panel.spacing.x = grid::unit(0.45, "lines"),
-      panel.spacing.y = grid::unit(0.8, "lines")
-    )
-}
-
-.m3tb_plot_pass_state_counts_pdf <- function(pass_dt, out_file, png_dir = NULL) {
-  p <- .m3tb_pass_state_counts_plot(pass_dt)
-  if (is.null(p)) return(.m3tb_plot_count_pdf(pass_dt, out_file, "Topic-link pass-state counts"))
-  grDevices::pdf(out_file, width = 15.2, height = 10.4, onefile = TRUE)
-  on.exit(grDevices::dev.off(), add = TRUE)
-  print(p)
-  if (!is.null(png_dir)) {
-    dir.create(png_dir, recursive = TRUE, showWarnings = FALSE)
-    ggplot2::ggsave(file.path(png_dir, "tf_std_six_setups_pass_state_counts.png"), p, width = 15.2, height = 10.4, dpi = 240, limitsize = FALSE)
-  }
-  invisible(out_file)
-}
-
-.m3tb_k_page_groups <- function(k_values, width = Inf) {
-  k_values <- sort(unique(as.integer(k_values)))
-  if (!length(k_values)) return(list())
-  if (!is.finite(width) || width >= length(k_values)) return(list(k_values))
-  split(k_values, ceiling(seq_along(k_values) / width))
-}
-
-.m3tb_prepare_shared_counts <- function(shared_dt) {
-  dt <- data.table::copy(data.table::as.data.table(shared_dt))
-  if (!nrow(dt)) return(dt)
-  dt[, `:=`(
-    gammafit_scope_label = "All topic links",
-    setup_label = .m3tb_setup_label(method_setup),
-    method_label = .m3tb_method_label(model_label),
-    selected_k = as.integer(selected_k),
-    n_topics = as.integer(n_topics),
-    n_items = as.numeric(n_items),
-    unit = as.character(unit)
-  )]
-  unit_levels <- c("Links", "Genes", "TFs", "Pathways")
-  unit_levels <- unit_levels[unit_levels %in% unique(as.character(dt$unit))]
-  dt[, unit := factor(as.character(unit), levels = unit_levels)]
-  dt[, setup_label := factor(setup_label, levels = unique(setup_label[order(method_order, setup_label)]))]
-  dt[, method_label := factor(method_label, levels = unique(method_label[order(method_label)]))]
-  dt[, method_setup_label := factor(as.character(method_setup), levels = unique(as.character(method_setup[order(method_order)])))]
-  dt[]
-}
-
-.m3tb_shared_topic_counts_plot <- function(shared_dt, unit_name, k_values) {
-  if (!requireNamespace("ggplot2", quietly = TRUE) || !requireNamespace("scales", quietly = TRUE)) return(NULL)
-  dt <- .m3tb_prepare_shared_counts(shared_dt)
-  dt <- dt[unit == unit_name & selected_k %in% k_values]
-  if (!nrow(dt)) return(NULL)
-  dt[, k_label := factor(paste0("K", selected_k), levels = paste0("K", sort(k_values)))]
-  dt[, bar_group := data.table::fcase(
-    n_topics == 0L, "No topic",
-    n_topics == 1L, "One topic",
-    default = "Multiple topics"
-  )]
-  dt[, bar_group := factor(bar_group, levels = c("No topic", "One topic", "Multiple topics"))]
-  ggplot2::ggplot(dt, ggplot2::aes(n_topics, n_items, fill = bar_group)) +
-    ggplot2::geom_col(width = 0.78, na.rm = TRUE) +
-    ggplot2::facet_grid(method_setup_label ~ k_label, scales = "free_y", drop = TRUE) +
-    ggplot2::scale_fill_manual(values = c("No topic" = "#969696", "One topic" = "#e34a33", "Multiple topics" = "#3182bd"), drop = FALSE) +
-    ggplot2::scale_x_continuous(breaks = function(x) {
-      vals <- seq(max(0, floor(x[1])), ceiling(x[2]))
-      vals[vals %% 5 == 0 | vals == 1]
-    }) +
-    ggplot2::scale_y_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
-    ggplot2::labs(
-      title = paste0("TF standard six setups - shared-topic counts: ", unit_name),
-      subtitle = "Each row is one topic-document construction and model setup; VAE-MLP and MultiVI are shown with the other deep-learning and LDA setups.",
-      x = "Topics shared (N)",
-      y = "Items",
-      fill = "Assignment"
-    ) +
-    .m3tb_review_theme(6.4) +
-    ggplot2::theme(
-      strip.text.y = ggplot2::element_text(size = 6.2),
-      strip.text.x = ggplot2::element_text(size = 6.2),
-      axis.text.x = ggplot2::element_text(size = 5.5),
-      axis.text.y = ggplot2::element_text(size = 5.5),
-      legend.position = "bottom",
-      panel.spacing.x = grid::unit(0.35, "lines"),
-      panel.spacing.y = grid::unit(0.55, "lines")
-    )
-}
-
-.m3tb_plot_shared_topic_counts_pdf <- function(shared_dt, out_file, png_dir = NULL) {
-  dt <- .m3tb_prepare_shared_counts(shared_dt)
-  if (!nrow(dt)) return(.m3tb_plot_count_pdf(shared_dt, out_file, "Shared topic counts", x_col = "method_setup"))
-  units <- levels(dt$unit)
-  grDevices::pdf(out_file, width = 22, height = 11.5, onefile = TRUE)
-  on.exit(grDevices::dev.off(), add = TRUE)
-  if (!is.null(png_dir)) dir.create(png_dir, recursive = TRUE, showWarnings = FALSE)
-  for (unit_name in units) {
-    k_groups <- .m3tb_k_page_groups(dt[unit == unit_name, selected_k])
-    for (k_values in k_groups) {
-      p <- .m3tb_shared_topic_counts_plot(dt, unit_name, k_values)
-      if (is.null(p)) next
-      print(p)
-      if (!is.null(png_dir) && identical(k_values, k_groups[[1L]])) {
-        png_name <- paste0(
-          "tf_std_six_setups_shared_topic_counts_",
-          tolower(unit_name),
-          ".png"
-        )
-        ggplot2::ggsave(file.path(png_dir, png_name), p, width = 22, height = 11.5, dpi = 180, limitsize = FALSE)
-      }
-    }
-  }
-  invisible(out_file)
 }
 
 .m3tb_json_for_html <- function(x) {
@@ -1990,6 +1820,7 @@
     pathway = character(),
     pathway_key = character(),
     padj = numeric(),
+    combined_score = numeric(),
     overlap = character(),
     overlap_genes = character(),
     gene_in = integer(),
@@ -2026,6 +1857,7 @@
     if (!nrow(dt)) return(empty)
     if (!"pathway" %in% names(dt) && "term" %in% names(dt)) data.table::setnames(dt, "term", "pathway")
     if (!"padj" %in% names(dt) && "adjusted_p_value" %in% names(dt)) data.table::setnames(dt, "adjusted_p_value", "padj")
+    if (!"combined_score" %in% names(dt)) dt[, combined_score := NA_real_]
     if (!"topic" %in% names(dt) && "topic_num" %in% names(dt)) data.table::setnames(dt, "topic_num", "topic")
     has_condition_id <- "condition_id" %in% names(dt)
     if (!"comparison_id" %in% names(dt) && "condition_id" %in% names(dt)) dt[, comparison_id := condition_id]
@@ -2077,6 +1909,7 @@
       topic = as.integer(topic),
       topic_num = as.integer(topic),
       padj = suppressWarnings(as.numeric(padj)),
+      combined_score = suppressWarnings(as.numeric(combined_score)),
       gene_in = suppressWarnings(as.integer(overlap_hits)),
       gene_total = .m3tb_parse_overlap_total(overlap),
       pathway = as.character(pathway),
@@ -2157,6 +1990,7 @@
   subgrn_json <- .m3tb_json_for_html(subgrn_manifest)
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    "<meta name=\"craftgrn-module3-report-schema\" content=\"2\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
     "<style>",
     "html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}",
@@ -2518,7 +2352,22 @@
                                         out_html,
                                         mds_svg_src = NULL,
                                         subgrn_manifest = NULL,
-                                        subgrn_payload_base = "../../pathway_subgrn_payloads") {
+                                        subgrn_payload_base = "../../pathway_subgrn_payloads",
+                                        condition_payload = NULL,
+                                        report_state = list()) {
+  if (!is.null(condition_payload) &&
+      nzchar(as.character(condition_payload$payload_file %||% ""))) {
+    return(.m3cr_condition_report_html(
+      title = title,
+      group_mds = group_mds,
+      group_topic = group_topic,
+      tf_topic = tf_topic,
+      pathways = pathways,
+      out_html = out_html,
+      condition_payload = condition_payload,
+      report_state = report_state
+    ))
+  }
   group_json <- .m3tb_json_for_html(group_mds)
   topic_json <- .m3tb_json_for_html(group_topic)
   if (is.null(tf_topic)) tf_topic <- data.table::data.table()
@@ -2529,6 +2378,7 @@
   mds_img <- "<div class=\"tooltip\" id=\"mdsTooltip\"></div><svg id=\"mdsSvg\" viewBox=\"0 0 980 680\"><g id=\"mdsLayer\"></g></svg>"
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
+    "<meta name=\"craftgrn-module3-report-schema\" content=\"2\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
     paste0("<style>html,body{width:100%;height:100%;overflow:hidden}body{margin:0;background:#f7f7f5;color:#111;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:48px;background:#fff;border-bottom:1px solid #d6d6d0;display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 12px;box-sizing:border-box}h1{font-size:18px;line-height:1.05;margin:0}.meta{font-size:11px;color:#475569;line-height:1.1}.controls{display:flex;gap:8px;align-items:center;white-space:nowrap}select,input,button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #aaa;border-radius:3px;background:#fff;padding:5px 7px}button{background:#111;color:#fff}.grid{height:calc(100vh - 48px);display:grid;grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr);gap:8px;padding:8px;box-sizing:border-box}.left{display:grid;grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px;min-height:0}.pane{background:#fff;border:1px solid #d6d6d0;display:flex;flex-direction:column;min-height:0;overflow:hidden}.paneHead{padding:8px 10px;border-bottom:1px solid #e5e5df;display:flex;justify-content:space-between;gap:8px;align-items:center}.pane h2{font-size:20px;line-height:1.05;margin:0}.barControls{display:flex;gap:8px;align-items:center;white-space:nowrap}.barControls select{max-width:180px}.barControls input{width:130px}.barControls select[multiple]{height:46px;min-width:130px}.body{position:relative;flex:1;min-height:0}.splitWaterfall{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);height:100%;min-height:0}.splitSide{position:relative;min-width:0;min-height:0}.splitSide:first-child{border-right:1px solid #e5e5df}.clearTf{display:none;margin-left:8px;padding:3px 6px;font-size:11px}.note{font-size:10px;color:#555;border-top:1px solid #e5e5df;padding:5px 8px;line-height:1.1}.tooltip{position:absolute;display:none;background:rgba(17,17,17,0.92);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:7px 8px;border-radius:3px;pointer-events:none;max-width:380px;line-height:1.35;z-index:5}body.embed .top{display:none}body.embed .grid{height:100vh}svg{width:100%;height:100%;display:block}.label{font-size:12px;font-weight:700}.small{font-size:10px}.mdsLeader{stroke:#555;stroke-width:1.7;opacity:.75}.mdsPointHit{cursor:pointer;fill:transparent;stroke:transparent;pointer-events:all}.mdsLabel{paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round;cursor:pointer}.barIn{fill:#cc454b}.barOut{fill:#a9cfe5}.pathAxis{stroke:#111;stroke-width:1.6;shape-rendering:crispEdges}.pathTick{stroke:#777;stroke-width:.9;shape-rendering:crispEdges}.pathLabel{font-size:16px;font-weight:700;fill:#111}.pathLabelTopicSpecific{fill:#cc2f3c}.pathLabelGroupSpecific{fill:#2563eb}.pathLabelBothSpecific{fill:#7e22ce}.pathTickText{font-size:14px;font-weight:700;fill:#111}.pathLegendText{font-size:14px;font-weight:700;fill:#334155}", .m3tb_subgrn_css(), "@media(max-width:1100px){.grid{grid-template-columns:1fr 1fr}.top{height:52px}.grid{height:calc(100vh - 52px)}}</style>"),
     "</head><body><div class=\"top\">",
@@ -2809,20 +2659,52 @@
   if (workers <= 1L) {
     return(lapply(x, fun))
   }
-  cl <- parallel::makeCluster(workers, type = "PSOCK")
-  on.exit(parallel::stopCluster(cl), add = TRUE)
-  parallel::clusterEvalQ(cl, {
-    repo_dir <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = "")
-    dev_load <- tolower(Sys.getenv("CRAFTGRN_DEV_LOAD", unset = "false")) %in% c("1", "true", "yes", "y")
-    if (dev_load && nzchar(repo_dir) && requireNamespace("devtools", quietly = TRUE)) {
-      devtools::load_all(repo_dir, quiet = TRUE)
+  parent_lib_paths <- .libPaths()
+  old_r_libs <- Sys.getenv("R_LIBS", unset = NA_character_)
+  restore_r_libs <- function() {
+    if (is.na(old_r_libs)) {
+      Sys.unsetenv("R_LIBS")
     } else {
-      library(craftgrn)
+      Sys.setenv(R_LIBS = old_r_libs)
     }
+  }
+  on.exit(restore_r_libs(), add = TRUE)
+  Sys.setenv(R_LIBS = paste(parent_lib_paths, collapse = .Platform$path.sep))
+  cl <- parallel::makeCluster(workers, type = "PSOCK")
+  restore_r_libs()
+  cluster_running <- TRUE
+  on.exit({
+    if (isTRUE(cluster_running)) {
+      try(parallel::stopCluster(cl), silent = TRUE)
+    }
+  }, add = TRUE)
+  worker_bootstrap <- function(lib_paths) {
+    .libPaths(unique(c(lib_paths, .libPaths())))
+    library(craftgrn)
     data.table::setDTthreads(1L)
     options(craftgrn.topic_review.fast_summary = TRUE)
     NULL
-  })
+  }
+  environment(worker_bootstrap) <- baseenv()
+  parallel::clusterCall(cl, worker_bootstrap, parent_lib_paths)
+  result <- tryCatch(
+    .m3tb_review_par_lapply(cl, x, fun),
+    error = identity
+  )
+  if (!inherits(result, "error")) return(result)
+
+  try(parallel::stopCluster(cl), silent = TRUE)
+  cluster_running <- FALSE
+  .log_warn(
+    paste0(
+      "Parallel Module 3 review workers failed; retrying ",
+      length(x), " task(s) sequentially. Cause: ", conditionMessage(result)
+    )
+  )
+  lapply(x, fun)
+}
+
+.m3tb_review_par_lapply <- function(cl, x, fun) {
   parallel::parLapplyLB(cl, x, fun)
 }
 
@@ -2870,25 +2752,26 @@
                                              score_result,
                                              topic_page_dir,
                                              condition_page_dir,
-                                             subgrn_payload_dir) {
+                                             subgrn_payload_dir,
+                                             condition_pair_payload_dir) {
   old_dt_threads <- data.table::getDTthreads()
   on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
   data.table::setDTthreads(1L)
+  report_state <- attr(score_result, "report_state") %||% list()
 
   row <- model_rows[i]
   k <- as.integer(row$selected_k[[1L]])
   theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", k))
-  phi_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("phi_K%d.csv", k))
-  if (!file.exists(theta_file) || !file.exists(phi_file)) {
+  if (!file.exists(theta_file)) {
     return(list(
       topic = data.table::data.table(),
       condition = data.table::data.table(),
-      subgrn_manifest = data.table::data.table()
+      subgrn_manifest = data.table::data.table(),
+      condition_payload = data.table::data.table()
     ))
   }
 
   theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
-  phi <- .m3tb_read_probability_csv(phi_file, "term_id")
   extraction_dir <- .m3tb_find_extraction_subdir(row)
   slug <- .m3tb_review_report_slug(row, k)
   run_id <- .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]])
@@ -2930,35 +2813,26 @@
       k = k
     )]
   }
-  topic_pathways_for_report <- topic_pathways
   condition_pathways_for_report <- condition_pathways
 
-  topic_mds <- .m3tb_topic_mds_from_phi(phi, theta)
-  topic_waterfall <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
   tf_topic <- .m3tb_tf_topic_rows(theta, row$context_type[[1L]])
-  topic_label <- sprintf("%s | K%d", row$method_setup[[1L]], k)
-  topic_out <- file.path(topic_page_dir, sprintf("%s_topic_report.html", slug))
-  .m3tb_topic_report_html(
-    topic_label,
-    topic_mds,
-    topic_waterfall,
-    tf_topic,
-    topic_pathways_for_report,
-    topic_out,
-    condition_pathways = condition_pathways_for_report,
-    subgrn_manifest = subgrn_manifest,
-    subgrn_payload_base = "../../pathway_subgrn_payloads"
-  )
-
   condition_report <- data.table::data.table()
+  condition_payload <- .m3cr_empty_payload_spec()
   group_mds <- data.table::as.data.table(score_result$mds_points)[as.integer(k) == as.integer(row$selected_k[[1L]]) & method_setup == row$method_setup[[1L]]]
   if (nrow(group_mds)) {
     group_mds[, mds_label := .m3tb_short_label(display_label, 18L)]
     group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
     condition_label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
     condition_out <- file.path(condition_page_dir, sprintf("%s_condition_topic_report.html", slug))
-    condition_mds_svg <- .m3tb_condition_mds_svg_path(condition_out)
-    .m3tb_write_condition_mds_svg(group_mds, condition_mds_svg)
+    if (identical(as.character(row$context_type[[1L]]), "condition")) {
+      condition_payload <- .m3cr_write_condition_payload(
+        extraction_dir = extraction_dir,
+        model_dir = row$model_dir[[1L]],
+        payload_dir = condition_pair_payload_dir,
+        payload_name = paste0(slug, "_condition_pair"),
+        payload_base = "../../assets/condition_pair_payloads"
+      )
+    }
     .m3tb_condition_report_html(
       condition_label,
       group_mds,
@@ -2966,10 +2840,12 @@
       tf_topic,
       condition_pathways_for_report,
       condition_out,
-      mds_svg_src = file.path("assets", basename(condition_mds_svg)),
       subgrn_manifest = subgrn_manifest,
-      subgrn_payload_base = "../../pathway_subgrn_payloads"
+      subgrn_payload_base = "../../pathway_subgrn_payloads",
+      condition_payload = condition_payload,
+      report_state = report_state
     )
+    .m3tb_validate_current_report_html(condition_out)
     condition_report <- data.table::data.table(
       label = condition_label,
       k = k,
@@ -2980,16 +2856,103 @@
   }
 
   list(
-    topic = data.table::data.table(
-      label = topic_label,
-      k = k,
+    topic = data.table::data.table(),
+    condition = condition_report,
+    subgrn_manifest = subgrn_manifest,
+    condition_payload = data.table::data.table(
       method_setup = row$method_setup[[1L]],
       run_id = run_id,
-      path = topic_out
-    ),
-    condition = condition_report,
-    subgrn_manifest = subgrn_manifest
+      k = k,
+      payload_file = condition_payload$payload_file,
+      network_payload_file = condition_payload$network_payload_file,
+      n_tf_gene = condition_payload$n_tf_gene,
+      n_tf_peak_gene = condition_payload$n_tf_peak_gene
+    )
   )
+}
+
+.m3tb_validate_current_report_html <- function(path) {
+  if (!file.exists(path)) .log_abort("Module 3 report was not written: {path}")
+  html <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  schema3 <- grepl(
+    "craftgrn-module3-report-schema\" content=\"3",
+    html,
+    fixed = TRUE
+  )
+  schema4 <- grepl(
+    "craftgrn-module3-report-schema\" content=\"4",
+    html,
+    fixed = TRUE
+  )
+  schema5 <- grepl(
+    "craftgrn-module3-report-schema\" content=\"5",
+    html,
+    fixed = TRUE
+  )
+  schema6 <- grepl(
+    "craftgrn-module3-report-schema\" content=\"6",
+    html,
+    fixed = TRUE
+  )
+  required <- if (schema5 || schema6) {
+    c(
+      "Condition Probability",
+      "TF/Condition Probability",
+      "id=\"cond1Select\"",
+      "id=\"cond2Select\"",
+      "id=\"tfSelect\"",
+      "id=\"pathwaySelect\"",
+      "id=\"tfButterflySvg\"",
+      "id=\"topicPageStatus\"",
+      "id=\"tfPageStatus\"",
+      "id=\"pathPageStatus\"",
+      "id=\"networkTabFilter\"",
+      "id=\"networkTabLayout\"",
+      "id=\"networkTabAppearance\"",
+      "role=\"dialog\"",
+      "CONDITION_PAYLOAD"
+    )
+  } else if (schema4) {
+    c(
+      "Condition Probability",
+      "TF/Condition Probability",
+      "id=\"cond1Select\"",
+      "id=\"cond2Select\"",
+      "id=\"tfSelect\"",
+      "id=\"pathwaySelect\"",
+      "id=\"tfButterflySvg\"",
+      "CONDITION_PAYLOAD"
+    )
+  } else if (schema3) {
+    c(
+      "Condition Topic Scores",
+      "id=\"cond1Select\"",
+      "id=\"cond2Select\"",
+      "id=\"tfSelect\"",
+      "id=\"pathwaySelect\"",
+      "CONDITION_PAYLOAD"
+    )
+  } else {
+    c(
+      "craftgrn-module3-report-schema\" content=\"2",
+      "Topic Bar Plots",
+      "id=\"tfSearchInput\"",
+      "id=\"tfSelect\"",
+      "multiple size=\"3\"",
+      "SUBGRN_MANIFEST"
+    )
+  }
+  missing <- required[!vapply(required, grepl, logical(1L), x = html, fixed = TRUE)]
+  obsolete <- grepl("Topic Waterfall", html, fixed = TRUE) ||
+    ((schema3 || schema4 || schema5 || schema6) && grepl("Topic Bar Plots", html, fixed = TRUE))
+  if (length(missing) || obsolete) {
+    details <- c(
+      if (length(missing)) paste0("missing: ", paste(missing, collapse = ", ")),
+      if (obsolete) "contains an obsolete panel label"
+    )
+    .log_abort("Generated Module 3 report does not match the current schema ({paste(details, collapse = '; ')}): {path}")
+  }
+  invisible(TRUE)
 }
 
 .m3tb_write_review_html <- function(output_dir, score_result, link_summary, review_dir = NULL) {
@@ -3000,33 +2963,48 @@
   review_dir <- normalizePath(as.character(review_dir)[[1L]], winslash = "/", mustWork = FALSE)
   html_dir <- .m3tb_review_html_dir(review_dir)
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
-  topic_report_dir <- file.path(html_dir, "topic_reports")
   condition_report_dir <- file.path(html_dir, "condition_topic_reports")
-  topic_page_dir <- file.path(topic_report_dir, "pages")
   condition_page_dir <- file.path(condition_report_dir, "pages")
   subgrn_payload_dir <- file.path(html_dir, "pathway_subgrn_payloads")
-  dir.create(topic_report_dir, recursive = TRUE, showWarnings = FALSE)
+  asset_dir <- .m3tb_plot_dir(review_dir)
+  condition_pair_payload_dir <- file.path(asset_dir, "condition_pair_payloads")
   dir.create(condition_report_dir, recursive = TRUE, showWarnings = FALSE)
-  dir.create(topic_page_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(condition_page_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(subgrn_payload_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(condition_pair_payload_dir, recursive = TRUE, showWarnings = FALSE)
   unlink(list.files(html_dir, pattern = "^(topic_report|condition_topic_report)_K[0-9]+[.]html$", full.names = TRUE))
-  unlink(list.files(topic_report_dir, pattern = "_K[0-9]+_topic_report[.]html$", full.names = TRUE))
   unlink(list.files(condition_report_dir, pattern = "_K[0-9]+_condition_topic_report[.]html$", full.names = TRUE))
-  unlink(list.files(topic_page_dir, pattern = "_K[0-9]+_topic_report[.]html$", full.names = TRUE))
   unlink(list.files(condition_page_dir, pattern = "_K[0-9]+_condition_topic_report[.]html$", full.names = TRUE))
+  obsolete <- c(
+    file.path(html_dir, "theta_phi_and_group_mds.html"),
+    file.path(html_dir, "topic_method_k_topic_mds_report.html"),
+    file.path(html_dir, "topic_reports"),
+    file.path(condition_page_dir, "assets"),
+    file.path(review_dir, "tf_std_six_setups_pass_state_counts.pdf"),
+    file.path(review_dir, "tf_std_six_setups_shared_topic_counts.pdf")
+  )
+  unlink(obsolete[file.exists(obsolete)], recursive = TRUE, force = TRUE)
+  obsolete_tf_std <- list.files(
+    review_dir,
+    pattern = "^tf_std_six_setups_",
+    recursive = TRUE,
+    full.names = TRUE
+  )
+  unlink(obsolete_tf_std, recursive = TRUE, force = TRUE)
+  obsolete_theta_assets <- list.files(
+    asset_dir,
+    pattern = "^(theta_group_mds|theta_phi_topic_distance_correlation)_",
+    full.names = TRUE
+  )
+  unlink(obsolete_theta_assets, force = TRUE)
   subgrn_max_context_env <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
   subgrn_skip_payloads <- nzchar(subgrn_max_context_env) &&
     suppressWarnings(as.integer(subgrn_max_context_env[[1L]])) <= 0L
   if (!isTRUE(subgrn_skip_payloads)) {
     unlink(list.files(subgrn_payload_dir, pattern = "[.]js$", full.names = TRUE))
   }
-  asset_dir <- .m3tb_plot_dir(review_dir)
-  image_manifest <- .m3tb_write_review_pngs(score_result, asset_dir)
   model_rows <- attr(score_result, "model_rows")
-  topic_reports <- data.table::data.table()
   condition_reports <- data.table::data.table()
-  topic_page_reports <- data.table::data.table()
   condition_page_reports <- data.table::data.table()
   subgrn_manifests <- list()
   if (is.data.frame(model_rows) && nrow(model_rows)) {
@@ -3037,9 +3015,10 @@
           i = i,
           model_rows = model_rows,
           score_result = score_result,
-          topic_page_dir = topic_page_dir,
+          topic_page_dir = "",
           condition_page_dir = condition_page_dir,
-          subgrn_payload_dir = subgrn_payload_dir
+          subgrn_payload_dir = subgrn_payload_dir,
+          condition_pair_payload_dir = condition_pair_payload_dir
         ),
         error = function(e) .m3tb_review_row_error(i, e)
       )
@@ -3051,11 +3030,24 @@
       }, character(1L))
       .log_abort(paste(c("Failed to build Module 3 review HTML pages.", msg), collapse = "\n"))
     }
-    topic_reports <- data.table::rbindlist(lapply(page_rows, `[[`, "topic"), use.names = TRUE, fill = TRUE)
-    topic_page_reports <- data.table::copy(topic_reports)
     condition_reports <- data.table::rbindlist(lapply(page_rows, `[[`, "condition"), use.names = TRUE, fill = TRUE)
     condition_page_reports <- data.table::copy(condition_reports)
     subgrn_manifests <- lapply(page_rows, `[[`, "subgrn_manifest")
+    condition_payload_manifest <- data.table::rbindlist(
+      lapply(page_rows, `[[`, "condition_payload"),
+      use.names = TRUE,
+      fill = TRUE
+    )
+    if (nrow(condition_payload_manifest)) {
+      csv_dir <- .m3tb_review_tables_dir(review_dir)
+      dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
+      data.table::fwrite(
+        condition_payload_manifest,
+        file.path(csv_dir, "condition_pair_payload_manifest.csv")
+      )
+    }
+    report_paths <- condition_page_reports$path
+    invisible(lapply(report_paths, .m3tb_validate_current_report_html))
   }
   if (length(subgrn_manifests)) {
     subgrn_manifest <- data.table::rbindlist(subgrn_manifests, use.names = TRUE, fill = TRUE)
@@ -3064,21 +3056,6 @@
       dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
       data.table::fwrite(subgrn_manifest, file.path(csv_dir, "pathway_subgrn_manifest.csv"))
     }
-  }
-  if (nrow(topic_reports)) {
-    topic_reports[, method_key := paste(run_id, method_setup, sep = "\t")]
-    topic_reports <- data.table::rbindlist(lapply(split(topic_reports, topic_reports$method_key), function(rows) {
-      data.table::setorder(rows, k)
-      slug <- .safe_filename(paste(rows$run_id[[1L]], rows$method_setup[[1L]], sep = "_"))
-      out <- file.path(topic_report_dir, sprintf("%s_topic_report.html", slug))
-      .m3tb_write_k_report_index(out, rows, rows$method_setup[[1L]])
-      data.table::data.table(
-        label = rows$method_setup[[1L]],
-        method_setup = rows$method_setup[[1L]],
-        run_id = rows$run_id[[1L]],
-        path = out
-      )
-    }), use.names = TRUE, fill = TRUE)
   }
   if (nrow(condition_reports)) {
     condition_reports[, method_key := paste(run_id, method_setup, sep = "\t")]
@@ -3095,11 +3072,7 @@
       )
     }), use.names = TRUE, fill = TRUE)
   }
-  files <- c(
-    theta_phi = file.path(html_dir, "theta_phi_and_group_mds.html"),
-    method = file.path(html_dir, "topic_method_k_topic_mds_report.html"),
-    condition = file.path(html_dir, "topic_method_k_condition_mds_report.html")
-  )
+  files <- c(condition = file.path(html_dir, "topic_method_k_condition_mds_report.html"))
   stale_global <- file.path(
     html_dir,
     c(
@@ -3108,28 +3081,18 @@
     )
   )
   unlink(stale_global[file.exists(stale_global)])
-  .m3tb_write_theta_review_html(score_result, files[["theta_phi"]], image_manifest)
-  if (!nrow(topic_page_reports)) topic_page_reports <- topic_reports
   if (!nrow(condition_page_reports)) condition_page_reports <- condition_reports
-  .m3tb_write_combined_report_index(files[["method"]], topic_page_reports, "Topic Method/K Reports")
-  .m3tb_write_combined_report_index(files[["condition"]], condition_page_reports, "Topic Method/K Condition Reports")
+  .m3cr_write_combined_report_index(
+    files[["condition"]],
+    condition_page_reports,
+    report_state = attr(score_result, "report_state") %||% list()
+  )
   files
 }
 
 .m3tb_write_review_outputs <- function(output_dir, score_result, link_summary, review_dir = NULL) {
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
   dir.create(review_dir, recursive = TRUE, showWarnings = FALSE)
-  png_dir <- file.path(review_dir, "plots")
-  .m3tb_plot_pass_state_counts_pdf(
-    link_summary$pass,
-    file.path(review_dir, "tf_std_six_setups_pass_state_counts.pdf"),
-    png_dir = png_dir
-  )
-  .m3tb_plot_shared_topic_counts_pdf(
-    link_summary$shared,
-    file.path(review_dir, "tf_std_six_setups_shared_topic_counts.pdf"),
-    png_dir = png_dir
-  )
   html <- .m3tb_write_review_html(output_dir, score_result, link_summary, review_dir = review_dir)
   invisible(html)
 }
@@ -3539,6 +3502,10 @@
 #' @param output_dir Topic benchmark output directory.
 #' @param methods Character vector of benchmark method IDs, `"default"`, or
 #'   `"all"`.
+#' @param training_methods Optional subset of `methods` to train. `NULL` trains
+#'   every selected method when `run_training = TRUE`.
+#' @param extraction_methods Optional subset of `methods` to extract. `NULL`
+#'   extracts every selected method when `run_extraction = TRUE`.
 #' @param k_grid Integer topic numbers.
 #' @param output_layout Output folder layout. `"standard"` is the clean
 #'   single-method layout for regular use, `"benchmark"` writes shallow
@@ -3570,6 +3537,16 @@
 #' @param analysis_label Label used to name the topic-model analysis.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides.
+#' @param memory_safety Module 3 memory policy.
+#' @param memory_max_fraction Maximum fraction of currently available memory
+#'   that a Module 3 stage may use.
+#' @param extraction_k_workers Number of K values to extract concurrently.
+#'   Use `1` for same-process WarpLDA training and extraction.
+#' @param extraction_k_max_workers Maximum concurrent K extraction workers.
+#' @param memory_safety Module 3 memory policy. `"strict"` fails before an
+#'   unsafe or unmeasurable allocation.
+#' @param memory_max_fraction Maximum fraction of currently available memory
+#'   that a Module 3 stage may use. Defaults to `0.8`.
 #' @param extraction_k_workers Number of K values to extract concurrently.
 #'   `NULL` selects workers adaptively from memory and CPU headroom.
 #' @param extraction_k_max_workers Maximum concurrent K extraction workers.
@@ -3577,6 +3554,9 @@
 #'   worker in GiB. `NULL` estimates from the shared `edges_docs.rds` cache.
 #' @param extraction_k_memory_reserve_gb Minimum available RAM in GiB to keep
 #'   unused while scheduling K workers. At least 25 percent is also reserved.
+#' @param memory_safety Module 3 memory policy passed to model training.
+#' @param memory_max_fraction Maximum fraction of currently available memory
+#'   that a Module 3 stage may use.
 #' @param paper_benchmark_csv Optional Tsao 2022-style benchmark CSV used to
 #'   score fibroblast paper-topic recovery from existing theta and phi files.
 #' @param run_fibroblast_paper_recovery Whether to write the fibroblast
@@ -3600,6 +3580,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         comparisons,
                                         output_dir,
                                         methods = "comparison_aggr_multivi",
+                                        training_methods = NULL,
+                                        extraction_methods = NULL,
                                         k_grid = 10L,
                                         output_layout = c("auto", "standard", "benchmark", "legacy"),
                                         replicate_documents = FALSE,
@@ -3618,11 +3600,14 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         input_source = c("differential_links", "condition_links"),
                                         sample_subset = NULL,
                                         analysis_label = NULL,
+                                        report_state = list(),
                                         extraction_topic_report_args = list(),
                                         extraction_k_workers = NULL,
                                         extraction_k_max_workers = 4L,
                                         extraction_k_memory_gb = NULL,
                                         extraction_k_memory_reserve_gb = 32,
+                                        memory_safety = c("strict", "adaptive", "off"),
+                                        memory_max_fraction = 0.8,
                                         paper_benchmark_csv = NULL,
                                         run_fibroblast_paper_recovery = !is.null(paper_benchmark_csv),
                                         run_training = TRUE,
@@ -3638,8 +3623,18 @@ run_module3_topic_benchmark <- function(filtered_dir,
   if (!length(k_grid)) .log_abort("k_grid must include at least one integer greater than 1.")
   count_method <- match.arg(count_method)
   input_source <- match.arg(input_source)
+  memory_safety <- match.arg(memory_safety)
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
   method_plan <- .module3_topic_method_plan(methods = methods, k_grid = k_grid)
+  normalize_stage_methods <- function(x, label) {
+    if (is.null(x)) return(method_plan$method)
+    x <- unique(as.character(x))
+    bad <- setdiff(x, method_plan$method)
+    if (length(bad)) .log_abort("{label} must be a subset of methods; unknown: {paste(bad, collapse = ', ')}")
+    x
+  }
+  training_methods <- normalize_stage_methods(training_methods, "training_methods")
+  extraction_methods <- normalize_stage_methods(extraction_methods, "extraction_methods")
   output_layout <- .m3tb_resolve_output_layout(
     output_layout = output_layout,
     output_dir = output_dir,
@@ -3682,8 +3677,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
     .log_inform("Module 3 output layout: {output_layout}.")
   }
   if (isTRUE(run_training)) {
-    for (i in seq_len(nrow(method_plan))) {
-      row <- method_plan[i]
+    training_plan <- method_plan[method %in% training_methods]
+    for (i in seq_len(nrow(training_plan))) {
+      row <- training_plan[i]
       if (isTRUE(verbose)) .log_inform("Training Module 3 topic method: {row$method_setup}.")
       train_topic_models(
         Kgrid = k_grid,
@@ -3703,6 +3699,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
         vae_variant = row$vae_variant[[1L]],
         reuse_if_exists = reuse_if_exists,
         local_threads = local_threads,
+        memory_safety = memory_safety,
+        memory_max_fraction = memory_max_fraction,
         warplda_iterations = warplda_iterations,
         vae_python = vae_python,
         vae_epochs = vae_epochs,
@@ -3731,8 +3729,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
     link_topic_core_cap <- suppressWarnings(as.integer(link_topic_core_cap[[1L]]))
     if (!is.finite(link_topic_core_cap) || link_topic_core_cap < 1L) link_topic_core_cap <- 8L
     link_topic_n_cores <- min(link_topic_requested_cores, link_topic_core_cap)
-    for (i in seq_len(nrow(method_plan))) {
-      row <- method_plan[i]
+    extraction_plan <- method_plan[method %in% extraction_methods]
+    for (i in seq_len(nrow(extraction_plan))) {
+      row <- extraction_plan[i]
       model_root <- row$topic_models_dir[[1L]]
       extract_roots <- .m3tb_extraction_output_dirs(row, k_grid, output_layout)
       link_scoring <- isTRUE(extraction_topic_report_args$run_link_topic_scores)
@@ -3746,6 +3745,15 @@ run_module3_topic_benchmark <- function(filtered_dir,
         cores = link_topic_requested_cores,
         link_scoring = link_scoring
       )
+      # Forking after the native OpenMP WarpLDA sampler has run can leave child
+      # processes with an invalid OpenMP runtime state. Keep same-process
+      # training plus extraction sequential; extraction-only runs can still
+      # use the adaptive K worker plan.
+      if (isTRUE(run_training) && identical(row$backend[[1L]], "warplda") && k_plan$workers > 1L) {
+        k_plan$workers <- 1L
+        k_plan$cores <- min(k_plan$cores, link_topic_requested_cores)
+        k_plan$reason <- "sequential after same-process OpenMP WarpLDA training"
+      }
       link_cores_per_worker <- max(1L, floor(link_topic_requested_cores / k_plan$workers))
       link_cores_per_worker <- min(link_cores_per_worker, link_topic_n_cores)
       if (isTRUE(verbose)) {
@@ -3814,6 +3822,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
       review_dir = review_dir
     )
     attr(score_result, "model_rows") <- model_rows
+    attr(score_result, "report_state") <- report_state
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
     if (isTRUE(run_fibroblast_paper_recovery) && !is.null(paper_benchmark_csv)) {
@@ -3945,6 +3954,35 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   count_method <- match.arg(count_method)
   count_input_requested <- if (is.null(count_input) || !length(count_input)) NA_character_ else as.character(count_input[[1L]])
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
+  sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
+  sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
+  input_signature <- .module3_topic_input_signature(
+    input_dir = filtered_dir,
+    input_source = input_source,
+    sample_subset = sample_subset,
+    settings = list(
+      doc_mode = doc_mode,
+      doc_design = doc_design,
+      fp_term_mode = fp_term_mode,
+      gene_term_mode = gene_term_mode,
+      count_method = count_method,
+      count_scale = as.numeric(count_scale),
+      count_input_effective = count_input_effective,
+      threshold_gene_expr = threshold_gene_expr,
+      threshold_fp_score = threshold_fp_score,
+      threshold_tf_expr = threshold_tf_expr,
+      include_tf_terms = isTRUE(include_tf_terms),
+      top_terms_per_doc = top_terms_per_doc,
+      min_df = min_df,
+      abs_log2fc_fp_min = abs_log2fc_fp_min,
+      abs_delta_fp_min = abs_delta_fp_min,
+      abs_log2fc_gene_min = abs_log2fc_gene_min,
+      require_fp_bound_either = isTRUE(require_fp_bound_either),
+      require_tf_expr_either = isTRUE(require_tf_expr_either),
+      require_gene_expr_either = isTRUE(require_gene_expr_either),
+      direction_consistency = direction_consistency
+    )
+  )
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   rds_dir <- file.path(output_dir, "rds")
   required_cache <- file.path(rds_dir, c("edges_docs.rds", "doc_term.rds", "dtm.rds", "dtm_index.rds"))
@@ -3952,11 +3990,12 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   if (!isTRUE(overwrite) && all(file.exists(required_cache)) && file.exists(summary_path)) {
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
     cache_matches <- nrow(summary_dt) &&
-      all(c("input_source", "doc_design", "doc_mode", "fp_term_mode") %in% names(summary_dt)) &&
+      all(c("input_source", "doc_design", "doc_mode", "fp_term_mode", "input_signature") %in% names(summary_dt)) &&
       identical(as.character(summary_dt$input_source[[1L]]), input_source) &&
       identical(as.character(summary_dt$doc_design[[1L]]), doc_design) &&
       identical(as.character(summary_dt$doc_mode[[1L]]), doc_mode) &&
       identical(as.character(summary_dt$fp_term_mode[[1L]]), fp_term_mode) &&
+      identical(as.character(summary_dt$input_signature[[1L]]), input_signature) &&
       all(c("count_method", "count_input_effective") %in% names(summary_dt)) &&
       identical(as.character(summary_dt$count_method[[1L]]), count_method) &&
       identical(as.character(summary_dt$count_input_effective[[1L]]), count_input_effective)
@@ -3968,8 +4007,6 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       .log_inform("Existing Module 3 topic input cache does not match requested document settings; rebuilding: {output_dir}")
     }
   }
-  sample_subset <- if (is.null(sample_subset)) NULL else unique(as.character(sample_subset))
-  sample_subset <- sample_subset[!is.na(sample_subset) & nzchar(sample_subset)]
   if (identical(input_source, "condition_links")) {
     if (isTRUE(verbose)) .log_inform("Loading condition-native links from {filtered_dir}.")
     edges_dt <- .module3_read_condition_links(filtered_dir, conditions = sample_subset)
@@ -4058,6 +4095,18 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     )
   }
   if (!nrow(doc_term)) .log_abort("Module 3 document-term table is empty.")
+  if (identical(doc_design, "condition")) {
+    .write_module3_document_term_qc(
+      doc_term = doc_term,
+      output_dir = output_dir,
+      count_column = count_input_effective,
+      title = paste0(
+        "Module 3 document-term QC - ",
+        as.character(analysis_label %||% "condition documents")[[1L]]
+      ),
+      verbose = verbose
+    )
+  }
   write_doc_term_cache(doc_term, out_dir = output_dir, save_full_doc_term_csv = isTRUE(save_full_doc_term_csv))
   .save_all(output_dir, "edges_filtered", edges_filt)
   .save_all(output_dir, "edges_docs", edges_docs)
@@ -4067,6 +4116,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   .save_all(output_dir, "dtm_index", list(doc_index = dtm_obj$doc_index, term_index = dtm_obj$term_index))
   summary_dt <- data.table::data.table(
     analysis_label = if (is.null(analysis_label)) NA_character_ else as.character(analysis_label[[1L]]),
+    input_signature = input_signature,
     input_source = input_source,
     doc_design = doc_design,
     doc_mode = doc_mode,
@@ -4453,7 +4503,12 @@ run_regulatory_topics <- function(filtered_dir,
                                   analysis_label = NULL,
                                   topic_link_output = c("pass", "full", "both", "none"),
                                   pathway_backend = NULL,
+                                  report_state = list(),
                                   extraction_topic_report_args = list(),
+                                  extraction_k_workers = NULL,
+                                  extraction_k_max_workers = 4L,
+                                  memory_safety = c("strict", "adaptive", "off"),
+                                  memory_max_fraction = 0.8,
                                   run_training = TRUE,
                                   run_extraction = TRUE,
                                   run_reports = TRUE,
@@ -4462,6 +4517,7 @@ run_regulatory_topics <- function(filtered_dir,
   topic_link_output <- match.arg(topic_link_output)
   count_method <- match.arg(count_method)
   input_source <- match.arg(input_source)
+  memory_safety <- match.arg(memory_safety)
   if (length(method) != 1L) .log_abort("run_regulatory_topics() expects one selected method.")
   extraction_args <- modifyList(
     list(
@@ -4495,7 +4551,12 @@ run_regulatory_topics <- function(filtered_dir,
     input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
+    report_state = report_state,
     extraction_topic_report_args = extraction_args,
+    extraction_k_workers = extraction_k_workers,
+    extraction_k_max_workers = extraction_k_max_workers,
+    memory_safety = memory_safety,
+    memory_max_fraction = memory_max_fraction,
     run_training = run_training,
     run_extraction = run_extraction,
     run_reports = run_reports,
@@ -4511,9 +4572,14 @@ run_regulatory_topics <- function(filtered_dir,
   if (is.null(project_config)) return(list())
   if (is.character(project_config) && length(project_config) == 1L) {
     if (!file.exists(project_config)) .log_abort("Module 3 project config not found: {project_config}")
-    return(yaml::read_yaml(project_config))
+    cfg <- yaml::read_yaml(project_config)
+    .validate_project_config(cfg, source = basename(project_config))
+    return(cfg)
   }
-  if (is.list(project_config)) return(project_config)
+  if (is.list(project_config)) {
+    .validate_project_config(project_config)
+    return(project_config)
+  }
   .log_abort("`project_config` must be NULL, a YAML path, or a list.")
 }
 
@@ -4536,6 +4602,33 @@ run_regulatory_topics <- function(filtered_dir,
   vals
 }
 
+.module3_report_state <- function(cfg) {
+  report <- cfg$report %||% cfg$report_state %||% list()
+  if (!is.list(report)) .log_abort("`report` in the project config must be a mapping.")
+  colors <- report$condition_colors %||% cfg$condition_colors %||% list()
+  if (is.atomic(colors) && !is.null(names(colors))) colors <- as.list(colors)
+  if (!is.list(colors)) .log_abort("`report.condition_colors` must be a named mapping of condition IDs to hex colors.")
+  if (length(colors)) {
+    if (is.null(names(colors)) || any(!nzchar(names(colors)))) {
+      .log_abort("Every `report.condition_colors` entry must have a condition ID.")
+    }
+    values <- unlist(colors, use.names = FALSE)
+    if (any(!grepl("^#[0-9A-Fa-f]{6}$", values))) {
+      .log_abort("Every `report.condition_colors` value must be a six-digit hex color such as `#4E79A7`.")
+    }
+    colors <- stats::setNames(as.list(toupper(values)), names(colors))
+  }
+  condition_order <- unique(as.character(report$condition_order %||% character()))
+  condition_order <- condition_order[!is.na(condition_order) & nzchar(condition_order)]
+  defaults <- report$defaults %||% list()
+  if (!is.list(defaults)) .log_abort("`report.defaults` in the project config must be a mapping.")
+  list(
+    condition_colors = colors,
+    condition_order = condition_order,
+    defaults = defaults
+  )
+}
+
 .module3_resolve_topic_run_config <- function(project_config = NULL,
                                              method = NULL,
                                              k_grid = NULL,
@@ -4544,10 +4637,12 @@ run_regulatory_topics <- function(filtered_dir,
                                              count_method = NULL,
                                              count_input = NULL,
                                              topic_score_method = NULL,
+                                             topic_term_assignment_method = NULL,
                                              vae_device = NULL,
                                              vae_batch_size = NULL,
                                              pathway_backend = NULL,
-                                             pathway_species = NULL) {
+                                             pathway_species = NULL,
+                                             pathway_databases = NULL) {
   cfg <- .module3_read_project_config(project_config)
   method <- if (is.null(method)) {
     as.character(.module3_cfg_value(cfg, c("topic_method", "module3_topic_method"), "comparison_aggr_multivi"))[[1L]]
@@ -4612,6 +4707,16 @@ run_regulatory_topics <- function(filtered_dir,
     pathway_species
   }
   pathway_species <- .normalize_pathway_species_mode(pathway_species)
+  pathway_databases <- if (is.null(pathway_databases)) {
+    .module3_cfg_value(cfg, c("pathway_databases", "module3_pathway_databases"), NULL)
+  } else {
+    pathway_databases
+  }
+  if (!is.null(pathway_databases)) {
+    pathway_databases <- unique(trimws(as.character(pathway_databases)))
+    pathway_databases <- pathway_databases[!is.na(pathway_databases) & nzchar(pathway_databases)]
+    if (!length(pathway_databases)) pathway_databases <- NULL
+  }
   gammafit_scope_raw <- .module3_cfg_value(
     cfg,
     c("topic_gammafit_scope", "module3_topic_gammafit_scope", "topic_gammafit_scopes", "module3_topic_gammafit_scopes"),
@@ -4648,6 +4753,18 @@ run_regulatory_topics <- function(filtered_dir,
   }
   if (!topic_score_method %in% c("normtop_specificity", "rowmax_phi")) {
     topic_score_method <- "normtop_specificity"
+  }
+  topic_term_assignment_method <- if (is.null(topic_term_assignment_method)) {
+    as.character(.module3_cfg_value(
+      cfg,
+      c("topic_term_assignment_method", "module3_topic_term_assignment_method"),
+      "max_phi"
+    ))[[1L]]
+  } else {
+    as.character(topic_term_assignment_method)[[1L]]
+  }
+  if (!topic_term_assignment_method %in% c("max_phi", "gammafit")) {
+    topic_term_assignment_method <- "max_phi"
   }
   topic_link_method <- as.character(.module3_cfg_value(
     cfg,
@@ -4698,9 +4815,11 @@ run_regulatory_topics <- function(filtered_dir,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
     pathway_backend = pathway_backend,
+    report_state = .module3_report_state(cfg),
     extraction_args = list(
       binarize_method = "gammafit",
       topic_score_method = topic_score_method,
+      topic_term_assignment_method = topic_term_assignment_method,
       gammafit_scope = gammafit_scope,
       thrP = gammafit_thrP,
       in_topic_min_terms = gammafit_min_terms,
@@ -4709,6 +4828,7 @@ run_regulatory_topics <- function(filtered_dir,
       topic_tf_membership_cutoff = topic_tf_membership_cutoff,
       topic_tf_primary_margin_cutoff = topic_tf_primary_margin_cutoff,
       pathway_species = pathway_species,
+      pathway_databases = pathway_databases,
       theta_umap_condition_colors = .module3_topic_condition_colors(cfg),
       run_raw_theta_document_heatmap = run_raw_theta_document_heatmap
     ),
@@ -4735,9 +4855,14 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param project_config Optional project YAML path or config list. When
 #'   supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 #'   `warplda_iterations`, `topic_link_output`, `topic_score_method`,
+#'   `topic_term_assignment_method`,
 #'   `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 #'   `topic_raw_theta_document_heatmap` are used for arguments that are left as
-#'   `NULL` or as default extraction settings.
+#'   `NULL` or as default extraction settings. A nested `report` mapping can
+#'   define `condition_colors`, `condition_order`, and initial `defaults` for
+#'   generated reports without creating package or browser-persistent state.
+#'   Defaults may use exact `condition_1` and `condition_2` IDs or reusable
+#'   `condition_1_suffix` and `condition_2_suffix` selectors.
 #' @param method Single Module 3 method ID. If `NULL`, read from
 #'   `project_config` or use the package default.
 #' @param k_grid Integer topic numbers. If `NULL`, read from `project_config`
@@ -4752,6 +4877,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   from `count_method`.
 #' @param topic_score_method Topic-term score method for extraction. If `NULL`,
 #'   read from `project_config` or use `"normtop_specificity"`.
+#' @param topic_term_assignment_method Term-to-topic assignment method. If
+#'   `NULL`, read from `project_config` or use `"max_phi"`, which assigns each
+#'   Gene and Peak term to exactly one topic from raw model phi.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
@@ -4765,9 +4893,22 @@ run_regulatory_topics <- function(filtered_dir,
 #'   databases separately and reports the better row per topic and normalized
 #'   pathway name, ranked by adjusted p-value, logp, combined score, and overlap
 #'   size. If `NULL`, read from `project_config` or infer from `ref_genome`.
+#' @param pathway_databases Optional Enrichr database names. If `NULL`, read
+#'   from `project_config` or use the species-specific package defaults.
+#' @param sample_subset Optional condition/sample IDs to retain when building
+#'   topic documents. Condition-link runs read only matching manifest rows.
+#' @param analysis_label Stable label written to topic input metadata.
 #' @param extraction_topic_report_args Optional named list of topic-extraction
 #'   report argument overrides. Values here override project config values,
 #'   including TF-to-topic assignment cutoffs.
+#' @param extraction_k_workers Number of K values to extract concurrently.
+#'   Use `1` to request sequential extraction.
+#' @param extraction_k_max_workers Maximum concurrent K extraction workers.
+#' @param memory_safety Module 3 memory policy. `"strict"` fails before an
+#'   unsafe allocation, `"adaptive"` reduces concurrency where possible, and
+#'   `"off"` disables memory preflight checks.
+#' @param memory_max_fraction Maximum fraction of currently available memory
+#'   that a Module 3 stage may use. Defaults to `0.8`.
 #' @param input_source Input source type. Use `"differential_links"` for
 #'   comparison links and `"condition_links"` for condition-native links.
 #' @param ... Additional arguments passed to the internal topic-modeling
@@ -4788,14 +4929,23 @@ run_topic_modeling <- function(filtered_dir,
                                count_method = NULL,
                                count_input = NULL,
                                topic_score_method = NULL,
+                               topic_term_assignment_method = NULL,
                                vae_device = NULL,
                                vae_batch_size = NULL,
                                pathway_backend = NULL,
                                pathway_species = NULL,
+                               pathway_databases = NULL,
+                               sample_subset = NULL,
+                               analysis_label = NULL,
                                extraction_topic_report_args = list(),
+                               extraction_k_workers = NULL,
+                               extraction_k_max_workers = 4L,
+                               memory_safety = c("strict", "adaptive", "off"),
+                               memory_max_fraction = 0.8,
                                input_source = c("differential_links", "condition_links"),
                                ...) {
   input_source <- match.arg(input_source)
+  memory_safety <- match.arg(memory_safety)
   resolved <- .module3_resolve_topic_run_config(
     project_config = project_config,
     method = method,
@@ -4805,10 +4955,12 @@ run_topic_modeling <- function(filtered_dir,
     count_method = count_method,
     count_input = count_input,
     topic_score_method = topic_score_method,
+    topic_term_assignment_method = topic_term_assignment_method,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
     pathway_backend = pathway_backend,
-    pathway_species = pathway_species
+    pathway_species = pathway_species,
+    pathway_databases = pathway_databases
   )
   run_regulatory_topics(
     filtered_dir = filtered_dir,
@@ -4822,10 +4974,17 @@ run_topic_modeling <- function(filtered_dir,
     count_method = resolved$count_method,
     count_input = resolved$count_input,
     pathway_backend = resolved$pathway_backend,
+    report_state = resolved$report_state,
     extraction_topic_report_args = modifyList(resolved$extraction_args, extraction_topic_report_args),
     vae_device = resolved$vae_device,
     vae_batch_size = resolved$vae_batch_size,
     input_source = input_source,
+    sample_subset = sample_subset,
+    analysis_label = analysis_label,
+    extraction_k_workers = extraction_k_workers,
+    extraction_k_max_workers = extraction_k_max_workers,
+    memory_safety = memory_safety,
+    memory_max_fraction = memory_max_fraction,
     ...
   )
 }

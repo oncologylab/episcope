@@ -733,6 +733,14 @@
   .module2_read_predicted_chunk(path, fmt, columns = columns)
 }
 
+.qc_table_columns <- function(path) {
+  if (grepl("[.]parquet$", path, ignore.case = TRUE)) {
+    if (!requireNamespace("arrow", quietly = TRUE)) return(character())
+    return(tryCatch(arrow::open_dataset(path)$schema$names, error = function(e) character()))
+  }
+  tryCatch(names(data.table::fread(path, nrows = 0L, showProgress = FALSE)), error = function(e) character())
+}
+
 .qc_read_manifest_chunks <- function(manifest_path) {
   if (is.null(manifest_path) || !file.exists(manifest_path)) return(tibble::tibble())
   tibble::as_tibble(readr::read_csv(manifest_path, show_col_types = FALSE))
@@ -1422,11 +1430,11 @@
   paths <- paths[!is.na(paths) & nzchar(paths) & file.exists(paths)]
   for (path in paths) {
     is_id_map <- grepl("fp_id_map_", basename(path), fixed = TRUE)
+    available <- .qc_table_columns(path)
     columns <- if (is_id_map) {
-      available <- tryCatch(names(data.table::fread(path, nrows = 0L, showProgress = FALSE)), error = function(e) character())
       intersect(c("source_fp_peak", "fp_peak_bak"), available)
     } else {
-      c("source_fp_peaks", "n_source_fp_peaks")
+      intersect(c("source_fp_peaks", "source_fp_peak", "n_source_fp_peaks"), available)
     }
     if (!length(columns)) next
     table <- tryCatch(.qc_read_table_file(path, columns = columns), error = function(e) tibble::tibble())
@@ -2625,7 +2633,18 @@ build_module1_qc_report <- function(module1,
   if (!is.finite(raw_fp_known)) {
     raw_recovery <- .module1_qc_raw_footprint_recovery(omics_data, module1_dir = module1_dir, project_config = project_config)
     if (is.finite(raw_recovery$count)) {
-      qc_summary <- dplyr::bind_rows(qc_summary, tibble::tibble(metric = "n_raw_footprints", value = raw_recovery$count))
+      metric_i <- match("n_raw_footprints", qc_summary$metric)
+      if (is.na(metric_i)) {
+        qc_summary <- dplyr::bind_rows(
+          qc_summary,
+          tibble::tibble(metric = "n_raw_footprints", value = raw_recovery$count)
+        )
+      } else {
+        qc_summary$value[[metric_i]] <- raw_recovery$count
+      }
+      if (!is.null(module1_dir)) {
+        readr::write_csv(qc_summary, file.path(module1_dir, "module1_qc_summary.csv"))
+      }
       raw_fp_known <- raw_recovery$count
     }
   }

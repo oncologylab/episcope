@@ -10,7 +10,8 @@ validate_config(
     "threshold_fp_gene_corr_r"),
   numeric_required = c("threshold_expr", "threshold_fp_score", "threshold_fp_tf_corr_r",
     "link_window_bp", "threshold_rna_gene_corr_r", "threshold_fp_gene_corr_r"),
-  env = .craftgrn_state
+  env = .craftgrn_state,
+  project_config = NULL
 )
 }
 \arguments{
@@ -19,6 +20,9 @@ validate_config(
 \item{numeric_required}{Character vector of required numeric variable names.}
 
 \item{env}{Environment to check. Defaults to the internal CraftGRN config state.}
+
+\item{project_config}{Optional parsed project config or YAML path to validate
+against the package project schema. Unknown or malformed entries fail.}
 }
 \value{
 \code{TRUE} invisibly when validation passes.

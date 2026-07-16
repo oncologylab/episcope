@@ -3,6 +3,42 @@ test_that("public Module 3 topic-model defaults use native WarpLDA", {
   expect_identical(eval(formals(extract_regulatory_topics)$backend)[[1L]], "warplda")
 })
 
+test_that("Module 3 strict memory preflight enforces the available-memory fraction", {
+  ok <- .module3_memory_preflight(
+    estimated_bytes = 80,
+    stage = "unit test",
+    available_bytes = 100,
+    memory_safety = "strict",
+    memory_max_fraction = 0.8,
+    verbose = FALSE
+  )
+  expect_true(ok$allowed)
+  expect_equal(ok$budget_bytes, 80)
+  expect_error(
+    .module3_memory_preflight(81, "unit test", "strict", 0.8, 100, FALSE),
+    "refused an unsafe allocation"
+  )
+  expect_error(
+    .module3_memory_preflight(1, "unit test", "strict", 0.8, NA_real_, FALSE),
+    "could not measure available RAM"
+  )
+  expect_warning(
+    adaptive <- .module3_memory_preflight(1, "unit test", "adaptive", 0.8, NA_real_, FALSE),
+    "continuing in adaptive mode"
+  )
+  expect_true(adaptive$allowed)
+  expect_error(.module3_memory_policy("strict", 0.95), "between 0.1 and 0.9")
+})
+
+test_that("WarpLDA token counts are deterministically capped below the native limit", {
+  capped <- .cap_warplda_token_counts(c(1e9, 1e9, 1e9), max_tokens = 1.9e9)
+  expect_equal(capped$raw_tokens, 3e9)
+  expect_lte(capped$tokens, 1.9e9)
+  expect_lt(capped$scale_factor, 1)
+  expect_true(all(capped$counts >= 1L))
+  expect_equal(.cap_warplda_token_counts(c(1, 2, 3), max_tokens = 10)$counts, 1:3)
+})
+
 test_that("WarpLDA training honors explicit topic count input", {
   root <- withr::local_tempdir()
   filtered_dir <- file.path(root, "filtered")
@@ -479,6 +515,123 @@ test_that("module3_construct_docs accepts condition-link inputs", {
   expect_setequal(unique(sub("::.*$", "", doc_term$doc_id)), c("CondA", "CondB"))
 })
 
+test_that("condition topic input cache invalidates when sample subset changes", {
+  root <- withr::local_tempdir()
+  input_dir <- file.path(root, "condition_links")
+  docs_dir <- file.path(root, "topic_documents")
+  dir.create(input_dir, recursive = TRUE)
+  links <- data.table::data.table(
+    condition_id = rep(c("CondA", "CondB"), each = 2),
+    condition_label = rep(c("CondA", "CondB"), each = 2),
+    doc_id = c("CondA::TF1", "CondA::TF2", "CondB::TF1", "CondB::TF2"),
+    tf_doc = c("TF1", "TF2", "TF1", "TF2"),
+    tf = c("TF1", "TF2", "TF1", "TF2"),
+    gene_key = c("G1", "G2", "G1", "G2"),
+    peak_id = c("P1", "P2", "P1", "P2"),
+    fp_score_condition = 5,
+    gene_expr_condition = 20,
+    tf_expr_condition = 30
+  )
+  link_path <- file.path(input_dir, "condition_links.csv")
+  data.table::fwrite(links, link_path)
+  data.table::fwrite(
+    data.table::data.table(
+      condition_id = c("CondA", "CondB"),
+      path = link_path,
+      format = "csv",
+      n_links = c(2L, 2L)
+    ),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+  first <- module3_construct_docs(
+    filtered_dir = input_dir,
+    output_dir = docs_dir,
+    input_source = "condition_links",
+    doc_mode = "tf",
+    doc_design = "condition",
+    fp_term_mode = "unique",
+    sample_subset = "CondA",
+    min_df = 1,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_false(first$reused)
+  second <- module3_construct_docs(
+    filtered_dir = input_dir,
+    output_dir = docs_dir,
+    input_source = "condition_links",
+    doc_mode = "tf",
+    doc_design = "condition",
+    fp_term_mode = "unique",
+    sample_subset = "CondB",
+    min_df = 1,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_false(second$reused)
+  doc_term <- readRDS(file.path(docs_dir, "rds", "doc_term.rds"))
+  expect_setequal(unique(sub("::.*$", "", doc_term$doc_id)), "CondB")
+  expect_true(nzchar(second$summary$input_signature[[1L]]))
+})
+
+test_that("condition WarpLDA model reuse invalidates when sample subset changes", {
+  root <- withr::local_tempdir()
+  input_dir <- file.path(root, "condition_links")
+  model_dir <- file.path(root, "models")
+  dir.create(input_dir, recursive = TRUE)
+  links <- data.table::data.table(
+    condition_id = rep(c("CondA", "CondB"), each = 4),
+    condition_label = rep(c("CondA", "CondB"), each = 4),
+    doc_id = paste0(rep(c("CondA", "CondB"), each = 4), "::", rep(c("TF1", "TF2"), each = 2, times = 2)),
+    tf_doc = rep(c("TF1", "TF2"), each = 2, times = 2),
+    tf = rep(c("TF1", "TF2"), each = 2, times = 2),
+    gene_key = paste0("G", rep(1:4, times = 2)),
+    peak_id = paste0("P", rep(1:4, times = 2)),
+    fp_score_condition = 5,
+    gene_expr_condition = 20,
+    tf_expr_condition = 30
+  )
+  link_path <- file.path(input_dir, "condition_links.csv")
+  data.table::fwrite(links, link_path)
+  data.table::fwrite(
+    data.table::data.table(
+      condition_id = c("CondA", "CondB"),
+      path = link_path,
+      format = "csv",
+      n_links = c(4L, 4L)
+    ),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+  run_one <- function(subset) train_topic_models(
+    Kgrid = 2L,
+    input_dir = input_dir,
+    output_dir = model_dir,
+    input_source = "condition_links",
+    sample_subset = subset,
+    analysis_label = "subset_reuse",
+    doc_mode = "tf",
+    doc_design = "condition",
+    fp_term_mode = "unique",
+    gene_term_mode = "unique",
+    min_df = 1,
+    count_method = "bin",
+    backend = "warplda",
+    warplda_iterations = 1L,
+    local_threads = 1L,
+    reuse_if_exists = TRUE,
+    flat_output = TRUE
+  )
+  run_one("CondA")
+  signature_a <- data.table::fread(file.path(model_dir, "model_metrics.csv"))$input_signature[[1L]]
+  expect_warning(run_one("CondB"), "cleared topic model artifacts")
+  metrics_b <- data.table::fread(file.path(model_dir, "model_metrics.csv"))
+  summary_b <- data.table::fread(file.path(model_dir, "topic_input_summary.csv"))
+  expect_false(identical(signature_a, metrics_b$input_signature[[1L]]))
+  expect_identical(metrics_b$input_signature[[1L]], summary_b$input_signature[[1L]])
+  theta_b <- data.table::fread(file.path(model_dir, "vae_models", "theta_K2.csv"))
+  expect_true(all(grepl("^CondB::", theta_b[[1L]])))
+})
+
 test_that("WarpLDA one-option runner exposes pathway dotplot control", {
   fmls <- names(formals(run_tfdocs_warplda_one_option))
   expect_true("pathway_make_heatmap" %in% fmls)
@@ -904,6 +1057,59 @@ test_that("topic score methods expose specificity and legacy rowmax scores", {
   expect_lt(specificity["Topic2", "GENE:Common"], rowmax["Topic2", "GENE:Common"])
 })
 
+test_that("max-phi assignment gives every Gene and Peak exactly one raw-phi topic", {
+  raw_phi <- matrix(
+    c(
+      0.60, 0.10, 0.45, 0.20,
+      0.40, 0.70, 0.35, 0.20
+    ),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(
+      c("Topic1", "Topic2"),
+      c("GENE:G1", "GENE:G2", "PEAK:P1", "OTHER:X")
+    )
+  )
+  score_mat <- matrix(
+    c(
+      0.10, 0.95, 0.20, 0.80,
+      0.90, 0.05, 0.85, 0.10
+    ),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = dimnames(raw_phi)
+  )
+  candidates <- binarize_topics(score_mat, method = "topn", top_n_terms = 2L)
+
+  assigned <- .assign_topic_terms(
+    raw_phi = raw_phi,
+    score_mat = score_mat,
+    candidate_terms = candidates,
+    method = "max_phi"
+  )
+  passing <- assigned[in_topic == TRUE]
+  gene_peak <- passing[term_group %in% c("GENE", "PEAK")]
+
+  expect_equal(gene_peak[, .N, by = term_id]$N, rep(1L, 3L))
+  expect_equal(gene_peak[term_id == "GENE:G1", topic_num], 1L)
+  expect_equal(gene_peak[term_id == "GENE:G2", topic_num], 2L)
+  expect_equal(gene_peak[term_id == "PEAK:P1", topic_num], 1L)
+  expect_true(all(gene_peak$assignment_method == "max_phi"))
+  expect_equal(
+    assigned[term_id == "OTHER:X", in_topic],
+    candidates[candidates$term_id == "OTHER:X", "in_topic"]
+  )
+  expect_true(all(assigned[term_id == "OTHER:X", assignment_method] == "gammafit"))
+
+  legacy <- .assign_topic_terms(
+    raw_phi = raw_phi,
+    score_mat = score_mat,
+    candidate_terms = candidates,
+    method = "gammafit"
+  )
+  expect_equal(legacy$in_topic, candidates$in_topic)
+})
+
 test_that("gammafit diagnostics report score method and minimum term forcing", {
   score_mat <- matrix(
     c(
@@ -1142,6 +1348,32 @@ test_that("term coverage summary lines report model and term-group percentages",
       "PEAK terms: 2 / 2 = 100.00%"
     )
   )
+})
+
+test_that("GammaFit summary owns and closes its PDF device", {
+  score_mat <- matrix(
+    c(0.9, 0.2, 0.8, 0.1, 0.1, 0.8, 0.2, 0.9),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(
+      c("Topic1", "Topic2"),
+      c("GENE:A", "GENE:B", "PEAK:P1", "PEAK:P2")
+    )
+  )
+  out_file <- tempfile(fileext = ".pdf")
+  device_before <- grDevices::dev.cur()
+
+  craftgrn:::plot_gammafit_binarize(
+    score_mat = score_mat,
+    out_file = out_file,
+    thrP = 0.7,
+    min_terms = 1L,
+    show_gammafit_pages = FALSE
+  )
+
+  expect_true(file.exists(out_file))
+  expect_gt(file.info(out_file)$size, 0)
+  expect_identical(grDevices::dev.cur(), device_before)
 })
 
 test_that("assignment coverage summary table includes term groups and item coverage", {
@@ -2094,7 +2326,10 @@ test_that("topic-term assignment writer keeps dense term-topic assignment output
   expect_identical(res, out_csv)
   expect_true(file.exists(out_csv))
   assignment <- data.table::fread(out_csv)
-  expect_true(all(c("term_id", "term_group", "primary_topic", "in_any_topic", "max_score") %in% names(assignment)))
+  expect_true(all(c(
+    "term_id", "term_group", "primary_topic", "primary_phi",
+    "assignment_method", "in_any_topic", "max_score"
+  ) %in% names(assignment)))
   expect_equal(assignment[term_id == "GENE:G1", primary_topic], "Topic1")
   expect_equal(assignment[term_id == "GENE:G2", primary_topic], "Topic2")
 })
@@ -2172,6 +2407,7 @@ test_that("topic extraction standard output skips raw theta documents", {
   topic_base <- list(theta = theta, phi = phi)
 
   out_enabled <- withr::local_tempdir()
+  device_before <- grDevices::dev.cur()
   run_tfdocs_report_from_topic_base(
     topic_base = topic_base,
     dtm = dtm,
@@ -2180,13 +2416,23 @@ test_that("topic extraction standard output skips raw theta documents", {
     doc_design = "condition",
     in_topic_min_terms = 1L,
     top_n_terms = 3L,
-    extraction_steps = c("tf_topic_assignment", "topic_term_heatmap"),
+    extraction_steps = c("tf_topic_assignment", "topic_term_heatmap", "topic_by_comparison"),
     title_prefix = "condition aggr LDA"
   )
   expect_false(file.exists(file.path(out_enabled, "raw_theta_documents_K3.pdf")))
   expect_false(file.exists(file.path(out_enabled, "topic_term_score_heatmap_K3.pdf")))
   expect_true(file.exists(file.path(out_enabled, "topic_term_phi_score_heatmap_K3.pdf")))
+  expect_true(file.exists(file.path(out_enabled, "All_topic_by_comparison.pdf")))
+  expect_identical(grDevices::dev.cur(), device_before)
   expect_true(file.exists(file.path(out_enabled, "topic_term_primary_assignment.csv")))
+  expect_equal(readLines(file.path(out_enabled, "topic_term_assignment_method.txt")), "max_phi")
+  extracted_terms <- data.table::fread(file.path(out_enabled, "topic_terms.csv"))
+  extracted_gene_peak <- extracted_terms[term_group %in% c("GENE", "PEAK")]
+  expect_true(all(extracted_gene_peak[, sum(in_topic), by = term_id]$V1 == 1L))
+  expect_true(all(extracted_gene_peak[in_topic == TRUE, assignment_method] == "max_phi"))
+  compact_assignment <- data.table::fread(file.path(out_enabled, "topic_term_primary_assignment.csv"))
+  expect_true(all(compact_assignment$assignment_method == "max_phi"))
+  expect_true(all(is.finite(compact_assignment$primary_phi)))
   expect_false(dir.exists(file.path(out_enabled, "tf_topic_assignment")))
   expect_false(dir.exists(file.path(out_enabled, "topic_term_assignment")))
   expect_false(dir.exists(file.path(out_enabled, "doc_topic_heatmaps")))
@@ -2416,4 +2662,107 @@ test_that("parallel topic link scoring matches serial scoring", {
   data.table::setorderv(serial, key_cols)
   data.table::setorderv(parallel, key_cols)
   expect_equal(parallel, serial, ignore_attr = TRUE)
+})
+test_that("pairwise condition gene log2FC uses the requested condition order", {
+  expression <- matrix(
+    c(9, 1, 0, 3, 1, 7),
+    nrow = 3,
+    dimnames = list(c("GeneA", "GeneB", "GeneC"), c("ConditionA", "ConditionB"))
+  )
+  observed <- .module3_condition_gene_log2fc(
+    expression,
+    conditions = c("ConditionA", "ConditionB"),
+    pseudocount = 1
+  )
+  expect_equal(observed$gene_key, c("GeneA", "GeneB", "GeneC"))
+  expect_equal(observed$log2fc_condition_1_vs_2, c(log2(10 / 4), 0, log2(1 / 8)))
+})
+
+test_that("condition comparison-union filtering is condition specific", {
+  expression <- matrix(
+    c(
+      3, 3, 1, 1,
+      1, 3, 3, 1,
+      3, 1, 1, 1
+    ),
+    nrow = 4,
+    dimnames = list(
+      c("GeneAB", "GeneAC", "GeneB", "GeneNone"),
+      c("ConditionA", "ConditionB", "ConditionC")
+    )
+  )
+  comparisons <- data.table::data.table(
+    comparison_id = c("A_vs_B", "A_vs_C", "B_vs_A_duplicate"),
+    condition1_id = c("ConditionA", "ConditionA", "ConditionB"),
+    condition2_id = c("ConditionB", "ConditionC", "ConditionA")
+  )
+  input_dir <- file.path(tempdir(), paste0("condition_union_input_", sample.int(1e7, 1L)))
+  output_dir <- file.path(tempdir(), paste0("condition_union_output_", sample.int(1e7, 1L)))
+  dir.create(input_dir, recursive = TRUE)
+  source_rows <- lapply(colnames(expression), function(condition) {
+    links <- data.table::data.table(
+      condition_id = condition,
+      tf = "TF1",
+      gene_key = rownames(expression),
+      peak_id = paste0("Peak", seq_len(nrow(expression)))
+    )
+    path <- file.path(input_dir, paste0(condition, "_condition_links.csv"))
+    data.table::fwrite(links, path)
+    data.table::data.table(
+      condition_id = condition,
+      path = normalizePath(path, winslash = "/", mustWork = TRUE),
+      format = "csv"
+    )
+  })
+  data.table::fwrite(
+    data.table::rbindlist(source_rows),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+
+  observed <- .module3_filter_condition_links_by_comparison_union(
+    input_dir = input_dir,
+    output_dir = output_dir,
+    gene_expression = expression,
+    comparisons = comparisons,
+    conditions = colnames(expression),
+    abs_log2fc_min = 1,
+    pseudocount = 1,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+
+  expect_equal(nrow(unique(observed$comparison_genes[, .(comparison_id)])), 2L)
+  expect_setequal(
+    observed$condition_gene_union[condition_id == "ConditionA", gene_key],
+    c("GeneAB", "GeneAC", "GeneB")
+  )
+  expect_setequal(
+    observed$condition_gene_union[condition_id == "ConditionB", gene_key],
+    c("GeneAB", "GeneB")
+  )
+  expect_setequal(
+    observed$condition_gene_union[condition_id == "ConditionC", gene_key],
+    "GeneAC"
+  )
+  condition_c <- data.table::fread(
+    observed$manifest[condition_id == "ConditionC", path],
+    showProgress = FALSE
+  )
+  expect_setequal(condition_c$gene_key, "GeneAC")
+  expect_true(all(observed$manifest$filter == "target_gene_comparison_union_abs_log2fc"))
+  expect_true(all(observed$manifest$filter_scope == "condition"))
+  expect_true(file.exists(file.path(output_dir, "condition_comparison_gene_filter_summary.csv")))
+})
+
+test_that("condition document-term QC separates gene and peak terms", {
+  doc_term <- data.table::data.table(
+    doc_id = c("A::TF1", "A::TF1", "A::TF2", "B::TF1", "B::TF1"),
+    term_id = c("GENE:G1", "PEAK:G1", "GENE:G2", "GENE:G1", "PEAK:G1"),
+    pseudo_count_log = c(2, 3, 4, 5, 6)
+  )
+  observed <- .module3_document_term_qc_summary(doc_term, "pseudo_count_log")
+  expect_setequal(observed$condition_id, c("A", "B"))
+  expect_setequal(observed$term_type, c("Gene", "Peak"))
+  expect_equal(observed[doc_id == "A::TF1" & term_type == "Gene", n_terms], 1)
+  expect_equal(observed[doc_id == "A::TF1" & term_type == "Peak", term_mass], 3)
 })

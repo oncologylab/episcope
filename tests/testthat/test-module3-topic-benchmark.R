@@ -5,6 +5,20 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
 
   root <- tempfile("module3-topic-benchmark-")
   dir.create(root, recursive = TRUE)
+  stale_review <- file.path(root, "review")
+  dir.create(file.path(stale_review, "topic_reports"), recursive = TRUE)
+  dir.create(
+    file.path(stale_review, "condition_topic_reports", "pages", "assets"),
+    recursive = TRUE
+  )
+  writeLines("stale", file.path(stale_review, "theta_phi_and_group_mds.html"))
+  writeLines("stale", file.path(stale_review, "topic_method_k_topic_mds_report.html"))
+  writeLines("stale", file.path(stale_review, "tf_std_six_setups_pass_state_counts.pdf"))
+  writeLines("stale", file.path(stale_review, "topic_reports", "stale.html"))
+  writeLines(
+    "stale",
+    file.path(stale_review, "condition_topic_reports", "pages", "assets", "stale.svg")
+  )
 
   plan <- .module3_topic_method_plan(
     methods = "condition_aggr_weight_lda",
@@ -148,10 +162,11 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_true(file.exists(file.path(csv_dir, "topic_setup_link_assignment_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "topic_setup_shared_topic_counts.csv")))
   expect_true(file.exists(file.path(csv_dir, "theta_group_mds_points.csv")))
-  expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_pass_state_counts.pdf")))
-  expect_true(file.exists(file.path(root, "review", "tf_std_six_setups_shared_topic_counts.pdf")))
-  expect_true(file.exists(file.path(html_dir, "theta_phi_and_group_mds.html")))
-  expect_true(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report.html")))
+  expect_false(file.exists(file.path(root, "review", "tf_std_six_setups_pass_state_counts.pdf")))
+  expect_false(file.exists(file.path(root, "review", "tf_std_six_setups_shared_topic_counts.pdf")))
+  expect_false(file.exists(file.path(html_dir, "theta_phi_and_group_mds.html")))
+  expect_false(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report.html")))
+  expect_false(dir.exists(file.path(html_dir, "condition_topic_reports", "pages", "assets")))
   expect_true(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report.html")))
   expect_false(file.exists(file.path(html_dir, "topic_method_k_topic_mds_report_global_term_group.html")))
   expect_false(file.exists(file.path(html_dir, "topic_method_k_condition_mds_report_global_term_group.html")))
@@ -183,37 +198,24 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_equal(unique(link_counts$count_basis), "Standard TF-FP-gene links")
   expect_true("Pathways" %in% shared_counts$unit)
 
-  topic_html <- paste(readLines(file.path(html_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
   condition_html <- paste(readLines(file.path(html_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
-  theta_html <- paste(readLines(file.path(html_dir, "theta_phi_and_group_mds.html"), warn = FALSE), collapse = "\n")
-  expect_match(topic_html, "Topic Method/K Reports", fixed = TRUE)
-  expect_match(topic_html, "Method <select", fixed = TRUE)
-  expect_match(topic_html, "K <select", fixed = TRUE)
-  expect_match(topic_html, "topic_reports/", fixed = TRUE)
-  expect_match(topic_html, "embedSrc(hit.src)", fixed = TRUE)
-  expect_match(topic_html, "embed=1", fixed = TRUE)
-  expect_no_match(topic_html, "srcdoc", fixed = TRUE)
-  expect_match(condition_html, "Topic Method/K Condition Reports", fixed = TRUE)
+  expect_match(condition_html, "Condition 1 <select", fixed = TRUE)
+  expect_match(condition_html, "Condition 2 <select", fixed = TRUE)
+  expect_match(condition_html, "Pathway <select", fixed = TRUE)
+  expect_no_match(condition_html, "Report <select", fixed = TRUE)
   expect_match(condition_html, "Method <select", fixed = TRUE)
   expect_match(condition_html, "K <select", fixed = TRUE)
   expect_match(condition_html, "condition_topic_reports/", fixed = TRUE)
-  expect_match(condition_html, "embedSrc(hit.src)", fixed = TRUE)
+  expect_match(condition_html, "frame.src=embed(hit.src)", fixed = TRUE)
   expect_match(condition_html, "embed=1", fixed = TRUE)
+  expect_match(condition_html, 'id="cond1Color"', fixed = TRUE)
+  expect_match(condition_html, 'id="cond2Color"', fixed = TRUE)
+  expect_no_match(condition_html, "Current selection", fixed = TRUE)
   expect_no_match(condition_html, "srcdoc", fixed = TRUE)
 
-  topic_report_files <- list.files(
-    file.path(html_dir, "topic_reports"),
-    pattern = "_topic_report[.]html$",
-    full.names = TRUE
-  )
   condition_report_files <- list.files(
     file.path(html_dir, "condition_topic_reports"),
     pattern = "_condition_topic_report[.]html$",
-    full.names = TRUE
-  )
-  topic_page_files <- list.files(
-    file.path(html_dir, "topic_reports", "pages"),
-    pattern = "_topic_report[.]html$",
     full.names = TRUE
   )
   condition_page_files <- list.files(
@@ -221,52 +223,17 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     pattern = "_condition_topic_report[.]html$",
     full.names = TRUE
   )
-  expect_true(length(topic_report_files) >= 1L)
+  expect_false(dir.exists(file.path(html_dir, "topic_reports")))
   expect_true(length(condition_report_files) >= 1L)
-  expect_true(length(topic_page_files) >= 1L)
   expect_true(length(condition_page_files) >= 1L)
-  topic_wrapper_html <- paste(readLines(topic_report_files[[1L]], warn = FALSE), collapse = "\n")
   condition_wrapper_html <- paste(readLines(condition_report_files[[1L]], warn = FALSE), collapse = "\n")
-  expect_match(topic_wrapper_html, "K <select", fixed = TRUE)
-  expect_match(topic_wrapper_html, "pages/", fixed = TRUE)
   expect_match(condition_wrapper_html, "K <select", fixed = TRUE)
   expect_match(condition_wrapper_html, "pages/", fixed = TRUE)
-  topic_detail_html <- paste(readLines(topic_page_files[[1L]], warn = FALSE), collapse = "\n")
   condition_detail_html <- paste(readLines(condition_page_files[[1L]], warn = FALSE), collapse = "\n")
-  expect_match(topic_detail_html, "Intertopic Distance Map", fixed = TRUE)
-  expect_match(topic_detail_html, "Topic Bar Plots", fixed = TRUE)
-  expect_match(topic_detail_html, "id=\"tfSelect\"", fixed = TRUE)
-  expect_match(topic_detail_html, "Pathways", fixed = TRUE)
-  expect_match(topic_detail_html, "Export SVG", fixed = TRUE)
-  expect_match(topic_detail_html, "image/svg+xml", fixed = TRUE)
-  expect_match(topic_detail_html, "XMLSerializer", fixed = TRUE)
-  expect_match(topic_detail_html, "exportSvg", fixed = TRUE)
-  expect_no_match(topic_detail_html, "document.documentElement.outerHTML", fixed = TRUE)
-  expect_no_match(topic_detail_html, "type:'text/html'", fixed = TRUE)
-  expect_match(topic_detail_html, "Genes in full document gene-universe enrichment", fixed = TRUE)
-  expect_match(topic_detail_html, "topic genes", fixed = TRUE)
-  expect_match(topic_detail_html, "universe remainder", fixed = TRUE)
-  expect_match(topic_detail_html, "gene_total_universe", fixed = TRUE)
-  expect_match(topic_detail_html, "mdsLeader", fixed = TRUE)
-  expect_match(topic_detail_html, "paletteSelect", fixed = TRUE)
-  expect_match(topic_detail_html, "mdsLayer", fixed = TRUE)
-  expect_match(topic_detail_html, "waterfallLayer", fixed = TRUE)
-  expect_match(topic_detail_html, "TF_TOPIC", fixed = TRUE)
-  expect_match(topic_detail_html, "tfWaterfallSvg", fixed = TRUE)
-  expect_match(topic_detail_html, "selectedTfUpper", fixed = TRUE)
-  expect_match(topic_detail_html, "TF targets", fixed = TRUE)
-  expect_match(topic_detail_html, "pathLayer", fixed = TRUE)
-  expect_match(topic_detail_html, "mdsTooltip", fixed = TRUE)
-  expect_match(topic_detail_html, "body.embed .top", fixed = TRUE)
-  expect_match(topic_detail_html, "wfTooltip", fixed = TRUE)
-  expect_match(topic_detail_html, "pathTooltip", fixed = TRUE)
-  expect_match(topic_detail_html, "mdsStats", fixed = TRUE)
-  expect_match(topic_detail_html, "waterfallStats", fixed = TRUE)
-  expect_match(topic_detail_html, "pathStats", fixed = TRUE)
-  expect_match(topic_detail_html, "Mean document-to-topic probability", fixed = TRUE)
-  expect_match(topic_detail_html, "marker", fixed = TRUE)
   expect_match(condition_detail_html, "Condition/Comparison MDS", fixed = TRUE)
   expect_match(condition_detail_html, "Topic Bar Plots", fixed = TRUE)
+  expect_match(condition_detail_html, "craftgrn-module3-report-schema\" content=\"2", fixed = TRUE)
+  expect_no_match(condition_detail_html, "Topic Waterfall", fixed = TRUE)
   expect_match(condition_detail_html, "id=\"tfSelect\"", fixed = TRUE)
   expect_match(condition_detail_html, "image/svg+xml", fixed = TRUE)
   expect_match(condition_detail_html, "XMLSerializer", fixed = TRUE)
@@ -296,7 +263,6 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
   expect_match(condition_detail_html, "selectedTfUpper", fixed = TRUE)
   expect_match(condition_detail_html, "TF targets", fixed = TRUE)
   expect_match(condition_detail_html, "waterfallStats", fixed = TRUE)
-  expect_match(theta_html, "theta_group_mds_k2.png", fixed = TRUE)
 
   mds_points <- data.table::fread(file.path(csv_dir, "theta_group_mds_points.csv"))
   expect_true("panel_label" %in% names(mds_points))
@@ -307,7 +273,7 @@ test_that("Module 3 topic benchmark scores existing models and writes review rep
     pattern = "[.]svg$",
     full.names = TRUE
   )
-  expect_true(length(condition_svg) >= 1L)
+  expect_length(condition_svg, 0L)
 
   score_mat <- data.table::fread(file.path(csv_dir, "theta_condition_separation_score_heatmap_values_matrix.csv"))
   expect_equal(score_mat$method_setup, "cond fp aggr weight | LDA")
@@ -782,6 +748,16 @@ test_that("pathway sub-GRN chunks use compressed columnar browser payloads", {
   js <- craftgrn:::.m3tb_subgrn_js()
   expect_true(any(grepl("subgrnDecodePayload", js, fixed = TRUE)))
   expect_true(any(grepl("compressed_columnar", js, fixed = TRUE)))
+  expect_true(any(grepl(
+    "pathKey=x=>String(x||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')",
+    js,
+    fixed = TRUE
+  )))
+  expect_true(any(grepl(
+    "pathKey(m.pathway_key||m.pathway||'')===pk",
+    js,
+    fixed = TRUE
+  )))
 })
 
 test_that("Module 3 theta separation score does not mark singleton groups as perfect", {
@@ -1420,7 +1396,7 @@ test_that("Module 3 standard layout finds root topic-link files", {
   expect_equal(craftgrn:::.m3tb_find_topic_links(root, row[1]), topic_links)
 })
 
-test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
+test_that("Module 3 review HTML keeps condition reports in method subfolders", {
   root <- tempfile("module3-topic-review-subfolders-")
   dir.create(root, recursive = TRUE)
   plan <- .m3tb_apply_output_layout(
@@ -1467,29 +1443,300 @@ test_that("Module 3 review HTML keeps method-specific reports in subfolders", {
   )
 
   review_dir <- res$review_dir
-  expect_true(file.exists(file.path(review_dir, "topic_method_k_topic_mds_report.html")))
+  expect_false(file.exists(file.path(review_dir, "topic_method_k_topic_mds_report.html")))
   expect_true(file.exists(file.path(review_dir, "topic_method_k_condition_mds_report.html")))
   expect_false(file.exists(file.path(review_dir, "topic_report_K2.html")))
   expect_false(file.exists(file.path(review_dir, "condition_topic_report_K2.html")))
 
-  topic_reports <- list.files(file.path(review_dir, "topic_reports"), pattern = "_topic_report[.]html$", full.names = TRUE)
   condition_reports <- list.files(file.path(review_dir, "condition_topic_reports"), pattern = "_condition_topic_report[.]html$", full.names = TRUE)
-  expect_equal(length(topic_reports), 2L)
+  expect_false(dir.exists(file.path(review_dir, "topic_reports")))
   expect_equal(length(condition_reports), 2L)
-  expect_equal(length(unique(basename(topic_reports))), 2L)
   expect_equal(length(unique(basename(condition_reports))), 2L)
 
-  topic_index <- paste(readLines(file.path(review_dir, "topic_method_k_topic_mds_report.html"), warn = FALSE), collapse = "\n")
   condition_index <- paste(readLines(file.path(review_dir, "topic_method_k_condition_mds_report.html"), warn = FALSE), collapse = "\n")
-  expect_match(topic_index, "topic_reports/", fixed = TRUE)
   expect_match(condition_index, "condition_topic_reports/", fixed = TRUE)
-  expect_match(topic_index, "Method <select", fixed = TRUE)
   expect_match(condition_index, "Method <select", fixed = TRUE)
-  expect_match(topic_index, "K <select", fixed = TRUE)
   expect_match(condition_index, "K <select", fixed = TRUE)
 })
 
-test_that("Module 3 review HTML groups multiple K values inside one method report", {
+test_that("Module 3 review validation rejects outdated HTML", {
+  current <- tempfile(fileext = ".html")
+  writeLines(c(
+    '<meta name="craftgrn-module3-report-schema" content="2"/>',
+    '<h2>Topic Bar Plots</h2>',
+    '<input id="tfSearchInput"/>',
+    '<select id="tfSelect" multiple size="3"></select>',
+    '<script>const SUBGRN_MANIFEST=[];</script>'
+  ), current)
+  expect_true(craftgrn:::.m3tb_validate_current_report_html(current))
+
+  stale <- tempfile(fileext = ".html")
+  writeLines("<h2>Topic Waterfall</h2>", stale)
+  expect_error(
+    craftgrn:::.m3tb_validate_current_report_html(stale),
+    "does not match the current schema",
+    fixed = TRUE
+  )
+})
+
+test_that("Module 3 condition-pair report uses schema 6 polished paired panels", {
+  out_file <- tempfile(fileext = ".html")
+  craftgrn:::.m3tb_condition_report_html(
+    title = "Condition pair",
+    group_mds = data.table::data.table(
+      comparison_label = c("A", "B"),
+      display_label = c("A", "B"),
+      MDS1 = c(-1, 1),
+      MDS2 = c(0, 0),
+      n_docs = 2L
+    ),
+    group_topic = data.table::data.table(
+      comparison_label = rep(c("A", "B"), each = 2L),
+      topic = rep(c("Topic1", "Topic2"), 2L),
+      topic_num = rep(1:2, 2L),
+      theta_mean = c(0.8, 0.2, 0.3, 0.7)
+    ),
+    tf_topic = data.table::data.table(
+      comparison_label = rep(c("A", "B"), each = 2L),
+      tf = "Batf",
+      tf_upper = "BATF",
+      topic_num = rep(1:2, 2L),
+      theta = c(0.8, 0.2, 0.3, 0.7)
+    ),
+    pathways = data.table::data.table(
+      comparison_label = c("A", "B"),
+      topic_num = 1L,
+      pathway = "Path A",
+      pathway_key = "path:a",
+      padj = c(0.01, 0.02),
+      combined_score = c(12, 4),
+      gene_in = c(3L, 2L),
+      overlap_genes = c("G1;G2;G3", "G1;G2")
+    ),
+    out_html = out_file,
+    condition_payload = list(
+      payload_file = "pair.js",
+      payload_base = "../../assets/condition_pair_payloads",
+      conditions = c("A", "B"),
+      n_tf_gene = 2L,
+      n_tf_peak_gene = 2L
+    ),
+    report_state = list(
+      condition_colors = list(A = "#E15759", B = "#4E79A7"),
+      condition_order = c("B", "A"),
+      defaults = list(condition_1 = "B", condition_2 = "A", topic = 2L)
+    )
+  )
+  html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
+  expect_match(html, 'craftgrn-module3-report-schema" content="6', fixed = TRUE)
+  expect_match(html, "Condition Probability", fixed = TRUE)
+  expect_match(html, "TF/Condition Probability", fixed = TRUE)
+  expect_match(html, "id=\"tfButterflySvg\"", fixed = TRUE)
+  expect_match(html, "P(topic | condition::TF)", fixed = TRUE)
+  expect_match(html, "TF Activity", fixed = TRUE)
+  expect_match(html, 'id="shortConditionNames" type="checkbox" checked', fixed = TRUE)
+  expect_match(html, "mdsShortLabelMap", fixed = TRUE)
+  expect_match(html, "mdsLabelCandidates", fixed = TRUE)
+  expect_match(html, "mdsFinalLabelPenalty", fixed = TRUE)
+  expect_match(html, "mdsRectOverlap", fixed = TRUE)
+  expect_match(html, "fill-opacity", fixed = TRUE)
+  expect_match(html, "selected?30:24", fixed = TRUE)
+  expect_match(html, "pointInset=38", fixed = TRUE)
+  expect_match(html, "pointInset=22", fixed = TRUE)
+  expect_match(html, "yMin=Math.max(0,yLoRaw-yPad)", fixed = TRUE)
+  expect_match(html, "value=yMin+frac*(yMax-yMin)", fixed = TRUE)
+  expect_match(html, "Math.log2((shareA+pseudo)/(shareB+pseudo))", fixed = TRUE)
+  expect_match(html, "log2 relative activity", fixed = TRUE)
+  expect_false(grepl(
+    "log2 relative FP activity (Condition 1 / Condition 2)",
+    html,
+    fixed = TRUE
+  ))
+  expect_match(html, "Math.asinh(d.deltaShare/soft)", fixed = TRUE)
+  expect_match(html, "Normalized FP delta (pp):", fixed = TRUE)
+  expect_match(html, "symmetric asinh display scale", fixed = TRUE)
+  expect_false(grepl("pseudo-log", html, fixed = TRUE))
+  expect_match(html, "id=\"conditionProbabilityTitle\"", fixed = TRUE)
+  expect_match(html, "id=\"tfConditionProbabilityTitle\"", fixed = TRUE)
+  expect_match(html, "updateProbabilityPanelTitles", fixed = TRUE)
+  expect_match(html, "Failed to load condition report payload after retries", fixed = TRUE)
+  expect_match(html, "PAYLOAD_PROMISES.delete(file)", fixed = TRUE)
+  expect_match(html, "function indexConditionPart", fixed = TRUE)
+  expect_match(html, "EDGE_BY_COND.set(condition", fixed = TRUE)
+  expect_match(html, "if(!tfSelect.value&&!networkOpen)return Promise.resolve", fixed = TRUE)
+  expect_match(html, "const drawMdsUncached=drawMds", fixed = TRUE)
+  expect_match(html, "const drawActivityUncached=drawActivity", fixed = TRUE)
+  expect_match(html, "if(n&&!isFile)url.searchParams.set", fixed = TRUE)
+  expect_match(html, "location.protocol!=='file:'", fixed = TRUE)
+  expect_match(html, "conditions.reduce", fixed = TRUE)
+  expect_match(html, "label:conditionLabel(o.value)", fixed = TRUE)
+  expect_match(html, "shortConditionNames').addEventListener('change',refresh", fixed = TRUE)
+  expect_match(html, "const sideA=a.delta<0?1:0", fixed = TRUE)
+  expect_match(html, "sideA===0?b.delta-a.delta:a.delta-b.delta", fixed = TRUE)
+  expect_match(html, "if(i%2===1)g.appendChild", fixed = TRUE)
+  expect_match(
+    html,
+    "if(['cond1','cond2','condition','tf'].includes(changed))refreshConditionData()",
+    fixed = TRUE
+  )
+  expect_match(html, "combined-score difference", fixed = TRUE)
+  expect_match(html, "differentialConditionLabels", fixed = TRUE)
+  expect_match(html, "rowH=Math.min(40", fixed = TRUE)
+  expect_match(html, "rowH=Math.min(38", fixed = TRUE)
+  expect_match(html, "rowH=Math.min(22", fixed = TRUE)
+  expect_match(html, "x:c2?ax.cx+gap:ax.cx", fixed = TRUE)
+  expect_match(html, "x:ax.cx-gap-w2", fixed = TRUE)
+  expect_match(html, "pathLabelTopicSpecific", fixed = TRUE)
+  expect_match(html, "pathLabelConditionSpecific", fixed = TRUE)
+  expect_match(html, "labelContrast", fixed = TRUE)
+  expect_match(html, "id=\"cond1Select\"", fixed = TRUE)
+  expect_match(html, "id=\"cond1Color\"", fixed = TRUE)
+  expect_match(html, "id=\"cond2Color\"", fixed = TRUE)
+  expect_match(html, "conditionColor(1)", fixed = TRUE)
+  expect_match(html, "conditionColor(2)", fixed = TRUE)
+  expect_match(html, "fill:conditionColor(1)", fixed = TRUE)
+  expect_match(html, "fill:conditionColor(2)", fixed = TRUE)
+  expect_match(html, "t.getComputedTextLength()<=maxWidth", fixed = TRUE)
+  expect_false(grepl("syncConditionPlotColors", html, fixed = TRUE))
+  expect_match(html, "q.textContent=v.toFixed(1)", fixed = TRUE)
+  expect_match(html, "x1:cx-gap-xw,y1:axisY", fixed = TRUE)
+  expect_match(html, "if(!c2)g.appendChild(el('line'", fixed = TRUE)
+  expect_match(html, "if(selected){const topics=Array.from(topicSelect.options)", fixed = TRUE)
+  expect_match(html, "topicMode=!!selectedTf", fixed = TRUE)
+  expect_match(html, "tfButterflyRowSelected", fixed = TRUE)
+  expect_match(html, "if(changed==='pathway'&&pathwaySelect.value)openNetwork()", fixed = TRUE)
+  expect_match(html, "selectTf(d.tfu)", fixed = TRUE)
+  expect_match(html, "return loadOverviewPayload()", fixed = TRUE)
+  expect_match(html, "loadNetworkPayload()", fixed = TRUE)
+  expect_match(html, "Loading compressed network data", fixed = TRUE)
+  expect_match(html, "condition_payload_files", fixed = TRUE)
+  expect_match(html, "loadReportData().then", fixed = TRUE)
+  expect_match(html, "indexTfTopics()", fixed = TRUE)
+  expect_match(html, "k==='tf_topic'?packed[k]:columnarRows", fixed = TRUE)
+  expect_match(html, "id=\"networkTfPalette\"", fixed = TRUE)
+  expect_match(html, 'id="networkTopTf" type="number" min="1" value="100"', fixed = TRUE)
+  expect_match(html, 'id="topicPageStatus"', fixed = TRUE)
+  expect_match(html, 'id="tfPageStatus"', fixed = TRUE)
+  expect_match(html, 'id="pathPageStatus"', fixed = TRUE)
+  expect_match(html, "grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr)", fixed = TRUE)
+  expect_match(html, "const PAGE_SIZE={topic:20,tf:20,path:35}", fixed = TRUE)
+  expect_match(html, "Enrichr combined score difference", fixed = TRUE)
+  expect_match(html, "r:sel?19:14", fixed = TRUE)
+  expect_match(html, "selectMdsCondition", fixed = TRUE)
+  expect_match(html, "ACTIVE_CONDITION_SIDE", fixed = TRUE)
+  expect_match(html, '"condition_colors":{"A":"#E15759","B":"#4E79A7"}', fixed = TRUE)
+  expect_match(html, "REPORT_STATE.condition_order", fixed = TRUE)
+  expect_match(html, "configuredCondition(defaults,'condition_2'", fixed = TRUE)
+  expect_match(html, "defaults[key+'_suffix']", fixed = TRUE)
+  expect_false(grepl("rows[i-1].scoreA>=rows[i-1].scoreB", html, fixed = TRUE))
+  expect_match(html, "Dot size = overlap genes", fixed = TRUE)
+  expect_match(html, "class:'pathAxisTickLabel'", fixed = TRUE)
+  expect_match(html, "Math.pow(2,value)-1", fixed = TRUE)
+  expect_match(html, "xTitle.textContent='MDS1'", fixed = TRUE)
+  expect_match(html, "yTitle.textContent='MDS2'", fixed = TRUE)
+  expect_false(grepl("chartScroll", html, fixed = TRUE))
+  expect_false(grepl("pathScroll", html, fixed = TRUE))
+  expect_false(grepl("pathShowAll", html, fixed = TRUE))
+  expect_match(html, 'id="networkTabFilter"', fixed = TRUE)
+  expect_match(html, 'id="networkTabLayout"', fixed = TRUE)
+  expect_match(html, 'id="networkTabAppearance"', fixed = TRUE)
+  expect_match(html, 'id="networkThetaPreset"', fixed = TRUE)
+  expect_match(html, 'id="networkPhiPreset"', fixed = TRUE)
+  expect_match(html, 'id="networkPrimaryOnly"', fixed = TRUE)
+  expect_match(html, 'id="networkSpacing"', fixed = TRUE)
+  expect_match(html, '<option value="tailwind">Tailwind CSS inspired</option>', fixed = TRUE)
+  expect_match(html, 'role="dialog"', fixed = TRUE)
+  expect_match(html, ".networkPanel{position:absolute;inset:0", fixed = TRUE)
+  expect_false(grepl(".networkPanel{position:fixed", html, fixed = TRUE))
+  expect_match(html, '<option value="force" selected>Force</option>', fixed = TRUE)
+  expect_match(html, '<option value="auto">Auto</option>', fixed = TRUE)
+  expect_match(html, "fitNetworkView", fixed = TRUE)
+  expect_match(html, "showItemPage", fixed = TRUE)
+  expect_true(craftgrn:::.m3tb_validate_current_report_html(out_file))
+
+  index_file <- tempfile(fileext = ".html")
+  craftgrn:::.m3cr_write_combined_report_index(
+    index_file,
+    data.table::data.table(
+      label = "Condition pair",
+      k = 2L,
+      method_setup = "condition | LDA",
+      run_id = "run_001",
+      path = out_file
+    ),
+    report_state = list(
+      condition_colors = list(A = "#E15759", B = "#4E79A7"),
+      condition_order = c("B", "A"),
+      defaults = list(condition_1 = "B")
+    )
+  )
+  index_html <- paste(readLines(index_file, warn = FALSE), collapse = "\n")
+  expect_match(index_html, "INITIAL_CONDITION_COLORS", fixed = TRUE)
+  expect_match(index_html, '"condition_order":["B","A"]', fixed = TRUE)
+  expect_match(index_html, "optionsSignature", fixed = TRUE)
+  expect_match(index_html, "paletteSignature", fixed = TRUE)
+  expect_false(grepl("localStorage", index_html, fixed = TRUE))
+})
+
+test_that("Module 3 condition payload filenames are Windows-safe and deterministic", {
+  name <- "run_001_condition_aggr_lda_K20_condition_pair"
+  stem <- craftgrn:::.m3cr_payload_stem(name)
+  expect_match(stem, "^cp_[a-f0-9]{12}$")
+  expect_identical(stem, craftgrn:::.m3cr_payload_stem(name))
+  expect_false(identical(stem, craftgrn:::.m3cr_payload_stem(paste0(name, "_other"))))
+  expect_lte(nchar(paste0(stem, "_c99_e.js")), 30L)
+
+  report_file <- craftgrn:::.m3cr_report_data_file(
+    "run_001_condition_aggr_lda_K20_condition_topic_report.html"
+  )
+  expect_match(report_file, "^cr_[a-f0-9]{12}_d[.]js$")
+  expect_lte(nchar(report_file), 20L)
+
+  subgrn_stem <- craftgrn:::.m3tb_subgrn_payload_stem(
+    "run_002_condition_aggr_multivi_K20_pathway_subgrn"
+  )
+  expect_match(subgrn_stem, "^sg_[a-f0-9]{12}$")
+  expect_lte(nchar(paste0(subgrn_stem, "_chunk_999.js")), 30L)
+})
+
+test_that("Module 3 stage methods preserve the full method layout", {
+  root <- tempfile("module3-stage-methods-")
+  dir.create(root, recursive = TRUE)
+  res <- craftgrn:::run_module3_topic_benchmark(
+    filtered_dir = root,
+    comparisons = data.table::data.table(condition_label = "A", condition_group = "A"),
+    output_dir = root,
+    methods = c("condition_aggr_lda", "condition_aggr_multivi"),
+    training_methods = "condition_aggr_multivi",
+    extraction_methods = "condition_aggr_multivi",
+    k_grid = 10L,
+    output_layout = "benchmark",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    path_length_check = FALSE,
+    verbose = FALSE
+  )
+  expect_equal(res$method_plan$run_id, c("run_001", "run_002"))
+  expect_equal(res$method_plan$method, c("condition_aggr_lda", "condition_aggr_multivi"))
+  expect_error(
+    craftgrn:::run_module3_topic_benchmark(
+      filtered_dir = root,
+      comparisons = data.table::data.table(condition_label = "A", condition_group = "A"),
+      output_dir = root,
+      methods = "condition_aggr_lda",
+      training_methods = "condition_aggr_multivi",
+      run_training = FALSE,
+      run_extraction = FALSE,
+      run_reports = FALSE,
+      path_length_check = FALSE,
+      verbose = FALSE
+    ),
+    "training_methods must be a subset"
+  )
+})
+
+test_that("Module 3 condition review groups multiple K values inside one method report", {
   root <- tempfile("module3-topic-review-k-dropdown-")
   dir.create(root, recursive = TRUE)
   plan <- .m3tb_apply_output_layout(
@@ -1543,19 +1790,12 @@ test_that("Module 3 review HTML groups multiple K values inside one method repor
   )
 
   review_dir <- res$review_dir
-  topic_reports <- list.files(file.path(review_dir, "topic_reports"), pattern = "_topic_report[.]html$", full.names = TRUE)
   condition_reports <- list.files(file.path(review_dir, "condition_topic_reports"), pattern = "_condition_topic_report[.]html$", full.names = TRUE)
-  expect_equal(length(topic_reports), 2L)
+  expect_false(dir.exists(file.path(review_dir, "topic_reports")))
   expect_equal(length(condition_reports), 2L)
-  expect_equal(length(list.files(file.path(review_dir, "topic_reports", "pages"), pattern = "_topic_report[.]html$")), 4L)
   expect_equal(length(list.files(file.path(review_dir, "condition_topic_reports", "pages"), pattern = "_condition_topic_report[.]html$")), 4L)
 
-  topic_html <- paste(readLines(topic_reports[[1L]], warn = FALSE), collapse = "\n")
   condition_html <- paste(readLines(condition_reports[[1L]], warn = FALSE), collapse = "\n")
-  expect_match(topic_html, "K <select", fixed = TRUE)
-  expect_match(topic_html, "K2", fixed = TRUE)
-  expect_match(topic_html, "K3", fixed = TRUE)
-  expect_match(topic_html, "pages/", fixed = TRUE)
   expect_match(condition_html, "K <select", fixed = TRUE)
   expect_match(condition_html, "K2", fixed = TRUE)
   expect_match(condition_html, "K3", fixed = TRUE)
@@ -2045,6 +2285,14 @@ test_that("Module 3 prepares reusable topic input caches", {
     doc_mode = "tf",
     doc_design = "comparison",
     fp_term_mode = "aggregate_weight",
+    min_df = 1,
+    threshold_gene_expr = 0,
+    threshold_fp_score = 0,
+    threshold_tf_expr = 0,
+    direction_consistency = "none",
+    require_tf_expr_either = FALSE,
+    require_gene_expr_either = FALSE,
+    require_fp_bound_either = FALSE,
     overwrite = FALSE,
     verbose = FALSE
   )
@@ -2083,6 +2331,7 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("project_config" %in% names(formals(run_topic_modeling)))
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
   expect_true("topic_score_method" %in% names(formals(run_topic_modeling)))
+  expect_true("topic_term_assignment_method" %in% names(formals(run_topic_modeling)))
   expect_true("vae_device" %in% names(formals(run_topic_modeling)))
   expect_true("vae_device" %in% names(formals(train_topic_models)))
   expect_true("vae_batch_size" %in% names(formals(train_topic_models)))
@@ -2106,10 +2355,17 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     warplda_iterations = 25L,
     topic_link_output = "none",
     topic_score_method = "rowmax_phi",
+    topic_term_assignment_method = "gammafit",
     topic_count_method = "bin",
     topic_count_input = "pseudo_count_bin",
     topic_vae_device = "cuda",
     topic_vae_batch_size = 512L,
+    pathway_databases = c("Reactome_2022", "KEGG_2021_Human"),
+    report = list(
+      condition_colors = list(A = "#E15759", B = "#4E79A7"),
+      condition_order = c("B", "A"),
+      defaults = list(condition_1 = "B")
+    ),
     topic_benchmark_enabled = TRUE,
     topic_benchmark_methods = c("condition_aggr_weight_lda", "comparison_aggr_weight_lda"),
     topic_benchmark_k_grid = c(5L, 6L)
@@ -2120,10 +2376,15 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$warplda_iterations, 25L)
   expect_equal(resolved$topic_link_output, "none")
   expect_equal(resolved$extraction_args$topic_score_method, "rowmax_phi")
+  expect_equal(resolved$extraction_args$topic_term_assignment_method, "gammafit")
   expect_equal(resolved$count_method, "bin")
   expect_equal(resolved$count_input, "pseudo_count_bin")
   expect_equal(resolved$vae_device, "cuda")
   expect_equal(resolved$vae_batch_size, 512L)
+  expect_equal(resolved$extraction_args$pathway_databases, cfg$pathway_databases)
+  expect_equal(resolved$report_state$condition_colors$A, "#E15759")
+  expect_equal(resolved$report_state$condition_order, c("B", "A"))
+  expect_equal(resolved$report_state$defaults$condition_1, "B")
   expect_true(resolved$benchmark$enabled)
   expect_equal(resolved$benchmark$methods, cfg$topic_benchmark_methods)
   expect_equal(resolved$benchmark$k_grid, c(5L, 6L))
@@ -2135,6 +2396,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     warplda_iterations = 3L,
     topic_link_output = "pass",
     topic_score_method = "normtop_specificity",
+    topic_term_assignment_method = "max_phi",
     count_method = "log",
     count_input = "pseudo_count_log",
     vae_device = "cpu",
@@ -2145,6 +2407,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(overridden$warplda_iterations, 3L)
   expect_equal(overridden$topic_link_output, "pass")
   expect_equal(overridden$extraction_args$topic_score_method, "normtop_specificity")
+  expect_equal(overridden$extraction_args$topic_term_assignment_method, "max_phi")
   expect_equal(overridden$count_method, "log")
   expect_equal(overridden$count_input, "pseudo_count_log")
   expect_equal(overridden$vae_device, "cpu")
@@ -2155,6 +2418,7 @@ test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   resolved_default <- .module3_resolve_topic_run_config(project_config = list())
   expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
   expect_equal(resolved_default$extraction_args$topic_score_method, "normtop_specificity")
+  expect_equal(resolved_default$extraction_args$topic_term_assignment_method, "max_phi")
   expect_equal(resolved_default$extraction_args$link_topic_prob_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_membership_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_primary_margin_cutoff, 0.1)
@@ -2304,38 +2568,99 @@ test_that("Module 3 review worker count is adaptive and memory bounded", {
   )
 })
 
+test_that("Module 3 review mapping retries sequentially after worker failure", {
+  testthat::local_mocked_bindings(
+    .m3tb_review_par_lapply = function(cl, x, fun) {
+      stop("simulated worker connection loss")
+    },
+    .package = "craftgrn"
+  )
+
+  expect_warning(
+    result <- craftgrn:::.m3tb_review_lapply(
+      as.list(1:3),
+      function(x) x * 2,
+      workers = 2L
+    ),
+    "retrying 3 task\\(s\\) sequentially"
+  )
+  expect_equal(unlist(result), c(2, 4, 6))
+})
+
 test_that("Module 3 review parallel helper runs socket workers", {
   skip_on_cran()
-  old_dev <- Sys.getenv("CRAFTGRN_DEV_LOAD", unset = NA_character_)
-  old_repo <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = NA_character_)
-  withr::defer({
-    if (is.na(old_dev)) Sys.unsetenv("CRAFTGRN_DEV_LOAD") else Sys.setenv(CRAFTGRN_DEV_LOAD = old_dev)
-    if (is.na(old_repo)) Sys.unsetenv("CRAFTGRN_REPO_DIR") else Sys.setenv(CRAFTGRN_REPO_DIR = old_repo)
-  })
-  repo_dir <- normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
-  Sys.setenv(
-    CRAFTGRN_DEV_LOAD = if (file.exists(file.path(repo_dir, "DESCRIPTION"))) "true" else "false",
-    CRAFTGRN_REPO_DIR = repo_dir
-  )
   out <- craftgrn:::.m3tb_review_lapply(1:4, function(i) i * i, workers = 2L)
   expect_equal(unlist(out), c(1L, 4L, 9L, 16L))
 })
 
+test_that("Module 3 review socket workers inherit parent library paths", {
+  skip_on_cran()
+  parent_library <- tempfile("craftgrn-worker-library-")
+  dir.create(parent_library)
+  old_paths <- .libPaths()
+  withr::defer(.libPaths(old_paths))
+  .libPaths(c(parent_library, old_paths))
+
+  out <- craftgrn:::.m3tb_review_lapply(
+    1:2,
+    function(i) list(
+      libraries = normalizePath(.libPaths(), winslash = "/", mustWork = FALSE),
+      package = normalizePath(
+        getNamespaceInfo(asNamespace("craftgrn"), "path"),
+        winslash = "/",
+        mustWork = FALSE
+      )
+    ),
+    workers = 2L
+  )
+  expected <- normalizePath(parent_library, winslash = "/", mustWork = FALSE)
+  expected_package <- normalizePath(find.package("craftgrn", lib.loc = old_paths), winslash = "/")
+  expect_true(all(vapply(out, function(x) expected %in% x$libraries, logical(1L))))
+  expect_true(all(vapply(out, function(x) identical(x$package, expected_package), logical(1L))))
+})
+
+test_that("condition report payload keeps bounded strongest peak support", {
+  skip_if_not_installed("arrow")
+  skip_if_not_installed("dplyr")
+  path <- tempfile(fileext = ".parquet")
+  links <- data.table::data.table(
+    condition_id = rep("condition_a", 5L),
+    tf = c("TF1", "TF1", "TF1", "TF2", "TF2"),
+    gene_key = c("Gene1", "Gene1", "Gene1", "Gene1", "Gene2"),
+    peak_id = c("peak_a", "peak_a", "peak_b", "peak_a", "peak_c"),
+    fp_score_condition = c(0.4, 0.8, 0.6, 0.7, 0.5),
+    gene_expr_condition = rep(2, 5L),
+    tf_expr_condition = rep(3, 5L)
+  )
+  arrow::write_parquet(links, path)
+
+  out <- craftgrn:::.m3cr_collect_condition_edges(
+    path,
+    topic_genes = c("Gene1", "Gene2"),
+    max_peaks_per_tf_gene = 1L
+  )
+
+  expect_equal(nrow(out$tf_peak_gene), 3L)
+  expect_equal(
+    out$tf_peak_gene[tf_upper == "TF1" & gene_key == "Gene1", peak_id],
+    "peak_a"
+  )
+  expect_equal(
+    out$tf_peak_gene[tf_upper == "TF1" & gene_key == "Gene1", fp_score],
+    0.8
+  )
+  expect_equal(
+    out$tf_peak_gene[gene_key == "Gene1", uniqueN(tf_upper)],
+    2L
+  )
+})
+
 test_that("Module 3 topic-link summary forces path arguments before socket workers", {
-  old_dev <- Sys.getenv("CRAFTGRN_DEV_LOAD", unset = NA_character_)
-  old_repo <- Sys.getenv("CRAFTGRN_REPO_DIR", unset = NA_character_)
   old_workers <- Sys.getenv("CRAFTGRN_REVIEW_WORKERS", unset = NA_character_)
   withr::defer({
-    if (is.na(old_dev)) Sys.unsetenv("CRAFTGRN_DEV_LOAD") else Sys.setenv(CRAFTGRN_DEV_LOAD = old_dev)
-    if (is.na(old_repo)) Sys.unsetenv("CRAFTGRN_REPO_DIR") else Sys.setenv(CRAFTGRN_REPO_DIR = old_repo)
     if (is.na(old_workers)) Sys.unsetenv("CRAFTGRN_REVIEW_WORKERS") else Sys.setenv(CRAFTGRN_REVIEW_WORKERS = old_workers)
   })
-  repo_dir <- normalizePath(testthat::test_path("..", ".."), winslash = "/", mustWork = TRUE)
-  Sys.setenv(
-    CRAFTGRN_DEV_LOAD = if (file.exists(file.path(repo_dir, "DESCRIPTION"))) "true" else "false",
-    CRAFTGRN_REPO_DIR = repo_dir,
-    CRAFTGRN_REVIEW_WORKERS = "2"
-  )
+  Sys.setenv(CRAFTGRN_REVIEW_WORKERS = "2")
   root <- tempfile("topic-review-force-")
   dir.create(root, recursive = TRUE)
   rows <- data.table::data.table(

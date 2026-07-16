@@ -68,7 +68,7 @@
   }
   if (.optional_namespace_available("enrichly")) {
     default_dbs <- tryCatch(
-      getExportedValue("enrichly", "enrichly_default_databases")(species),
+      enrichly::enrichly_default_databases(species),
       error = function(e) NULL
     )
     if (is.character(default_dbs) && length(default_dbs)) {

@@ -14,6 +14,7 @@ load_prep_multiomic_data(
   do_motif_clustering = FALSE,
   trim_hocomoco = FALSE,
   fp_root_dir = NULL,
+  fp_input_format = NULL,
   fp_cache_dir = NULL,
   fp_cache_tag = NULL,
   footprint_sample_scope = "metadata",
@@ -62,6 +63,10 @@ preprocessing when available.}
 is available.}
 
 \item{fp_root_dir}{Optional root directory for raw footprint overview files.}
+
+\item{fp_input_format}{Footprint input layout. `"overview"` uses native
+per-motif overview files. `"fp_tools_compact"` imports fp-tools compact
+motif-site caches directly.}
 
 \item{fp_cache_dir}{Cache directory for aligned footprint files.}
 

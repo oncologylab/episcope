@@ -17,6 +17,11 @@ test_that("Module 3 report API exposes publication-facing helpers", {
   expect_false("plot_diff_grn_master_tf_summary" %in% exports)
 })
 
+test_that("run_topic_modeling exposes condition subset controls", {
+  args <- names(formals(run_topic_modeling))
+  expect_true(all(c("sample_subset", "analysis_label") %in% args))
+})
+
 test_that("Module 3 Enrichr helpers default to fast request scheduling", {
   expect_equal(
     formals(craftgrn:::plot_topic_pathway_enrichment_heatmap)$enrichr_sleep_time,
@@ -222,7 +227,7 @@ test_that("Module 3 visualization helpers write self-contained index pages", {
   diff_dir <- tempfile("module3-diff-vis-")
   dir.create(file.path(topic_dir, "review"), recursive = TRUE)
   dir.create(diff_dir, recursive = TRUE)
-  writeLines("<!doctype html><html><body>Topic MDS</body></html>", file.path(topic_dir, "review", "topic_method_k_topic_mds_report.html"))
+  writeLines("<!doctype html><html><body>Condition MDS</body></html>", file.path(topic_dir, "review", "topic_method_k_condition_mds_report.html"))
   data.table::fwrite(
     data.table::data.table(
       comparison_id = "CondA_vs_CondB",

@@ -10,6 +10,7 @@ module3_extract_topics(
   output_dir,
   flatten_single_output = TRUE,
   topic_score_method = c("normtop_specificity", "rowmax_phi"),
+  topic_term_assignment_method = c("max_phi", "gammafit"),
   k_workers = NULL,
   k_max_workers = 4L,
   k_memory_gb = NULL,
@@ -32,6 +33,10 @@ directly under `output_dir`. Defaults to `TRUE` for the public step API.}
 \item{topic_score_method}{Topic-term score method. `"normtop_specificity"`
 is the default for new extractions; `"rowmax_phi"` preserves the legacy
 row-maximum-scaled phi score.}
+
+\item{topic_term_assignment_method}{Term-to-topic assignment. `"max_phi"`
+assigns every Gene and Peak term to exactly one topic from raw model `phi`;
+`"gammafit"` retains the legacy score-and-cutoff membership behavior.}
 
 \item{k_workers}{Number of K values to extract concurrently. `NULL` selects
 workers adaptively from current memory and CPU headroom.}
@@ -60,8 +65,10 @@ topic-link tables, direction-specific TF-to-topic assignment tables, and
 review outputs from trained Module 3 topic models.
 }
 \details{
-Topic assignment uses unit-specific evidence. Terms are assigned from `phi`
-after the selected topic-term score method and GammaFit cutoffs. TFs are
+Topic assignment uses unit-specific evidence. By default, each Gene and Peak
+term is assigned to exactly one topic using its maximum raw model `phi`
+probability. The legacy `"gammafit"` assignment can retain a term in zero or
+multiple topics after specificity scoring and GammaFit cutoffs. TFs are
 assigned from raw document-topic `theta` with the TF membership and primary
 margin cutoffs. Per-comparison pathway gene sets are built from model
 outputs only: documents with theta above the TF membership cutoff intersect

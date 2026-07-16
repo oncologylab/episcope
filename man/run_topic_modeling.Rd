@@ -17,11 +17,19 @@ run_topic_modeling(
   count_method = NULL,
   count_input = NULL,
   topic_score_method = NULL,
+  topic_term_assignment_method = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
   pathway_backend = NULL,
   pathway_species = NULL,
+  pathway_databases = NULL,
+  sample_subset = NULL,
+  analysis_label = NULL,
   extraction_topic_report_args = list(),
+  extraction_k_workers = NULL,
+  extraction_k_max_workers = 4L,
+  memory_safety = c("strict", "adaptive", "off"),
+  memory_max_fraction = 0.8,
   input_source = c("differential_links", "condition_links"),
   ...
 )
@@ -40,9 +48,14 @@ files.}
 \item{project_config}{Optional project YAML path or config list. When
 supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 `warplda_iterations`, `topic_link_output`, `topic_score_method`,
+`topic_term_assignment_method`,
 `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 `topic_raw_theta_document_heatmap` are used for arguments that are left as
-`NULL` or as default extraction settings.}
+`NULL` or as default extraction settings. A nested `report` mapping can
+define `condition_colors`, `condition_order`, and initial `defaults` for
+generated reports without creating package or browser-persistent state.
+Defaults may use exact `condition_1` and `condition_2` IDs or reusable
+`condition_1_suffix` and `condition_2_suffix` selectors.}
 
 \item{method}{Single Module 3 method ID. If `NULL`, read from
 `project_config` or use the package default.}
@@ -65,6 +78,10 @@ from `count_method`.}
 \item{topic_score_method}{Topic-term score method for extraction. If `NULL`,
 read from `project_config` or use `"normtop_specificity"`.}
 
+\item{topic_term_assignment_method}{Term-to-topic assignment method. If
+`NULL`, read from `project_config` or use `"max_phi"`, which assigns each
+Gene and Peak term to exactly one topic from raw model phi.}
+
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}
 
@@ -82,9 +99,29 @@ databases separately and reports the better row per topic and normalized
 pathway name, ranked by adjusted p-value, logp, combined score, and overlap
 size. If `NULL`, read from `project_config` or infer from `ref_genome`.}
 
+\item{pathway_databases}{Optional Enrichr database names. If `NULL`, read
+from `project_config` or use the species-specific package defaults.}
+
+\item{sample_subset}{Optional condition/sample IDs to retain when building
+topic documents. Condition-link runs read only matching manifest rows.}
+
+\item{analysis_label}{Stable label written to topic input metadata.}
+
 \item{extraction_topic_report_args}{Optional named list of topic-extraction
 report argument overrides. Values here override project config values,
 including TF-to-topic assignment cutoffs.}
+
+\item{extraction_k_workers}{Number of K values to extract concurrently.
+Use `1` to request sequential extraction.}
+
+\item{extraction_k_max_workers}{Maximum concurrent K extraction workers.}
+
+\item{memory_safety}{Module 3 memory policy. `"strict"` fails before an
+unsafe allocation, `"adaptive"` reduces concurrency where possible, and
+`"off"` disables memory preflight checks.}
+
+\item{memory_max_fraction}{Maximum fraction of currently available memory
+that a Module 3 stage may use. Defaults to `0.8`.}
 
 \item{input_source}{Input source type. Use `"differential_links"` for
 comparison links and `"condition_links"` for condition-native links.}

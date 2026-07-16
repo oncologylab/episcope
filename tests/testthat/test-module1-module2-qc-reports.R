@@ -158,6 +158,25 @@ test_that("Module 1 QC recovers legacy raw footprint counts from compact caches"
   expect_equal(cards$value[cards$label == "Raw footprints"], "Unavailable for legacy run")
 })
 
+test_that("Module 1 QC reads singular provenance from Parquet compact caches", {
+  skip_if_not_installed("arrow")
+  cache_dir <- tempfile("module1-singular-fp-cache-")
+  dir.create(cache_dir, recursive = TRUE)
+  arrow::write_parquet(
+    tibble::tibble(
+      peak_ID = c("p1", "p2", "p3"),
+      source_fp_peak = c("s1", "s2", "s2")
+    ),
+    file.path(cache_dir, "fp_sites_TEST.parquet")
+  )
+  compact <- craftgrn:::as_multiomic_object(module1_tiny_fixture()$omics_data, verbose = FALSE)
+  recovered <- craftgrn:::.module1_qc_raw_footprint_recovery(
+    compact,
+    project_config = list(fp_cache_dir = cache_dir, db = "TEST")
+  )
+  expect_equal(recovered$count, 2)
+})
+
 test_that("Module 1 QC follows source projects and reads legacy footprint maps", {
   project_root <- tempfile("module1-legacy-fp-project-")
   source_root <- tempfile("module1-legacy-fp-source-")

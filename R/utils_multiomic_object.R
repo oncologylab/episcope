@@ -84,6 +84,7 @@ is_multiomic_object <- function(x) {
 .compact_fp_features <- function(omics_data) {
   fp_ids <- rownames(.compact_matrix_from_table(omics_data$fp_score_condition_qn, "peak_ID"))
   ann <- omics_data$fp_annotation
+  if (is.data.frame(ann)) ann <- as.data.frame(ann, stringsAsFactors = FALSE)
   if (is.data.frame(ann) && all(c("fp_peak", "atac_peak") %in% names(ann))) {
     ann_base <- ann[!duplicated(ann$fp_peak), c("fp_peak", "atac_peak"), drop = FALSE]
     atac_peak <- ann_base$atac_peak[match(fp_ids, ann_base$fp_peak)]
@@ -105,6 +106,7 @@ is_multiomic_object <- function(x) {
   empty <- tibble::tibble(fp_id = character(), motif = character(), tf = character())
   ann <- omics_data$fp_annotation
   if (!is.data.frame(ann)) return(empty)
+  ann <- as.data.frame(ann, stringsAsFactors = FALSE)
 
   if (all(c("fp_peak", "motifs", "tfs") %in% names(ann))) {
     dt <- data.table::as.data.table(ann[, c("fp_peak", "motifs", "tfs"), drop = FALSE])
@@ -114,7 +116,8 @@ is_multiomic_object <- function(x) {
     data.table::setnames(dt, c("fp_peak", "motifs"), c("fp_id", "motif"))
     gene_col <- .module1_motif_gene_col(omics_data$motif_db)
     if (is.data.frame(omics_data$motif_db) && !is.null(gene_col) && all(c("motif", gene_col) %in% names(omics_data$motif_db))) {
-      map <- data.table::as.data.table(omics_data$motif_db[, c("motif", gene_col), drop = FALSE])
+      motif_db <- as.data.frame(omics_data$motif_db, stringsAsFactors = FALSE)
+      map <- data.table::as.data.table(motif_db[, c("motif", gene_col), drop = FALSE])
       data.table::setnames(map, c("motif", gene_col), c("motif", "tf"))
       map[, motif := sub("^_+", "", as.character(motif))]
       map <- unique(map[!is.na(motif) & nzchar(motif) & !is.na(tf) & nzchar(tf)])
@@ -126,7 +129,8 @@ is_multiomic_object <- function(x) {
       dt[, tf := gsub("[^A-Za-z0-9]+", "", tf)]
     }
   } else if (is.data.frame(omics_data$fp_tfs) && all(c("fp_peak", "tfs") %in% names(omics_data$fp_tfs))) {
-    dt <- data.table::as.data.table(omics_data$fp_tfs[, c("fp_peak", "tfs"), drop = FALSE])
+    fp_tfs <- as.data.frame(omics_data$fp_tfs, stringsAsFactors = FALSE)
+    dt <- data.table::as.data.table(fp_tfs[, c("fp_peak", "tfs"), drop = FALSE])
     data.table::setnames(dt, c("fp_peak", "tfs"), c("fp_id", "tf"))
     dt[, motif := NA_character_]
   } else {

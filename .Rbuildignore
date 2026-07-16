@@ -31,5 +31,6 @@ $run_dev.*
 ^\.superpowers$
 ^.*\.Rcheck$
 ^.*\.tar\.gz$
+^[^/]+[.]pptx$
 ^cran-comments\.md$
 ^CRAN-SUBMISSION$

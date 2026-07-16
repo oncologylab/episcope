@@ -105,6 +105,68 @@ test_that("Module 2 keeps regulatory-prior-only candidates outside TSS windows",
   expect_equal(candidates$distance_to_tss, -999890)
 })
 
+test_that("Module 2 vectorized candidate merge preserves combined evidence", {
+  fp_meta <- tibble::tibble(
+    fp_id = "fp1",
+    chr = "chr1",
+    start = 100L,
+    end = 120L,
+    atac_peak = "chr1:90-160"
+  )
+  tf_target_pass <- tibble::tibble(tf = "TF_A", target_gene = "GENE_NEAR")
+  gene_tss <- tibble::tibble(
+    target_gene = "GENE_NEAR",
+    target_chr = "chr1",
+    target_tss = 110L,
+    target_strand = "+"
+  )
+  regulatory_prior <- tibble::tibble(
+    fp_id = "fp1",
+    target_gene = "GENE_NEAR",
+    prior_id = "prior1",
+    prior_source = "test_prior",
+    prior_score = 0.9,
+    prior_status = "supported"
+  )
+
+  candidates <- .module2_build_candidates_from_fp_meta(
+    fp_meta = fp_meta,
+    tf_target_pass = tf_target_pass,
+    gene_tss = gene_tss,
+    regulatory_prior = regulatory_prior,
+    max_distance_bp = 100L
+  )
+
+  expect_equal(nrow(candidates), 1L)
+  expect_equal(candidates$candidate_source, "both")
+  expect_true(candidates$within_tss_window)
+  expect_true(candidates$prior_supported)
+  expect_equal(candidates$prior_id, "prior1")
+})
+
+test_that("Module 2 candidate preflight uses a genomic-density upper bound", {
+  fp_meta <- tibble::tibble(
+    fp_id = c("fp1", "fp2"),
+    chr = "chr1"
+  )
+  gene_tss <- tibble::tibble(
+    target_gene = c("G1", "G2", "G3"),
+    target_chr = "chr1",
+    target_tss = c(0, 100, 1000)
+  )
+  prior <- tibble::tibble(fp_id = "fp1", target_gene = "G3")
+
+  bound <- .module2_candidate_row_upper_bound(
+    fp_meta = fp_meta,
+    target_genes = gene_tss$target_gene,
+    gene_tss = gene_tss,
+    max_distance_bp = 100,
+    regulatory_prior = prior
+  )
+
+  expect_equal(bound, 5)
+})
+
 test_that("Module 2 empty FP-target candidate sets keep the standard schema", {
   predicted_tfbs <- tibble::tibble(
     fp_id = "fp1",

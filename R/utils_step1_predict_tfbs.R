@@ -449,18 +449,7 @@
 }
 
 .module1_default_cores <- function(cores = NULL) {
-  if (!is.null(cores)) {
-    cores <- as.integer(cores)[[1L]]
-    if (!is.finite(cores) || cores < 1L) .log_abort("`cores` must be a positive integer.")
-    return(cores)
-  }
-  cores <- if (requireNamespace("parallelly", quietly = TRUE)) {
-    parallelly::availableCores()
-  } else {
-    parallel::detectCores(logical = TRUE)
-  }
-  cores <- suppressWarnings(as.integer(cores)[[1L]])
-  if (!is.finite(cores) || cores < 1L) 1L else cores
+  .safe_worker_plan(requested = cores)$workers
 }
 
 .module1_output_format <- function(output_format = c("csv", "parquet", "auto")) {

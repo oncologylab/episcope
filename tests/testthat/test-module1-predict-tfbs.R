@@ -142,6 +142,11 @@ test_that("raw footprint counting deduplicates source coordinates", {
     )
   )
   expect_equal(craftgrn:::.module1_raw_footprint_count(aligned), 3)
+
+  aligned <- list(
+    fp_sites = tibble::tibble(source_fp_peak = c("s1", "s2", "s2"))
+  )
+  expect_equal(craftgrn:::.module1_raw_footprint_count(aligned), 2)
 })
 
 test_that("predict_tfbs defaults do not write to the working directory", {
@@ -397,6 +402,22 @@ test_that("CraftGRN multiomic object uses semantic names", {
   expect_true(is.logical(compact$matrices$gene_on))
   expect_true(is.logical(compact$matrices$fp_bound))
   expect_silent(craftgrn:::validate_multiomic_object(compact))
+})
+
+test_that("CraftGRN multiomic conversion accepts data.table feature metadata", {
+  fixture <- module1_tiny_fixture()
+  fixture$omics_data$fp_annotation <- data.table::as.data.table(
+    fixture$omics_data$fp_annotation
+  )
+  fixture$omics_data$motif_db <- data.table::as.data.table(
+    fixture$omics_data$motif_db
+  )
+
+  compact <- craftgrn:::as_multiomic_object(fixture$omics_data, verbose = FALSE)
+
+  expect_silent(craftgrn:::validate_multiomic_object(compact))
+  expect_gt(nrow(compact$features$fp_motif), 0L)
+  expect_true(all(nzchar(compact$features$fp_motif$tf)))
 })
 
 test_that("predict_tfbs requires CraftGRN multiomic objects", {

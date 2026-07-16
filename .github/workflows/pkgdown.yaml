@@ -21,6 +21,8 @@ jobs:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          clean: true
 
       - uses: r-lib/actions/setup-pandoc@v2
 

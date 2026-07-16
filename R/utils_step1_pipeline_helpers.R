@@ -48,8 +48,14 @@ NULL
   source_ids <- character()
   if (is.data.frame(fp_aligned$id_map) && "source_fp_peak" %in% names(fp_aligned$id_map)) {
     source_ids <- as.character(fp_aligned$id_map$source_fp_peak)
-  } else if (is.data.frame(fp_aligned$fp_sites) && "source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
-    encoded <- as.character(fp_aligned$fp_sites$source_fp_peaks)
+  } else if (is.data.frame(fp_aligned$fp_sites) &&
+             any(c("source_fp_peaks", "source_fp_peak") %in% names(fp_aligned$fp_sites))) {
+    source_col <- if ("source_fp_peaks" %in% names(fp_aligned$fp_sites)) {
+      "source_fp_peaks"
+    } else {
+      "source_fp_peak"
+    }
+    encoded <- as.character(fp_aligned$fp_sites[[source_col]])
     encoded <- encoded[!is.na(encoded) & nzchar(encoded)]
     if (length(encoded)) {
       source_ids <- unlist(strsplit(encoded, ";", fixed = TRUE), use.names = FALSE)
@@ -86,6 +92,9 @@ NULL
 #' @param trim_hocomoco Logical; trim HOCOMOCO manifests when the trimming helper
 #'   is available.
 #' @param fp_root_dir Optional root directory for raw footprint overview files.
+#' @param fp_input_format Footprint input layout. `"overview"` uses native
+#'   per-motif overview files. `"fp_tools_compact"` imports fp-tools compact
+#'   motif-site caches directly.
 #' @param fp_cache_dir Cache directory for aligned footprint files.
 #' @param fp_cache_tag Cache tag, typically the motif database name.
 #' @param footprint_sample_scope Footprint sample selection rule.
@@ -139,6 +148,7 @@ load_prep_multiomic_data <- function(
     do_motif_clustering = FALSE,
     trim_hocomoco = FALSE,
     fp_root_dir = NULL,
+    fp_input_format = NULL,
     fp_cache_dir = NULL,
     fp_cache_tag = NULL,
     footprint_sample_scope = "metadata",
@@ -182,6 +192,10 @@ load_prep_multiomic_data <- function(
   if (!is.null(genome) && nzchar(genome)) {
     .cfg_set("ref_genome", genome)
   }
+  if (is.null(fp_input_format)) {
+    fp_input_format <- config_input$fp_input_format %||% "overview"
+  }
+  fp_input_format <- match.arg(fp_input_format, c("overview", "fp_tools_compact"))
   if (is.null(project_date) && !is.null(config_input$project_date)) {
     project_date <- config_input$project_date
   }
@@ -239,7 +253,13 @@ load_prep_multiomic_data <- function(
       if (!exists("load_footprints", mode = "function") || !exists("align_footprints", mode = "function")) {
         .log_abort("Preprocessing requires `load_footprints()` and `align_footprints()`, which are not yet available in the rebuilt Step 1 path.")
       }
-      if (is.null(fp_root_dir)) fp_root_dir <- get_cfg("fp_root_dir")
+      if (is.null(fp_root_dir)) {
+        fp_root_dir <- if (identical(fp_input_format, "fp_tools_compact")) {
+          get_cfg("fp_tools_compact_dir", get_cfg("fp_root_dir"))
+        } else {
+          get_cfg("fp_root_dir")
+        }
+      }
       if (is.null(fp_root_dir) || !nzchar(fp_root_dir)) {
         .log_abort("`fp_root_dir` is not set. Provide it or set it in config.")
       }
@@ -269,25 +289,40 @@ load_prep_multiomic_data <- function(
           fp_sample_ids <- fp_sample_ids[!is.na(fp_sample_ids) & nzchar(fp_sample_ids)]
         }
       }
-      fp_manifest <- load_footprints(
-        root_dir = fp_root_dir,
-        db_name = db_use,
-        out_dir = file.path(fp_cache_dir, paste0("fp_", db_use)),
-        sample_ids = fp_sample_ids
-      )
+      if (identical(fp_input_format, "fp_tools_compact")) {
+        fp_aligned <- .load_fp_tools_compact_footprints(
+          root_dir = fp_root_dir,
+          sample_ids = fp_sample_ids,
+          cache_dir = fp_cache_dir,
+          cache_tag = db_use,
+          verbose = verbose
+        )
+        if (is.null(motif_db)) motif_db <- fp_aligned$motif_db
+        if (is.null(tf_list)) tf_list <- sort(unique(as.character(motif_db$gene_symbol)))
+      } else {
+        fp_manifest <- load_footprints(
+          root_dir = fp_root_dir,
+          db_name = db_use,
+          out_dir = file.path(fp_cache_dir, paste0("fp_", db_use)),
+          sample_ids = fp_sample_ids
+        )
+      }
       fp_manifest_trim_fn <- get0("fp_manifest_trim", mode = "function")
-      if (isTRUE(trim_hocomoco) && identical(db_use, "HOCOMOCOv13") && is.function(fp_manifest_trim_fn)) {
+      if (!identical(fp_input_format, "fp_tools_compact") &&
+          isTRUE(trim_hocomoco) && identical(db_use, "HOCOMOCOv13") && is.function(fp_manifest_trim_fn)) {
         fp_manifest <- fp_manifest_trim_fn(fp_manifest)
       }
-      fp_aligned <- align_footprints(
-        fp_manifest,
-        mid_slop = mid_slop,
-        round_digits = round_digits,
-        score_match_pct = score_match_pct,
-        cache_dir = fp_cache_dir,
-        cache_tag = db_use,
-        output_mode = output_mode
-      )
+      if (!identical(fp_input_format, "fp_tools_compact")) {
+        fp_aligned <- align_footprints(
+          fp_manifest,
+          mid_slop = mid_slop,
+          round_digits = round_digits,
+          score_match_pct = score_match_pct,
+          cache_dir = fp_cache_dir,
+          cache_tag = db_use,
+          output_mode = output_mode
+        )
+      }
       run_fp_motif_clustering_fn <- get0("run_fp_motif_clustering", mode = "function")
       if (isTRUE(do_motif_clustering) && is.function(run_fp_motif_clustering_fn)) {
         cluster_out_dir <- file.path(

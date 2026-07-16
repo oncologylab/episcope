@@ -47,6 +47,14 @@
 NULL
 
 resolve_motif_db_path <- function(db, ref_genome = NULL) {
+  configured_path <- .cfg_get("motif_db_path")
+  if (is.character(configured_path) && length(configured_path) == 1L && nzchar(configured_path)) {
+    configured_path <- normalizePath(configured_path, winslash = "/", mustWork = FALSE)
+    if (!file.exists(configured_path)) {
+      .log_abort("Configured motif database does not exist: {.path {configured_path}}.")
+    }
+    return(configured_path)
+  }
   if (is.null(ref_genome) || !nzchar(ref_genome)) {
     ref_genome <- .cfg_get("ref_genome")
   }

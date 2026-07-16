@@ -38,6 +38,7 @@ make_rna_expressed <- function(
   if (!is.data.frame(metadata)) .log_abort("`metadata` must be a data.frame.")
   if (!"id" %in% names(metadata)) .log_abort("`metadata` must include an id column.")
   if (!label_col %in% names(metadata)) .log_abort("label_col {.val {label_col}} not found in `metadata`.")
+  metadata <- as.data.frame(metadata, stringsAsFactors = FALSE)
   if (!is.numeric(threshold_gene_expr) || length(threshold_gene_expr) != 1L) {
     .log_abort("`threshold_gene_expr` must be a single numeric value.")
   }
@@ -88,6 +89,7 @@ make_rna_condition <- function(
   if (!is.data.frame(metadata)) .log_abort("`metadata` must be a data.frame.")
   if (!"id" %in% names(metadata)) .log_abort("`metadata` must include an id column.")
   if (!label_col %in% names(metadata)) .log_abort("label_col {.val {label_col}} not found in `metadata`.")
+  metadata <- as.data.frame(metadata, stringsAsFactors = FALSE)
   agg_fun <- match.arg(agg_fun)
 
   meta_use <- metadata[, c("id", label_col), drop = FALSE]
@@ -149,6 +151,7 @@ make_fp_score_condition <- function(
   if (!is.data.frame(metadata)) .log_abort("`metadata` must be a data.frame.")
   if (!"id" %in% names(metadata)) .log_abort("`metadata` must include an id column.")
   if (!label_col %in% names(metadata)) .log_abort("label_col {.val {label_col}} not found in `metadata`.")
+  metadata <- as.data.frame(metadata, stringsAsFactors = FALSE)
   agg_fun <- match.arg(agg_fun)
 
   meta_use <- metadata[, c("id", label_col), drop = FALSE]
@@ -232,6 +235,7 @@ make_fp_bound_condition <- function(
   }
   if (!is.data.frame(metadata) || !"id" %in% names(metadata)) .log_abort("`metadata` must include an id column.")
   if (!label_col %in% names(metadata)) .log_abort("label_col {.val {label_col}} not found in `metadata`.")
+  metadata <- as.data.frame(metadata, stringsAsFactors = FALSE)
   min_samples <- as.integer(min_samples)
   if (!is.numeric(min_samples) || length(min_samples) != 1L || min_samples < 1L) {
     .log_abort("`min_samples` must be a positive integer.")

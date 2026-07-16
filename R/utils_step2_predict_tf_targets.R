@@ -2,18 +2,17 @@
 # Purpose: Compact relational Module 2 TF-target linking.
 
 .module2_default_cores <- function(n_cores = NULL) {
-  if (is.null(n_cores) || length(n_cores) == 0L || is.na(n_cores[[1L]])) {
-    return(max(1L, parallel::detectCores(logical = TRUE)))
-  }
-  max(1L, as.integer(n_cores[[1L]]))
+  .safe_worker_plan(requested = n_cores)$workers
 }
 
 .module2_cfg <- function(project_config = NULL) {
   cfg <- list()
   if (is.character(project_config) && length(project_config) == 1L && nzchar(project_config) && file.exists(project_config)) {
     cfg <- yaml::read_yaml(project_config)
+    .validate_project_config(cfg, source = basename(project_config))
   } else if (is.list(project_config)) {
     cfg <- project_config
+    .validate_project_config(cfg)
   }
   if (is.list(cfg$module2)) cfg <- utils::modifyList(cfg, cfg$module2)
   cfg
@@ -299,7 +298,7 @@
 }
 
 .module2_build_candidates_from_fp_meta <- function(fp_meta, tf_target_pass, gene_tss, regulatory_prior = NULL, max_distance_bp = 100000, id_offset = 0L) {
-  atac_peak <- candidate_source <- chr <- distance_to_tss <- end <- fp_center <- fp_id <- point_end <- point_start <- prior_id <- prior_score <- prior_source <- prior_status <- prior_supported <- start <- target_gene <- target_strand <- target_tss <- within_tss_window <- NULL
+  atac_peak <- candidate_source <- chr <- distance_to_tss <- end <- fp_center <- fp_id <- point_end <- point_start <- prior_any <- prior_id <- prior_score <- prior_source <- prior_status <- prior_supported <- start <- target_gene <- target_strand <- target_tss <- within_any <- within_tss_window <- NULL
   empty <- .module2_empty_candidates()
   if (!nrow(fp_meta) || !nrow(tf_target_pass)) {
     return(empty)
@@ -383,21 +382,23 @@
   cand$prior_supported_sort <- NULL
   cand$within_tss_window_sort <- NULL
   cand <- data.table::as.data.table(cand)
-  cand <- cand[, {
-    within_any <- any(.SD$within_tss_window %in% TRUE)
-    prior_any <- any(.SD$prior_supported %in% TRUE)
-    x <- .SD[1L]
-    x[, `:=`(
-      within_tss_window = within_any,
-      prior_supported = prior_any
+  best <- unique(cand, by = c("fp_id", "target_gene"))
+  if (nrow(best) < nrow(cand)) {
+    flags <- cand[, .(
+      within_any = any(within_tss_window %in% TRUE),
+      prior_any = any(prior_supported %in% TRUE)
+    ), by = .(fp_id, target_gene)]
+    best[flags, on = c("fp_id", "target_gene"), `:=`(
+      within_tss_window = i.within_any,
+      prior_supported = i.prior_any
     )]
-    x[, candidate_source := fifelse(
-      within_tss_window %in% TRUE & prior_supported %in% TRUE,
-      "both",
-      fifelse(within_tss_window %in% TRUE, "tss_window", "regulatory_prior")
-    )]
-    x
-  }, by = .(fp_id, target_gene)]
+  }
+  cand <- best
+  cand[, candidate_source := data.table::fifelse(
+    within_tss_window %in% TRUE & prior_supported %in% TRUE,
+    "both",
+    data.table::fifelse(within_tss_window %in% TRUE, "tss_window", "regulatory_prior")
+  )]
   cand[, candidate_id := sprintf("cand_%08d", as.integer(id_offset) + seq_len(.N))]
   data.table::setcolorder(cand, c("candidate_id", setdiff(names(cand), "candidate_id")))
   tibble::as_tibble(cand)
@@ -416,7 +417,7 @@
   if (identical(format, "parquet") || grepl("\\.parquet$", path, ignore.case = TRUE)) {
     if (!requireNamespace("arrow", quietly = TRUE)) .log_abort("Package arrow is required to read Parquet predicted TFBS chunks.")
     if (is.null(columns)) return(tibble::as_tibble(arrow::read_parquet(path)))
-    return(tibble::as_tibble(arrow::read_parquet(path, col_select = columns)))
+    return(tibble::as_tibble(arrow::read_parquet(path, col_select = dplyr::all_of(columns))))
   }
   if (is.null(columns)) return(tibble::as_tibble(readr::read_csv(path, show_col_types = FALSE)))
   tibble::as_tibble(readr::read_csv(path, col_select = dplyr::all_of(columns), show_col_types = FALSE))
@@ -434,6 +435,43 @@
     readr::write_csv(x, path)
   }
   tibble::tibble(chunk_id = as.integer(chunk_id), path = path, format = fmt, n_rows = nrow(x))
+}
+
+.module2_candidate_row_upper_bound <- function(fp_meta,
+                                                target_genes,
+                                                gene_tss,
+                                                max_distance_bp,
+                                                regulatory_prior = NULL) {
+  chr <- fp_id <- target_chr <- target_gene <- target_tss <- NULL
+  fp <- data.table::as.data.table(fp_meta)[
+    !is.na(chr) & nzchar(chr),
+    .(n_fp = data.table::uniqueN(fp_id)),
+    by = chr
+  ]
+  genes <- data.table::as.data.table(gene_tss)[
+    target_gene %in% target_genes & !is.na(target_chr) & is.finite(target_tss),
+    .(target_tss = sort(unique(as.numeric(target_tss)))),
+    by = .(chr = target_chr)
+  ]
+  if (!nrow(fp) || !nrow(genes)) {
+    return(if (is.data.frame(regulatory_prior)) nrow(regulatory_prior) else 0)
+  }
+  width <- 2 * as.numeric(max_distance_bp)
+  max_in_window <- function(x) {
+    if (!length(x)) return(0L)
+    left <- 1L
+    best <- 1L
+    for (right in seq_along(x)) {
+      while (x[[right]] - x[[left]] > width) left <- left + 1L
+      best <- max(best, right - left + 1L)
+    }
+    best
+  }
+  density <- genes[, .(max_genes = max_in_window(target_tss)), by = chr]
+  bound <- fp[density, on = "chr"]
+  rows <- sum(as.numeric(bound$n_fp) * as.numeric(bound$max_genes), na.rm = TRUE)
+  if (is.data.frame(regulatory_prior)) rows <- rows + nrow(regulatory_prior)
+  rows
 }
 
 .module2_link_tf_targets_streamed <- function(multiomic_data, predicted_manifest, gene_tss, regulatory_prior = NULL, project_config = NULL, output_dir, max_distance_bp = NULL, n_cores = NULL, output_format = c("auto", "parquet", "csv"), verbose = TRUE, write_qc_report = TRUE, qc_report_validate = FALSE) {
@@ -490,6 +528,18 @@
   corr_dir <- file.path(data_dir, "correlations")
   link_dir <- file.path(data_dir, "links")
   dir.create(file.path(output_dir, "reports"), recursive = TRUE, showWarnings = FALSE)
+  candidate_row_bound <- .module2_candidate_row_upper_bound(
+    fp_meta = fp_meta,
+    target_genes = unique(tf_target_pass$target_gene),
+    gene_tss = gene_tss,
+    max_distance_bp = max_distance_bp,
+    regulatory_prior = regulatory_prior
+  )
+  .resource_preflight(
+    estimated_bytes = max(1, candidate_row_bound) * 2048,
+    stage = paste0("Module 2 candidate construction (<=", candidate_row_bound, " rows)"),
+    verbose = verbose
+  )
   candidates <- .module2_build_candidates_from_fp_meta(fp_meta, tf_target_pass, gene_tss, regulatory_prior = regulatory_prior, max_distance_bp = max_distance_bp)
   cand_table <- .module2_manifest_table(.module2_write_table(candidates, cand_dir, "fp_target_candidates", output_format), "module2_fp_target_candidates")
   fp_pair_dt <- if (nrow(candidates)) {
