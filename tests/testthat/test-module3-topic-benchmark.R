@@ -1917,13 +1917,18 @@ test_that("Module 3 benchmark extraction writes directly into each K folder", {
   phi <- data.table::data.table(
     topic = c("Topic1", "Topic2"),
     `GENE:G1` = c(0.8, 0.2),
-    `GENE:G2` = c(0.2, 0.8)
+    `GENE:G2` = c(0.2, 0.8),
+    `PEAK:G1` = c(0.7, 0.3),
+    `PEAK:G2` = c(0.3, 0.7)
   )
   data.table::fwrite(theta, file.path(model_dir, "vae_models", "theta_K10.csv"))
   data.table::fwrite(phi, file.path(model_dir, "vae_models", "phi_K10.csv"))
-  dtm <- Matrix::Matrix(matrix(c(2, 1, 1, 2), nrow = 2, byrow = TRUE), sparse = TRUE)
+  dtm <- Matrix::Matrix(
+    matrix(c(2, 1, 2, 1, 1, 2, 1, 2), nrow = 2, byrow = TRUE),
+    sparse = TRUE
+  )
   rownames(dtm) <- theta$doc_id
-  colnames(dtm) <- c("GENE:G1", "GENE:G2")
+  colnames(dtm) <- c("GENE:G1", "GENE:G2", "PEAK:G1", "PEAK:G2")
   edges_docs <- data.table::data.table(
     doc_id = theta$doc_id,
     tf = "KLF5",
@@ -1958,6 +1963,15 @@ test_that("Module 3 benchmark extraction writes directly into each K folder", {
 
   k_dir <- file.path(plan$topic_extraction_dir[[1L]], "K10")
   expect_true(file.exists(file.path(k_dir, "topic_terms.csv")))
+  expect_true(file.exists(file.path(k_dir, "topic_gene_peak_assignment.csv")))
+  expect_true(file.exists(file.path(k_dir, "topic_term_assignment_summary.csv")))
+  expect_equal(
+    readLines(file.path(k_dir, "topic_term_assignment_method.txt")),
+    "gammafit_maxprob"
+  )
+  assignment_summary <- data.table::fread(file.path(k_dir, "topic_term_assignment_summary.csv"))
+  expect_equal(assignment_summary$model_family, "multivi")
+  expect_equal(assignment_summary$gammafit_thrP, 0.8)
   expect_false(file.exists(file.path(k_dir, "raw_theta_documents_K2.pdf")))
   expect_false(dir.exists(file.path(k_dir, "tf_topic_assignment")))
   expect_false(dir.exists(file.path(k_dir, model_name)))
@@ -2418,11 +2432,31 @@ test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   resolved_default <- .module3_resolve_topic_run_config(project_config = list())
   expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
   expect_equal(resolved_default$extraction_args$topic_score_method, "normtop_specificity")
-  expect_equal(resolved_default$extraction_args$topic_term_assignment_method, "max_phi")
+  expect_equal(resolved_default$extraction_args$topic_term_assignment_method, "gammafit_maxprob")
+  expect_equal(resolved_default$extraction_args$thrP, 0.8)
   expect_equal(resolved_default$extraction_args$link_topic_prob_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_membership_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_primary_margin_cutoff, 0.1)
   expect_false("topic_tf_assignment_browser" %in% names(resolved_default$extraction_args))
+
+  resolved_lda <- .module3_resolve_topic_run_config(
+    project_config = list(),
+    method = "condition_aggr_lda"
+  )
+  expect_equal(resolved_lda$extraction_args$topic_term_assignment_method, "gammafit_maxprob")
+  expect_equal(resolved_lda$extraction_args$thrP, 0.70)
+
+  resolved_weighted <- .module3_resolve_topic_run_config(
+    project_config = list(),
+    method = "condition_aggr_weight_lda"
+  )
+  expect_equal(resolved_weighted$extraction_args$topic_term_assignment_method, "max_phi")
+
+  resolved_mapped <- .module3_resolve_topic_run_config(
+    project_config = list(topic_gammafit_thrP = list(lda = 0.79, multivi = 0.87)),
+    method = "condition_aggr_multivi"
+  )
+  expect_equal(resolved_mapped$extraction_args$thrP, 0.87)
 
   resolved_explicit <- .module3_resolve_topic_run_config(
     project_config = list(

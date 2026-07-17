@@ -156,7 +156,8 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
     module3 = list(
       topic_benchmark_methods = c("condition_aggr_lda", "condition_aggr_multivi"),
       topic_k_grid = c(10L, 20L, 30L),
-      topic_term_assignment_method = "max_phi",
+      topic_term_assignment_method = "gammafit_maxprob",
+      topic_gammafit_thrP = list(lda = 0.8, multivi = 0.85),
       topic_vae_device = "cpu",
       pathway_species = "human"
     )
@@ -180,6 +181,10 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
   bad_assignment <- cfg
   bad_assignment$module3$topic_term_assignment_method <- "maximum"
   expect_error(validate(bad_assignment), "module3_topic_term_assignment_method", fixed = TRUE)
+
+  bad_gammafit <- cfg
+  bad_gammafit$module3$topic_gammafit_thrP$multivi <- 1.2
+  expect_error(validate(bad_gammafit), "GammaFit probability", fixed = TRUE)
 
   unknown_module3 <- cfg
   unknown_module3$module3$pathway_speces <- "human"

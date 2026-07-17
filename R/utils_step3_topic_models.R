@@ -1349,6 +1349,29 @@ plot_model_selection_cistopic <- function(metrics_tbl, out_pdf, title_prefix = N
 # 7) Topicterm scoring (cisTopic-like NormTop) + binarization (Gamma-fit or TopN)
 # =============================================================================
 
+.module3_topic_model_family <- function(x) {
+  value <- tolower(paste(as.character(x), collapse = " "))
+  if (grepl("multivi", value, fixed = TRUE)) return("multivi")
+  if (grepl("vae_mlp", value, fixed = TRUE) || grepl("vae-mlp", value, fixed = TRUE)) {
+    return("vae_mlp")
+  }
+  if (grepl("warplda", value, fixed = TRUE) || grepl("lda", value, fixed = TRUE)) {
+    return("lda")
+  }
+  "default"
+}
+
+.module3_default_gammafit_thrP <- function(model_family) {
+  family <- .module3_topic_model_family(model_family)
+  switch(
+    family,
+    lda = 0.70,
+    multivi = 0.80,
+    vae_mlp = 0.80,
+    0.80
+  )
+}
+
 .gamma_moments <- function(x) {
   x <- .safe_num(x)
   x <- x[is.finite(x) & x > 0]
@@ -1732,7 +1755,7 @@ binarize_topics <- function(score_mat,
 .assign_topic_terms <- function(raw_phi,
                                 score_mat,
                                 candidate_terms,
-                                method = c("max_phi", "gammafit")) {
+                                method = c("gammafit_maxprob", "max_phi", "gammafit")) {
   method <- match.arg(method)
   raw_phi <- as.matrix(raw_phi)
   score_mat <- as.matrix(score_mat)
@@ -1756,11 +1779,27 @@ binarize_topics <- function(score_mat,
   }
   out[, topic_num := suppressWarnings(as.integer(gsub("^Topic", "", as.character(topic))))]
   out[, term_group := .term_group(term_id)]
-  out[, assignment_method := if (identical(method, "max_phi")) {
-    data.table::fifelse(term_group %in% c("GENE", "PEAK"), "max_phi", "gammafit")
-  } else {
-    "gammafit"
-  }]
+  out[, gammafit_candidate := .as_logical_flag(in_topic)]
+  out[, `:=`(
+    assignment_method = data.table::fcase(
+      term_group %in% c("GENE", "PEAK") & identical(method, "gammafit_maxprob"), "gammafit_maxprob",
+      term_group %in% c("GENE", "PEAK") & identical(method, "max_phi"), "max_phi",
+      default = "gammafit"
+    ),
+    term_pair_key = NA_character_,
+    paired_term_id = NA_character_,
+    shared_gammafit_candidate = NA,
+    common_candidate_count = NA_integer_,
+    term_maxprob_selected = NA,
+    term_maxprob_topic = NA_integer_,
+    term_maxprob_probability = NA_real_,
+    term_maxprob_margin = NA_real_,
+    assignment_status = data.table::fcase(
+      identical(method, "max_phi"), "assigned_by_raw_phi",
+      identical(method, "gammafit"), "gammafit_membership",
+      default = "not_applicable"
+    )
+  )]
   topic_index <- match(out$topic_num, seq_len(nrow(raw_phi)))
   term_index <- match(out$term_id, colnames(raw_phi))
   valid <- is.finite(topic_index) & is.finite(term_index)
@@ -1775,17 +1814,317 @@ binarize_topics <- function(score_mat,
     max_topic <- stats::setNames(seq_len(nrow(phi_clean))[max_index], colnames(phi_clean))
     eligible <- out$term_group %in% c("GENE", "PEAK") & out$term_id %in% names(max_topic)
     out[eligible, in_topic := topic_num == unname(max_topic[term_id])]
+  } else if (identical(method, "gammafit_maxprob")) {
+    phi_clean <- raw_phi
+    phi_clean[!is.finite(phi_clean) | phi_clean < 0] <- 0
+    phi_sum <- colSums(phi_clean)
+    phi_sum[!is.finite(phi_sum) | phi_sum <= 0] <- 1
+    phi_by_term <- sweep(phi_clean, 2L, phi_sum, "/")
+    phi_by_term[!is.finite(phi_by_term) | phi_by_term < 0] <- 0
+
+    term_ids <- colnames(phi_clean)
+    gene_keys <- sub("^GENE:", "", term_ids[grepl("^GENE:", term_ids)])
+    peak_keys <- sub("^PEAK:", "", term_ids[grepl("^PEAK:", term_ids)])
+    pair_keys <- sort(intersect(gene_keys, peak_keys))
+    gene_idx <- match(paste0("GENE:", pair_keys), term_ids)
+    peak_idx <- match(paste0("PEAK:", pair_keys), term_ids)
+
+    candidate_mat <- matrix(FALSE, nrow = nrow(phi_clean), ncol = ncol(phi_clean))
+    valid_candidate <- valid & out$gammafit_candidate
+    candidate_mat[cbind(topic_index[valid_candidate], term_index[valid_candidate])] <- TRUE
+
+    term_pair_index <- rep(NA_integer_, length(term_ids))
+    if (length(pair_keys)) {
+      term_pair_index[gene_idx] <- seq_along(pair_keys)
+      term_pair_index[peak_idx] <- seq_along(pair_keys)
+    }
+    row_pair_index <- term_pair_index[term_index]
+    paired_rows <- valid & !is.na(row_pair_index) & out$term_group %in% c("GENE", "PEAK")
+    unmatched_rows <- out$term_group %in% c("GENE", "PEAK") & !paired_rows
+
+    out[out$term_group %in% c("GENE", "PEAK"), in_topic := FALSE]
+    out$assignment_status[unmatched_rows] <- "missing_matching_gene_or_peak_term"
+
+    if (length(pair_keys)) {
+      shared_candidate <- candidate_mat[, gene_idx, drop = FALSE] &
+        candidate_mat[, peak_idx, drop = FALSE]
+      common_count <- colSums(shared_candidate)
+      select_candidate_max <- function(indices) {
+        candidate <- candidate_mat[, indices, drop = FALSE]
+        probability <- phi_by_term[, indices, drop = FALSE]
+        probability[!candidate | !is.finite(probability)] <- 0
+        probability_sum <- colSums(probability)
+        has_candidate <- colSums(candidate) > 0L &
+          is.finite(probability_sum) & probability_sum > 0
+        probability <- sweep(
+          probability,
+          2L,
+          ifelse(has_candidate, probability_sum, 1),
+          "/"
+        )
+        probability[!is.finite(probability) | probability < 0] <- 0
+        selected_topic <- max.col(t(probability), ties.method = "first")
+        selected_topic[!has_candidate] <- NA_integer_
+        selected_probability <- rep(NA_real_, length(indices))
+        selected_probability[has_candidate] <- probability[cbind(
+          selected_topic[has_candidate],
+          which(has_candidate)
+        )]
+        runner_up_probability <- probability
+        if (any(has_candidate)) {
+          runner_up_probability[cbind(
+            selected_topic[has_candidate],
+            which(has_candidate)
+          )] <- -Inf
+        }
+        runner_up <- apply(runner_up_probability, 2L, max, na.rm = TRUE)
+        runner_up[!is.finite(runner_up)] <- 0
+        list(
+          candidate = candidate,
+          has_candidate = has_candidate,
+          topic = selected_topic,
+          probability = selected_probability,
+          margin = selected_probability - runner_up
+        )
+      }
+
+      # Select each term independently after GammaFit; retain only exact agreement.
+      gene_max <- select_candidate_max(gene_idx)
+      peak_max <- select_candidate_max(peak_idx)
+      has_assignment <- gene_max$has_candidate & peak_max$has_candidate &
+        gene_max$topic == peak_max$topic
+      selected_topic <- gene_max$topic
+      selected_topic[!has_assignment] <- NA_integer_
+      pair_status <- data.table::fcase(
+        !gene_max$has_candidate & !peak_max$has_candidate, "no_gammafit_candidate",
+        !gene_max$has_candidate, "gene_no_gammafit_candidate",
+        !peak_max$has_candidate, "peak_no_gammafit_candidate",
+        has_assignment, "assigned_gammafit_maxprob_agreement",
+        common_count == 0L, "no_shared_gammafit_topic",
+        default = "maxprob_topic_disagreement"
+      )
+      pair_row <- row_pair_index[paired_rows]
+      pair_topic <- topic_index[paired_rows]
+      is_gene_row <- out$term_group[paired_rows] == "GENE"
+      row_max_topic <- ifelse(
+        is_gene_row,
+        gene_max$topic[pair_row],
+        peak_max$topic[pair_row]
+      )
+      row_max_probability <- ifelse(
+        is_gene_row,
+        gene_max$probability[pair_row],
+        peak_max$probability[pair_row]
+      )
+      row_max_margin <- ifelse(
+        is_gene_row,
+        gene_max$margin[pair_row],
+        peak_max$margin[pair_row]
+      )
+      out$term_pair_key[paired_rows] <- pair_keys[pair_row]
+      out$paired_term_id[paired_rows] <- ifelse(
+        is_gene_row,
+        paste0("PEAK:", pair_keys[pair_row]),
+        paste0("GENE:", pair_keys[pair_row])
+      )
+      out$shared_gammafit_candidate[paired_rows] <- shared_candidate[cbind(pair_topic, pair_row)]
+      out$common_candidate_count[paired_rows] <- common_count[pair_row]
+      out$term_maxprob_selected[paired_rows] <- !is.na(row_max_topic) &
+        pair_topic == row_max_topic
+      out$term_maxprob_topic[paired_rows] <- row_max_topic
+      out$term_maxprob_probability[paired_rows] <- row_max_probability
+      out$term_maxprob_margin[paired_rows] <- row_max_margin
+      out$assignment_status[paired_rows] <- pair_status[pair_row]
+      out$in_topic[paired_rows] <- has_assignment[pair_row] &
+        pair_topic == selected_topic[pair_row]
+    }
   }
   out[, in_topic := .as_logical_flag(in_topic)]
   data.table::setcolorder(out, c(
     "topic", "topic_num", "term_id", "term_group", "score", "phi",
-    "in_topic", "assignment_method",
+    "in_topic", "assignment_method", "gammafit_candidate",
+    "term_pair_key", "paired_term_id", "shared_gammafit_candidate",
+    "common_candidate_count", "term_maxprob_selected",
+    "term_maxprob_topic", "term_maxprob_probability",
+    "term_maxprob_margin", "assignment_status",
     setdiff(names(out), c(
       "topic", "topic_num", "term_id", "term_group", "score", "phi",
-      "in_topic", "assignment_method"
+      "in_topic", "assignment_method", "gammafit_candidate",
+      "term_pair_key", "paired_term_id", "shared_gammafit_candidate",
+      "common_candidate_count", "term_maxprob_selected",
+      "term_maxprob_topic", "term_maxprob_probability",
+      "term_maxprob_margin", "assignment_status"
     ))
   ))
   out[]
+}
+
+.topic_gene_peak_assignment_table <- function(topic_terms) {
+  tt <- data.table::as.data.table(topic_terms)
+  required <- c(
+    "topic_num", "term_id", "term_group", "phi", "in_topic",
+    "gammafit_candidate", "term_maxprob_topic",
+    "term_maxprob_probability", "term_maxprob_margin"
+  )
+  if (!nrow(tt) || length(setdiff(required, names(tt)))) {
+    return(data.table::data.table())
+  }
+  if (!"term_pair_key" %in% names(tt)) {
+    tt[, term_pair_key := data.table::fcase(
+      term_group == "GENE", sub("^GENE:", "", term_id),
+      term_group == "PEAK", sub("^PEAK:", "", term_id),
+      default = NA_character_
+    )]
+  }
+  tt <- tt[term_group %in% c("GENE", "PEAK") & !is.na(term_pair_key) & nzchar(term_pair_key)]
+  if (!nrow(tt)) return(data.table::data.table())
+
+  collapse_topics <- function(x) {
+    x <- sort(unique(as.integer(x[is.finite(x)])))
+    if (!length(x)) "" else paste(x, collapse = ";")
+  }
+  summarize_group <- function(group_name, prefix) {
+    x <- tt[term_group == group_name]
+    if (!nrow(x)) {
+      out <- data.table::data.table(
+        target_gene = character(),
+        term_id = character(),
+        gammafit_topic_count = integer(),
+        gammafit_topics = character(),
+        maxprob_topic = character(),
+        maxprob_probability = numeric(),
+        maxprob_margin = numeric(),
+        assigned_topic = character(),
+        assigned_phi = numeric()
+      )
+      data.table::setnames(
+        out,
+        setdiff(names(out), "target_gene"),
+        paste0(prefix, "_", setdiff(names(out), "target_gene"))
+      )
+      return(out)
+    }
+    out <- x[, .(
+      term_id = as.character(term_id[[1L]]),
+      gammafit_topic_count = sum(.as_logical_flag(gammafit_candidate)),
+      gammafit_topics = collapse_topics(topic_num[.as_logical_flag(gammafit_candidate)]),
+      maxprob_topic = collapse_topics(term_maxprob_topic),
+      maxprob_probability = {
+        value <- unique(term_maxprob_probability[is.finite(term_maxprob_probability)])
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      },
+      maxprob_margin = {
+        value <- unique(term_maxprob_margin[is.finite(term_maxprob_margin)])
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      },
+      assigned_topic = collapse_topics(topic_num[.as_logical_flag(in_topic)]),
+      assigned_phi = {
+        value <- phi[.as_logical_flag(in_topic)]
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      }
+    ), by = .(target_gene = term_pair_key)]
+    data.table::setnames(
+      out,
+      setdiff(names(out), "target_gene"),
+      paste0(prefix, "_", setdiff(names(out), "target_gene"))
+    )
+    out
+  }
+
+  gene <- summarize_group("GENE", "gene")
+  peak <- summarize_group("PEAK", "peak")
+  out <- merge(gene, peak, by = "target_gene", all = TRUE, sort = TRUE)
+  paired <- tt[term_group == "GENE" & !is.na(paired_term_id), .(
+    common_candidate_count = suppressWarnings(max(common_candidate_count, na.rm = TRUE)),
+    shared_gammafit_topics = collapse_topics(topic_num[.as_logical_flag(shared_gammafit_candidate)]),
+    assignment_status = as.character(assignment_status[[1L]])
+  ), by = .(target_gene = term_pair_key)]
+  paired[!is.finite(common_candidate_count), common_candidate_count := 0L]
+  out <- merge(out, paired, by = "target_gene", all.x = TRUE, sort = TRUE)
+  out[, assigned_topic := data.table::fcase(
+    !is.na(gene_assigned_topic) & nzchar(gene_assigned_topic) &
+      gene_assigned_topic == peak_assigned_topic,
+    gene_assigned_topic,
+    default = NA_character_
+  )]
+  out[, assignment_status := data.table::fcase(
+    is.na(gene_term_id) | is.na(peak_term_id), "missing_matching_gene_or_peak_term",
+    !is.na(assigned_topic) & nzchar(assigned_topic), "assigned_gammafit_maxprob_agreement",
+    !is.na(assignment_status) & nzchar(assignment_status), assignment_status,
+    default = "no_shared_gammafit_topic"
+  )]
+  out[, assigned := !is.na(assigned_topic) & nzchar(assigned_topic)]
+  out[, min_maxprob_probability := pmin(
+    gene_maxprob_probability,
+    peak_maxprob_probability,
+    na.rm = FALSE
+  )]
+  out[, min_maxprob_margin := pmin(
+    gene_maxprob_margin,
+    peak_maxprob_margin,
+    na.rm = FALSE
+  )]
+  data.table::setcolorder(out, c(
+    "target_gene", "assigned", "assigned_topic", "assignment_status",
+    "gene_term_id", "peak_term_id", "gene_gammafit_topic_count",
+    "peak_gammafit_topic_count", "common_candidate_count",
+    "gene_gammafit_topics", "peak_gammafit_topics",
+    "shared_gammafit_topics", "gene_maxprob_topic", "peak_maxprob_topic",
+    "gene_maxprob_probability", "peak_maxprob_probability",
+    "min_maxprob_probability", "gene_maxprob_margin",
+    "peak_maxprob_margin", "min_maxprob_margin",
+    "gene_assigned_phi", "peak_assigned_phi",
+    "gene_assigned_topic", "peak_assigned_topic"
+  ))
+  data.table::setorder(out, -assigned, target_gene)
+  out[]
+}
+
+.topic_gene_peak_assignment_summary <- function(pair_assignment,
+                                                thrP,
+                                                assignment_method,
+                                                model_family = NA_character_) {
+  x <- data.table::as.data.table(pair_assignment)
+  matched <- x[!is.na(gene_term_id) & !is.na(peak_term_id)]
+  assigned <- matched[.as_logical_flag(assigned)]
+  finite_quantile <- function(value, probability) {
+    value <- as.numeric(value[is.finite(value)])
+    if (!length(value)) return(NA_real_)
+    as.numeric(stats::quantile(value, probability, names = FALSE, type = 7L))
+  }
+  data.table::data.table(
+    assignment_method = as.character(assignment_method),
+    model_family = as.character(model_family),
+    gammafit_thrP = as.numeric(thrP),
+    gene_term_count = sum(!is.na(x$gene_term_id)),
+    peak_term_count = sum(!is.na(x$peak_term_id)),
+    matched_target_count = nrow(matched),
+    assigned_target_count = nrow(assigned),
+    assigned_target_percent = if (nrow(matched)) 100 * nrow(assigned) / nrow(matched) else NA_real_,
+    no_gene_gammafit_candidate_count = sum(
+      matched$assignment_status %in% c("no_gammafit_candidate", "gene_no_gammafit_candidate"),
+      na.rm = TRUE
+    ),
+    no_peak_gammafit_candidate_count = sum(
+      matched$assignment_status %in% c("no_gammafit_candidate", "peak_no_gammafit_candidate"),
+      na.rm = TRUE
+    ),
+    no_shared_topic_count = sum(matched$assignment_status == "no_shared_gammafit_topic", na.rm = TRUE),
+    maxprob_topic_disagreement_count = sum(
+      matched$assignment_status == "maxprob_topic_disagreement",
+      na.rm = TRUE
+    ),
+    multiple_common_topic_count = sum(matched$common_candidate_count > 1L, na.rm = TRUE),
+    multiple_common_topic_percent = if (nrow(assigned)) {
+      100 * sum(assigned$common_candidate_count > 1L, na.rm = TRUE) / nrow(assigned)
+    } else {
+      NA_real_
+    },
+    min_maxprob_probability_p10 = finite_quantile(assigned$min_maxprob_probability, 0.1),
+    min_maxprob_probability_median = finite_quantile(assigned$min_maxprob_probability, 0.5),
+    min_maxprob_margin_p10 = finite_quantile(assigned$min_maxprob_margin, 0.1),
+    min_maxprob_margin_median = finite_quantile(assigned$min_maxprob_margin, 0.5)
+  )
 }
 
 # Gamma-fit diagnostic plots (cisTopic-like)
@@ -5881,6 +6220,7 @@ compute_topic_links <- function(edges_docs,
                                 score_mat,
                                 raw_score_mat = NULL,
                                 topic_terms = NULL,
+                                use_final_term_assignment = FALSE,
                                 theta = NULL,
                                 topic_tf_membership_cutoff = 0.3,
                                 fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
@@ -6050,7 +6390,35 @@ compute_topic_links <- function(edges_docs,
   gamma_cutoffs_peak <- rep(NA_real_, K)
   gamma_cutoffs_gene <- rep(NA_real_, K)
   in_set_map <- NULL
-  if (binarize_method == "gammafit") {
+  final_topic_map <- NULL
+  if (isTRUE(use_final_term_assignment)) {
+    if (is.null(topic_terms) || !is.data.frame(topic_terms) || !nrow(topic_terms)) {
+      .log_abort("topic_terms is required when use_final_term_assignment = TRUE.")
+    }
+    tt <- data.table::as.data.table(topic_terms)
+    .assert_has_cols(tt, c("term_id", "in_topic"), context = "compute_topic_links topic_terms")
+    if (!"topic_num" %in% names(tt)) {
+      if (!"topic" %in% names(tt)) {
+        .log_abort("topic_terms must contain topic_num or topic.")
+      }
+      tt[, topic_num := suppressWarnings(as.integer(gsub("^Topic", "", as.character(topic))))]
+    }
+    tt <- tt[
+      .as_logical_flag(in_topic) & is.finite(topic_num) &
+        grepl("^(GENE|PEAK):", term_id)
+    ]
+    final_assignment <- unique(tt[, .(term_id, topic_num = as.integer(topic_num))])
+    duplicate_terms <- final_assignment[, .N, by = term_id][N > 1L]
+    if (nrow(duplicate_terms)) {
+      .log_abort(
+        "Final topic-term assignment contains {nrow(duplicate_terms)} term(s) assigned to multiple topics."
+      )
+    }
+    final_topic_map <- stats::setNames(
+      final_assignment$topic_num,
+      final_assignment$term_id
+    )
+  } else if (binarize_method == "gammafit") {
     cut_tbl <- .gammafit_cutoffs_by_termclass(
       score_mat,
       thrP = thrP,
@@ -6107,7 +6475,18 @@ compute_topic_links <- function(edges_docs,
       theta_value <- as.vector(t(theta_chunk))
       theta_pass <- is.finite(theta_value) & theta_value >= theta_cutoff
     }
-    if (binarize_method == "gammafit") {
+    if (isTRUE(use_final_term_assignment)) {
+      gene_topic <- unname(final_topic_map[chunk_dt$gene_term])
+      gene_pass <- rep_topic == rep(gene_topic, each = K)
+      gene_pass[is.na(gene_pass)] <- FALSE
+      if (has_peak_terms) {
+        peak_topic <- unname(final_topic_map[chunk_dt$peak_term])
+        peak_pass <- rep_topic == rep(peak_topic, each = K)
+        peak_pass[is.na(peak_pass)] <- FALSE
+      } else {
+        peak_pass <- rep(TRUE, length(rep_topic))
+      }
+    } else if (binarize_method == "gammafit") {
       if (has_peak_terms) {
         peak_pass <- is.finite(peaks_gamma_cutoff) & peak_score_gate >= peaks_gamma_cutoff & peak_score_gate > 0
       } else {
@@ -8746,7 +9125,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                                                "opt3_gene_fc_expr", "joint"),
                                               direction_by = c("gene", "fp", "none"),
                                               topic_score_method = c("normtop_specificity", "rowmax_phi"),
-                                              topic_term_assignment_method = c("max_phi", "gammafit"),
+                                              topic_term_assignment_method = c("max_phi", "gammafit_maxprob", "gammafit"),
+                                              topic_model_family = NULL,
                                               binarize_method = c("gammafit", "topn"),
                                               gammafit_scope = c("topic_term_group", "global_term_group"),
                                               thrP = 0.975,
@@ -8856,6 +9236,12 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
   if (!is.finite(pathway_topic_term_theta_min)) pathway_topic_term_theta_min <- 0.3
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
+  if (identical(topic_term_assignment_method, "gammafit_maxprob") &&
+      !identical(fp_term_mode, "aggregate")) {
+    .log_abort(
+      "gammafit_maxprob requires fp_term_mode = 'aggregate' so each GENE:<gene> has a matching PEAK:<gene>."
+    )
+  }
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
   link_topic_gate_mode <- unique(as.character(link_topic_gate_mode))
   link_topic_method <- match.arg(link_topic_method)
@@ -8889,6 +9275,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
 
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   if (is.null(title_prefix)) title_prefix <- basename(out_dir)
+  topic_model_family <- .module3_topic_model_family(c(topic_model_family, title_prefix))
   step_timing <- list()
   .record_step <- function(step, code) {
     start_time <- Sys.time()
@@ -8966,6 +9353,33 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
   writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
   writeLines(topic_term_assignment_method, file.path(out_dir, "topic_term_assignment_method.txt"))
+  if (identical(topic_term_assignment_method, "gammafit_maxprob")) {
+    pair_assignment <- .topic_gene_peak_assignment_table(topic_terms)
+    pair_columns <- c("gene_term_id", "peak_term_id")
+    matched_pair_count <- if (nrow(pair_assignment) && all(pair_columns %in% names(pair_assignment))) {
+      pair_assignment[!is.na(gene_term_id) & !is.na(peak_term_id), .N]
+    } else {
+      0L
+    }
+    if (!is.finite(matched_pair_count) || matched_pair_count < 1L) {
+      .log_abort(
+        "gammafit_maxprob requires matched aggregate GENE:<gene> and PEAK:<gene> terms."
+      )
+    }
+    data.table::fwrite(
+      pair_assignment,
+      file.path(out_dir, "topic_gene_peak_assignment.csv")
+    )
+    data.table::fwrite(
+      .topic_gene_peak_assignment_summary(
+        pair_assignment,
+        thrP = thrP,
+        assignment_method = topic_term_assignment_method,
+        model_family = topic_model_family
+      ),
+      file.path(out_dir, "topic_term_assignment_summary.csv")
+    )
+  }
   if (identical(binarize_method, "gammafit")) {
     gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
       score_mat,
@@ -9001,6 +9415,10 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           score_mat = score_mat,
           raw_score_mat = topic_base$phi,
           topic_terms = topic_terms,
+          use_final_term_assignment = identical(
+            topic_term_assignment_method,
+            "gammafit_maxprob"
+          ),
           theta = topic_base$theta,
           topic_tf_membership_cutoff = topic_tf_membership_cutoff,
           fp_term_mode = fp_term_mode,
@@ -11780,9 +12198,10 @@ extract_regulatory_topics <- function(k,
   if (!is.null(topic_term_assignment_method)) {
     topic_report_args$topic_term_assignment_method <- match.arg(
       topic_term_assignment_method,
-      choices = c("max_phi", "gammafit")
+      choices = c("gammafit_maxprob", "max_phi", "gammafit")
     )
   }
+  topic_term_assignment_explicit <- !is.null(topic_report_args$topic_term_assignment_method)
   report_doc_design <- if (identical(weight_label, "peak_score_gene_expr")) "condition" else "comparison"
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
@@ -11854,8 +12273,11 @@ extract_regulatory_topics <- function(k,
   defaults <- list(
       binarize_method = "gammafit",
       topic_score_method = "normtop_specificity",
-      topic_term_assignment_method = "max_phi",
-      thrP = 0.9,
+      topic_term_assignment_method = "gammafit_maxprob",
+      topic_model_family = if (identical(backend, "warplda")) "lda" else vae_variant,
+      thrP = .module3_default_gammafit_thrP(
+        if (identical(backend, "warplda")) "lda" else vae_variant
+      ),
       top_n_terms = 500L,
       in_topic_min_terms = 1L,
       pathway_use_all_terms = FALSE,
@@ -11909,6 +12331,7 @@ extract_regulatory_topics <- function(k,
       run_document_theta_umap = TRUE,
       run_topic_by_comparison_heatmaps = TRUE,
       run_intertopic_distance_map = TRUE,
+      fp_term_mode = "aggregate",
       topic_by_comparison_label_cleaner = wrap_comp_label
     )
     if (is.null(topic_report_args$fp_term_mode) && file.exists(topic_input_summary_path)) {
@@ -11924,6 +12347,16 @@ extract_regulatory_topics <- function(k,
             "Using fp_term_mode={inferred_fp_term_mode} from topic input summary for topic extraction."
           )
         }
+      }
+    }
+    if (!isTRUE(topic_term_assignment_explicit)) {
+      resolved_fp_term_mode <- .resolve_fp_term_mode(
+        topic_report_args$fp_term_mode %||% defaults$fp_term_mode
+      )
+      defaults$topic_term_assignment_method <- if (identical(resolved_fp_term_mode, "aggregate")) {
+        "gammafit_maxprob"
+      } else {
+        "max_phi"
       }
     }
     args <- modifyList(defaults, topic_report_args)
@@ -12099,10 +12532,12 @@ extract_regulatory_topics <- function(k,
 #' topic-link tables, direction-specific TF-to-topic assignment tables, and
 #' review outputs from trained Module 3 topic models.
 #'
-#' Topic assignment uses unit-specific evidence. By default, each Gene and Peak
-#' term is assigned to exactly one topic using its maximum raw model `phi`
-#' probability. The legacy `"gammafit"` assignment can retain a term in zero or
-#' multiple topics after specificity scoring and GammaFit cutoffs. TFs are
+#' Topic assignment uses unit-specific evidence. By default, GammaFit first
+#' identifies candidate topics for each aggregate `GENE:<gene>` and
+#' `PEAK:<gene>` pair. Each term independently selects its maximum-phi passing
+#' topic, and the pair is retained only when those topics agree. The explicit
+#' `"max_phi"` and legacy `"gammafit"` methods remain available for comparison.
+#' TFs are
 #' assigned from raw document-topic `theta` with the TF membership and primary
 #' margin cutoffs. Per-comparison pathway gene sets are built from model
 #' outputs only: documents with theta above the TF membership cutoff intersect
@@ -12119,9 +12554,12 @@ extract_regulatory_topics <- function(k,
 #' @param topic_score_method Topic-term score method. `"normtop_specificity"`
 #'   is the default for new extractions; `"rowmax_phi"` preserves the legacy
 #'   row-maximum-scaled phi score.
-#' @param topic_term_assignment_method Term-to-topic assignment. `"max_phi"`
-#'   assigns every Gene and Peak term to exactly one topic from raw model `phi`;
-#'   `"gammafit"` retains the legacy score-and-cutoff membership behavior.
+#' @param topic_term_assignment_method Term-to-topic assignment.
+#'   `"gammafit_maxprob"` applies GammaFit first, independently selects the
+#'   maximum-phi passing topic for each aggregate Gene and Peak term, and keeps
+#'   the target only when those topics agree. `"max_phi"` assigns terms
+#'   independently from raw `phi`; `"gammafit"` retains multi-topic cutoff
+#'   membership.
 #' @param k_workers Number of K values to extract concurrently. `NULL` selects
 #'   workers adaptively from current memory and CPU headroom.
 #' @param k_max_workers Maximum concurrent K workers in adaptive mode.
@@ -12141,7 +12579,7 @@ module3_extract_topics <- function(k,
                                    output_dir,
                                    flatten_single_output = TRUE,
                                    topic_score_method = c("normtop_specificity", "rowmax_phi"),
-                                   topic_term_assignment_method = c("max_phi", "gammafit"),
+                                   topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
                                    k_workers = NULL,
                                    k_max_workers = 4L,
                                    k_memory_gb = NULL,

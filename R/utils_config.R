@@ -396,14 +396,41 @@
     cli::cli_abort("Project config entries must be positive integers: {paste(bad_integer, collapse = ', ')}.")
   }
 
+  gammafit_probability_keys <- intersect(c(
+    "topic_gammafit_thrP", "module3_topic_gammafit_thrP"
+  ), names(cfg))
+  valid_gammafit_probability <- function(x) {
+    if (.project_config_scalar(x, "numeric")) return(x > 0 && x < 1)
+    values <- if (is.list(x)) unlist(x, use.names = TRUE) else x
+    value_names <- names(values)
+    allowed_names <- c("lda", "multivi", "vae_mlp", "default")
+    normalized_names <- tolower(gsub("-", "_", value_names, fixed = TRUE))
+    normalized_names[normalized_names == "warplda"] <- "lda"
+    normalized_names[normalized_names == "vae"] <- "vae_mlp"
+    length(values) > 0L && !is.null(value_names) && all(nzchar(value_names)) &&
+      all(normalized_names %in% allowed_names) && !anyDuplicated(normalized_names) &&
+      all(vapply(as.list(values), function(value) {
+        .project_config_scalar(value, "numeric") && value > 0 && value < 1
+      }, logical(1L)))
+  }
+  bad_gammafit_probability <- gammafit_probability_keys[
+    !vapply(cfg[gammafit_probability_keys], valid_gammafit_probability, logical(1L))
+  ]
+  if (length(bad_gammafit_probability)) {
+    cli::cli_abort(paste0(
+      "GammaFit probability config entries must be one probability strictly between 0 and 1, ",
+      "or a named lda/multivi/vae_mlp/default mapping: ",
+      paste(bad_gammafit_probability, collapse = ", "), "."
+    ))
+  }
+
   probability_keys <- intersect(c(
     "gene_de_padj_cutoff", "threshold_fp_gene_corr_fdr",
     "threshold_fp_gene_corr_p", "threshold_fp_tf_corr_fdr",
     "threshold_fp_tf_corr_p", "threshold_fp_target_corr_fdr",
     "threshold_fp_target_corr_p", "threshold_rna_gene_corr_fdr",
     "threshold_rna_gene_corr_p", "threshold_tf_target_corr_fdr",
-    "threshold_tf_target_corr_p", "topic_gammafit_thrP",
-    "module3_topic_gammafit_thrP", "topic_tf_membership_cutoff",
+    "threshold_tf_target_corr_p", "topic_tf_membership_cutoff",
     "module3_topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
     "module3_topic_tf_primary_margin_cutoff"
   ), names(cfg))
@@ -448,8 +475,8 @@
     module3_topic_link_output = c("pass", "full", "both", "none"),
     topic_score_method = c("normtop_specificity", "rowmax_phi"),
     module3_topic_score_method = c("normtop_specificity", "rowmax_phi"),
-    topic_term_assignment_method = c("max_phi", "gammafit"),
-    module3_topic_term_assignment_method = c("max_phi", "gammafit"),
+    topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
+    module3_topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
     topic_vae_device = c("auto", "cpu", "cuda"),
     module3_topic_vae_device = c("auto", "cpu", "cuda")
   )

@@ -10,7 +10,7 @@ module3_extract_topics(
   output_dir,
   flatten_single_output = TRUE,
   topic_score_method = c("normtop_specificity", "rowmax_phi"),
-  topic_term_assignment_method = c("max_phi", "gammafit"),
+  topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
   k_workers = NULL,
   k_max_workers = 4L,
   k_memory_gb = NULL,
@@ -34,9 +34,12 @@ directly under `output_dir`. Defaults to `TRUE` for the public step API.}
 is the default for new extractions; `"rowmax_phi"` preserves the legacy
 row-maximum-scaled phi score.}
 
-\item{topic_term_assignment_method}{Term-to-topic assignment. `"max_phi"`
-assigns every Gene and Peak term to exactly one topic from raw model `phi`;
-`"gammafit"` retains the legacy score-and-cutoff membership behavior.}
+\item{topic_term_assignment_method}{Term-to-topic assignment.
+`"gammafit_maxprob"` applies GammaFit first, independently selects the
+maximum-phi passing topic for each aggregate Gene and Peak term, and keeps
+the target only when those topics agree. `"max_phi"` assigns terms
+independently from raw `phi`; `"gammafit"` retains multi-topic cutoff
+membership.}
 
 \item{k_workers}{Number of K values to extract concurrently. `NULL` selects
 workers adaptively from current memory and CPU headroom.}
@@ -65,10 +68,12 @@ topic-link tables, direction-specific TF-to-topic assignment tables, and
 review outputs from trained Module 3 topic models.
 }
 \details{
-Topic assignment uses unit-specific evidence. By default, each Gene and Peak
-term is assigned to exactly one topic using its maximum raw model `phi`
-probability. The legacy `"gammafit"` assignment can retain a term in zero or
-multiple topics after specificity scoring and GammaFit cutoffs. TFs are
+Topic assignment uses unit-specific evidence. By default, GammaFit first
+identifies candidate topics for each aggregate `GENE:<gene>` and
+`PEAK:<gene>` pair. Each term independently selects its maximum-phi passing
+topic, and the pair is retained only when those topics agree. The explicit
+`"max_phi"` and legacy `"gammafit"` methods remain available for comparison.
+TFs are
 assigned from raw document-topic `theta` with the TF membership and primary
 margin cutoffs. Per-comparison pathway gene sets are built from model
 outputs only: documents with theta above the TF membership cutoff intersect

@@ -1110,6 +1110,100 @@ test_that("max-phi assignment gives every Gene and Peak exactly one raw-phi topi
   expect_equal(legacy$in_topic, candidates$in_topic)
 })
 
+test_that("GammaFit MaxProb retains only matching independent Gene and Peak maxima", {
+  raw_phi <- cbind(
+    "GENE:G1" = c(0.70, 0.20, 0.10),
+    "PEAK:G1" = c(0.10, 0.80, 0.10),
+    "GENE:G2" = c(0.10, 0.30, 0.60),
+    "PEAK:G2" = c(0.10, 0.40, 0.50),
+    "GENE:G3" = c(0.60, 0.30, 0.10),
+    "PEAK:G3" = c(0.20, 0.70, 0.10)
+  )
+  rownames(raw_phi) <- paste0("Topic", seq_len(nrow(raw_phi)))
+  score_mat <- raw_phi
+  candidate_mask <- cbind(
+    "GENE:G1" = c(TRUE, FALSE, TRUE),
+    "PEAK:G1" = c(FALSE, TRUE, TRUE),
+    "GENE:G2" = c(FALSE, TRUE, TRUE),
+    "PEAK:G2" = c(FALSE, TRUE, TRUE),
+    "GENE:G3" = c(TRUE, FALSE, FALSE),
+    "PEAK:G3" = c(FALSE, TRUE, FALSE)
+  )
+  candidates <- data.table::CJ(
+    topic = seq_len(nrow(raw_phi)),
+    term_id = colnames(raw_phi),
+    sorted = TRUE
+  )
+  candidates[, score := score_mat[cbind(topic, match(term_id, colnames(score_mat)))]]
+  candidates[, in_topic := candidate_mask[cbind(topic, match(term_id, colnames(candidate_mask)))]]
+
+  assigned <- .assign_topic_terms(
+    raw_phi = raw_phi,
+    score_mat = score_mat,
+    candidate_terms = candidates,
+    method = "gammafit_maxprob"
+  )
+  passing <- assigned[.as_logical_flag(in_topic) & term_group %in% c("GENE", "PEAK")]
+
+  expect_equal(passing[term_id %in% c("GENE:G2", "PEAK:G2"), unique(topic_num)], 3L)
+  expect_equal(passing[term_id %in% c("GENE:G1", "PEAK:G1"), .N], 0L)
+  expect_equal(passing[term_id %in% c("GENE:G3", "PEAK:G3"), .N], 0L)
+  expect_true(all(passing[, .N, by = term_id]$N == 1L))
+  expect_true(all(passing$assignment_method == "gammafit_maxprob"))
+
+  pair_assignment <- .topic_gene_peak_assignment_table(assigned)
+  expect_false(pair_assignment[target_gene == "G1", assigned])
+  expect_equal(pair_assignment[target_gene == "G1", gene_maxprob_topic], "1")
+  expect_equal(pair_assignment[target_gene == "G1", peak_maxprob_topic], "2")
+  expect_equal(
+    pair_assignment[target_gene == "G1", assignment_status],
+    "maxprob_topic_disagreement"
+  )
+  expect_equal(pair_assignment[target_gene == "G1", common_candidate_count], 1L)
+  expect_true(pair_assignment[target_gene == "G2", assigned])
+  expect_equal(pair_assignment[target_gene == "G2", assigned_topic], "3")
+  expect_false(pair_assignment[target_gene == "G3", assigned])
+  expect_equal(
+    pair_assignment[target_gene == "G3", assignment_status],
+    "no_shared_gammafit_topic"
+  )
+})
+
+test_that("topic links can use the final unique Gene and Peak assignment", {
+  score_mat <- matrix(
+    c(0.8, 0.7, 0.4, 0.5, 0.6, 0.3),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(c("Topic1", "Topic2"), c("GENE:G1", "PEAK:G1", "OTHER:X"))
+  )
+  topic_terms <- data.table::CJ(topic_num = 1:2, term_id = colnames(score_mat))
+  topic_terms[, `:=`(
+    topic = topic_num,
+    score = score_mat[cbind(topic_num, match(term_id, colnames(score_mat)))],
+    in_topic = term_id == "OTHER:X" | topic_num == 2L
+  )]
+  edges_docs <- data.table::data.table(
+    doc_id = "ConditionA::TF1",
+    tf = "TF1",
+    peak_id = "chr1:1-100",
+    gene_key = "G1"
+  )
+
+  links <- compute_topic_links(
+    edges_docs = edges_docs,
+    score_mat = score_mat,
+    raw_score_mat = score_mat,
+    topic_terms = topic_terms,
+    use_final_term_assignment = TRUE,
+    fp_term_mode = "aggregate",
+    binarize_method = "gammafit",
+    link_method = "gammafit",
+    output_mode = "none"
+  )
+  expect_equal(nrow(links), 1L)
+  expect_equal(links$topic_num, 2L)
+})
+
 test_that("gammafit diagnostics report score method and minimum term forcing", {
   score_mat <- matrix(
     c(

@@ -3765,6 +3765,19 @@ run_module3_topic_benchmark <- function(filtered_dir,
         k = k_grid[[j]],
         output_dir = extract_roots[[j]]
       ))
+      row_report_args <- modifyList(
+        list(
+          fp_term_mode = row$fp_mode[[1L]],
+          link_topic_n_cores = link_cores_per_worker,
+          topic_model_family = .module3_topic_model_family(row$method[[1L]]),
+          topic_term_assignment_method = .module3_default_term_assignment_method(row$method[[1L]])
+        ),
+        extraction_topic_report_args
+      )
+      row_report_args$thrP <- .module3_resolve_gammafit_thrP(
+        extraction_topic_report_args$thrP %||% NULL,
+        method = row$method[[1L]]
+      )
       worker_fun <- function(task) {
         extract_regulatory_topics(
           k = task$k,
@@ -3775,13 +3788,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
           doc_mode = "tf",
           weight_label = row$weight_label[[1L]],
           flatten_single_output = .m3tb_flat_output_for_layout(output_layout),
-          topic_report_args = modifyList(
-            list(
-              fp_term_mode = row$fp_mode[[1L]],
-              link_topic_n_cores = link_cores_per_worker
-            ),
-            extraction_topic_report_args
-          )
+          topic_report_args = row_report_args
         )
       }
       .module3_run_extraction_k_tasks(
@@ -4602,6 +4609,50 @@ run_regulatory_topics <- function(filtered_dir,
   vals
 }
 
+.module3_resolve_gammafit_thrP <- function(value = NULL, method = NULL) {
+  family <- .module3_topic_model_family(method)
+  if (is.null(value)) return(.module3_default_gammafit_thrP(family))
+  if (is.numeric(value) && length(value) == 1L) {
+    cutoff <- suppressWarnings(as.numeric(value[[1L]]))
+  } else {
+    values <- if (is.list(value)) unlist(value, use.names = TRUE) else value
+    value_names <- names(values)
+    if (is.null(value_names) || any(!nzchar(value_names))) {
+      .log_abort(
+        "topic_gammafit_thrP must be one probability or a named lda/multivi/vae_mlp/default mapping."
+      )
+    }
+    value_names <- tolower(gsub("-", "_", value_names, fixed = TRUE))
+    aliases <- c(warplda = "lda", vae = "vae_mlp")
+    value_names[value_names %in% names(aliases)] <- aliases[value_names[value_names %in% names(aliases)]]
+    if (anyDuplicated(value_names)) {
+      .log_abort("topic_gammafit_thrP contains duplicate model-family entries after alias normalization.")
+    }
+    names(values) <- value_names
+    selected <- if (family %in% names(values)) {
+      values[[family]]
+    } else if ("default" %in% names(values)) {
+      values[["default"]]
+    } else {
+      NULL
+    }
+    if (is.null(selected)) return(.module3_default_gammafit_thrP(family))
+    cutoff <- suppressWarnings(as.numeric(selected[[1L]]))
+  }
+  if (!is.finite(cutoff) || cutoff <= 0 || cutoff >= 1) {
+    .log_abort("topic_gammafit_thrP must be strictly between 0 and 1.")
+  }
+  cutoff
+}
+
+.module3_default_term_assignment_method <- function(method) {
+  value <- tolower(paste(as.character(method), collapse = " "))
+  is_aggregate <- grepl("aggr|aggregate", value)
+  is_weighted <- grepl("weight", value, fixed = TRUE)
+  is_unique <- grepl("uniq|unique", value)
+  if (is_aggregate && !is_weighted && !is_unique) "gammafit_maxprob" else "max_phi"
+}
+
 .module3_report_state <- function(cfg) {
   report <- cfg$report %||% cfg$report_state %||% list()
   if (!is.list(report)) .log_abort("`report` in the project config must be a mapping.")
@@ -4726,14 +4777,11 @@ run_regulatory_topics <- function(filtered_dir,
   if (!gammafit_scope %in% c("topic_term_group", "global_term_group")) {
     gammafit_scope <- "topic_term_group"
   }
-  gammafit_thrP <- suppressWarnings(as.numeric(.module3_cfg_value(
+  gammafit_thrP <- .module3_resolve_gammafit_thrP(.module3_cfg_value(
     cfg,
     c("topic_gammafit_thrP", "module3_topic_gammafit_thrP"),
-    0.975
-  )[[1L]]))
-  if (!is.finite(gammafit_thrP) || gammafit_thrP <= 0 || gammafit_thrP >= 1) {
-    gammafit_thrP <- 0.975
-  }
+    NULL
+  ), method = method)
   gammafit_min_terms <- suppressWarnings(as.integer(.module3_cfg_value(
     cfg,
     c("topic_gammafit_min_terms", "module3_topic_gammafit_min_terms"),
@@ -4758,13 +4806,13 @@ run_regulatory_topics <- function(filtered_dir,
     as.character(.module3_cfg_value(
       cfg,
       c("topic_term_assignment_method", "module3_topic_term_assignment_method"),
-      "max_phi"
+      .module3_default_term_assignment_method(method)
     ))[[1L]]
   } else {
     as.character(topic_term_assignment_method)[[1L]]
   }
-  if (!topic_term_assignment_method %in% c("max_phi", "gammafit")) {
-    topic_term_assignment_method <- "max_phi"
+  if (!topic_term_assignment_method %in% c("gammafit_maxprob", "max_phi", "gammafit")) {
+    topic_term_assignment_method <- .module3_default_term_assignment_method(method)
   }
   topic_link_method <- as.character(.module3_cfg_value(
     cfg,
@@ -4856,6 +4904,7 @@ run_regulatory_topics <- function(filtered_dir,
 #'   supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 #'   `warplda_iterations`, `topic_link_output`, `topic_score_method`,
 #'   `topic_term_assignment_method`,
+#'   `topic_gammafit_thrP` (a scalar or an `lda`/`multivi`/`vae_mlp` mapping),
 #'   `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 #'   `topic_raw_theta_document_heatmap` are used for arguments that are left as
 #'   `NULL` or as default extraction settings. A nested `report` mapping can
@@ -4878,8 +4927,11 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param topic_score_method Topic-term score method for extraction. If `NULL`,
 #'   read from `project_config` or use `"normtop_specificity"`.
 #' @param topic_term_assignment_method Term-to-topic assignment method. If
-#'   `NULL`, read from `project_config` or use `"max_phi"`, which assigns each
-#'   Gene and Peak term to exactly one topic from raw model phi.
+#'   `NULL`, read from `project_config`. Aggregate Gene/Peak methods default to
+#'   `"gammafit_maxprob"`, which applies GammaFit first and retains a Gene/Peak
+#'   pair only when the independently selected maximum-phi passing topics agree.
+#'   Unique or aggregate-weight methods retain the independent `"max_phi"`
+#'   default.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from

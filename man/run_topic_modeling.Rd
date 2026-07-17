@@ -49,6 +49,7 @@ files.}
 supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 `warplda_iterations`, `topic_link_output`, `topic_score_method`,
 `topic_term_assignment_method`,
+`topic_gammafit_thrP` (a scalar or an `lda`/`multivi`/`vae_mlp` mapping),
 `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 `topic_raw_theta_document_heatmap` are used for arguments that are left as
 `NULL` or as default extraction settings. A nested `report` mapping can
@@ -79,8 +80,11 @@ from `count_method`.}
 read from `project_config` or use `"normtop_specificity"`.}
 
 \item{topic_term_assignment_method}{Term-to-topic assignment method. If
-`NULL`, read from `project_config` or use `"max_phi"`, which assigns each
-Gene and Peak term to exactly one topic from raw model phi.}
+`NULL`, read from `project_config`. Aggregate Gene/Peak methods default to
+`"gammafit_maxprob"`, which applies GammaFit first and retains a Gene/Peak
+pair only when the independently selected maximum-phi passing topics agree.
+Unique or aggregate-weight methods retain the independent `"max_phi"`
+default.}
 
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}

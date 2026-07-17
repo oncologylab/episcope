@@ -169,6 +169,10 @@ topic_method: comparison_aggr_multivi
 topic_k: 10
 warplda_iterations: 2000
 topic_link_output: pass
+topic_term_assignment_method: gammafit_maxprob
+topic_gammafit_thrP:
+  lda: 0.70
+  multivi: 0.80
 pathway_backend: enrichly
 pathway_species: human_mouse_best
 
@@ -179,8 +183,12 @@ topic_benchmark_k_grid: []
 
 Module 3 uses different evidence for different topic-assignment units:
 
-- Terms are assigned from the topic-term matrix `phi` after the default
-  `normtop_specificity` score and GammaFit topic-term cutoffs.
+- Aggregate Gene and Peak terms are assigned in two stages. The default
+  `normtop_specificity` score and GammaFit cutoffs identify candidate topics;
+  `gammafit_maxprob` independently chooses the maximum-`phi` passing topic for
+  `GENE:<gene>` and `PEAK:<gene>`, then keeps both only when those topics agree.
+  Default GammaFit probabilities are model-specific; one scalar can override
+  all models.
 - TFs are assigned from raw document-topic `theta`; a TF document belongs to a
   topic when `theta >= topic_tf_membership_cutoff` and primary-topic ambiguity
   is controlled by `topic_tf_primary_margin_cutoff`.
@@ -217,7 +225,9 @@ keeps a deterministic case-normalized fallback so old all-uppercase versus
 titlecase differences still match where possible.
 
 Standard extraction folders are flat. For a selected K, review the K root for
-`topic_terms.csv`, `topic_links_pass.csv`, `topic_item_coverage_counts.csv`,
+`topic_terms.csv`, `topic_gene_peak_assignment.csv`,
+`topic_term_assignment_summary.csv`, `topic_links_pass.csv`,
+`topic_item_coverage_counts.csv`,
 `topic_terms_and_cutoffs_summary.pdf`, `topic_term_phi_score_heatmap_K*.pdf`,
 `topic_pathway_enrichment_dotplot.pdf`, and
 `per_comparison_topic_pathway_enrichment.csv`. Standard runs do not create LDAvis,
