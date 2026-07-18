@@ -5648,7 +5648,7 @@ compute_link_topic_scores <- function(edges_docs,
     phi_mat <- phi_mat[colnames(theta_mat), , drop = FALSE]
   }
   topic_labels <- colnames(theta_mat)
-  topic_nums <- seq_len(ncol(theta_mat))
+  topic_nums <- .m3_opt_topic_ids(theta_mat, "column")
 
   doc_ids <- rownames(theta_mat)
   if (is.null(doc_ids) || anyNA(doc_ids) || any(doc_ids == "")) {
@@ -6456,7 +6456,8 @@ compute_topic_links <- function(edges_docs,
     rep_tf <- rep(chunk_dt$tf, each = K)
     rep_peak <- rep(chunk_dt$peak_id, each = K)
     rep_gene <- rep(chunk_dt$gene_key, each = K)
-    rep_topic <- rep(seq_len(K), times = n)
+    topic_ids <- .m3_opt_topic_ids(score_mat, "row")
+    rep_topic <- rep(topic_ids, times = n)
     peak_score <- as.vector(peak_scores_raw)
     gene_score <- as.vector(gene_scores_raw)
     peak_score_gate <- as.vector(peak_scores_gate)
@@ -9066,7 +9067,9 @@ plot_intertopic_distance_map <- function(phi, topic_terms, out_file, option_labe
       tt <- tt[grepl(paste0("^", term_prefix), term_id)]
       counts <- tt[, .N, by = topic]
     }
-    sizes <- counts$N[match(seq_len(K), counts$topic)]
+    topic_ids <- .m3_opt_topic_ids(phi, "row")
+    count_ids <- suppressWarnings(as.integer(sub("^Topic", "", counts$topic)))
+    sizes <- counts$N[match(topic_ids, count_ids)]
     sizes[!is.finite(sizes)] <- 1
   }
   sizes <- sqrt(pmax(sizes, 1))
@@ -9202,6 +9205,14 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               run_topic_term_heatmap = TRUE,
                                               run_topic_by_comparison_heatmaps = TRUE,
                                               run_intertopic_distance_map = TRUE,
+                                              optimize_topics = NULL,
+                                              topic_merge_min_genes = 50L,
+                                              topic_merge_min_links = 200L,
+                                              topic_merge_similarity_threshold = 0.90,
+                                              run_topic_assignment_qc = NULL,
+                                              topic_qc_umap_links_per_condition = 10000L,
+                                              topic_qc_top_tfs = 100L,
+                                              topic_qc_seed = 20260716L,
                                               extraction_steps = NULL,
                                               topic_by_comparison_label_cleaner = NULL,
                                               doc_design = c("comparison", "condition"),
@@ -9268,6 +9279,27 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   } else {
     isTRUE(pathway_per_condition)
   }
+  optimization_eligible <- identical(doc_design, "condition") &&
+    identical(fp_term_mode, "aggregate") &&
+    identical(topic_term_assignment_method, "gammafit_maxprob")
+  optimize_topics <- if (is.null(optimize_topics)) {
+    optimization_eligible
+  } else {
+    isTRUE(optimize_topics)
+  }
+  run_topic_assignment_qc <- if (is.null(run_topic_assignment_qc)) {
+    optimize_topics
+  } else {
+    isTRUE(run_topic_assignment_qc)
+  }
+  if (optimize_topics && !optimization_eligible) {
+    .log_abort(
+      paste(
+        "Topic optimization requires condition documents, aggregate terms,",
+        "and topic_term_assignment_method = 'gammafit_maxprob'."
+      )
+    )
+  }
 
   .assert_pkg("cli")
   .assert_pkg("data.table")
@@ -9312,6 +9344,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
 
   theta <- .validate_topic_probability_matrix(topic_base$theta, "theta")
   phi <- .validate_topic_probability_matrix(topic_base$phi, "phi")
+  model_k <- nrow(phi)
 
   if (is.null(rownames(theta)) && !is.null(rownames(dtm))) {
     rownames(theta) <- rownames(dtm)
@@ -9327,6 +9360,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     "score_terms",
     score_terms_normtop(phi, method = topic_score_method)
   )
+  gamma_score_mat <- score_mat
   candidate_topic_terms <- .record_step(
     "binarize_topics",
     binarize_topics(
@@ -9379,10 +9413,75 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       ),
       file.path(out_dir, "topic_term_assignment_summary.csv")
     )
+    if (isTRUE(optimize_topics)) {
+      raw_k <- nrow(phi)
+      data.table::fwrite(
+        topic_terms,
+        file.path(out_dir, "topic_terms_raw.csv")
+      )
+      data.table::fwrite(
+        pair_assignment,
+        file.path(out_dir, "topic_gene_peak_assignment_raw.csv")
+      )
+      optimization <- .record_step(
+        "optimize_topics",
+        .module3_optimize_condition_topics(
+          theta = theta,
+          phi = phi,
+          dtm = dtm,
+          topic_terms = topic_terms,
+          pair_assignment = pair_assignment,
+          min_genes = topic_merge_min_genes,
+          min_links = topic_merge_min_links,
+          similarity_threshold = topic_merge_similarity_threshold,
+          tf_topic_cutoff = topic_tf_membership_cutoff,
+          umap_max_links_per_condition = topic_qc_umap_links_per_condition,
+          seed = topic_qc_seed
+        )
+      )
+      theta <- optimization$theta
+      phi <- optimization$phi
+      score_mat <- optimization$score
+      topic_terms <- optimization$topic_terms
+      pair_assignment <- optimization$pair_assignment
+      topic_base$theta <- theta
+      topic_base$phi <- phi
+      data.table::fwrite(topic_terms, file.path(out_dir, "topic_terms.csv"))
+      data.table::fwrite(
+        pair_assignment,
+        file.path(out_dir, "topic_gene_peak_assignment.csv")
+      )
+      .save_all(out_dir, "topic_terms", topic_terms)
+      .save_all(out_dir, "topic_term_scores_normtop", score_mat)
+      .save_all(out_dir, paste0("topic_term_scores_", topic_score_method), score_mat)
+      data.table::fwrite(
+        .topic_gene_peak_assignment_summary(
+          pair_assignment,
+          thrP = thrP,
+          assignment_method = "gammafit_maxprob_optimized",
+          model_family = topic_model_family
+        ),
+        file.path(out_dir, "topic_term_assignment_summary.csv")
+      )
+      if (isTRUE(run_topic_assignment_qc)) {
+        .record_step(
+          "topic_assignment_qc",
+          .write_module3_topic_optimization_outputs(
+            optimization = optimization,
+            out_dir = out_dir,
+            raw_k = raw_k,
+            title_prefix = title_prefix,
+            condition_colors = theta_umap_condition_colors,
+            top_n_tfs = topic_qc_top_tfs,
+            seed = topic_qc_seed
+          )
+        )
+      }
+    }
   }
   if (identical(binarize_method, "gammafit")) {
     gamma_diagnostics_tbl <- .gammafit_diagnostics_by_termclass(
-      score_mat,
+      gamma_score_mat,
       topic_terms = candidate_topic_terms,
       topic_score_method = topic_score_method,
       thrP = thrP,
@@ -9394,7 +9493,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       file.path(out_dir, "topic_gammafit_diagnostics.csv")
     )
     gamma_cutoffs_tbl <- .gammafit_cutoffs_by_termclass(
-      score_mat,
+      gamma_score_mat,
       thrP = thrP,
       min_terms = in_topic_min_terms,
       gammafit_scope = gammafit_scope
@@ -9534,7 +9633,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     .record_step(
       "raw_theta_document_heatmap",
       {
-        raw_theta_path <- file.path(out_dir, sprintf("raw_theta_documents_K%d.pdf", ncol(topic_base$theta)))
+        raw_theta_path <- file.path(out_dir, sprintf("raw_theta_documents_K%d.pdf", model_k))
         .plot_raw_theta_document_heatmap(
           theta = topic_base$theta,
           out_file = raw_theta_path,
@@ -9548,7 +9647,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     .record_step(
       "document_theta_umap",
       {
-        theta_umap_path <- file.path(out_dir, sprintf("document_theta_umap_K%d.pdf", ncol(topic_base$theta)))
+        theta_umap_path <- file.path(out_dir, sprintf("document_theta_umap_K%d.pdf", model_k))
         .plot_document_theta_umap(
           theta = topic_base$theta,
           out_file = theta_umap_path,
@@ -9567,7 +9666,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     .record_step(
       "topic_term_heatmaps",
       {
-        term_compare_path <- file.path(out_dir, sprintf("topic_term_phi_score_heatmap_K%d.pdf", nrow(score_mat)))
+        term_compare_path <- file.path(out_dir, sprintf("topic_term_phi_score_heatmap_K%d.pdf", model_k))
         .write_topic_term_primary_assignment(
           score_mat = score_mat,
           topic_terms = topic_terms,
@@ -12456,7 +12555,7 @@ extract_regulatory_topics <- function(k,
     reason <- "available memory could not be measured"
   } else if (isTRUE(link_scoring)) {
     workers <- 1L
-    reason <- "topic-link scoring requires sequential K extraction"
+    reason <- "topic-link scoring or topic optimization requires sequential K extraction"
   } else if (memory_workers <= 1L) {
     workers <- 1L
     reason <- "available memory headroom supports one K worker"
@@ -12560,6 +12659,19 @@ extract_regulatory_topics <- function(k,
 #'   the target only when those topics agree. `"max_phi"` assigns terms
 #'   independently from raw `phi`; `"gammafit"` retains multi-topic cutoff
 #'   membership.
+#' @param optimize_topics Whether eligible condition-topic extractions merge
+#'   undersized or highly similar topics before downstream reports.
+#' @param topic_merge_min_genes Minimum assigned genes required to retain a
+#'   topic without a size-based merge.
+#' @param topic_merge_min_links Minimum aligned TF-target links required to
+#'   retain a topic without a size-based merge.
+#' @param topic_merge_similarity_threshold Mean Gene/Peak Hellinger similarity
+#'   at or above which two topics are merged.
+#' @param run_topic_assignment_qc Whether to write the standard per-K topic
+#'   assignment QC PDF and optimization audit tables.
+#' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
+#'   size per condition. Full-universe counts are never sampled.
+#' @param topic_qc_top_tfs Number of TFs per condition shown in QC heatmaps.
 #' @param k_workers Number of K values to extract concurrently. `NULL` selects
 #'   workers adaptively from current memory and CPU headroom.
 #' @param k_max_workers Maximum concurrent K workers in adaptive mode.
@@ -12580,6 +12692,13 @@ module3_extract_topics <- function(k,
                                    flatten_single_output = TRUE,
                                    topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                    topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
+                                   optimize_topics = NULL,
+                                   topic_merge_min_genes = 50L,
+                                   topic_merge_min_links = 200L,
+                                   topic_merge_similarity_threshold = 0.90,
+                                   run_topic_assignment_qc = NULL,
+                                   topic_qc_umap_links_per_condition = 10000L,
+                                   topic_qc_top_tfs = 100L,
                                    k_workers = NULL,
                                    k_max_workers = 4L,
                                    k_memory_gb = NULL,
@@ -12593,18 +12712,34 @@ module3_extract_topics <- function(k,
   topic_score_method <- match.arg(topic_score_method)
   topic_term_assignment_method <- match.arg(topic_term_assignment_method)
   dots <- list(...)
+  topic_report_args <- dots$topic_report_args %||% list()
+  dots$topic_report_args <- modifyList(
+    list(
+      optimize_topics = optimize_topics,
+      topic_merge_min_genes = topic_merge_min_genes,
+      topic_merge_min_links = topic_merge_min_links,
+      topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+      run_topic_assignment_qc = run_topic_assignment_qc,
+      topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
+      topic_qc_top_tfs = topic_qc_top_tfs
+    ),
+    topic_report_args
+  )
   if (length(k) == 1L) {
-    return(extract_regulatory_topics(
-      k = k,
-      model_dir = model_dir,
-      output_dir = output_dir,
-      flatten_single_output = flatten_single_output,
-      topic_score_method = topic_score_method,
-      topic_term_assignment_method = topic_term_assignment_method,
-      ...
+    return(do.call(
+      extract_regulatory_topics,
+      c(list(
+        k = k,
+        model_dir = model_dir,
+        output_dir = output_dir,
+        flatten_single_output = flatten_single_output,
+        topic_score_method = topic_score_method,
+        topic_term_assignment_method = topic_term_assignment_method
+      ), dots)
     ))
   }
-  link_scoring <- isTRUE(dots$topic_report_args$run_link_topic_scores)
+  link_scoring <- isTRUE(dots$topic_report_args$run_link_topic_scores) ||
+    !identical(dots$topic_report_args$optimize_topics, FALSE)
   plan <- .module3_extraction_k_worker_plan(
     n_tasks = length(k),
     model_dir = model_dir,

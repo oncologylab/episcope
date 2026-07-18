@@ -11,6 +11,13 @@ module3_extract_topics(
   flatten_single_output = TRUE,
   topic_score_method = c("normtop_specificity", "rowmax_phi"),
   topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
+  optimize_topics = NULL,
+  topic_merge_min_genes = 50L,
+  topic_merge_min_links = 200L,
+  topic_merge_similarity_threshold = 0.9,
+  run_topic_assignment_qc = NULL,
+  topic_qc_umap_links_per_condition = 10000L,
+  topic_qc_top_tfs = 100L,
   k_workers = NULL,
   k_max_workers = 4L,
   k_memory_gb = NULL,
@@ -40,6 +47,26 @@ maximum-phi passing topic for each aggregate Gene and Peak term, and keeps
 the target only when those topics agree. `"max_phi"` assigns terms
 independently from raw `phi`; `"gammafit"` retains multi-topic cutoff
 membership.}
+
+\item{optimize_topics}{Whether eligible condition-topic extractions merge
+undersized or highly similar topics before downstream reports.}
+
+\item{topic_merge_min_genes}{Minimum assigned genes required to retain a
+topic without a size-based merge.}
+
+\item{topic_merge_min_links}{Minimum aligned TF-target links required to
+retain a topic without a size-based merge.}
+
+\item{topic_merge_similarity_threshold}{Mean Gene/Peak Hellinger similarity
+at or above which two topics are merged.}
+
+\item{run_topic_assignment_qc}{Whether to write the standard per-K topic
+assignment QC PDF and optimization audit tables.}
+
+\item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
+size per condition. Full-universe counts are never sampled.}
+
+\item{topic_qc_top_tfs}{Number of TFs per condition shown in QC heatmaps.}
 
 \item{k_workers}{Number of K values to extract concurrently. `NULL` selects
 workers adaptively from current memory and CPU headroom.}

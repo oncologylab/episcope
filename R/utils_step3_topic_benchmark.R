@@ -4593,6 +4593,10 @@ run_regulatory_topics <- function(filtered_dir,
 .module3_cfg_value <- function(cfg, names, default = NULL) {
   for (nm in names) {
     if (!is.null(cfg[[nm]])) return(cfg[[nm]])
+    if (startsWith(nm, "module3_") && is.list(cfg$module3)) {
+      nested_name <- sub("^module3_", "", nm)
+      if (!is.null(cfg$module3[[nested_name]])) return(cfg$module3[[nested_name]])
+    }
   }
   default
 }
@@ -4853,6 +4857,78 @@ run_regulatory_topics <- function(filtered_dir,
     TRUE
   )
   run_raw_theta_document_heatmap <- .as_logical_flag(run_raw_theta_document_heatmap[[1L]])
+  optimize_topics_raw <- .module3_cfg_value(
+    cfg,
+    c(
+      "topic_optimize_topics", "module3_topic_optimize_topics",
+      "module3_optimize_topics"
+    ),
+    NULL
+  )
+  optimize_topics <- if (is.null(optimize_topics_raw)) {
+    NULL
+  } else {
+    .as_logical_flag(optimize_topics_raw[[1L]])
+  }
+  topic_merge_min_genes <- suppressWarnings(as.integer(.module3_cfg_value(
+    cfg,
+    c(
+      "topic_merge_min_genes", "module3_topic_merge_min_genes",
+      "module3_merge_min_genes"
+    ),
+    50L
+  )[[1L]]))
+  topic_merge_min_links <- suppressWarnings(as.integer(.module3_cfg_value(
+    cfg,
+    c(
+      "topic_merge_min_links", "module3_topic_merge_min_links",
+      "module3_merge_min_links"
+    ),
+    200L
+  )[[1L]]))
+  topic_merge_similarity_threshold <- suppressWarnings(as.numeric(.module3_cfg_value(
+    cfg,
+    c(
+      "topic_merge_similarity_threshold",
+      "module3_topic_merge_similarity_threshold",
+      "module3_merge_similarity_threshold"
+    ),
+    0.90
+  )[[1L]]))
+  run_topic_assignment_qc_raw <- .module3_cfg_value(
+    cfg,
+    c(
+      "topic_assignment_qc", "module3_topic_assignment_qc",
+      "module3_run_topic_assignment_qc"
+    ),
+    NULL
+  )
+  run_topic_assignment_qc <- if (is.null(run_topic_assignment_qc_raw)) {
+    NULL
+  } else {
+    .as_logical_flag(run_topic_assignment_qc_raw[[1L]])
+  }
+  topic_qc_umap_links_per_condition <- suppressWarnings(as.integer(
+    .module3_cfg_value(
+      cfg,
+      c(
+        "topic_qc_umap_links_per_condition",
+        "module3_topic_qc_umap_links_per_condition",
+        "module3_qc_umap_links_per_condition"
+      ),
+      10000L
+    )[[1L]]
+  ))
+  topic_qc_top_tfs <- suppressWarnings(as.integer(.module3_cfg_value(
+    cfg,
+    c("topic_qc_top_tfs", "module3_topic_qc_top_tfs", "module3_qc_top_tfs"),
+    100L
+  )[[1L]]))
+  topic_qc_seed <- suppressWarnings(as.integer(.module3_cfg_value(
+    cfg,
+    c("topic_qc_seed", "module3_topic_qc_seed", "module3_qc_seed"),
+    20260716L
+  )[[1L]]))
   list(
     method = method,
     k_grid = k_grid,
@@ -4878,7 +4954,15 @@ run_regulatory_topics <- function(filtered_dir,
       pathway_species = pathway_species,
       pathway_databases = pathway_databases,
       theta_umap_condition_colors = .module3_topic_condition_colors(cfg),
-      run_raw_theta_document_heatmap = run_raw_theta_document_heatmap
+      run_raw_theta_document_heatmap = run_raw_theta_document_heatmap,
+      optimize_topics = optimize_topics,
+      topic_merge_min_genes = topic_merge_min_genes,
+      topic_merge_min_links = topic_merge_min_links,
+      topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+      run_topic_assignment_qc = run_topic_assignment_qc,
+      topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
+      topic_qc_top_tfs = topic_qc_top_tfs,
+      topic_qc_seed = topic_qc_seed
     ),
     benchmark = list(
       enabled = isTRUE(.module3_cfg_value(cfg, c("topic_benchmark_enabled", "module3_topic_benchmark_enabled"), FALSE)),
@@ -4932,6 +5016,20 @@ run_regulatory_topics <- function(filtered_dir,
 #'   pair only when the independently selected maximum-phi passing topics agree.
 #'   Unique or aggregate-weight methods retain the independent `"max_phi"`
 #'   default.
+#' @param optimize_topics Whether eligible condition-topic extractions merge
+#'   undersized or highly similar topics before downstream reports. If `NULL`,
+#'   use project config or the standard condition-mode default.
+#' @param run_topic_assignment_qc Whether to write the standard per-K topic
+#'   assignment QC PDF. If `NULL`, use project config.
+#' @param topic_merge_min_genes Minimum assigned genes required to retain a
+#'   topic without a size-based merge. If `NULL`, use project config.
+#' @param topic_merge_min_links Minimum aligned TF-target links required to
+#'   retain a topic without a size-based merge. If `NULL`, use project config.
+#' @param topic_merge_similarity_threshold Mean Gene/Peak Hellinger similarity
+#'   at or above which topics are merged. If `NULL`, use project config.
+#' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
+#'   size per condition. Full-universe counts are not sampled.
+#' @param topic_qc_top_tfs Number of TFs per condition shown in QC heatmaps.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
@@ -4982,6 +5080,13 @@ run_topic_modeling <- function(filtered_dir,
                                count_input = NULL,
                                topic_score_method = NULL,
                                topic_term_assignment_method = NULL,
+                               optimize_topics = NULL,
+                               run_topic_assignment_qc = NULL,
+                               topic_merge_min_genes = NULL,
+                               topic_merge_min_links = NULL,
+                               topic_merge_similarity_threshold = NULL,
+                               topic_qc_umap_links_per_condition = NULL,
+                               topic_qc_top_tfs = NULL,
                                vae_device = NULL,
                                vae_batch_size = NULL,
                                pathway_backend = NULL,
@@ -5014,6 +5119,24 @@ run_topic_modeling <- function(filtered_dir,
     pathway_species = pathway_species,
     pathway_databases = pathway_databases
   )
+  if (!is.null(optimize_topics)) {
+    extraction_topic_report_args$optimize_topics <- isTRUE(optimize_topics)
+  }
+  if (!is.null(run_topic_assignment_qc)) {
+    extraction_topic_report_args$run_topic_assignment_qc <-
+      isTRUE(run_topic_assignment_qc)
+  }
+  direct_extraction_controls <- list(
+    topic_merge_min_genes = topic_merge_min_genes,
+    topic_merge_min_links = topic_merge_min_links,
+    topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+    topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
+    topic_qc_top_tfs = topic_qc_top_tfs
+  )
+  for (control in names(direct_extraction_controls)) {
+    value <- direct_extraction_controls[[control]]
+    if (!is.null(value)) extraction_topic_report_args[[control]] <- value
+  }
   run_regulatory_topics(
     filtered_dir = filtered_dir,
     multiomic_data = multiomic_data,

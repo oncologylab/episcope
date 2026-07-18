@@ -118,6 +118,10 @@
     "topic_k", "topic_k_grid", "topic_link_method", "topic_link_output",
     "topic_link_prob_cutoff", "topic_method", "topic_score_method",
     "topic_term_assignment_method",
+    "topic_optimize_topics", "topic_merge_min_genes",
+    "topic_merge_min_links", "topic_merge_similarity_threshold",
+    "topic_assignment_qc", "topic_qc_umap_links_per_condition",
+    "topic_qc_top_tfs", "topic_qc_seed",
     "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
     "topic_vae_batch_size", "topic_vae_device", "warplda_iterations",
     "waterfall_min_abs_net",
@@ -130,10 +134,19 @@
       "topic_k_grid", "topic_link_method", "topic_link_output",
       "topic_link_prob_cutoff", "topic_method", "topic_score_method",
       "topic_term_assignment_method",
+      "topic_optimize_topics", "topic_merge_min_genes",
+      "topic_merge_min_links", "topic_merge_similarity_threshold",
+      "topic_assignment_qc", "topic_qc_umap_links_per_condition",
+      "topic_qc_top_tfs", "topic_qc_seed",
       "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
       "topic_vae_batch_size", "topic_vae_device", "warplda_iterations"
     )),
-    "topic_warplda_iterations"
+    "topic_warplda_iterations",
+    paste0("module3_", c(
+      "optimize_topics", "merge_min_genes", "merge_min_links",
+      "merge_similarity_threshold", "run_topic_assignment_qc",
+      "qc_umap_links_per_condition", "qc_top_tfs", "qc_seed"
+    ))
   )
 }
 
@@ -376,7 +389,10 @@
 
   logical_keys <- intersect(c(
     "filter_to_canonical_bound", "force_rebuild_fp_manifest",
-    "topic_benchmark_enabled", "module3_topic_benchmark_enabled"
+    "topic_benchmark_enabled", "module3_topic_benchmark_enabled",
+    "topic_optimize_topics", "module3_topic_optimize_topics",
+    "topic_assignment_qc", "module3_topic_assignment_qc",
+    "module3_optimize_topics", "module3_run_topic_assignment_qc"
   ), names(cfg))
   bad_logical <- logical_keys[!vapply(cfg[logical_keys], .project_config_scalar, logical(1L), type = "logical")]
   if (length(bad_logical)) {
@@ -387,6 +403,15 @@
     "all_mode_tf_chunk_size", "link_window_bp", "module3_comparison_workers",
     "topic_gammafit_min_terms", "module3_topic_gammafit_min_terms",
     "topic_vae_batch_size", "module3_topic_vae_batch_size",
+    "topic_merge_min_genes", "module3_topic_merge_min_genes",
+    "topic_merge_min_links", "module3_topic_merge_min_links",
+    "topic_qc_umap_links_per_condition",
+    "module3_topic_qc_umap_links_per_condition",
+    "topic_qc_top_tfs", "module3_topic_qc_top_tfs",
+    "topic_qc_seed", "module3_topic_qc_seed",
+    "module3_merge_min_genes", "module3_merge_min_links",
+    "module3_qc_umap_links_per_condition", "module3_qc_top_tfs",
+    "module3_qc_seed",
     "warplda_iterations", "topic_warplda_iterations", "module3_warplda_iterations"
   ), names(cfg))
   bad_integer <- positive_integer_keys[!vapply(cfg[positive_integer_keys], function(x) {
@@ -422,6 +447,20 @@
       "or a named lda/multivi/vae_mlp/default mapping: ",
       paste(bad_gammafit_probability, collapse = ", "), "."
     ))
+  }
+
+  similarity_keys <- intersect(c(
+    "topic_merge_similarity_threshold",
+    "module3_topic_merge_similarity_threshold",
+    "module3_merge_similarity_threshold"
+  ), names(cfg))
+  bad_similarity <- similarity_keys[!vapply(cfg[similarity_keys], function(x) {
+    .project_config_scalar(x, "numeric") && x > 0 && x <= 1
+  }, logical(1L))]
+  if (length(bad_similarity)) {
+    cli::cli_abort(
+      "Topic merge similarity thresholds must be greater than 0 and at most 1: {paste(bad_similarity, collapse = ', ')}."
+    )
   }
 
   probability_keys <- intersect(c(

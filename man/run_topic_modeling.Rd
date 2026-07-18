@@ -18,6 +18,13 @@ run_topic_modeling(
   count_input = NULL,
   topic_score_method = NULL,
   topic_term_assignment_method = NULL,
+  optimize_topics = NULL,
+  run_topic_assignment_qc = NULL,
+  topic_merge_min_genes = NULL,
+  topic_merge_min_links = NULL,
+  topic_merge_similarity_threshold = NULL,
+  topic_qc_umap_links_per_condition = NULL,
+  topic_qc_top_tfs = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
   pathway_backend = NULL,
@@ -85,6 +92,27 @@ read from `project_config` or use `"normtop_specificity"`.}
 pair only when the independently selected maximum-phi passing topics agree.
 Unique or aggregate-weight methods retain the independent `"max_phi"`
 default.}
+
+\item{optimize_topics}{Whether eligible condition-topic extractions merge
+undersized or highly similar topics before downstream reports. If `NULL`,
+use project config or the standard condition-mode default.}
+
+\item{run_topic_assignment_qc}{Whether to write the standard per-K topic
+assignment QC PDF. If `NULL`, use project config.}
+
+\item{topic_merge_min_genes}{Minimum assigned genes required to retain a
+topic without a size-based merge. If `NULL`, use project config.}
+
+\item{topic_merge_min_links}{Minimum aligned TF-target links required to
+retain a topic without a size-based merge. If `NULL`, use project config.}
+
+\item{topic_merge_similarity_threshold}{Mean Gene/Peak Hellinger similarity
+at or above which topics are merged. If `NULL`, use project config.}
+
+\item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
+size per condition. Full-universe counts are not sampled.}
+
+\item{topic_qc_top_tfs}{Number of TFs per condition shown in QC heatmaps.}
 
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}

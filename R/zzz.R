@@ -168,3 +168,18 @@ utils::globalVariables(c(
   "side_x", "src", "status", "tf_display", "theta", "unit", "up_ambiguous",
   "up_primary_theta", "up_primary_topic"
 ))
+
+utils::globalVariables(c(
+  "colour_value__", "column_label", "doc_index", "gene_token_count",
+  "link_index", "optimized_aligned", "optimized_assigned_topic",
+  "optimized_gene_topic", "optimized_peak_topic",
+  "optimized_posterior_agrees", "optimized_posterior_margin",
+  "optimized_posterior_probability", "optimized_posterior_topic",
+  "optimized_theta_pass", "optimized_topic", "optimized_topic_num",
+  "peak_token_count", "raw_aligned", "raw_assigned_topic",
+  "raw_posterior_agrees", "raw_posterior_margin",
+  "raw_posterior_probability", "raw_posterior_topic",
+  "raw_target_topic", "raw_theta_pass", "raw_topic_num",
+  "recovered_after_merge", "short", "similarity", "target_index",
+  "target_key__", "targets", "tf_index", "topic_short"
+))
