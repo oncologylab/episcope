@@ -1184,6 +1184,23 @@
   )
 }
 
+.m3_qc_jitter_umap <- function(data,
+                               seed = 20260718L,
+                               fraction = 0.005) {
+  out <- data.table::copy(data)
+  if (!nrow(out) || !all(c("UMAP1", "UMAP2") %in% names(out))) return(out)
+  x_span <- diff(range(out$UMAP1, finite = TRUE))
+  y_span <- diff(range(out$UMAP2, finite = TRUE))
+  if (!is.finite(x_span) || x_span <= 0) x_span <- 1
+  if (!is.finite(y_span) || y_span <= 0) y_span <- 1
+  set.seed(as.integer(seed))
+  out[, `:=`(
+    UMAP1 = UMAP1 + stats::runif(.N, -x_span * fraction, x_span * fraction),
+    UMAP2 = UMAP2 + stats::runif(.N, -y_span * fraction, y_span * fraction)
+  )]
+  out[]
+}
+
 .m3_qc_umap_plot <- function(data,
                              colour_column,
                              title,
@@ -1213,15 +1230,15 @@
       background,
       ggplot2::aes(UMAP1, UMAP2),
       colour = "#B9C1C7",
-      alpha = 0.14,
-      size = 0.16
+      alpha = 0.08,
+      size = 0.10
     )
   }
   p <- p + point_layer(
     foreground,
     ggplot2::aes(UMAP1, UMAP2, colour = .data[[colour_column]]),
-    alpha = 0.50,
-    size = 0.23
+    alpha = 0.25,
+    size = 0.14
   )
   if (is.null(colors)) {
     values <- sort(unique(as.character(foreground[[colour_column]])))
@@ -1252,7 +1269,7 @@
       max.overlaps = Inf,
       seed = as.integer(seed),
       label.size = 0.22,
-      segment.colour = "#65717A",
+      segment.colour = NA,
       show.legend = FALSE
     )
   }
@@ -1477,6 +1494,11 @@
     )
   )
   optimized_sample[, topic_short := sub("^Topic ", "T", topic)]
+  raw_sample <- .m3_qc_jitter_umap(raw_sample, seed = seed + 20L)
+  optimized_sample <- .m3_qc_jitter_umap(
+    optimized_sample,
+    seed = seed + 21L
+  )
   condition_values <- sort(unique(assignments$condition_id))
   if (is.null(condition_colors) || !length(condition_colors)) {
     condition_colors <- .module3_bright_topic_palette(condition_values)

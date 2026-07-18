@@ -163,3 +163,17 @@ test_that("topic structure and count heatmaps use square cells", {
   expect_equal(structure_plot$coordinates$ratio, 1)
   expect_equal(count_plot$coordinates$ratio, 1)
 })
+
+test_that("UMAP display jitter is small and deterministic", {
+  coordinates <- data.table::data.table(
+    UMAP1 = seq(0, 10, length.out = 20),
+    UMAP2 = seq(-5, 5, length.out = 20)
+  )
+
+  first <- .m3_qc_jitter_umap(coordinates, seed = 17L)
+  second <- .m3_qc_jitter_umap(coordinates, seed = 17L)
+
+  expect_equal(first, second)
+  expect_true(max(abs(first$UMAP1 - coordinates$UMAP1)) <= 0.05)
+  expect_true(max(abs(first$UMAP2 - coordinates$UMAP2)) <= 0.05)
+})
