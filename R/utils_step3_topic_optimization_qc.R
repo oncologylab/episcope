@@ -898,6 +898,7 @@
       name = "Similarity"
     ) +
     ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+    ggplot2::coord_fixed(ratio = 1) +
     .m3_qc_theme() +
     ggplot2::theme(
       axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5),
@@ -938,6 +939,7 @@
       name = "Count"
     ) +
     ggplot2::labs(title = title, x = NULL, y = NULL) +
+    ggplot2::coord_fixed(ratio = 1) +
     .m3_qc_theme() +
     ggplot2::theme(
       axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5),
@@ -980,9 +982,185 @@
     ggplot2::labs(title = title, x = "Full-universe count", y = NULL) +
     .m3_qc_theme() +
     ggplot2::theme(
+      plot.subtitle = ggplot2::element_text(colour = NA),
       axis.text.y = ggplot2::element_blank(),
       axis.ticks.y = ggplot2::element_blank(),
       panel.grid.major.y = ggplot2::element_blank()
+    ) +
+    ggplot2::labs(subtitle = " ")
+}
+
+.m3_qc_topic_structure_plot <- function(similarity,
+                                        counts,
+                                        topic_column,
+                                        topic_order,
+                                        title,
+                                        subtitle) {
+  similarity <- as.matrix(similarity)
+  topic_ids <- suppressWarnings(as.integer(sub(
+    "^Topic ",
+    "",
+    rownames(similarity)
+  )))
+  ordered_ids <- topic_ids[topic_order]
+  ordered_labels <- paste0("Topic ", ordered_ids)
+  k <- length(ordered_ids)
+  reordered <- similarity[topic_order, topic_order, drop = FALSE]
+  heatmap <- data.table::as.data.table(as.table(reordered))
+  data.table::setnames(heatmap, c("row_label", "column_label", "similarity"))
+  heatmap[, `:=`(
+    x = match(as.character(column_label), ordered_labels),
+    y = k - match(as.character(row_label), ordered_labels) + 1L,
+    similarity = as.numeric(similarity)
+  )]
+
+  count_data <- data.table::copy(counts)
+  data.table::setnames(count_data, topic_column, "topic")
+  count_data[, y := k - match(as.integer(topic), ordered_ids) + 1L]
+  count_data <- count_data[is.finite(y)]
+  bar_width <- max(3.5, min(6, k * 0.20))
+  gap <- max(1, k * 0.04)
+  link_start <- k + gap
+  gene_start <- link_start + bar_width + gap
+  link_max <- max(count_data$links, na.rm = TRUE)
+  gene_max <- max(count_data$genes, na.rm = TRUE)
+  if (!is.finite(link_max) || link_max <= 0) link_max <- 1
+  if (!is.finite(gene_max) || gene_max <= 0) gene_max <- 1
+  count_data[, `:=`(
+    link_xmax = link_start + links / link_max * bar_width,
+    gene_xmax = gene_start + genes / gene_max * bar_width,
+    link_label = .m3_qc_compact_count(links),
+    gene_label = .m3_qc_compact_count(genes),
+    link_inside = links / link_max >= 0.28,
+    gene_inside = genes / gene_max >= 0.28
+  )]
+  right_edge <- gene_start + bar_width + 1.1
+  title_y <- k + 1.15
+
+  ggplot2::ggplot() +
+    ggplot2::geom_tile(
+      data = heatmap,
+      ggplot2::aes(x, y, fill = similarity),
+      colour = "#D6DCE1",
+      linewidth = 0.2,
+      width = 1,
+      height = 1
+    ) +
+    ggplot2::geom_rect(
+      data = count_data,
+      ggplot2::aes(
+        xmin = link_start,
+        xmax = link_xmax,
+        ymin = y - 0.40,
+        ymax = y + 0.40
+      ),
+      fill = "#007C78",
+      colour = "#30383F",
+      linewidth = 0.2
+    ) +
+    ggplot2::geom_rect(
+      data = count_data,
+      ggplot2::aes(
+        xmin = gene_start,
+        xmax = gene_xmax,
+        ymin = y - 0.40,
+        ymax = y + 0.40
+      ),
+      fill = "#D97824",
+      colour = "#30383F",
+      linewidth = 0.2
+    ) +
+    ggplot2::geom_text(
+      data = count_data[link_inside == TRUE],
+      ggplot2::aes(link_xmax - 0.12, y, label = link_label),
+      hjust = 1,
+      colour = "white",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
+    ggplot2::geom_text(
+      data = count_data[link_inside == FALSE],
+      ggplot2::aes(link_xmax + 0.12, y, label = link_label),
+      hjust = 0,
+      colour = "#20272E",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
+    ggplot2::geom_text(
+      data = count_data[gene_inside == TRUE],
+      ggplot2::aes(gene_xmax - 0.12, y, label = gene_label),
+      hjust = 1,
+      colour = "white",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
+    ggplot2::geom_text(
+      data = count_data[gene_inside == FALSE],
+      ggplot2::aes(gene_xmax + 0.12, y, label = gene_label),
+      hjust = 0,
+      colour = "#20272E",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
+    ggplot2::annotate(
+      "text",
+      x = link_start + bar_width / 2,
+      y = title_y,
+      label = "Links",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.5
+    ) +
+    ggplot2::annotate(
+      "text",
+      x = gene_start + bar_width / 2,
+      y = title_y,
+      label = "Target genes",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.5
+    ) +
+    ggplot2::scale_fill_gradient2(
+      low = "#2166AC",
+      mid = "#F7F7F7",
+      high = "#B2182B",
+      midpoint = 0.5,
+      limits = c(0, 1),
+      name = "Similarity"
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = seq_len(k),
+      labels = ordered_labels,
+      limits = c(0.5, right_edge + 0.25),
+      expand = c(0, 0)
+    ) +
+    ggplot2::scale_y_continuous(
+      breaks = seq_len(k),
+      labels = rev(ordered_labels),
+      limits = c(0.5, title_y + 0.35),
+      expand = c(0, 0)
+    ) +
+    ggplot2::coord_fixed(ratio = 1, clip = "off") +
+    ggplot2::labs(
+      title = title,
+      subtitle = subtitle,
+      x = NULL,
+      y = NULL
+    ) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.key.width = grid::unit(1.0, "in")
     )
 }
 
@@ -1098,7 +1276,9 @@
 .m3_qc_arrange <- function(...,
                            ncol = 2L,
                            title = NULL,
-                           layout_matrix = NULL) {
+                           layout_matrix = NULL,
+                           widths = NULL,
+                           heights = NULL) {
   .assert_pkg("gridExtra")
   plots <- list(...)
   top <- if (is.null(title)) NULL else grid::textGrob(
@@ -1111,12 +1291,20 @@
     )
   )
   if (is.null(layout_matrix)) {
-    gridExtra::arrangeGrob(grobs = plots, ncol = ncol, top = top)
+    gridExtra::arrangeGrob(
+      grobs = plots,
+      ncol = ncol,
+      top = top,
+      widths = widths,
+      heights = heights
+    )
   } else {
     gridExtra::arrangeGrob(
       grobs = plots,
       layout_matrix = layout_matrix,
-      top = top
+      top = top,
+      widths = widths,
+      heights = heights
     )
   }
 }
@@ -1331,7 +1519,7 @@
       label_column = "condition_label",
       seed = seed + 1L
     ),
-    ncol = 2L,
+    ncol = 1L,
     title = paste0(title_prefix, ": filtered aligned-link UMAP")
   )
 
@@ -1339,33 +1527,19 @@
   rownames(raw_topic_similarity) <- colnames(raw_topic_similarity) <-
     paste0("Topic ", qc$raw_topic_ids)
   raw_topic_order <- .m3_qc_cluster_order(raw_topic_similarity, "row")
-  raw_topic_labels <- rownames(raw_topic_similarity)[raw_topic_order]
   page2 <- .m3_qc_arrange(
-    .m3_qc_similarity_plot(
-      raw_topic_similarity,
-      "Raw topic similarity",
-      "Mean Hellinger similarity across separately normalized Gene and Peak phi",
-      row_order = raw_topic_order,
-      column_order = raw_topic_order
+    .m3_qc_topic_structure_plot(
+      similarity = raw_topic_similarity,
+      counts = qc$raw_counts,
+      topic_column = "raw_topic",
+      topic_order = raw_topic_order,
+      title = "Raw topic assignment structure",
+      subtitle = paste(
+        "Mean Hellinger similarity across separately normalized Gene and Peak phi;",
+        "bars show full-universe assigned counts"
+      )
     ),
-    .m3_qc_topic_count_bar(
-      qc$raw_counts,
-      "raw_topic",
-      "links",
-      "Links",
-      raw_topic_labels,
-      "#007C78"
-    ),
-    .m3_qc_topic_count_bar(
-      qc$raw_counts,
-      "raw_topic",
-      "genes",
-      "Target genes",
-      raw_topic_labels,
-      "#D97824"
-    ),
-    layout_matrix = rbind(c(1L, 1L, 2L, 3L)),
-    title = "Raw topic assignment structure"
+    ncol = 1L
   )
 
   optimized_topic_similarity <- qc$optimized_topic_similarity
@@ -1375,9 +1549,6 @@
     optimized_topic_similarity,
     "row"
   )
-  optimized_topic_labels <- rownames(optimized_topic_similarity)[
-    optimized_topic_order
-  ]
   page3 <- .m3_qc_arrange(
     .m3_qc_umap_plot(
       optimized_aligned_sample,
@@ -1387,31 +1558,22 @@
       label_column = "topic_short",
       seed = seed + 4L
     ),
-    .m3_qc_similarity_plot(
-      optimized_topic_similarity,
-      "Optimized topic similarity",
-      "Mean Hellinger similarity after deterministic topic merging",
-      row_order = optimized_topic_order,
-      column_order = optimized_topic_order
+    ncol = 1L,
+    title = "Optimized filtered aligned-link UMAP"
+  )
+  page3_structure <- .m3_qc_arrange(
+    .m3_qc_topic_structure_plot(
+      similarity = optimized_topic_similarity,
+      counts = qc$optimized_counts,
+      topic_column = "optimized_topic",
+      topic_order = optimized_topic_order,
+      title = "Optimized topic assignment structure",
+      subtitle = paste(
+        "Mean Hellinger similarity after deterministic topic merging;",
+        "bars show full-universe assigned counts"
+      )
     ),
-    .m3_qc_topic_count_bar(
-      qc$optimized_counts,
-      "optimized_topic",
-      "links",
-      "Links",
-      optimized_topic_labels,
-      "#007C78"
-    ),
-    .m3_qc_topic_count_bar(
-      qc$optimized_counts,
-      "optimized_topic",
-      "genes",
-      "Target genes",
-      optimized_topic_labels,
-      "#D97824"
-    ),
-    layout_matrix = rbind(c(1L, 1L, 2L, 2L, 3L, 4L)),
-    title = "Optimized topic assignment structure"
+    ncol = 1L
   )
 
   link_matrix <- .m3_qc_condition_topic_matrix(
@@ -1448,7 +1610,7 @@
       row_order = row_order,
       column_order = column_order
     ),
-    ncol = 2L,
+    ncol = 1L,
     title = "Condition-topic assignment counts"
   )
 
@@ -1503,14 +1665,22 @@
     "Condition-topic similarity",
     "Mean Jaccard of unique TF-target pairs and target genes"
   )
-  page5 <- do.call(
-    .m3_qc_arrange,
-    c(
-      list(cross_plot),
-      pair_plots,
-      list(ncol = 3L, title = "Top distinct condition-topic matches")
-    )
+  page5_args <- c(
+    list(cross_plot),
+    pair_plots,
+    list(title = "Top distinct condition-topic matches")
   )
+  if (length(pair_plots) == 4L) {
+    page5_args$layout_matrix <- rbind(
+      c(1L, 1L),
+      c(2L, 3L),
+      c(4L, 5L)
+    )
+    page5_args$heights <- c(1.15, 1, 1)
+  } else {
+    page5_args$ncol <- 2L
+  }
+  page5 <- do.call(.m3_qc_arrange, page5_args)
 
   pair_candidates <- .m3_opt_parse_topics(
     optimization$raw_pair_assignment$gene_gammafit_topics,
@@ -1576,7 +1746,7 @@
       "TF-target link assignment funnel",
       fill = "#007C78"
     ),
-    ncol = 2L,
+    ncol = 1L,
     title = "Topic assignment retention"
   )
 
@@ -1587,8 +1757,8 @@
   dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
   grDevices::cairo_pdf(
     out_file,
-    width = 11,
-    height = 8.5,
+    width = 8.5,
+    height = 11,
     family = "Helvetica",
     onefile = TRUE
   )
@@ -1600,6 +1770,8 @@
   if (!identity_map) {
     grid::grid.newpage()
     grid::grid.draw(page3)
+    grid::grid.newpage()
+    grid::grid.draw(page3_structure)
   }
   grid::grid.newpage()
   grid::grid.draw(page4)

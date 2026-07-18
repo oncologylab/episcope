@@ -171,7 +171,8 @@ utils::globalVariables(c(
 
 utils::globalVariables(c(
   "colour_value__", "column_label", "doc_index", "gene_token_count",
-  "link_index", "optimized_aligned", "optimized_assigned_topic",
+  "gene_inside", "gene_label", "gene_xmax", "link_index", "link_inside", "links",
+  "link_label", "link_xmax", "optimized_aligned", "optimized_assigned_topic",
   "optimized_gene_topic", "optimized_peak_topic",
   "optimized_posterior_agrees", "optimized_posterior_margin",
   "optimized_posterior_probability", "optimized_posterior_topic",

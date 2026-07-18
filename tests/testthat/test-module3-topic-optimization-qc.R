@@ -137,3 +137,29 @@ test_that("TF heatmap pages contain only their paginated TF rows", {
   expect_equal(length(unique(pages[[1]]$data$row_label)), 2)
   expect_equal(length(unique(pages[[2]]$data$row_label)), 2)
 })
+
+test_that("topic structure and count heatmaps use square cells", {
+  similarity <- diag(3)
+  rownames(similarity) <- colnames(similarity) <- paste0("Topic ", 1:3)
+  counts <- data.table::data.table(
+    raw_topic = 1:3,
+    links = c(100, 50, 25),
+    genes = c(20, 10, 5)
+  )
+
+  structure_plot <- .m3_qc_topic_structure_plot(
+    similarity = similarity,
+    counts = counts,
+    topic_column = "raw_topic",
+    topic_order = 1:3,
+    title = "Structure",
+    subtitle = "Square cells"
+  )
+  count_plot <- .m3_qc_count_heatmap(
+    similarity,
+    title = "Counts"
+  )
+
+  expect_equal(structure_plot$coordinates$ratio, 1)
+  expect_equal(count_plot$coordinates$ratio, 1)
+})
