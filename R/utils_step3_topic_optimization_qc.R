@@ -1085,7 +1085,9 @@
                                  row_order = NULL,
                                  column_order = NULL,
                                  limits = NULL,
+                                 color_transform = "sqrt",
                                  show_x_axis = TRUE) {
+  color_transform <- match.arg(color_transform, c("identity", "sqrt"))
   layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
   if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
   if (is.null(column_order)) column_order <- .m3_qc_cluster_order(x, "column")
@@ -1107,7 +1109,7 @@
     ) +
     ggplot2::scale_fill_viridis_c(
       option = "C",
-      trans = "sqrt",
+      trans = color_transform,
       limits = limits,
       oob = scales::squish,
       labels = scales::label_number(accuracy = 0.01),
@@ -2112,7 +2114,8 @@
       "Mean expression of assigned target genes",
       "Mean log2(expression + 1)",
       row_order = row_order,
-      column_order = column_order
+      column_order = column_order,
+      color_transform = "identity"
     )
   ))
   page4 <- do.call(.m3_qc_arrange, c(page4_plots, list(
