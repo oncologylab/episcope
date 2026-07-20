@@ -75,17 +75,27 @@
   path <- file.path(extraction_dir, "topic_terms.csv")
   if (!file.exists(path)) return(data.table::data.table())
   header <- names(data.table::fread(path, nrows = 0L, showProgress = FALSE))
-  cols <- intersect(c("topic", "term_id", "score", "in_topic"), header)
-  if (!all(c("topic", "term_id", "score") %in% cols)) {
+  cols <- intersect(
+    c("topic", "topic_num", "term_id", "score", "in_topic"),
+    header
+  )
+  if (!all(c("term_id", "score") %in% cols) ||
+      !any(c("topic", "topic_num") %in% cols)) {
     return(data.table::data.table())
   }
   dt <- data.table::fread(path, select = cols, showProgress = FALSE)
   if ("in_topic" %in% names(dt)) dt <- dt[as.logical(in_topic) %in% TRUE]
-  dt <- dt[grepl("^GENE:", term_id), .(
-    topic_num = suppressWarnings(as.integer(topic)),
-    gene_key = sub("^GENE:", "", as.character(term_id)),
-    topic_score = suppressWarnings(as.numeric(score))
-  )]
+  topic_value <- if ("topic_num" %in% names(dt)) {
+    suppressWarnings(as.integer(dt$topic_num))
+  } else {
+    suppressWarnings(as.integer(sub("^Topic\\s*", "", as.character(dt$topic))))
+  }
+  keep <- grepl("^GENE:", dt$term_id)
+  dt <- data.table::data.table(
+    topic_num = topic_value[keep],
+    gene_key = sub("^GENE:", "", as.character(dt$term_id[keep])),
+    topic_score = suppressWarnings(as.numeric(dt$score[keep]))
+  )
   unique(dt[
     is.finite(topic_num) & !is.na(gene_key) & nzchar(gene_key) &
       is.finite(topic_score)

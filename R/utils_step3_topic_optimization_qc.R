@@ -1868,44 +1868,40 @@
   target_max <- is.finite(
     suppressWarnings(as.integer(optimization$raw_pair_assignment$assigned_topic))
   )
-  link_gamma <- target_gamma[assignments$target_index]
   link_max <- target_max[assignments$target_index]
   funnel_link_labels <- c(
     "Input universe",
-    "Gene and Peak pass GammaFit",
-    "Gene and Peak MaxProb agree",
-    "Link posterior agrees",
-    sprintf("TF theta >= %.2f", optimization$tf_topic_cutoff),
-    "Retained/recovered after optimization"
+    "Raw target topic assigned",
+    "Raw link posterior agrees",
+    sprintf("Raw posterior + TF theta >= %.2f", optimization$tf_topic_cutoff),
+    "Optimized target topic assigned",
+    "Optimized link posterior agrees",
+    sprintf(
+      "Optimized posterior + TF theta >= %.2f",
+      optimization$tf_topic_cutoff
+    )
   )
   funnel_gene_labels <- c(
     "Input target genes",
     "Gene and Peak pass GammaFit",
-    "Gene and Peak MaxProb agree",
-    "Genes with posterior-agreeing link",
-    sprintf(
-      "Genes with TF theta >= %.2f link",
-      optimization$tf_topic_cutoff
-    ),
-    "Assigned/recovered after optimization"
+    "Raw Gene/Peak MaxProb agree",
+    "Optimized Gene/Peak MaxProb agree"
   )
+  optimized_target <- is.finite(assignments$optimized_topic)
   funnel_links <- c(
     nrow(assignments),
-    sum(link_gamma),
     sum(link_max),
     sum(assignments$raw_posterior_agrees),
     sum(assignments$raw_aligned),
+    sum(optimized_target),
+    sum(assignments$optimized_posterior_agrees),
     sum(assignments$optimized_aligned)
   )
   funnel_genes <- c(
     nrow(optimization$raw_pair_assignment),
     sum(target_gamma),
     sum(target_max),
-    data.table::uniqueN(
-      assignments[raw_posterior_agrees == TRUE, target_index]
-    ),
-    data.table::uniqueN(assignments[raw_aligned == TRUE, target_index]),
-    data.table::uniqueN(assignments[optimized_aligned == TRUE, target_index])
+    sum(.as_logical_flag(optimization$pair_assignment$assigned))
   )
   funnel_page <- .m3_qc_arrange(
     .m3_qc_funnel_plot(
@@ -1985,6 +1981,12 @@
     input_links = nrow(optimization$qc$assignments),
     raw_aligned_links = sum(optimization$qc$assignments$raw_aligned),
     optimized_aligned_links = sum(optimization$qc$assignments$optimized_aligned),
+    raw_pair_assigned_genes = sum(.as_logical_flag(
+      optimization$raw_pair_assignment$assigned
+    )),
+    optimized_pair_assigned_genes = sum(.as_logical_flag(
+      optimization$pair_assignment$assigned
+    )),
     raw_assigned_genes = data.table::uniqueN(
       optimization$qc$assignments[raw_aligned == TRUE, target_index]
     ),

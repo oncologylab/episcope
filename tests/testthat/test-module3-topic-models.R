@@ -175,8 +175,6 @@ test_that("VAE training reuses complete K values and trains missing K values", {
     data.table::data.table(term_id = c("T1", "T2"), Topic1 = c(0.8, 0.2), Topic2 = c(0.2, 0.8)),
     file.path(models_dir, "phi_K2.csv")
   )
-  writeLines("old model", file.path(models_dir, "model_K2.pt"))
-
   fake_trainer <- file.path(out_dir, "fake_vae.R")
   writeLines(c(
     "args <- commandArgs(trailingOnly = TRUE)",
@@ -1765,6 +1763,46 @@ test_that("Module 3 K extraction workers keep worker output quiet", {
       workers = if (.Platform$OS.type == "unix") 2L else 1L,
       cores = 2L
     )
+  )
+})
+
+test_that("optimized assignment extraction is kept sequential", {
+  expect_true(.module3_extraction_requires_sequential(
+    list(optimize_topics = TRUE),
+    "gammafit_maxprob"
+  ))
+  expect_true(.module3_extraction_requires_sequential(
+    list(run_topic_assignment_qc = TRUE, optimize_topics = FALSE),
+    "gammafit_maxprob"
+  ))
+  expect_false(.module3_extraction_requires_sequential(
+    list(optimize_topics = FALSE, run_topic_assignment_qc = FALSE),
+    "gammafit_maxprob"
+  ))
+  expect_false(.module3_extraction_requires_sequential(
+    list(),
+    "max_phi"
+  ))
+  expect_equal(
+    formals(module3_extract_topics)$topic_qc_umap_links_per_condition,
+    3000L
+  )
+})
+
+test_that("missing extraction worker results fail clearly", {
+  tasks <- list(list(k = 10L), list(k = 20L))
+  delivered <- list(
+    list(index = 1L, value = TRUE, warnings = character()),
+    list(index = 2L, value = TRUE, warnings = character())
+  )
+
+  expect_silent(.module3_validate_extraction_k_results(delivered, tasks))
+  expect_error(
+    .module3_validate_extraction_k_results(
+      list(delivered[[1L]], NULL),
+      tasks
+    ),
+    "did not return a result for K=20"
   )
 })
 

@@ -1366,7 +1366,7 @@ plot_model_selection_cistopic <- function(metrics_tbl, out_pdf, title_prefix = N
   switch(
     family,
     lda = 0.70,
-    multivi = 0.80,
+    multivi = 0.50,
     vae_mlp = 0.80,
     0.80
   )
@@ -9210,7 +9210,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               topic_merge_min_links = 200L,
                                               topic_merge_similarity_threshold = 0.90,
                                               run_topic_assignment_qc = NULL,
-                                              topic_qc_umap_links_per_condition = 10000L,
+                                              topic_qc_umap_links_per_condition = 3000L,
                                               topic_qc_top_tfs = 100L,
                                               topic_qc_seed = 20260716L,
                                               extraction_steps = NULL,
@@ -10771,8 +10771,7 @@ run_vae_topic_report_py <- function(doc_term,
     metrics_k <- unique(as.integer(old_metrics$K))
     file_k <- k_grid[
       file.exists(file.path(models_dir, sprintf("theta_K%d.csv", k_grid))) &
-        file.exists(file.path(models_dir, sprintf("phi_K%d.csv", k_grid))) &
-        file.exists(file.path(models_dir, sprintf("model_K%d.pt", k_grid)))
+        file.exists(file.path(models_dir, sprintf("phi_K%d.csv", k_grid)))
     ]
     complete_k <- intersect(metrics_k, file_k)
   }
@@ -12611,18 +12610,57 @@ extract_regulatory_topics <- function(k,
   } else {
     lapply(seq_along(tasks), run_one)
   }
-  failures <- vapply(results, function(x) inherits(x$value, "error"), logical(1L))
+  .module3_validate_extraction_k_results(results, tasks)
+  worker_warnings <- unique(unlist(lapply(results, `[[`, "warnings"), use.names = FALSE))
+  if (length(worker_warnings)) {
+    .log_warn("Module 3 K extraction warning(s): {paste(worker_warnings, collapse = '; ')}")
+  }
+  invisible(results)
+}
+
+.module3_extraction_requires_sequential <- function(topic_report_args,
+                                                    assignment_method) {
+  isTRUE(topic_report_args$run_link_topic_scores) ||
+    isTRUE(topic_report_args$run_topic_assignment_qc) ||
+    (
+      identical(assignment_method, "gammafit_maxprob") &&
+        !identical(topic_report_args$optimize_topics, FALSE)
+    )
+}
+
+.module3_validate_extraction_k_results <- function(results, tasks) {
+  delivered <- vapply(results, function(x) {
+    is.list(x) &&
+      all(c("index", "value", "warnings") %in% names(x)) &&
+      length(x$index) == 1L &&
+      is.finite(suppressWarnings(as.integer(x$index)))
+  }, logical(1L))
+  if (any(!delivered)) {
+    missing_k <- vapply(
+      which(!delivered),
+      function(i) as.character(tasks[[i]]$k),
+      character(1L)
+    )
+    .log_abort(
+      paste0(
+        "Module 3 K extraction worker(s) did not return a result for K=",
+        paste(missing_k, collapse = ", "),
+        ". Rerun extraction sequentially."
+      )
+    )
+  }
+  failures <- vapply(
+    results,
+    function(x) inherits(x$value, "error"),
+    logical(1L)
+  )
   if (any(failures)) {
     messages <- vapply(results[failures], function(x) {
       sprintf("K=%s: %s", tasks[[x$index]]$k, conditionMessage(x$value))
     }, character(1L))
     .log_abort(paste(c("Module 3 K extraction failed.", messages), collapse = "\n"))
   }
-  worker_warnings <- unique(unlist(lapply(results, `[[`, "warnings"), use.names = FALSE))
-  if (length(worker_warnings)) {
-    .log_warn("Module 3 K extraction warning(s): {paste(worker_warnings, collapse = '; ')}")
-  }
-  invisible(results)
+  invisible(TRUE)
 }
 
 #' Extract Module 3 regulatory topics
@@ -12697,7 +12735,7 @@ module3_extract_topics <- function(k,
                                    topic_merge_min_links = 200L,
                                    topic_merge_similarity_threshold = 0.90,
                                    run_topic_assignment_qc = NULL,
-                                   topic_qc_umap_links_per_condition = 10000L,
+                                   topic_qc_umap_links_per_condition = 3000L,
                                    topic_qc_top_tfs = 100L,
                                    k_workers = NULL,
                                    k_max_workers = 4L,

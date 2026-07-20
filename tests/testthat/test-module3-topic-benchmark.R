@@ -1971,7 +1971,7 @@ test_that("Module 3 benchmark extraction writes directly into each K folder", {
   )
   assignment_summary <- data.table::fread(file.path(k_dir, "topic_term_assignment_summary.csv"))
   expect_equal(assignment_summary$model_family, "multivi")
-  expect_equal(assignment_summary$gammafit_thrP, 0.8)
+  expect_equal(assignment_summary$gammafit_thrP, 0.5)
   expect_false(file.exists(file.path(k_dir, "raw_theta_documents_K2.pdf")))
   expect_false(dir.exists(file.path(k_dir, "tf_topic_assignment")))
   expect_false(dir.exists(file.path(k_dir, model_name)))
@@ -2433,7 +2433,7 @@ test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
   expect_equal(resolved_default$extraction_args$topic_score_method, "normtop_specificity")
   expect_equal(resolved_default$extraction_args$topic_term_assignment_method, "gammafit_maxprob")
-  expect_equal(resolved_default$extraction_args$thrP, 0.8)
+  expect_equal(resolved_default$extraction_args$thrP, 0.5)
   expect_equal(resolved_default$extraction_args$link_topic_prob_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_membership_cutoff, 0.3)
   expect_equal(resolved_default$extraction_args$topic_tf_primary_margin_cutoff, 0.1)
@@ -2445,6 +2445,12 @@ test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   )
   expect_equal(resolved_lda$extraction_args$topic_term_assignment_method, "gammafit_maxprob")
   expect_equal(resolved_lda$extraction_args$thrP, 0.70)
+
+  resolved_multivi <- .module3_resolve_topic_run_config(
+    project_config = list(),
+    method = "condition_aggr_multivi"
+  )
+  expect_equal(resolved_multivi$extraction_args$thrP, 0.50)
 
   resolved_weighted <- .module3_resolve_topic_run_config(
     project_config = list(),

@@ -16,7 +16,7 @@ module3_extract_topics(
   topic_merge_min_links = 200L,
   topic_merge_similarity_threshold = 0.9,
   run_topic_assignment_qc = NULL,
-  topic_qc_umap_links_per_condition = 10000L,
+  topic_qc_umap_links_per_condition = 3000L,
   topic_qc_top_tfs = 100L,
   k_workers = NULL,
   k_max_workers = 4L,

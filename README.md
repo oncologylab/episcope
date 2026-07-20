@@ -172,7 +172,7 @@ topic_link_output: pass
 topic_term_assignment_method: gammafit_maxprob
 topic_gammafit_thrP:
   lda: 0.70
-  multivi: 0.80
+  multivi: 0.50
 pathway_backend: enrichly
 pathway_species: human_mouse_best
 

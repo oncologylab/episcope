@@ -3734,7 +3734,12 @@ run_module3_topic_benchmark <- function(filtered_dir,
       row <- extraction_plan[i]
       model_root <- row$topic_models_dir[[1L]]
       extract_roots <- .m3tb_extraction_output_dirs(row, k_grid, output_layout)
-      link_scoring <- isTRUE(extraction_topic_report_args$run_link_topic_scores)
+      assignment_method <- extraction_topic_report_args$topic_term_assignment_method %||%
+        .module3_default_term_assignment_method(row$method[[1L]])
+      sequential_extraction <- .module3_extraction_requires_sequential(
+        extraction_topic_report_args,
+        assignment_method
+      )
       k_plan <- .module3_extraction_k_worker_plan(
         n_tasks = length(k_grid),
         model_dir = model_root,
@@ -3743,7 +3748,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         k_memory_gb = extraction_k_memory_gb,
         k_memory_reserve_gb = extraction_k_memory_reserve_gb,
         cores = link_topic_requested_cores,
-        link_scoring = link_scoring
+        link_scoring = sequential_extraction
       )
       # Forking after the native OpenMP WarpLDA sampler has run can leave child
       # processes with an invalid OpenMP runtime state. Keep same-process
@@ -3770,7 +3775,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
           fp_term_mode = row$fp_mode[[1L]],
           link_topic_n_cores = link_cores_per_worker,
           topic_model_family = .module3_topic_model_family(row$method[[1L]]),
-          topic_term_assignment_method = .module3_default_term_assignment_method(row$method[[1L]])
+          topic_term_assignment_method = assignment_method
         ),
         extraction_topic_report_args
       )

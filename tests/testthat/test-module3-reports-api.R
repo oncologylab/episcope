@@ -187,6 +187,53 @@ test_that("Module 3 pathway rerun resolves pass-only topic links", {
   expect_true(all(c("Gene1", "Gene2") %in% captured$link_scores$gene_key))
 })
 
+test_that("condition report parses labeled and numeric gene topics", {
+  labeled_dir <- tempfile("condition-report-labeled-topics-")
+  numeric_dir <- tempfile("condition-report-numeric-topics-")
+  dir.create(labeled_dir)
+  dir.create(numeric_dir)
+
+  data.table::fwrite(
+    data.table::data.table(
+      topic = c("Topic17", "Topic17", "Topic2"),
+      term_id = c("GENE:GeneA", "PEAK:GeneA", "GENE:GeneB"),
+      score = c(0.8, 0.9, 0.4),
+      in_topic = c(TRUE, TRUE, FALSE)
+    ),
+    file.path(labeled_dir, "topic_terms.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(
+      topic = "unused",
+      topic_num = 6L,
+      term_id = "GENE:GeneC",
+      score = 0.7,
+      in_topic = TRUE
+    ),
+    file.path(numeric_dir, "topic_terms.csv")
+  )
+
+  labeled <- craftgrn:::.m3cr_gene_topic_rows(labeled_dir)
+  numeric <- craftgrn:::.m3cr_gene_topic_rows(numeric_dir)
+
+  expect_equal(
+    labeled,
+    data.table::data.table(
+      topic_num = 17L,
+      gene_key = "GeneA",
+      topic_score = 0.8
+    )
+  )
+  expect_equal(
+    numeric,
+    data.table::data.table(
+      topic_num = 6L,
+      gene_key = "GeneC",
+      topic_score = 0.7
+    )
+  )
+})
+
 test_that("Module 3 QC report writes differential TF summaries", {
   root <- tempfile("module3-qc-topic-")
   diff_dir <- tempfile("module3-qc-diff-")
