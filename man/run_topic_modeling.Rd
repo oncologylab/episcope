@@ -112,8 +112,7 @@ at or above which topics are merged. If `NULL`, use project config.}
 \item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
 size per condition. Full-universe counts are not sampled.}
 
-\item{topic_qc_top_tfs}{Number of TFs per condition requested for QC
-heatmaps, capped at 50 for one readable portrait page per condition.}
+\item{topic_qc_top_tfs}{Number of TFs per condition shown in QC heatmaps.}
 
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}

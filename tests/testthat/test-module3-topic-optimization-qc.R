@@ -111,28 +111,29 @@ test_that("repeated condition IDs retain concise stable display labels", {
   expect_equal(observed, c("0 FBS", "0 FBS", "10 FBS"))
 })
 
-test_that("TF heatmaps use one page per condition", {
+test_that("TF heatmaps keep up to 100 TFs on one page per condition", {
+  n_tfs <- 100L
   assignments <- data.table::data.table(
     condition_id = "Condition_A",
-    tf_index = rep(1:4, each = 2),
-    target_index = seq_len(8),
-    optimized_topic = rep(1:2, 4),
+    tf_index = rep(seq_len(n_tfs), each = 2),
+    target_index = seq_len(n_tfs * 2L),
+    optimized_topic = rep(1:2, n_tfs),
     optimized_aligned = TRUE
   )
   optimization <- list(qc = list(
     assignments = assignments,
     optimized_topic_ids = 1:2,
-    tf_levels = paste0("TF", 1:4)
+    tf_levels = paste0("TF", seq_len(n_tfs))
   ))
 
   pages <- .m3_qc_tf_topic_pages(
     optimization,
-    top_n_tfs = 4
+    top_n_tfs = 100
   )
 
   expect_length(pages, 1)
-  expect_false(anyNA(pages[[1]]$data$row_label))
-  expect_equal(length(unique(pages[[1]]$data$row_label)), 4)
+  expect_s3_class(pages[[1]], "gtable")
+  expect_gte(length(pages[[1]]$grobs), 2)
 })
 
 test_that("topic structure and count heatmaps use square cells", {

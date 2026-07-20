@@ -17,7 +17,7 @@ module3_extract_topics(
   topic_merge_similarity_threshold = 0.9,
   run_topic_assignment_qc = NULL,
   topic_qc_umap_links_per_condition = 10000L,
-  topic_qc_top_tfs = 50L,
+  topic_qc_top_tfs = 100L,
   k_workers = NULL,
   k_max_workers = 4L,
   k_memory_gb = NULL,
@@ -66,8 +66,7 @@ assignment QC PDF and optimization audit tables.}
 \item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
 size per condition. Full-universe counts are never sampled.}
 
-\item{topic_qc_top_tfs}{Number of TFs per condition requested for QC
-heatmaps, capped at 50 for one readable portrait page per condition.}
+\item{topic_qc_top_tfs}{Number of TFs per condition shown in QC heatmaps.}
 
 \item{k_workers}{Number of K values to extract concurrently. `NULL` selects
 workers adaptively from current memory and CPU headroom.}
