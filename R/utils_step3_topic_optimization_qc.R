@@ -886,6 +886,36 @@
   out
 }
 
+.m3_qc_heatmap_layout_spec <- function(n_conditions, n_topics) {
+  n_conditions <- max(1L, as.integer(n_conditions))
+  n_topics <- max(1L, as.integer(n_topics))
+  axis_size <- max(
+    9,
+    min(11, 165 / n_conditions, 360 / n_topics)
+  )
+  list(
+    axis_size = axis_size,
+    title_size = max(9, min(11, axis_size + 1)),
+    label_size = max(3.2, min(3.8, axis_size / 2.845)),
+    tile_linewidth = if (n_conditions * n_topics >= 600L) 0.14 else 0.20,
+    plot_margin = ggplot2::margin(2, 4, 2, 4)
+  )
+}
+
+.m3_qc_heatmap_fill_max <- function(x, probability = 0.95) {
+  values <- as.numeric(x)
+  values <- values[is.finite(values) & values > 0]
+  if (!length(values)) return(1)
+  out <- as.numeric(stats::quantile(
+    values,
+    probs = probability,
+    names = FALSE,
+    type = 8
+  ))
+  if (!is.finite(out) || out <= 0) out <- max(values)
+  out
+}
+
 .m3_qc_similarity_plot <- function(x,
                                    title,
                                    subtitle = NULL,
@@ -990,19 +1020,24 @@
                                  square_cells = TRUE,
                                  show_legend = TRUE,
                                  show_labels = TRUE,
-                                 label_size = 3.2,
+                                 label_size = NULL,
                                  show_x_axis = TRUE) {
+  layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
+  if (is.null(label_size)) label_size <- layout_spec$label_size
   if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
   if (is.null(column_order)) column_order <- .m3_qc_cluster_order(x, "column")
   long <- .m3_qc_matrix_long(x, row_order, column_order)
-  if (is.null(fill_max)) fill_max <- max(long$value, na.rm = TRUE)
+  if (is.null(fill_max)) fill_max <- .m3_qc_heatmap_fill_max(long$value)
   if (!is.finite(fill_max) || fill_max <= 0) fill_max <- 1
   long[, label := ifelse(value >= label_min, .m3_qc_heatmap_count(value), "")]
   p <- ggplot2::ggplot(
     long,
     ggplot2::aes(column_label, row_label, fill = value)
   ) +
-    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.2)
+    ggplot2::geom_tile(
+      colour = "#D6DCE1",
+      linewidth = layout_spec$tile_linewidth
+    )
   if (isTRUE(show_labels)) {
     p <- p + ggplot2::geom_text(
         ggplot2::aes(label = label, colour = value >= fill_max * 0.55),
@@ -1020,15 +1055,19 @@
       option = "C",
       trans = "sqrt",
       limits = c(0, fill_max),
+      oob = scales::squish,
       labels = scales::label_comma(),
       name = "Count"
     ) +
     ggplot2::labs(title = title, x = NULL, y = NULL) +
     .m3_qc_theme() +
     ggplot2::theme(
+      plot.title = ggplot2::element_text(size = layout_spec$title_size),
+      axis.text = ggplot2::element_text(size = layout_spec$axis_size),
       axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5),
       panel.grid = ggplot2::element_blank(),
-      legend.position = if (isTRUE(show_legend)) "right" else "none"
+      legend.position = if (isTRUE(show_legend)) "right" else "none",
+      plot.margin = layout_spec$plot_margin
     )
   if (!isTRUE(show_x_axis)) {
     p <- p + ggplot2::theme(
@@ -1047,10 +1086,13 @@
                                  column_order = NULL,
                                  limits = NULL,
                                  show_x_axis = TRUE) {
+  layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
   if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
   if (is.null(column_order)) column_order <- .m3_qc_cluster_order(x, "column")
   long <- .m3_qc_matrix_long(x, row_order, column_order)
-  if (is.null(limits)) limits <- range(c(0, long$value), finite = TRUE)
+  if (is.null(limits)) {
+    limits <- c(0, .m3_qc_heatmap_fill_max(long$value))
+  }
   if (length(limits) != 2L || !all(is.finite(limits)) ||
       limits[[2L]] <= limits[[1L]]) {
     limits <- c(0, 1)
@@ -1059,23 +1101,31 @@
     long,
     ggplot2::aes(column_label, row_label, fill = value)
   ) +
-    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.2) +
+    ggplot2::geom_tile(
+      colour = "#D6DCE1",
+      linewidth = layout_spec$tile_linewidth
+    ) +
     ggplot2::scale_fill_viridis_c(
       option = "C",
+      trans = "sqrt",
       limits = limits,
+      oob = scales::squish,
       labels = scales::label_number(accuracy = 0.01),
       name = legend_title
     ) +
     ggplot2::labs(title = title, x = NULL, y = NULL) +
     .m3_qc_theme() +
     ggplot2::theme(
+      plot.title = ggplot2::element_text(size = layout_spec$title_size),
+      axis.text = ggplot2::element_text(size = layout_spec$axis_size),
       axis.text.x = ggplot2::element_text(
         angle = 90,
         hjust = 1,
         vjust = 0.5
       ),
       panel.grid = ggplot2::element_blank(),
-      legend.position = "right"
+      legend.position = "right",
+      plot.margin = layout_spec$plot_margin
     )
   if (!isTRUE(show_x_axis)) {
     p <- p + ggplot2::theme(
@@ -1475,14 +1525,19 @@
   }
 }
 
-.m3_qc_align_plot_widths <- function(plots) {
+.m3_qc_align_plot_dimensions <- function(plots) {
   grobs <- lapply(plots, ggplot2::ggplotGrob)
   shared_widths <- Reduce(
     grid::unit.pmax,
     lapply(grobs, function(grob) grob$widths)
   )
+  shared_heights <- Reduce(
+    grid::unit.pmax,
+    lapply(grobs, function(grob) grob$heights)
+  )
   lapply(grobs, function(grob) {
     grob$widths <- shared_widths
+    grob$heights <- shared_heights
     grob
   })
 }
@@ -2027,7 +2082,7 @@
   )
   rownames(condition_theta) <- display_conditions
   rownames(expression_matrix) <- display_conditions
-  page4_plots <- .m3_qc_align_plot_widths(list(
+  page4_plots <- .m3_qc_align_plot_dimensions(list(
     .m3_qc_count_heatmap(
       link_matrix,
       "Aligned TF-target links",
@@ -2050,7 +2105,6 @@
       "Mean theta",
       row_order = row_order,
       column_order = column_order,
-      limits = c(0, max(condition_theta, na.rm = TRUE)),
       show_x_axis = FALSE
     ),
     .m3_qc_value_heatmap(
@@ -2058,8 +2112,7 @@
       "Mean expression of assigned target genes",
       "Mean log2(expression + 1)",
       row_order = row_order,
-      column_order = column_order,
-      limits = c(0, max(expression_matrix, na.rm = TRUE))
+      column_order = column_order
     )
   ))
   page4 <- do.call(.m3_qc_arrange, c(page4_plots, list(

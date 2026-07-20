@@ -227,9 +227,19 @@ test_that("QC panel alignment reserves one shared legend width", {
     ggplot2::geom_tile() +
     ggplot2::scale_fill_continuous(name = "Mean log2(expression + 1)")
 
-  aligned <- .m3_qc_align_plot_widths(list(short, long))
+  aligned <- .m3_qc_align_plot_dimensions(list(short, long))
 
   expect_equal(aligned[[1L]]$widths, aligned[[2L]]$widths)
+  expect_equal(aligned[[1L]]$heights, aligned[[2L]]$heights)
+})
+
+test_that("QC heatmap styling adapts without dropping below nine points", {
+  small <- .m3_qc_heatmap_layout_spec(5, 10)
+  large <- .m3_qc_heatmap_layout_spec(20, 40)
+
+  expect_gte(small$axis_size, large$axis_size)
+  expect_gte(large$axis_size, 9)
+  expect_equal(.m3_qc_heatmap_fill_max(c(0, 1:100)), 95.65, tolerance = 0.01)
 })
 
 test_that("condition-topic layouts preserve pairs for odd counts", {
