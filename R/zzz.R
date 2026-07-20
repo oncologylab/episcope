@@ -170,7 +170,8 @@ utils::globalVariables(c(
 ))
 
 utils::globalVariables(c(
-  "colour_value__", "column_label", "doc_index", "gene_token_count",
+  "..heatmap_columns", "colour_value__", "column_label", "doc_index",
+  "gene_token_count",
   "gene_inside", "gene_label", "gene_xmax", "link_index", "link_inside", "links",
   "link_label", "link_xmax", "optimized_aligned", "optimized_assigned_topic",
   "optimized_gene_topic", "optimized_peak_topic",
@@ -180,7 +181,9 @@ utils::globalVariables(c(
   "peak_token_count", "raw_aligned", "raw_assigned_topic",
   "raw_posterior_agrees", "raw_posterior_margin",
   "raw_posterior_probability", "raw_posterior_topic",
-  "raw_target_topic", "raw_theta_pass", "raw_topic_num",
+  "raw_target_topic", "raw_theta_pass", "raw_topic_num", "report_key",
+  "report_label",
   "recovered_after_merge", "short", "similarity", "target_index",
-  "target_key__", "targets", "tf_index", "topic_short"
+  "target_key__", "targets", "tf_index", "topic_count", "topic_short",
+  "topic_space", "topic_space_order", "trained_k", "space_order"
 ))

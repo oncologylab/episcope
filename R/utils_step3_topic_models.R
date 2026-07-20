@@ -8223,6 +8223,270 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
   )
 }
 
+.module3_pathway_settings_from_audit <- function(extraction_dir) {
+  path <- file.path(extraction_dir, "topic_pathway_enrichment_debug.txt")
+  lines <- if (file.exists(path)) readLines(path, warn = FALSE) else character()
+  value_after <- function(prefix) {
+    hit <- grep(prefix, lines, fixed = TRUE, value = TRUE)
+    if (!length(hit)) return("")
+    sub(paste0("^.*", prefix), "", hit[[1L]])
+  }
+  species <- if (any(grepl("Pathway species mode: human_mouse_best", lines, fixed = TRUE))) {
+    "human_mouse_best"
+  } else {
+    value_after("Pathway species: ")
+  }
+  if (!nzchar(species)) species <- "human"
+  db_lines <- if (identical(species, "human_mouse_best")) {
+    c(value_after("Human DBs: "), value_after("Mouse DBs: "))
+  } else {
+    value_after("DBs: ")
+  }
+  dbs <- unique(trimws(unlist(strsplit(db_lines, ",", fixed = TRUE))))
+  dbs <- dbs[!is.na(dbs) & nzchar(dbs)]
+  if (!length(dbs)) dbs <- .default_pathway_databases(species)
+  list(species = species, databases = dbs)
+}
+
+.module3_copy_topic_space_pathway_outputs <- function(from_dir,
+                                                       extraction_dir,
+                                                       topic_space) {
+  suffix <- paste0("_", topic_space)
+  files <- c(
+    topic_pathway_enrichment_topic_terms = "csv",
+    per_condition_topic_pathway_enrichment = "csv",
+    topic_pathway_enrichment_dotplot = "csv",
+    topic_pathway_enrichment_dotplot = "pdf",
+    topic_pathway_gene_sets = "csv"
+  )
+  source_names <- paste0(names(files), ".", unname(files))
+  target_names <- paste0(names(files), suffix, ".", unname(files))
+  copied <- logical(length(source_names))
+  for (i in seq_along(source_names)) {
+    source <- file.path(from_dir, source_names[[i]])
+    target <- file.path(extraction_dir, target_names[[i]])
+    if (!file.exists(source)) next
+    copied[[i]] <- file.copy(source, target, overwrite = TRUE)
+  }
+  if (identical(topic_space, "combined")) {
+    standard <- c(
+      "topic_pathway_enrichment_topic_terms.csv",
+      "per_condition_topic_pathway_enrichment.csv",
+      "topic_pathway_enrichment_dotplot.csv",
+      "topic_pathway_enrichment_dotplot.pdf",
+      "topic_pathway_gene_sets.csv"
+    )
+    for (name in standard) {
+      source <- file.path(from_dir, name)
+      if (file.exists(source)) {
+        file.copy(source, file.path(extraction_dir, name), overwrite = TRUE)
+      }
+    }
+  }
+  invisible(copied)
+}
+
+.module3_rebuild_topic_space_pathways <- function(extraction_dir,
+                                                   model_dir,
+                                                   topic_space = c("raw", "combined"),
+                                                   edges_docs = NULL,
+                                                   overwrite = FALSE,
+                                                   enrichr_n_cores = 1L,
+                                                   pathway_backend = NULL,
+                                                   pathway_species = NULL,
+                                                   pathway_databases = NULL,
+                                                   verbose = TRUE) {
+  topic_space <- match.arg(topic_space)
+  extraction_dir <- normalizePath(extraction_dir, winslash = "/", mustWork = TRUE)
+  model_dir <- normalizePath(model_dir, winslash = "/", mustWork = TRUE)
+  settings <- .module3_pathway_settings_from_audit(extraction_dir)
+  if (!is.null(pathway_species)) {
+    settings$species <- .normalize_pathway_species_mode(pathway_species)
+  }
+  if (!is.null(pathway_databases)) {
+    pathway_databases <- unique(as.character(pathway_databases))
+    settings$databases <- pathway_databases[
+      !is.na(pathway_databases) & nzchar(pathway_databases)
+    ]
+  }
+  if (!length(settings$databases)) {
+    settings$databases <- .default_pathway_databases(settings$species)
+  }
+  terms_file <- if (identical(topic_space, "raw")) {
+    file.path(extraction_dir, "topic_terms_raw.csv")
+  } else {
+    file.path(extraction_dir, "topic_terms.csv")
+  }
+  if (!file.exists(terms_file)) {
+    .log_abort("Missing {topic_space} topic terms: {terms_file}")
+  }
+  target_file <- file.path(
+    extraction_dir,
+    paste0("topic_pathway_enrichment_topic_terms_", topic_space, ".csv")
+  )
+  condition_target_file <- file.path(
+    extraction_dir,
+    paste0("per_condition_topic_pathway_enrichment_", topic_space, ".csv")
+  )
+  if (!isTRUE(overwrite) && file.exists(target_file) &&
+      file.exists(condition_target_file)) {
+    if (isTRUE(verbose)) {
+      .log_inform(
+        "Keeping existing {topic_space} pathways: {extraction_dir}"
+      )
+    }
+    return(invisible(list(
+      overall = target_file,
+      per_condition = condition_target_file
+    )))
+  }
+  topic_terms <- data.table::fread(terms_file, showProgress = FALSE)
+  if (is.null(edges_docs)) {
+    edges_file <- file.path(model_dir, "rds", "edges_docs.rds")
+    if (!file.exists(edges_file)) .log_abort("Missing edges_docs: {edges_file}")
+    edges_docs <- readRDS(edges_file)
+  }
+  topic_term_edges <- data.table::data.table(
+    peak_id = character(),
+    gene_key = character()
+  )
+  trained_k <- suppressWarnings(as.integer(sub(
+    "^K",
+    "",
+    basename(extraction_dir)
+  )))
+  if (!is.finite(trained_k) || trained_k < 2L) {
+    .log_abort(
+      "The extraction directory must be named K<integer>: {extraction_dir}"
+    )
+  }
+  if (identical(topic_space, "raw")) {
+    theta_file <- file.path(
+      model_dir,
+      "vae_models",
+      sprintf("theta_K%d.csv", trained_k)
+    )
+    theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
+  } else {
+    theta_file <- file.path(
+      extraction_dir,
+      "rds",
+      "topic_theta_optimized.rds"
+    )
+    if (!file.exists(theta_file)) {
+      .log_abort("Missing combined theta: {theta_file}")
+    }
+    theta <- readRDS(theta_file)
+  }
+  work_dir <- tempfile(
+    paste0("module3_pathways_", topic_space, "_"),
+    tmpdir = extraction_dir
+  )
+  dir.create(work_dir, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(work_dir, recursive = TRUE, force = TRUE), add = TRUE)
+  cache_dir <- file.path(
+    extraction_dir,
+    "cache",
+    .pathway_backend(pathway_backend)
+  )
+  plot_topic_pathway_enrichment_heatmap(
+    topic_terms = topic_terms,
+    edges_docs = topic_term_edges,
+    option_label = "joint",
+    out_file = file.path(work_dir, "topic_pathway_enrichment_heatmap.pdf"),
+    theta = theta,
+    dbs = settings$databases,
+    pathway_species = settings$species,
+    padj_cut = 0.05,
+    min_genes = 5L,
+    top_n_per_topic = Inf,
+    dot_top_n_per_topic = 30L,
+    max_pathways = 1000L,
+    title_prefix = sprintf("%s | %s", basename(extraction_dir), topic_space),
+    use_all_terms = FALSE,
+    make_heatmap = FALSE,
+    make_dotplot = TRUE,
+    tf_link_mode = "none",
+    enrichr_cache_dir = cache_dir,
+    enrichr_n_cores = enrichr_n_cores,
+    pathway_backend = pathway_backend
+  )
+  overall_file <- file.path(
+    work_dir,
+    "topic_pathway_enrichment_topic_terms.csv"
+  )
+  if (!file.exists(overall_file)) {
+    .log_abort(
+      "No overall {topic_space} pathway table was produced for {extraction_dir}."
+    )
+  }
+  plot_topic_pathway_enrichment_by_condition_terms(
+    topic_terms = topic_terms,
+    edges_docs = edges_docs,
+    theta = theta,
+    out_dir = work_dir,
+    title_prefix = sprintf("%s | %s", basename(extraction_dir), topic_space),
+    dbs = settings$databases,
+    pathway_species = settings$species,
+    padj_cut = 0.05,
+    theta_min = 0.3,
+    include_peak_terms = TRUE,
+    use_all_terms = FALSE,
+    min_genes = 5L,
+    top_n_per_topic = Inf,
+    dot_top_n_per_topic = Inf,
+    max_pathways = 1000L,
+    make_dotplot = FALSE,
+    enrichr_cache_dir = cache_dir,
+    enrichr_n_cores = enrichr_n_cores,
+    pathway_backend = pathway_backend,
+    overall_pathway_file = overall_file,
+    overwrite = TRUE
+  )
+  .module3_copy_topic_space_pathway_outputs(
+    work_dir,
+    extraction_dir,
+    topic_space
+  )
+  manifest <- data.table::data.table(
+    topic_space = topic_space,
+    trained_k = trained_k,
+    topic_count = ncol(theta),
+    terms_file = basename(terms_file),
+    terms_hash = digest::digest(
+      file = terms_file,
+      algo = "xxhash64",
+      serialize = FALSE
+    ),
+    theta_file = basename(theta_file),
+    theta_hash = digest::digest(
+      file = theta_file,
+      algo = "xxhash64",
+      serialize = FALSE
+    ),
+    pathway_species = settings$species,
+    pathway_databases = paste(settings$databases, collapse = ";"),
+    pathway_backend = .pathway_backend(pathway_backend),
+    built_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  )
+  manifest_file <- file.path(extraction_dir, "topic_space_pathway_manifest.csv")
+  previous <- if (file.exists(manifest_file)) {
+    data.table::fread(manifest_file, showProgress = FALSE)
+  } else {
+    data.table::data.table()
+  }
+  previous <- previous[topic_space != manifest$topic_space]
+  data.table::fwrite(
+    data.table::rbindlist(list(previous, manifest), use.names = TRUE, fill = TRUE),
+    manifest_file
+  )
+  invisible(list(
+    overall = target_file,
+    per_condition = condition_target_file,
+    manifest = manifest_file
+  ))
+}
+
 plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
                                                            out_dir,
                                                            title_prefix = NULL,

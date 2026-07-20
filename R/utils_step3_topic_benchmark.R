@@ -719,6 +719,8 @@
       .m3tb_safe_label(row$setup_label[[1L]]),
       "_K",
       as.integer(row$selected_k[[1L]]),
+      "_",
+      .m3tb_topic_space_value(row, "topic_space", "raw"),
       ".csv"
     )
   )
@@ -841,6 +843,127 @@
   out[]
 }
 
+.m3tb_topic_space_rows <- function(model_rows) {
+  model_rows <- data.table::as.data.table(model_rows)
+  if (!nrow(model_rows)) return(model_rows)
+  rows <- lapply(seq_len(nrow(model_rows)), function(i) {
+    row <- data.table::copy(model_rows[i])
+    trained_k <- as.integer(row$selected_k[[1L]])
+    extraction_dir <- .m3tb_find_extraction_subdir(row)
+    map_file <- file.path(extraction_dir, "topic_optimization_map.csv")
+    optimized_theta_file <- file.path(
+      extraction_dir,
+      "rds",
+      "topic_theta_optimized.rds"
+    )
+    optimized_terms_file <- file.path(extraction_dir, "topic_terms.csv")
+    has_combined <- file.exists(map_file) &&
+      file.exists(optimized_theta_file) &&
+      file.exists(optimized_terms_file)
+    optimized_k <- trained_k
+    if (has_combined) {
+      mapping <- data.table::fread(
+        map_file,
+        select = "optimized_topic",
+        showProgress = FALSE
+      )
+      optimized_k <- data.table::uniqueN(mapping$optimized_topic)
+    }
+    if (!is.finite(optimized_k) || optimized_k < 1L) optimized_k <- trained_k
+    raw <- data.table::copy(row)
+    raw[, `:=`(
+      trained_k = trained_k,
+      topic_space = "raw",
+      topic_count = trained_k,
+      report_key = sprintf("raw_k%d", trained_k),
+      report_label = sprintf("Raw K%d", trained_k)
+    )]
+    if (!has_combined) return(raw)
+    combined <- data.table::copy(row)
+    combined[, `:=`(
+      trained_k = trained_k,
+      topic_space = "combined",
+      topic_count = optimized_k,
+      report_key = sprintf("combined_k%d_from_k%d", optimized_k, trained_k),
+      report_label = sprintf("Combined K%d (from K%d)", optimized_k, trained_k)
+    )]
+    data.table::rbindlist(list(raw, combined), use.names = TRUE, fill = TRUE)
+  })
+  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  out[, topic_space_order := data.table::fifelse(topic_space == "raw", 1L, 2L)]
+  data.table::setorder(out, method_order, trained_k, topic_space_order)
+  out[, topic_space_order := NULL]
+  out[]
+}
+
+.m3tb_topic_space_value <- function(row, name, default = NULL) {
+  if (!(name %in% names(row))) return(default)
+  value <- row[[name]][[1L]]
+  if (length(value) && !is.na(value)) value else default
+}
+
+.m3tb_topic_space_theta <- function(row) {
+  topic_space <- .m3tb_topic_space_value(row, "topic_space", "raw")
+  trained_k <- as.integer(.m3tb_topic_space_value(
+    row,
+    "trained_k",
+    row$selected_k[[1L]]
+  ))
+  if (identical(topic_space, "combined")) {
+    extraction_dir <- .m3tb_find_extraction_subdir(row)
+    path <- file.path(extraction_dir, "rds", "topic_theta_optimized.rds")
+    if (!file.exists(path)) {
+      .log_abort(
+        "Missing combined theta for trained K{trained_k}: {path}"
+      )
+    }
+    theta <- readRDS(path)
+    theta <- as.matrix(theta)
+    storage.mode(theta) <- "numeric"
+    return(theta)
+  }
+  path <- file.path(
+    row$model_dir[[1L]],
+    "vae_models",
+    sprintf("theta_K%d.csv", trained_k)
+  )
+  .m3tb_read_theta(path)
+}
+
+.m3tb_topic_space_file <- function(extraction_dir,
+                                    topic_space = c("raw", "combined"),
+                                    kind = c("terms", "overall_pathways",
+                                             "condition_pathways")) {
+  topic_space <- match.arg(topic_space)
+  kind <- match.arg(kind)
+  names_by_kind <- list(
+    terms = if (identical(topic_space, "raw")) {
+      c("topic_terms_raw.csv")
+    } else {
+      c("topic_terms.csv")
+    },
+    overall_pathways = if (identical(topic_space, "raw")) {
+      c("topic_pathway_enrichment_topic_terms_raw.csv")
+    } else {
+      c(
+        "topic_pathway_enrichment_topic_terms_combined.csv",
+        "topic_pathway_enrichment_topic_terms.csv"
+      )
+    },
+    condition_pathways = if (identical(topic_space, "raw")) {
+      c("per_condition_topic_pathway_enrichment_raw.csv")
+    } else {
+      c(
+        "per_condition_topic_pathway_enrichment_combined.csv",
+        "per_condition_topic_pathway_enrichment.csv"
+      )
+    }
+  )
+  candidates <- file.path(extraction_dir, names_by_kind[[kind]])
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit)) hit[[1L]] else candidates[[1L]]
+}
+
 .m3tb_score_theta_outputs <- function(output_dir,
                                       model_rows,
                                       comparisons,
@@ -859,9 +982,15 @@
   data.table::fwrite(design, file.path(csv_dir, paste0(score_prefix, "_design.csv")))
   payload <- lapply(seq_len(nrow(model_rows)), function(i) {
     row <- model_rows[i]
-    theta_path <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", as.integer(row$selected_k[[1L]])))
-    theta <- .m3tb_read_theta(theta_path)
-    .m3tb_score_theta_one(theta, row, design, csv_dir)
+    theta <- .m3tb_topic_space_theta(row)
+    scored <- .m3tb_score_theta_one(theta, row, design, csv_dir)
+    meta <- c("trained_k", "topic_space", "topic_count", "report_key", "report_label")
+    meta <- meta[meta %in% names(row)]
+    for (part in names(scored)) {
+      if (!is.data.frame(scored[[part]])) next
+      for (column in meta) scored[[part]][, (column) := row[[column]][[1L]]]
+    }
+    scored
   })
   scores <- data.table::rbindlist(lapply(payload, `[[`, "score"), use.names = TRUE, fill = TRUE)
   per_label <- data.table::rbindlist(lapply(payload, `[[`, "per_label"), use.names = TRUE, fill = TRUE)
@@ -873,20 +1002,25 @@
   data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_per_label.csv")))
   data.table::fwrite(per_label, file.path(csv_dir, paste0(score_prefix, "_score_long.csv")))
   data.table::fwrite(mds_points, file.path(csv_dir, "theta_group_mds_points.csv"))
-  heatmap_values <- scores[, .(
-    method_order,
-    context_type,
-    method_setup,
-    setup,
-    setup_label,
-    model_label,
-    k,
-    theta_condition_separation_score
-  )]
+  heatmap_columns <- intersect(
+    c(
+      "method_order", "context_type", "method_setup", "setup",
+      "setup_label", "model_label", "k", "trained_k", "topic_space",
+      "topic_count", "report_key", "report_label",
+      "theta_condition_separation_score"
+    ),
+    names(scores)
+  )
+  heatmap_values <- scores[, ..heatmap_columns]
   data.table::fwrite(heatmap_values, file.path(csv_dir, paste0(score_prefix, "_score_heatmap_values.csv")))
+  score_wide <- data.table::copy(scores)
+  if (!"topic_space" %in% names(score_wide)) score_wide[, topic_space := "raw"]
   wide <- data.table::dcast(
-    scores[, .(method_order, context_type, method_setup, k = as.integer(k), theta_condition_separation_score)],
-    method_order + context_type + method_setup ~ k,
+    score_wide[, .(
+      method_order, context_type, method_setup, topic_space,
+      k = as.integer(k), theta_condition_separation_score
+    )],
+    method_order + context_type + method_setup + topic_space ~ k,
     value.var = "theta_condition_separation_score"
   )
   k_cols <- as.character(sort(unique(scores$k)))
@@ -1647,6 +1781,12 @@
     dt[, k_for_filter := suppressWarnings(as.integer(k))]
     dt <- dt[k_for_filter == selected_k][, k_for_filter := NULL][]
   }
+  if ("topic_space" %in% names(dt) && "topic_space" %in% names(row)) {
+    dt <- dt[topic_space == row$topic_space[[1L]]]
+  }
+  if ("report_key" %in% names(dt) && "report_key" %in% names(row)) {
+    dt <- dt[report_key == row$report_key[[1L]]]
+  }
   if (!nrow(dt)) return(data.table::data.table())
   dt <- dt[file.exists(file.path(subgrn_payload_dir, payload_file))]
   dt[]
@@ -1809,7 +1949,8 @@
                                       model_dir = NULL,
                                       compute_universe = TRUE,
                                       padj_cut = 0.05,
-                                      verbose = FALSE) {
+                                      verbose = FALSE,
+                                      pathway_file = NULL) {
   empty <- data.table::data.table(
     topic = integer(),
     topic_num = integer(),
@@ -1830,7 +1971,10 @@
     genes = character()
   )
   if (is.na(extraction_dir) || !dir.exists(extraction_dir)) return(empty)
-  if (isTRUE(per_group)) {
+  if (!is.null(pathway_file)) {
+    files <- as.character(pathway_file)
+    files <- files[file.exists(files)]
+  } else if (isTRUE(per_group)) {
     files <- file.path(
       extraction_dir,
       c(
@@ -1950,16 +2094,18 @@
                                                 model_dir = NULL,
                                                 compute_universe = TRUE,
                                                 padj_cut = 0.05,
-                                                verbose = FALSE) {
+                                                verbose = FALSE,
+                                                pathway_file = NULL) {
   pathways <- .m3tb_read_pathway_tables(
     extraction_dir,
     per_group = TRUE,
     model_dir = model_dir,
     compute_universe = compute_universe,
     padj_cut = padj_cut,
-    verbose = verbose
+    verbose = verbose,
+    pathway_file = pathway_file
   )
-  if (nrow(pathways)) return(pathways)
+  if (nrow(pathways) || !is.null(pathway_file)) return(pathways)
   .m3tb_read_pathway_tables(
     extraction_dir,
     per_group = FALSE,
@@ -2537,10 +2683,33 @@
 }
 
 .m3tb_review_report_slug <- function(row, k) {
+  run_id <- .m3tb_review_row_value(row, "run_id", "")
+  run_short <- if (grepl("^run_[0-9]+", run_id)) {
+    sub("^(run_[0-9]+).*$", "\\1", run_id)
+  } else {
+    run_id
+  }
+  model <- tolower(.m3tb_review_row_value(
+    row,
+    "model_label",
+    .m3tb_review_row_value(row, "method", "model")
+  ))
+  topic_space <- .m3tb_topic_space_value(row, "topic_space", "raw")
+  topic_count <- suppressWarnings(as.integer(.m3tb_topic_space_value(
+    row,
+    "topic_count",
+    k
+  )))
+  space_label <- if (identical(topic_space, "combined")) {
+    paste0("combined_K", topic_count)
+  } else {
+    "raw"
+  }
   parts <- c(
-    .m3tb_review_row_value(row, "run_id", ""),
-    .m3tb_review_row_value(row, "method", ""),
-    paste0("K", as.integer(k))
+    run_short,
+    model,
+    paste0("K", as.integer(k)),
+    space_label
   )
   parts <- parts[!is.na(parts) & nzchar(parts)]
   if (!length(parts)) parts <- c(.m3tb_review_row_value(row, "method_setup", "method"), paste0("K", as.integer(k)))
@@ -2558,9 +2727,14 @@
   reports <- data.table::as.data.table(reports)
   if (!nrow(reports)) return(NA_character_)
   reports[, src := vapply(path, .m3tb_relative_html_path, character(1L), base_dir = dirname(out_file))]
-  reports[, k_label := paste0("K", as.integer(k))]
-  data.table::setorder(reports, k)
-  json <- .m3tb_json_for_html(reports[, .(label, k, k_label, src)])
+  if (!"report_label" %in% names(reports)) reports[, report_label := paste0("K", as.integer(k))]
+  if (!"trained_k" %in% names(reports)) reports[, trained_k := as.integer(k)]
+  if (!"topic_space" %in% names(reports)) reports[, topic_space := "raw"]
+  reports[, space_order := data.table::fifelse(topic_space == "raw", 1L, 2L)]
+  data.table::setorder(reports, trained_k, space_order)
+  json <- .m3tb_json_for_html(reports[, .(
+    label, k, k_label = report_label, src
+  )])
   html <- c(
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     paste0("<title>", .m3tb_html_escape(title), "</title>"),
@@ -2761,8 +2935,11 @@
 
   row <- model_rows[i]
   k <- as.integer(row$selected_k[[1L]])
-  theta_file <- file.path(row$model_dir[[1L]], "vae_models", sprintf("theta_K%d.csv", k))
-  if (!file.exists(theta_file)) {
+  theta <- tryCatch(
+    .m3tb_topic_space_theta(row),
+    error = function(e) NULL
+  )
+  if (is.null(theta)) {
     return(list(
       topic = data.table::data.table(),
       condition = data.table::data.table(),
@@ -2771,8 +2948,8 @@
     ))
   }
 
-  theta <- .m3tb_read_probability_csv(theta_file, "doc_id")
   extraction_dir <- .m3tb_find_extraction_subdir(row)
+  topic_space <- .m3tb_topic_space_value(row, "topic_space", "combined")
   slug <- .m3tb_review_report_slug(row, k)
   run_id <- .m3tb_review_row_value(row, "run_id", row$method_setup[[1L]])
 
@@ -2780,12 +2957,22 @@
     extraction_dir,
     per_group = FALSE,
     model_dir = row$model_dir[[1L]],
-    compute_universe = TRUE
+    compute_universe = TRUE,
+    pathway_file = .m3tb_topic_space_file(
+      extraction_dir,
+      topic_space,
+      "overall_pathways"
+    )
   )
   condition_pathways <- .m3tb_read_condition_pathway_tables(
     extraction_dir,
     model_dir = row$model_dir[[1L]],
-    compute_universe = TRUE
+    compute_universe = TRUE,
+    pathway_file = .m3tb_topic_space_file(
+      extraction_dir,
+      topic_space,
+      "condition_pathways"
+    )
   )
   max_context_raw <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
   payload_disabled <- nzchar(max_context_raw) &&
@@ -2810,7 +2997,9 @@
     subgrn_manifest[, `:=`(
       method_setup = row$method_setup[[1L]],
       run_id = run_id,
-      k = k
+      k = k,
+      topic_space = topic_space,
+      report_key = .m3tb_topic_space_value(row, "report_key", paste0("k", k))
     )]
   }
   condition_pathways_for_report <- condition_pathways
@@ -2818,11 +3007,21 @@
   tf_topic <- .m3tb_tf_topic_rows(theta, row$context_type[[1L]])
   condition_report <- data.table::data.table()
   condition_payload <- .m3cr_empty_payload_spec()
-  group_mds <- data.table::as.data.table(score_result$mds_points)[as.integer(k) == as.integer(row$selected_k[[1L]]) & method_setup == row$method_setup[[1L]]]
+  group_mds <- data.table::as.data.table(score_result$mds_points)[
+    as.integer(k) == as.integer(row$selected_k[[1L]]) &
+      method_setup == row$method_setup[[1L]]
+  ]
+  if ("report_key" %in% names(group_mds) && "report_key" %in% names(row)) {
+    group_mds <- group_mds[report_key == row$report_key[[1L]]]
+  }
   if (nrow(group_mds)) {
     group_mds[, mds_label := .m3tb_short_label(display_label, 18L)]
     group_topic <- .m3tb_topic_waterfall(theta, row$context_type[[1L]])
-    condition_label <- sprintf("%s | K%d condition topic view", row$method_setup[[1L]], k)
+    condition_label <- sprintf(
+      "%s | %s condition topic view",
+      row$method_setup[[1L]],
+      .m3tb_topic_space_value(row, "report_label", sprintf("K%d", k))
+    )
     condition_out <- file.path(condition_page_dir, sprintf("%s_condition_topic_report.html", slug))
     if (identical(as.character(row$context_type[[1L]]), "condition")) {
       condition_payload <- .m3cr_write_condition_payload(
@@ -2830,7 +3029,8 @@
         model_dir = row$model_dir[[1L]],
         payload_dir = condition_pair_payload_dir,
         payload_name = paste0(slug, "_condition_pair"),
-        payload_base = "../../assets/condition_pair_payloads"
+        payload_base = "../../assets/condition_pair_payloads",
+        topic_space = topic_space
       )
     }
     .m3tb_condition_report_html(
@@ -2849,6 +3049,11 @@
     condition_report <- data.table::data.table(
       label = condition_label,
       k = k,
+      trained_k = as.integer(.m3tb_topic_space_value(row, "trained_k", k)),
+      topic_count = as.integer(.m3tb_topic_space_value(row, "topic_count", ncol(theta))),
+      topic_space = topic_space,
+      report_key = .m3tb_topic_space_value(row, "report_key", paste0("k", k)),
+      report_label = .m3tb_topic_space_value(row, "report_label", paste0("K", k)),
       method_setup = row$method_setup[[1L]],
       run_id = run_id,
       path = condition_out
@@ -2863,6 +3068,8 @@
       method_setup = row$method_setup[[1L]],
       run_id = run_id,
       k = k,
+      topic_space = topic_space,
+      report_key = .m3tb_topic_space_value(row, "report_key", paste0("k", k)),
       payload_file = condition_payload$payload_file,
       network_payload_file = condition_payload$network_payload_file,
       n_tf_gene = condition_payload$n_tf_gene,
@@ -2897,7 +3104,7 @@
   required <- if (schema5 || schema6) {
     c(
       "Condition Probability",
-      "TF/Condition Probability",
+      "TF Probability",
       "id=\"cond1Select\"",
       "id=\"cond2Select\"",
       "id=\"tfSelect\"",
@@ -3048,6 +3255,16 @@
     }
     report_paths <- condition_page_reports$path
     invisible(lapply(report_paths, .m3tb_validate_current_report_html))
+    existing_pages <- list.files(
+      condition_page_dir,
+      pattern = "[.]html$",
+      full.names = TRUE
+    )
+    stale_pages <- setdiff(
+      normalizePath(existing_pages, winslash = "/", mustWork = FALSE),
+      normalizePath(report_paths, winslash = "/", mustWork = FALSE)
+    )
+    unlink(stale_pages[file.exists(stale_pages)], force = TRUE)
   }
   if (length(subgrn_manifests)) {
     subgrn_manifest <- data.table::rbindlist(subgrn_manifests, use.names = TRUE, fill = TRUE)
@@ -3819,6 +4036,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
   fibroblast_paper_recovery <- NULL
   if (isTRUE(run_reports)) {
     if (isTRUE(verbose)) .log_inform("Scoring Module 3 theta separation and writing review reports.")
+    report_model_rows <- .m3tb_topic_space_rows(model_rows)
     score_prefix <- if (isTRUE(replicate_documents)) {
       "theta_condition_replicate_separation"
     } else {
@@ -3826,14 +4044,14 @@ run_module3_topic_benchmark <- function(filtered_dir,
     }
     score_result <- .m3tb_score_theta_outputs(
       output_dir,
-      model_rows,
+      report_model_rows,
       comparisons,
       score_prefix = score_prefix,
       replicate_documents = replicate_documents,
       multiomic_data = multiomic_data,
       review_dir = review_dir
     )
-    attr(score_result, "model_rows") <- model_rows
+    attr(score_result, "model_rows") <- report_model_rows
     attr(score_result, "report_state") <- report_state
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
     html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)

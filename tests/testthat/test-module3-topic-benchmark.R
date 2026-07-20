@@ -1530,7 +1530,7 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
   expect_match(html, 'craftgrn-module3-report-schema" content="6', fixed = TRUE)
   expect_match(html, "Condition Probability", fixed = TRUE)
-  expect_match(html, "TF/Condition Probability", fixed = TRUE)
+  expect_match(html, "TF Probability", fixed = TRUE)
   expect_match(html, "id=\"tfButterflySvg\"", fixed = TRUE)
   expect_match(html, "P(topic | condition::TF)", fixed = TRUE)
   expect_match(html, "TF Activity", fixed = TRUE)
@@ -1571,8 +1571,8 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(html, "conditions.reduce", fixed = TRUE)
   expect_match(html, "label:conditionLabel(o.value)", fixed = TRUE)
   expect_match(html, "shortConditionNames').addEventListener('change',refresh", fixed = TRUE)
-  expect_match(html, "const sideA=a.delta<0?1:0", fixed = TRUE)
-  expect_match(html, "sideA===0?b.delta-a.delta:a.delta-b.delta", fixed = TRUE)
+  expect_match(html, "const pos=rows.filter(d=>d.delta>=0)", fixed = TRUE)
+  expect_match(html, "neg=rows.filter(d=>d.delta<0)", fixed = TRUE)
   expect_match(html, "if(i%2===1)g.appendChild", fixed = TRUE)
   expect_match(
     html,
@@ -1601,10 +1601,12 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(html, "q.textContent=v.toFixed(1)", fixed = TRUE)
   expect_match(html, "x1:cx-gap-xw,y1:axisY", fixed = TRUE)
   expect_match(html, "if(!c2)g.appendChild(el('line'", fixed = TRUE)
-  expect_match(html, "if(selected){const topics=Array.from(topicSelect.options)", fixed = TRUE)
+  expect_match(html, "if(selected)return conditionTopicRows()", fixed = TRUE)
   expect_match(html, "topicMode=!!selectedTf", fixed = TRUE)
   expect_match(html, "tfButterflyRowSelected", fixed = TRUE)
   expect_match(html, "if(changed==='pathway'&&pathwaySelect.value)openNetwork()", fixed = TRUE)
+  expect_match(html, "counts = condition 1 / condition 2 / union", fixed = TRUE)
+  expect_match(html, "value=\"topic\" selected>In Topic", fixed = TRUE)
   expect_match(html, "selectTf(d.tfu)", fixed = TRUE)
   expect_match(html, "return loadOverviewPayload()", fixed = TRUE)
   expect_match(html, "loadNetworkPayload()", fixed = TRUE)
@@ -2722,4 +2724,80 @@ test_that("Module 3 topic-link summary forces path arguments before socket worke
   out <- call_summary(root)
   expect_s3_class(out$pass, "data.table")
   expect_equal(nrow(out$pass), 0L)
+})
+
+test_that("Module 3 review exposes complete raw and combined topic spaces", {
+  root <- tempfile("topic-spaces-")
+  extraction_dir <- file.path(root, "topic_extraction", "K4")
+  model_dir <- file.path(root, "topic_models")
+  dir.create(file.path(extraction_dir, "rds"), recursive = TRUE)
+  dir.create(file.path(model_dir, "vae_models"), recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(
+      raw_topic = 1:4,
+      optimized_topic = c(1L, 1L, 2L, 3L)
+    ),
+    file.path(extraction_dir, "topic_optimization_map.csv")
+  )
+  data.table::fwrite(
+    data.table::data.table(
+      topic = 1:3,
+      term_id = paste0("GENE:G", 1:3),
+      in_topic = TRUE
+    ),
+    file.path(extraction_dir, "topic_terms.csv")
+  )
+  optimized_theta <- matrix(
+    c(0.7, 0.2, 0.1, 0.1, 0.3, 0.6),
+    nrow = 2L,
+    byrow = TRUE,
+    dimnames = list(c("A::TF1", "B::TF1"), paste0("Topic", 1:3))
+  )
+  saveRDS(
+    optimized_theta,
+    file.path(extraction_dir, "rds", "topic_theta_optimized.rds")
+  )
+  data.table::fwrite(
+    data.table::data.table(
+      doc_id = c("A::TF1", "B::TF1"),
+      Topic1 = c(0.5, 0.1),
+      Topic2 = c(0.2, 0.2),
+      Topic3 = c(0.2, 0.3),
+      Topic4 = c(0.1, 0.4)
+    ),
+    file.path(model_dir, "vae_models", "theta_K4.csv")
+  )
+  rows <- data.table::data.table(
+    selected_k = 4L,
+    method_order = 1L,
+    method_setup = "cond fp aggr | LDA",
+    model_label = "LDA",
+    model_dir = model_dir,
+    topic_extraction_dir = file.path(root, "topic_extraction")
+  )
+
+  spaces <- craftgrn:::.m3tb_topic_space_rows(rows)
+
+  expect_equal(spaces$topic_space, c("raw", "combined"))
+  expect_equal(spaces$topic_count, c(4L, 3L))
+  expect_equal(
+    spaces$report_label,
+    c("Raw K4", "Combined K3 (from K4)")
+  )
+  expect_equal(
+    craftgrn:::.m3tb_topic_space_theta(spaces[topic_space == "combined"]),
+    optimized_theta
+  )
+  expect_match(
+    craftgrn:::.m3tb_topic_space_file(
+      extraction_dir,
+      "raw",
+      "condition_pathways"
+    ),
+    "per_condition_topic_pathway_enrichment_raw[.]csv$"
+  )
+  expect_equal(
+    craftgrn:::.m3tb_review_report_slug(spaces[topic_space == "combined"], 4L),
+    "lda_K4_combined_K3"
+  )
 })

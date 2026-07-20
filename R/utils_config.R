@@ -212,7 +212,8 @@
     .project_config_assert_mapping(defaults, "report.defaults")
     allowed_defaults <- c(
       "condition_1", "condition_2", "condition_1_suffix",
-      "condition_2_suffix", "pathway", "short_condition_names", "tf", "topic"
+      "condition_2_suffix", "pathway", "short_condition_names", "tf", "topic",
+      "topic_space", "trained_k"
     )
     unknown <- setdiff(names(defaults), allowed_defaults)
     if (length(unknown)) {
@@ -226,12 +227,23 @@
     if (length(bad_char)) {
       cli::cli_abort("Report defaults must be non-empty strings or null: {paste(bad_char, collapse = ', ')}.")
     }
-    if (!is.null(defaults$topic) &&
-        (!.project_config_scalar(defaults$topic, "integer") || defaults$topic < 1L)) {
+    if (!is.null(defaults[["topic"]]) &&
+        (!.project_config_scalar(defaults[["topic"]], "integer") ||
+          defaults[["topic"]] < 1L)) {
       cli::cli_abort("`report.defaults.topic` must be a positive integer.")
     }
-    if (!is.null(defaults$short_condition_names) &&
-        !.project_config_scalar(defaults$short_condition_names, "logical")) {
+    if (!is.null(defaults[["trained_k"]]) &&
+        (!.project_config_scalar(defaults[["trained_k"]], "integer") ||
+          defaults[["trained_k"]] < 2L)) {
+      cli::cli_abort("`report.defaults.trained_k` must be an integer greater than 1.")
+    }
+    if (!is.null(defaults[["topic_space"]]) &&
+        (!.project_config_scalar(defaults[["topic_space"]], "character") ||
+          !defaults[["topic_space"]] %in% c("raw", "combined"))) {
+      cli::cli_abort("`report.defaults.topic_space` must be raw or combined.")
+    }
+    if (!is.null(defaults[["short_condition_names"]]) &&
+        !.project_config_scalar(defaults[["short_condition_names"]], "logical")) {
       cli::cli_abort("`report.defaults.short_condition_names` must be true or false.")
     }
   }

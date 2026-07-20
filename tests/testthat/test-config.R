@@ -85,6 +85,8 @@ test_that("project config validation checks nested report state", {
         condition_1_suffix = "_0_BCAA_Ctrl",
         condition_2_suffix = "_10_FBS_Ctrl",
         topic = 1L,
+        trained_k = 30L,
+        topic_space = "combined",
         short_condition_names = TRUE
       ),
       condition_order = c("HPAFII_0_BCAA_Ctrl", "HPAFII_10_FBS_Ctrl"),
@@ -123,6 +125,28 @@ test_that("project config validation checks nested report state", {
     "six-digit hex",
     fixed = TRUE
   )
+
+  bad_topic_space <- cfg
+  bad_topic_space$report$defaults$topic_space <- "optimized"
+  expect_error(
+    validate_config(
+      required = character(),
+      numeric_required = character(),
+      project_config = bad_topic_space
+    ),
+    "raw or combined",
+    fixed = TRUE
+  )
+
+  expect_true(validate_config(
+    required = character(),
+    numeric_required = character(),
+    project_config = list(
+      report = list(
+        defaults = list(trained_k = 30L, topic_space = "combined")
+      )
+    )
+  ))
 })
 
 test_that("project resource and batch-correction configuration is validated", {
