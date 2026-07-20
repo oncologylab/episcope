@@ -1475,6 +1475,18 @@
   }
 }
 
+.m3_qc_align_plot_widths <- function(plots) {
+  grobs <- lapply(plots, ggplot2::ggplotGrob)
+  shared_widths <- Reduce(
+    grid::unit.pmax,
+    lapply(grobs, function(grob) grob$widths)
+  )
+  lapply(grobs, function(grob) {
+    grob$widths <- shared_widths
+    grob
+  })
+}
+
 .m3_qc_pair_layout <- function(pair_count) {
   pair_count <- suppressWarnings(as.integer(pair_count)[[1L]])
   if (!is.finite(pair_count) || pair_count < 1L) return(NULL)
@@ -2015,7 +2027,7 @@
   )
   rownames(condition_theta) <- display_conditions
   rownames(expression_matrix) <- display_conditions
-  page4 <- .m3_qc_arrange(
+  page4_plots <- .m3_qc_align_plot_widths(list(
     .m3_qc_count_heatmap(
       link_matrix,
       "Aligned TF-target links",
@@ -2048,10 +2060,12 @@
       row_order = row_order,
       column_order = column_order,
       limits = c(0, max(expression_matrix, na.rm = TRUE))
-    ),
+    )
+  ))
+  page4 <- do.call(.m3_qc_arrange, c(page4_plots, list(
     ncol = 1L,
     title = "Condition-topic assignment profiles"
-  )
+  )))
 
   cross <- qc$condition_topic_similarity$mean
   pair_table <- data.table::as.data.table(as.table(cross))

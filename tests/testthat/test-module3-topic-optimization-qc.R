@@ -218,6 +218,20 @@ test_that("condition expression QC remains optional for legacy edges", {
   expect_equal(nrow(observed), 0L)
 })
 
+test_that("QC panel alignment reserves one shared legend width", {
+  values <- data.frame(x = 1:2, y = 1, value = 1:2)
+  short <- ggplot2::ggplot(values, ggplot2::aes(x, y, fill = value)) +
+    ggplot2::geom_tile() +
+    ggplot2::scale_fill_continuous(name = "Count")
+  long <- ggplot2::ggplot(values, ggplot2::aes(x, y, fill = value)) +
+    ggplot2::geom_tile() +
+    ggplot2::scale_fill_continuous(name = "Mean log2(expression + 1)")
+
+  aligned <- .m3_qc_align_plot_widths(list(short, long))
+
+  expect_equal(aligned[[1L]]$widths, aligned[[2L]]$widths)
+})
+
 test_that("condition-topic layouts preserve pairs for odd counts", {
   layout <- .m3_qc_pair_layout(3L)
 
