@@ -9695,6 +9695,10 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           dtm = dtm,
           topic_terms = topic_terms,
           pair_assignment = pair_assignment,
+          condition_gene_expression = .m3_qc_condition_gene_expression(
+            edges_docs,
+            genes = pair_assignment$target_gene
+          ),
           min_genes = topic_merge_min_genes,
           min_links = topic_merge_min_links,
           similarity_threshold = topic_merge_similarity_threshold,

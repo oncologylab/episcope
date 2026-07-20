@@ -178,6 +178,46 @@ test_that("condition topics rank by mean theta before Jaccard", {
   expect_equal(top[condition_id == "A" & topic_num == 2L, mean_jaccard], 0.95)
 })
 
+test_that("condition-topic expression uses one fixed expressed-gene pool", {
+  edges <- data.table::data.table(
+    condition_id = c("A", "A", "A", "B", "B", "A"),
+    gene_key = c("G1", "G1", "G2", "G1", "G2", "G3"),
+    gene_expr_condition = c(3, 3, 1, 0, 7, 15)
+  )
+  expression <- .m3_qc_condition_gene_expression(
+    edges,
+    genes = c("G1", "G2", "G3", "G4")
+  )
+  pairs <- data.table::data.table(
+    target_gene = c("G1", "G2", "G3", "G4"),
+    optimized_assigned_topic = 1:4
+  )
+  pairs[2L, optimized_assigned_topic := 1L]
+  matrix <- .m3_qc_condition_topic_expression_matrix(
+    expression,
+    pairs,
+    conditions = c("A", "B"),
+    topics = 1:4
+  )
+
+  expect_equal(nrow(expression), 5L)
+  expect_equal(unname(matrix["A", "Topic 1"]), 1.5)
+  expect_equal(unname(matrix["B", "Topic 1"]), 1.5)
+  expect_equal(unname(matrix["A", "Topic 3"]), 4)
+  expect_equal(unname(matrix["B", "Topic 3"]), 0)
+  expect_equal(unname(matrix[, "Topic 4"]), c(0, 0))
+})
+
+test_that("condition expression QC remains optional for legacy edges", {
+  observed <- .m3_qc_condition_gene_expression(
+    data.table::data.table(condition_id = "A", gene_key = "G1"),
+    genes = "G1"
+  )
+
+  expect_named(observed, c("condition_id", "target_gene", "expression"))
+  expect_equal(nrow(observed), 0L)
+})
+
 test_that("condition-topic layouts preserve pairs for odd counts", {
   layout <- .m3_qc_pair_layout(3L)
 

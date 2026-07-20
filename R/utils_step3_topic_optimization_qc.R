@@ -591,6 +591,7 @@
                                                dtm,
                                                topic_terms,
                                                pair_assignment,
+                                               condition_gene_expression = NULL,
                                                min_genes = 50L,
                                                min_links = 200L,
                                                similarity_threshold = 0.90,
@@ -785,6 +786,7 @@
     raw_phi = phi,
     raw_topic_terms = topic_terms,
     raw_pair_assignment = pair_assignment,
+    condition_gene_expression = condition_gene_expression,
     raw_to_optimized = stats::setNames(merge$mapping, raw_topic_ids),
     merge_audit = merge$audit,
     sample_rows = sample_rows,
@@ -987,7 +989,9 @@
                                  fill_max = NULL,
                                  square_cells = TRUE,
                                  show_legend = TRUE,
-                                 show_labels = TRUE) {
+                                 show_labels = TRUE,
+                                 label_size = 3.2,
+                                 show_x_axis = TRUE) {
   if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
   if (is.null(column_order)) column_order <- .m3_qc_cluster_order(x, "column")
   long <- .m3_qc_matrix_long(x, row_order, column_order)
@@ -1004,7 +1008,7 @@
         ggplot2::aes(label = label, colour = value >= fill_max * 0.55),
         family = "Helvetica",
         fontface = "bold",
-        size = 3.2,
+        size = label_size,
         show.legend = FALSE
       ) +
       ggplot2::scale_colour_manual(
@@ -1026,7 +1030,59 @@
       panel.grid = ggplot2::element_blank(),
       legend.position = if (isTRUE(show_legend)) "right" else "none"
     )
+  if (!isTRUE(show_x_axis)) {
+    p <- p + ggplot2::theme(
+      axis.text.x = ggplot2::element_blank(),
+      axis.ticks.x = ggplot2::element_blank()
+    )
+  }
   if (isTRUE(square_cells)) p <- p + ggplot2::coord_fixed(ratio = 1)
+  p
+}
+
+.m3_qc_value_heatmap <- function(x,
+                                 title,
+                                 legend_title,
+                                 row_order = NULL,
+                                 column_order = NULL,
+                                 limits = NULL,
+                                 show_x_axis = TRUE) {
+  if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
+  if (is.null(column_order)) column_order <- .m3_qc_cluster_order(x, "column")
+  long <- .m3_qc_matrix_long(x, row_order, column_order)
+  if (is.null(limits)) limits <- range(c(0, long$value), finite = TRUE)
+  if (length(limits) != 2L || !all(is.finite(limits)) ||
+      limits[[2L]] <= limits[[1L]]) {
+    limits <- c(0, 1)
+  }
+  p <- ggplot2::ggplot(
+    long,
+    ggplot2::aes(column_label, row_label, fill = value)
+  ) +
+    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.2) +
+    ggplot2::scale_fill_viridis_c(
+      option = "C",
+      limits = limits,
+      labels = scales::label_number(accuracy = 0.01),
+      name = legend_title
+    ) +
+    ggplot2::labs(title = title, x = NULL, y = NULL) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+  if (!isTRUE(show_x_axis)) {
+    p <- p + ggplot2::theme(
+      axis.text.x = ggplot2::element_blank(),
+      axis.ticks.x = ggplot2::element_blank()
+    )
+  }
   p
 }
 
@@ -1456,6 +1512,96 @@
   out
 }
 
+.m3_qc_condition_gene_expression <- function(edges_docs, genes = NULL) {
+  x <- data.table::as.data.table(edges_docs)
+  gene_column <- if ("gene_key" %in% names(x)) {
+    "gene_key"
+  } else if ("target_gene" %in% names(x)) {
+    "target_gene"
+  } else {
+    NA_character_
+  }
+  required <- c("condition_id", "gene_expr_condition")
+  if (is.na(gene_column) || !all(required %in% names(x))) {
+    return(data.table::data.table(
+      condition_id = character(),
+      target_gene = character(),
+      expression = numeric()
+    ))
+  }
+  if (!is.null(genes)) {
+    genes <- unique(as.character(genes))
+    genes <- genes[!is.na(genes) & nzchar(genes)]
+    x <- x[get(gene_column) %in% genes]
+  }
+  x <- x[
+    !is.na(condition_id) & nzchar(condition_id) &
+      !is.na(get(gene_column)) & nzchar(get(gene_column)) &
+      is.finite(gene_expr_condition) & gene_expr_condition >= 0,
+    .(
+      expression = max(as.numeric(gene_expr_condition), na.rm = TRUE)
+    ),
+    by = .(
+      condition_id = as.character(condition_id),
+      target_gene = as.character(get(gene_column))
+    )
+  ]
+  data.table::setorder(x, condition_id, target_gene)
+  x[]
+}
+
+.m3_qc_condition_topic_expression_matrix <- function(condition_gene_expression,
+                                                       pair_assignment,
+                                                       conditions,
+                                                       topics) {
+  out <- matrix(
+    0,
+    nrow = length(conditions),
+    ncol = length(topics),
+    dimnames = list(conditions, paste0("Topic ", topics))
+  )
+  expression <- data.table::as.data.table(condition_gene_expression)
+  pairs <- data.table::as.data.table(pair_assignment)
+  required_expression <- c("condition_id", "target_gene", "expression")
+  required_pairs <- c("target_gene", "optimized_assigned_topic")
+  if (!all(required_expression %in% names(expression)) ||
+      !all(required_pairs %in% names(pairs))) {
+    return(out)
+  }
+  pools <- unique(pairs[
+    is.finite(optimized_assigned_topic),
+    .(
+      target_gene = as.character(target_gene),
+      topic = as.integer(optimized_assigned_topic)
+    )
+  ])
+  expressed <- unique(expression[
+    is.finite(expression) & expression > 0,
+    as.character(target_gene)
+  ])
+  pools <- pools[topic %in% topics & target_gene %in% expressed]
+  if (!nrow(pools)) return(out)
+  pool_sizes <- pools[, .(pool_size = data.table::uniqueN(target_gene)), by = topic]
+  values <- merge(
+    expression[condition_id %in% conditions],
+    pools,
+    by = "target_gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  values[, expression_log2 := log2(pmax(as.numeric(expression), 0) + 1)]
+  means <- values[, .(
+    expression_sum = sum(expression_log2, na.rm = TRUE)
+  ), by = .(condition_id, topic)]
+  means <- merge(means, pool_sizes, by = "topic", all.x = TRUE, sort = FALSE)
+  means[, mean_expression := expression_sum / pool_size]
+  rows <- match(means$condition_id, conditions)
+  columns <- match(means$topic, topics)
+  valid <- is.finite(rows) & is.finite(columns)
+  out[cbind(rows[valid], columns[valid])] <- means$mean_expression[valid]
+  out
+}
+
 .m3_qc_pooled_tf_topic_matrix <- function(optimization,
                                            top_n_tfs = 150L) {
   top_n_tfs <- suppressWarnings(as.integer(top_n_tfs)[[1L]])
@@ -1855,21 +2001,56 @@
   )
   row_order <- .m3_qc_cluster_order(clustering_matrix, "row")
   column_order <- .m3_qc_cluster_order(link_matrix + gene_matrix, "column")
+  condition_theta <- .m3_qc_condition_topic_theta(optimization)
+  condition_theta <- condition_theta[
+    condition_values,
+    paste0("Topic ", qc$optimized_topic_ids),
+    drop = FALSE
+  ]
+  expression_matrix <- .m3_qc_condition_topic_expression_matrix(
+    condition_gene_expression = optimization$condition_gene_expression,
+    pair_assignment = optimization$pair_assignment,
+    conditions = condition_values,
+    topics = qc$optimized_topic_ids
+  )
+  rownames(condition_theta) <- display_conditions
+  rownames(expression_matrix) <- display_conditions
   page4 <- .m3_qc_arrange(
     .m3_qc_count_heatmap(
       link_matrix,
       "Aligned TF-target links",
       row_order = row_order,
-      column_order = column_order
+      column_order = column_order,
+      square_cells = FALSE,
+      show_x_axis = FALSE
     ),
     .m3_qc_count_heatmap(
       gene_matrix,
       "Assigned target genes",
       row_order = row_order,
-      column_order = column_order
+      column_order = column_order,
+      square_cells = FALSE,
+      show_x_axis = FALSE
+    ),
+    .m3_qc_value_heatmap(
+      condition_theta,
+      "Mean condition topic probability",
+      "Mean theta",
+      row_order = row_order,
+      column_order = column_order,
+      limits = c(0, max(condition_theta, na.rm = TRUE)),
+      show_x_axis = FALSE
+    ),
+    .m3_qc_value_heatmap(
+      expression_matrix,
+      "Mean expression of assigned target genes",
+      "Mean log2(expression + 1)",
+      row_order = row_order,
+      column_order = column_order,
+      limits = c(0, max(expression_matrix, na.rm = TRUE))
     ),
     ncol = 1L,
-    title = "Condition-topic assignment counts"
+    title = "Condition-topic assignment profiles"
   )
 
   cross <- qc$condition_topic_similarity$mean
@@ -1893,7 +2074,6 @@
     used_topics <- c(used_topics, candidate$topic_num)
     if (nrow(chosen) >= 6L) break
   }
-  condition_theta <- .m3_qc_condition_topic_theta(optimization)
   condition_top_topics <- .m3_qc_top_condition_topics(
     condition_theta,
     cross,
