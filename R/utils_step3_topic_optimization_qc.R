@@ -2093,14 +2093,6 @@
       square_cells = FALSE,
       show_x_axis = FALSE
     ),
-    .m3_qc_count_heatmap(
-      gene_matrix,
-      "Assigned target genes",
-      row_order = row_order,
-      column_order = column_order,
-      square_cells = FALSE,
-      show_x_axis = FALSE
-    ),
     .m3_qc_value_heatmap(
       condition_theta,
       "Mean condition topic probability",
