@@ -4927,7 +4927,7 @@ run_regulatory_topics <- function(filtered_dir,
   topic_qc_top_tfs <- suppressWarnings(as.integer(.module3_cfg_value(
     cfg,
     c("topic_qc_top_tfs", "module3_topic_qc_top_tfs", "module3_qc_top_tfs"),
-    50L
+    150L
   )[[1L]]))
   topic_qc_seed <- suppressWarnings(as.integer(.module3_cfg_value(
     cfg,
@@ -5034,7 +5034,8 @@ run_regulatory_topics <- function(filtered_dir,
 #'   at or above which topics are merged. If `NULL`, use project config.
 #' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
 #'   size per condition. Full-universe counts are not sampled.
-#' @param topic_qc_top_tfs Number of TFs per condition shown in QC heatmaps.
+#' @param topic_qc_top_tfs Number of globally ranked TFs shown in the pooled
+#'   TF-by-topic QC heatmap.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from

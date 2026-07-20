@@ -1419,6 +1419,28 @@
   }
 }
 
+.m3_qc_pair_layout <- function(pair_count) {
+  pair_count <- suppressWarnings(as.integer(pair_count)[[1L]])
+  if (!is.finite(pair_count) || pair_count < 1L) return(NULL)
+  pair_rows <- ceiling(pair_count / 2L)
+  layout <- matrix(
+    NA_integer_,
+    nrow = pair_rows + 1L,
+    ncol = 4L
+  )
+  layout[1L, ] <- 1L
+  for (i in seq_len(pair_count)) {
+    row <- 1L + ceiling(i / 2L)
+    column <- if (i %% 2L == 1L) 1L else 3L
+    grob <- 2L + (i - 1L) * 2L
+    layout[row, column:(column + 1L)] <- c(grob, grob + 1L)
+  }
+  list(
+    layout_matrix = layout,
+    heights = c(1.35, rep(1, pair_rows))
+  )
+}
+
 .m3_qc_condition_topic_matrix <- function(counts, value, conditions, topics) {
   out <- matrix(
     0,
@@ -1432,6 +1454,113 @@
   valid <- is.finite(rows) & is.finite(columns)
   out[cbind(rows[valid], columns[valid])] <- counts[[value]][valid]
   out
+}
+
+.m3_qc_pooled_tf_topic_matrix <- function(optimization,
+                                           top_n_tfs = 150L) {
+  top_n_tfs <- suppressWarnings(as.integer(top_n_tfs)[[1L]])
+  if (!is.finite(top_n_tfs) || top_n_tfs < 1L) {
+    .log_abort("top_n_tfs must be a positive integer.")
+  }
+  qc <- optimization$qc
+  x <- qc$assignments[optimized_aligned == TRUE]
+  topics <- as.integer(qc$optimized_topic_ids)
+  if (!nrow(x) || !length(topics)) return(matrix(numeric(), 0L, 0L))
+  totals <- x[, .(
+    targets = data.table::uniqueN(target_index)
+  ), by = tf_index]
+  totals[, tf := as.character(qc$tf_levels[tf_index])]
+  data.table::setorder(totals, -targets, tf)
+  selected <- head(totals, top_n_tfs)
+  counts <- x[tf_index %in% selected$tf_index, .(
+    targets = data.table::uniqueN(target_index)
+  ), by = .(tf_index, optimized_topic)]
+  out <- matrix(
+    0,
+    nrow = nrow(selected),
+    ncol = length(topics),
+    dimnames = list(selected$tf, paste0("Topic ", topics))
+  )
+  rows <- match(counts$tf_index, selected$tf_index)
+  columns <- match(counts$optimized_topic, topics)
+  valid <- is.finite(rows) & is.finite(columns)
+  out[cbind(rows[valid], columns[valid])] <- counts$targets[valid]
+  out
+}
+
+.m3_qc_condition_topic_theta <- function(optimization) {
+  theta <- as.matrix(optimization$theta)
+  assignments <- optimization$qc$assignments
+  if (!nrow(theta) || !nrow(assignments)) {
+    return(matrix(numeric(), 0L, 0L))
+  }
+  doc_conditions <- unique(assignments[, .(doc_index, condition_id)])
+  conflicts <- doc_conditions[, data.table::uniqueN(condition_id), by = doc_index][
+    V1 > 1L
+  ]
+  if (nrow(conflicts)) {
+    .log_abort("Each topic document must map to exactly one condition.")
+  }
+  doc_conditions <- doc_conditions[
+    is.finite(doc_index) & doc_index >= 1L & doc_index <= nrow(theta)
+  ]
+  conditions <- sort(unique(as.character(doc_conditions$condition_id)))
+  topic_ids <- .m3_opt_topic_ids(theta, "column")
+  out <- vapply(conditions, function(condition) {
+    rows <- doc_conditions[condition_id == condition, doc_index]
+    colMeans(theta[rows, , drop = FALSE])
+  }, numeric(ncol(theta)))
+  out <- t(out)
+  rownames(out) <- conditions
+  colnames(out) <- paste0("Topic ", topic_ids)
+  out
+}
+
+.m3_qc_top_condition_topics <- function(theta,
+                                         jaccard,
+                                         top_n = 3L) {
+  top_n <- suppressWarnings(as.integer(top_n)[[1L]])
+  if (!is.finite(top_n) || top_n < 1L) {
+    .log_abort("top_n must be a positive integer.")
+  }
+  theta <- as.matrix(theta)
+  jaccard <- as.matrix(jaccard)
+  if (!nrow(theta) || !ncol(theta)) return(data.table::data.table())
+  theta_long <- data.table::as.data.table(as.table(theta))
+  data.table::setnames(
+    theta_long,
+    c("condition_id", "topic_label", "mean_theta")
+  )
+  theta_long[, `:=`(
+    condition_id = as.character(condition_id),
+    topic_label = as.character(topic_label),
+    topic_num = suppressWarnings(as.integer(sub("^Topic ", "", topic_label))),
+    mean_theta = as.numeric(get("mean_theta"))
+  )]
+  jaccard_long <- data.table::as.data.table(as.table(jaccard))
+  data.table::setnames(
+    jaccard_long,
+    c("condition_id", "topic_num", "mean_jaccard")
+  )
+  jaccard_long[, `:=`(
+    condition_id = as.character(condition_id),
+    topic_num = suppressWarnings(as.integer(as.character(topic_num))),
+    mean_jaccard = as.numeric(get("mean_jaccard"))
+  )]
+  out <- merge(
+    theta_long,
+    jaccard_long,
+    by = c("condition_id", "topic_num"),
+    all = FALSE,
+    sort = FALSE
+  )
+  data.table::setorderv(
+    out,
+    c("condition_id", "mean_theta", "mean_jaccard", "topic_num"),
+    c(1L, -1L, -1L, 1L)
+  )
+  out[, rank := seq_len(.N), by = condition_id]
+  out[rank <= top_n]
 }
 
 .m3_qc_funnel_plot <- function(labels,
@@ -1466,90 +1595,56 @@
 }
 
 .m3_qc_tf_topic_pages <- function(optimization,
-                                  top_n_tfs = 100L) {
-  top_n_tfs <- suppressWarnings(as.integer(top_n_tfs)[[1L]])
-  if (!is.finite(top_n_tfs) || top_n_tfs < 1L) {
-    .log_abort("top_n_tfs must be a positive integer.")
-  }
-  x <- optimization$qc$assignments[optimized_aligned == TRUE]
-  if (!nrow(x)) return(list())
-  x <- x[, .(
-    targets = data.table::uniqueN(target_index)
-  ), by = .(condition_id, tf_index, optimized_topic)]
-  totals <- x[, .(targets = sum(targets)), by = .(condition_id, tf_index)]
-  data.table::setorder(totals, condition_id, -targets, tf_index)
-  totals <- totals[, head(.SD, as.integer(top_n_tfs)), by = condition_id]
-  x <- x[totals, on = .(condition_id, tf_index), nomatch = 0L]
-  topics <- optimization$qc$optimized_topic_ids
-  pages <- list()
-  page_index <- 0L
-  for (condition in unique(totals$condition_id)) {
-    selected <- totals[condition_id == condition, tf_index]
-    selected <- selected[!duplicated(selected)]
-    mat <- matrix(
-      0,
-      nrow = length(selected),
-      ncol = length(topics),
-      dimnames = list(
-        optimization$qc$tf_levels[selected],
-        paste0("Topic ", topics)
-      )
+                                  top_n_tfs = 150L) {
+  mat <- .m3_qc_pooled_tf_topic_matrix(
+    optimization,
+    top_n_tfs = top_n_tfs
+  )
+  if (!nrow(mat) || !ncol(mat)) return(list())
+  row_order <- .m3_qc_cluster_order(mat, "row")
+  column_order <- .m3_qc_cluster_order(mat, "column")
+  plot <- .m3_qc_count_heatmap(
+    mat,
+    title = "Unique assigned target genes",
+    row_order = row_order,
+    column_order = column_order,
+    label_min = 1L,
+    square_cells = FALSE,
+    show_legend = TRUE,
+    show_labels = FALSE
+  ) +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(
+        family = "Helvetica",
+        face = "bold",
+        size = 5,
+        margin = ggplot2::margin(r = 1)
+      ),
+      axis.text.x = ggplot2::element_text(
+        family = "Helvetica",
+        face = "bold",
+        size = 7,
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      plot.margin = ggplot2::margin(2, 5, 2, 2)
     )
-    values <- x[condition_id == condition]
-    mat[cbind(
-      match(values$tf_index, selected),
-      match(values$optimized_topic, topics)
-    )] <- values$targets
-    row_order <- .m3_qc_cluster_order(mat, "row")
-    column_order <- .m3_qc_cluster_order(mat, "column")
-    page_index <- page_index + 1L
-    page_matrix <- mat[row_order, column_order, drop = FALSE]
-    row_blocks <- split(
-      seq_len(nrow(page_matrix)),
-      ceiling(seq_len(nrow(page_matrix)) / 50L)
+  list(.m3_qc_arrange(
+    plot,
+    ncol = 1L,
+    title = sprintf(
+      "Top %d TFs by unique assigned target genes across all conditions",
+      nrow(mat)
     )
-    fill_max <- max(page_matrix, na.rm = TRUE)
-    block_plots <- lapply(seq_along(row_blocks), function(i) {
-      rows <- row_blocks[[i]]
-      .m3_qc_count_heatmap(
-        page_matrix[rows, , drop = FALSE],
-        title = sprintf(
-          "TF ranks %d-%d",
-          min(rows),
-          max(rows)
-        ),
-        row_order = seq_along(rows),
-        column_order = seq_len(ncol(page_matrix)),
-        label_min = 1L,
-        fill_max = fill_max,
-        square_cells = FALSE,
-        show_legend = i == length(row_blocks),
-        show_labels = FALSE
-      )
-    })
-    pages[[page_index]] <- do.call(
-      .m3_qc_arrange,
-      c(
-        block_plots,
-        list(
-          ncol = length(block_plots),
-          title = sprintf(
-            "%s: top %d TFs by unique targets",
-            .m3_qc_short_condition_labels(condition),
-            nrow(page_matrix)
-          )
-        )
-      )
-    )
-  }
-  pages
+  ))
 }
 
 .write_module3_topic_assignment_qc <- function(optimization,
                                                out_file,
                                                title_prefix = NULL,
                                                condition_colors = NULL,
-                                               top_n_tfs = 100L,
+                                               top_n_tfs = 150L,
                                                seed = 20260716L) {
   .assert_pkg("ggplot2")
   .assert_pkg("gridExtra")
@@ -1626,9 +1721,19 @@
   raw_aligned_sample[, condition_label := .m3_qc_short_condition_labels(
     condition_id
   )]
+  condition_labels <- .m3_qc_short_condition_labels(condition_values)
   condition_palette <- stats::setNames(
-    condition_colors[raw_aligned_sample[, unique(condition_id)]],
-    .m3_qc_short_condition_labels(raw_aligned_sample[, unique(condition_id)])
+    condition_colors[condition_values],
+    condition_labels
+  )
+  topic_values <- sort(unique(c(
+    as.integer(qc$raw_topic_ids),
+    as.integer(qc$optimized_topic_ids)
+  )))
+  topic_labels <- paste0("Topic ", topic_values)
+  topic_palette <- stats::setNames(
+    .module3_bright_topic_palette(topic_labels),
+    topic_labels
   )
   page1 <- .m3_qc_arrange(
     .m3_qc_umap_plot(
@@ -1639,6 +1744,7 @@
         scales::comma(nrow(raw_aligned_sample)),
         " sampled links with posterior primary topic = assigned target topic"
       ),
+      colors = topic_palette,
       label_column = "topic_short",
       seed = seed
     ),
@@ -1684,6 +1790,7 @@
       "topic",
       "Optimized filtered aligned-link UMAP",
       "Sampled links retained after topic merge and alignment",
+      colors = topic_palette,
       label_column = "topic_short",
       seed = seed + 4L
     ),
@@ -1786,28 +1893,44 @@
     used_topics <- c(used_topics, candidate$topic_num)
     if (nrow(chosen) >= 6L) break
   }
-  topic_palette <- stats::setNames(
-    .module3_bright_topic_palette(
-      paste0("Topic ", qc$optimized_topic_ids)
-    ),
-    paste0("Topic ", qc$optimized_topic_ids)
+  condition_theta <- .m3_qc_condition_topic_theta(optimization)
+  condition_top_topics <- .m3_qc_top_condition_topics(
+    condition_theta,
+    cross,
+    top_n = 3L
   )
   pair_plots <- unlist(lapply(seq_len(nrow(chosen)), function(i) {
     candidate <- chosen[i]
     condition_label <- .m3_qc_short_condition_labels(candidate$condition_id)
-    topic_label <- paste0("Topic ", candidate$topic_num)
+    selected_topics <- condition_top_topics[
+      condition_id == candidate$condition_id
+    ]
+    selected_labels <- selected_topics$topic_label
+    selected_short <- sub("^Topic ", "T", selected_labels)
+    selected_annotations <- stats::setNames(
+      sprintf(
+        "%s\n%.2f / %.2f",
+        selected_short,
+        selected_topics$mean_theta,
+        selected_topics$mean_jaccard
+      ),
+      selected_labels
+    )
     condition_highlight <- optimized_sample[
       condition_id == candidate$condition_id
     ]
     condition_highlight[, selected := condition_label]
-    topic_highlight <- optimized_sample[topic == topic_label]
-    topic_highlight[, selected := topic_label]
+    topic_highlight <- optimized_sample[topic %in% selected_labels]
+    topic_highlight[, "topic_annotation" := selected_annotations[topic]]
     list(
       .m3_qc_umap_plot(
         condition_highlight,
         "selected",
         paste0(condition_label, " (condition)"),
-        sprintf("Paired mean Jaccard %.3f", candidate$similarity),
+        sprintf(
+          "Top mean-theta topic %s",
+          if (length(selected_short)) selected_short[[1L]] else "not available"
+        ),
         colors = stats::setNames(
           condition_colors[[candidate$condition_id]],
           condition_label
@@ -1817,11 +1940,13 @@
       ),
       .m3_qc_umap_plot(
         topic_highlight,
-        "selected",
-        paste0(topic_label, " (topic)"),
-        sprintf("Paired with %s", condition_label),
-        colors = topic_palette[topic_label],
+        "topic",
+        "Top theta topics (topic)",
+        "Label: theta / Jaccard",
+        colors = topic_palette[selected_labels],
         background = optimized_sample,
+        label_column = "topic_annotation",
+        seed = seed + 30L + i,
         compact = TRUE
       )
     )
@@ -1834,25 +1959,15 @@
     "Mean Jaccard of unique TF-target pairs and target genes"
   )
   page5_args <- c(list(cross_plot), pair_plots, list(
-    title = "Top distinct condition-topic matches"
+    title = "Top condition-topic matches"
   ))
-  if (length(pair_plots) == 12L) {
-    page5_args$layout_matrix <- rbind(
-      c(1L, 1L, 1L, 1L),
-      c(2L, 3L, 4L, 5L),
-      c(6L, 7L, 8L, 9L),
-      c(10L, 11L, 12L, 13L)
-    )
-    page5_args$heights <- c(1.35, 1, 1, 1)
-  } else if (length(pair_plots) == 8L) {
-    page5_args$layout_matrix <- rbind(
-      c(1L, 1L, 1L, 1L),
-      c(2L, 3L, 4L, 5L),
-      c(6L, 7L, 8L, 9L)
-    )
-    page5_args$heights <- c(1.35, 1, 1)
+  pair_count <- length(pair_plots) %/% 2L
+  if (pair_count > 0L) {
+    pair_layout <- .m3_qc_pair_layout(pair_count)
+    page5_args$layout_matrix <- pair_layout$layout_matrix
+    page5_args$heights <- pair_layout$heights
   } else {
-    page5_args$ncol <- 2L
+    page5_args$ncol <- 1L
   }
   page5 <- do.call(.m3_qc_arrange, page5_args)
 
@@ -1959,7 +2074,7 @@
                                                       raw_k,
                                                       title_prefix = NULL,
                                                       condition_colors = NULL,
-                                                      top_n_tfs = 100L,
+                                                      top_n_tfs = 150L,
                                                       seed = 20260716L) {
   mapping <- data.table::data.table(
     raw_topic = as.integer(names(optimization$raw_to_optimized)),

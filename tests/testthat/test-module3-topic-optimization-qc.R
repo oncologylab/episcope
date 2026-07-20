@@ -89,7 +89,7 @@ test_that("topic optimization controls validate in nested project config", {
       merge_similarity_threshold = 0.9,
       run_topic_assignment_qc = TRUE,
       qc_umap_links_per_condition = 1000L,
-      qc_top_tfs = 100L,
+      qc_top_tfs = 150L,
       qc_seed = 1L
     )
   )))
@@ -111,13 +111,13 @@ test_that("repeated condition IDs retain concise stable display labels", {
   expect_equal(observed, c("0 FBS", "0 FBS", "10 FBS"))
 })
 
-test_that("TF heatmaps keep up to 100 TFs on one page per condition", {
-  n_tfs <- 100L
+test_that("TF heatmap pools conditions and deduplicates targets per topic", {
+  n_tfs <- 160L
   assignments <- data.table::data.table(
-    condition_id = "Condition_A",
-    tf_index = rep(seq_len(n_tfs), each = 2),
-    target_index = seq_len(n_tfs * 2L),
-    optimized_topic = rep(1:2, n_tfs),
+    condition_id = rep(c("Condition_A", "Condition_B"), each = n_tfs * 2L),
+    tf_index = rep(rep(seq_len(n_tfs), each = 2L), 2L),
+    target_index = rep(seq_len(n_tfs * 2L), 2L),
+    optimized_topic = rep(rep(1:2, n_tfs), 2L),
     optimized_aligned = TRUE
   )
   optimization <- list(qc = list(
@@ -126,14 +126,66 @@ test_that("TF heatmaps keep up to 100 TFs on one page per condition", {
     tf_levels = paste0("TF", seq_len(n_tfs))
   ))
 
+  matrix <- .m3_qc_pooled_tf_topic_matrix(
+    optimization,
+    top_n_tfs = 150
+  )
   pages <- .m3_qc_tf_topic_pages(
     optimization,
-    top_n_tfs = 100
+    top_n_tfs = 150
   )
 
+  expect_equal(dim(matrix), c(150, 2))
+  expect_equal(unname(matrix["TF1", ]), c(1, 1))
   expect_length(pages, 1)
   expect_s3_class(pages[[1]], "gtable")
-  expect_gte(length(pages[[1]]$grobs), 2)
+})
+
+test_that("condition topics rank by mean theta before Jaccard", {
+  theta <- rbind(
+    `A::TF1` = c(0.60, 0.15, 0.05, 0.20),
+    `A::TF2` = c(0.40, 0.20, 0.10, 0.30),
+    `B::TF1` = c(0.05, 0.10, 0.55, 0.30),
+    `B::TF2` = c(0.10, 0.20, 0.40, 0.30)
+  )
+  colnames(theta) <- paste0("Topic", 1:4)
+  assignments <- data.table::data.table(
+    doc_index = rep(seq_len(4L), each = 2L),
+    condition_id = rep(c("A", "A", "B", "B"), each = 2L)
+  )
+  optimization <- list(
+    theta = theta,
+    qc = list(assignments = assignments)
+  )
+  jaccard <- rbind(
+    A = c(0.10, 0.95, 0.20),
+    B = c(0.90, 0.20, 0.10)
+  )
+  colnames(jaccard) <- as.character(1:3)
+
+  condition_theta <- .m3_qc_condition_topic_theta(optimization)
+  top <- .m3_qc_top_condition_topics(
+    condition_theta,
+    jaccard,
+    top_n = 3L
+  )
+
+  expect_equal(unname(condition_theta["A", ]), c(0.50, 0.175, 0.075, 0.25))
+  expect_equal(unname(condition_theta["B", ]), c(0.075, 0.15, 0.475, 0.30))
+  expect_equal(top[condition_id == "A", topic_num], c(1L, 2L, 3L))
+  expect_equal(top[condition_id == "B", topic_num], c(3L, 2L, 1L))
+  expect_false(4L %in% top$topic_num)
+  expect_equal(top[condition_id == "A" & topic_num == 2L, mean_jaccard], 0.95)
+})
+
+test_that("condition-topic layouts preserve pairs for odd counts", {
+  layout <- .m3_qc_pair_layout(3L)
+
+  expect_equal(layout$layout_matrix[1, ], rep(1L, 4L))
+  expect_equal(layout$layout_matrix[2, ], 2:5)
+  expect_equal(layout$layout_matrix[3, 1:2], 6:7)
+  expect_true(all(is.na(layout$layout_matrix[3, 3:4])))
+  expect_equal(layout$heights, c(1.35, 1, 1))
 })
 
 test_that("topic structure and count heatmaps use square cells", {
