@@ -838,6 +838,16 @@
   sub("[.]0([kM])$", "\\1", out)
 }
 
+.m3_qc_heatmap_count <- function(x) {
+  x <- as.numeric(x)
+  out <- format(round(x), big.mark = ",", scientific = FALSE, trim = TRUE)
+  thousands <- x >= 1000 & x < 1e6
+  millions <- x >= 1e6
+  out[thousands] <- paste0(round(x[thousands] / 1000), "k")
+  out[millions] <- paste0(round(x[millions] / 1e6), "M")
+  out
+}
+
 .m3_qc_cluster_order <- function(x, margin = c("row", "column")) {
   margin <- match.arg(margin)
   x <- as.matrix(x)
@@ -907,6 +917,68 @@
     )
 }
 
+.m3_qc_condition_correlation <- function(link_matrix, gene_matrix) {
+  link_matrix <- as.matrix(link_matrix)
+  gene_matrix <- as.matrix(gene_matrix)
+  if (!identical(dim(link_matrix), dim(gene_matrix)) ||
+      !identical(rownames(link_matrix), rownames(gene_matrix))) {
+    .log_abort("Condition link and gene topic matrices must have matching rows.")
+  }
+  profiles <- cbind(
+    .m3_opt_row_normalize(link_matrix),
+    .m3_opt_row_normalize(gene_matrix)
+  )
+  if (nrow(profiles) == 1L) {
+    out <- matrix(
+      1,
+      nrow = 1L,
+      dimnames = list(rownames(profiles), rownames(profiles))
+    )
+    return(out)
+  }
+  out <- suppressWarnings(stats::cor(
+    t(profiles),
+    use = "pairwise.complete.obs"
+  ))
+  out[!is.finite(out)] <- 0
+  diag(out) <- 1
+  out
+}
+
+.m3_qc_correlation_plot <- function(x,
+                                    title,
+                                    subtitle = NULL,
+                                    order = NULL) {
+  x <- as.matrix(x)
+  if (is.null(order)) order <- .m3_qc_cluster_order(x, "row")
+  long <- .m3_qc_matrix_long(x, order, order)
+  ggplot2::ggplot(
+    long,
+    ggplot2::aes(column_label, row_label, fill = value)
+  ) +
+    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.25) +
+    ggplot2::scale_fill_gradient2(
+      low = "#2166AC",
+      mid = "#F7F7F7",
+      high = "#B2182B",
+      midpoint = 0,
+      limits = c(-1, 1),
+      name = "Pearson r"
+    ) +
+    ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+    ggplot2::coord_fixed(ratio = 1) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "right"
+    )
+}
+
 .m3_qc_count_heatmap <- function(x,
                                  title,
                                  row_order = NULL,
@@ -917,7 +989,7 @@
   long <- .m3_qc_matrix_long(x, row_order, column_order)
   fill_max <- max(long$value, na.rm = TRUE)
   if (!is.finite(fill_max) || fill_max <= 0) fill_max <- 1
-  long[, label := ifelse(value >= label_min, .m3_qc_compact_count(value), "")]
+  long[, label := ifelse(value >= label_min, .m3_qc_heatmap_count(value), "")]
   ggplot2::ggplot(
     long,
     ggplot2::aes(column_label, row_label, fill = value)
@@ -1208,7 +1280,8 @@
                              colors = NULL,
                              background = NULL,
                              label_column = NULL,
-                             seed = 20260716L) {
+                             seed = 20260716L,
+                             compact = FALSE) {
   foreground <- data[!is.na(get(colour_column))]
   p <- ggplot2::ggplot()
   point_layer <- function(data, mapping, colour = NULL, alpha, size) {
@@ -1273,7 +1346,7 @@
       show.legend = FALSE
     )
   }
-  p +
+  p <- p +
     ggplot2::scale_colour_manual(values = colors, guide = "none") +
     ggplot2::scale_fill_manual(values = colors, guide = "none") +
     ggplot2::coord_equal() +
@@ -1288,6 +1361,15 @@
         linewidth = 0.45
       )
     )
+  if (isTRUE(compact)) {
+    p <- p + ggplot2::theme(
+      axis.title = ggplot2::element_blank(),
+      axis.text = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(),
+      plot.margin = ggplot2::margin(2, 3, 2, 3)
+    )
+  }
+  p
 }
 
 .m3_qc_arrange <- function(...,
@@ -1373,8 +1455,17 @@
 }
 
 .m3_qc_tf_topic_pages <- function(optimization,
-                                  top_n_tfs = 100L,
-                                  rows_per_page = 34L) {
+                                  top_n_tfs = 50L) {
+  top_n_tfs <- suppressWarnings(as.integer(top_n_tfs)[[1L]])
+  if (!is.finite(top_n_tfs) || top_n_tfs < 1L) {
+    .log_abort("top_n_tfs must be a positive integer.")
+  }
+  if (top_n_tfs > 50L) {
+    .log_warn(
+      "Portrait topic-assignment QC displays at most 50 TFs per condition."
+    )
+    top_n_tfs <- 50L
+  }
   x <- optimization$qc$assignments[optimized_aligned == TRUE]
   if (!nrow(x)) return(list())
   x <- x[, .(
@@ -1406,31 +1497,23 @@
     )] <- values$targets
     row_order <- .m3_qc_cluster_order(mat, "row")
     column_order <- .m3_qc_cluster_order(mat, "column")
-    chunks <- split(row_order, ceiling(seq_along(row_order) / rows_per_page))
-    for (i in seq_along(chunks)) {
-      page_index <- page_index + 1L
-      page_matrix <- mat[
-        chunks[[i]],
-        column_order,
-        drop = FALSE
-      ]
-      pages[[page_index]] <- .m3_qc_count_heatmap(
-        page_matrix,
-        title = sprintf(
-          "%s: top TFs by unique targets (%d/%d)",
-          .m3_qc_short_condition_labels(condition),
-          i,
-          length(chunks)
-        ),
-        row_order = seq_len(nrow(page_matrix)),
-        column_order = seq_len(ncol(page_matrix)),
-        label_min = 1L
-      ) +
-        ggplot2::labs(
-          subtitle = "Cells show unique target genes for each TF and optimized topic",
-          fill = "Targets"
-        )
-    }
+    page_index <- page_index + 1L
+    page_matrix <- mat[row_order, column_order, drop = FALSE]
+    pages[[page_index]] <- .m3_qc_count_heatmap(
+      page_matrix,
+      title = sprintf(
+        "%s: top %d TFs by unique targets",
+        .m3_qc_short_condition_labels(condition),
+        nrow(page_matrix)
+      ),
+      row_order = seq_len(nrow(page_matrix)),
+      column_order = seq_len(ncol(page_matrix)),
+      label_min = 1L
+    ) +
+      ggplot2::labs(
+        subtitle = "Cells show unique target genes for each TF and optimized topic",
+        fill = "Targets"
+      )
   }
   pages
 }
@@ -1439,7 +1522,7 @@
                                                out_file,
                                                title_prefix = NULL,
                                                condition_colors = NULL,
-                                               top_n_tfs = 100L,
+                                               top_n_tfs = 50L,
                                                seed = 20260716L) {
   .assert_pkg("ggplot2")
   .assert_pkg("gridExtra")
@@ -1575,15 +1658,11 @@
     .m3_qc_umap_plot(
       optimized_aligned_sample,
       "topic",
-      "Optimized topics",
+      "Optimized filtered aligned-link UMAP",
       "Sampled links retained after topic merge and alignment",
       label_column = "topic_short",
       seed = seed + 4L
     ),
-    ncol = 1L,
-    title = "Optimized filtered aligned-link UMAP"
-  )
-  page3_structure <- .m3_qc_arrange(
     .m3_qc_topic_structure_plot(
       similarity = optimized_topic_similarity,
       counts = qc$optimized_counts,
@@ -1595,7 +1674,9 @@
         "bars show full-universe assigned counts"
       )
     ),
-    ncol = 1L
+    ncol = 1L,
+    heights = c(0.85, 1.15),
+    title = "Optimized topic assignments"
   )
 
   link_matrix <- .m3_qc_condition_topic_matrix(
@@ -1613,28 +1694,61 @@
   display_conditions <- .m3_qc_short_condition_labels(rownames(link_matrix))
   rownames(link_matrix) <- display_conditions
   rownames(gene_matrix) <- display_conditions
+  condition_correlation <- .m3_qc_condition_correlation(
+    link_matrix,
+    gene_matrix
+  )
+  condition_correlation_order <- .m3_qc_cluster_order(
+    condition_correlation,
+    "row"
+  )
+  condition_correlation_page <- .m3_qc_arrange(
+    .m3_qc_correlation_plot(
+      condition_correlation,
+      "Condition correlation by topic composition",
+      paste(
+        "Pearson correlation of concatenated, separately normalized",
+        "TF-target-link and target-gene topic profiles"
+      ),
+      order = condition_correlation_order
+    ),
+    ncol = 1L
+  )
   clustering_matrix <- cbind(
     .m3_opt_row_normalize(link_matrix),
     .m3_opt_row_normalize(gene_matrix)
   )
   row_order <- .m3_qc_cluster_order(clustering_matrix, "row")
   column_order <- .m3_qc_cluster_order(link_matrix + gene_matrix, "column")
-  page4 <- .m3_qc_arrange(
-    .m3_qc_count_heatmap(
-      link_matrix,
-      "Aligned TF-target links",
-      row_order = row_order,
-      column_order = column_order
-    ),
-    .m3_qc_count_heatmap(
-      gene_matrix,
-      "Assigned target genes",
-      row_order = row_order,
-      column_order = column_order
-    ),
-    ncol = 1L,
-    title = "Condition-topic assignment counts"
+  topic_page_count <- ceiling(length(column_order) / 20L)
+  topic_chunk_size <- ceiling(length(column_order) / topic_page_count)
+  topic_chunks <- split(
+    column_order,
+    ceiling(seq_along(column_order) / topic_chunk_size)
   )
+  page4_pages <- lapply(seq_along(topic_chunks), function(i) {
+    columns <- topic_chunks[[i]]
+    .m3_qc_arrange(
+      .m3_qc_count_heatmap(
+        link_matrix[, columns, drop = FALSE],
+        "Aligned TF-target links",
+        row_order = row_order,
+        column_order = seq_along(columns)
+      ),
+      .m3_qc_count_heatmap(
+        gene_matrix[, columns, drop = FALSE],
+        "Assigned target genes",
+        row_order = row_order,
+        column_order = seq_along(columns)
+      ),
+      ncol = 1L,
+      title = sprintf(
+        "Condition-topic assignment counts (%d/%d)",
+        i,
+        length(topic_chunks)
+      )
+    )
+  })
 
   cross <- qc$condition_topic_similarity$mean
   pair_table <- data.table::as.data.table(as.table(cross))
@@ -1657,29 +1771,46 @@
     used_topics <- c(used_topics, candidate$topic_num)
     if (nrow(chosen) >= 4L) break
   }
-  pair_plots <- lapply(seq_len(nrow(chosen)), function(i) {
+  topic_palette <- stats::setNames(
+    .module3_bright_topic_palette(
+      paste0("Topic ", qc$optimized_topic_ids)
+    ),
+    paste0("Topic ", qc$optimized_topic_ids)
+  )
+  pair_plots <- unlist(lapply(seq_len(nrow(chosen)), function(i) {
     candidate <- chosen[i]
-    highlighted <- optimized_sample[
-      condition_id == candidate$condition_id &
-        topic == paste0("Topic ", candidate$topic_num)
+    condition_label <- .m3_qc_short_condition_labels(candidate$condition_id)
+    topic_label <- paste0("Topic ", candidate$topic_num)
+    condition_highlight <- optimized_sample[
+      condition_id == candidate$condition_id
     ]
-    highlighted[, selected := candidate$condition_id]
-    .m3_qc_umap_plot(
-      highlighted,
-      "selected",
-      sprintf(
-        "%s / Topic %d",
-        .m3_qc_short_condition_labels(candidate$condition_id),
-        candidate$topic_num
+    condition_highlight[, selected := condition_label]
+    topic_highlight <- optimized_sample[topic == topic_label]
+    topic_highlight[, selected := topic_label]
+    list(
+      .m3_qc_umap_plot(
+        condition_highlight,
+        "selected",
+        paste0(condition_label, " (condition)"),
+        sprintf("Paired mean Jaccard %.3f", candidate$similarity),
+        colors = stats::setNames(
+          condition_colors[[candidate$condition_id]],
+          condition_label
+        ),
+        background = optimized_sample,
+        compact = TRUE
       ),
-      sprintf("Mean Jaccard %.3f", candidate$similarity),
-      colors = stats::setNames(
-        condition_colors[[candidate$condition_id]],
-        candidate$condition_id
-      ),
-      background = optimized_sample
+      .m3_qc_umap_plot(
+        topic_highlight,
+        "selected",
+        paste0(topic_label, " (topic)"),
+        sprintf("Paired with %s", condition_label),
+        colors = topic_palette[topic_label],
+        background = optimized_sample,
+        compact = TRUE
+      )
     )
-  })
+  }), recursive = FALSE)
   cross_display <- cross
   rownames(cross_display) <- .m3_qc_short_condition_labels(rownames(cross_display))
   cross_plot <- .m3_qc_similarity_plot(
@@ -1687,18 +1818,18 @@
     "Condition-topic similarity",
     "Mean Jaccard of unique TF-target pairs and target genes"
   )
-  page5_args <- c(
-    list(cross_plot),
-    pair_plots,
-    list(title = "Top distinct condition-topic matches")
-  )
-  if (length(pair_plots) == 4L) {
+  page5_args <- c(list(cross_plot), pair_plots, list(
+    title = "Top distinct condition-topic matches"
+  ))
+  if (length(pair_plots) == 8L) {
     page5_args$layout_matrix <- rbind(
       c(1L, 1L),
       c(2L, 3L),
-      c(4L, 5L)
+      c(4L, 5L),
+      c(6L, 7L),
+      c(8L, 9L)
     )
-    page5_args$heights <- c(1.15, 1, 1)
+    page5_args$heights <- c(1.35, 1, 1, 1, 1)
   } else {
     page5_args$ncol <- 2L
   }
@@ -1792,11 +1923,13 @@
   if (!identity_map) {
     grid::grid.newpage()
     grid::grid.draw(page3)
-    grid::grid.newpage()
-    grid::grid.draw(page3_structure)
   }
   grid::grid.newpage()
-  grid::grid.draw(page4)
+  grid::grid.draw(condition_correlation_page)
+  for (page in page4_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
   grid::grid.newpage()
   grid::grid.draw(page5)
   for (page in tf_pages) {
@@ -1813,7 +1946,7 @@
                                                       raw_k,
                                                       title_prefix = NULL,
                                                       condition_colors = NULL,
-                                                      top_n_tfs = 100L,
+                                                      top_n_tfs = 50L,
                                                       seed = 20260716L) {
   mapping <- data.table::data.table(
     raw_topic = as.integer(names(optimization$raw_to_optimized)),

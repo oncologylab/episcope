@@ -111,7 +111,7 @@ test_that("repeated condition IDs retain concise stable display labels", {
   expect_equal(observed, c("0 FBS", "0 FBS", "10 FBS"))
 })
 
-test_that("TF heatmap pages contain only their paginated TF rows", {
+test_that("TF heatmaps use one page per condition", {
   assignments <- data.table::data.table(
     condition_id = "Condition_A",
     tf_index = rep(1:4, each = 2),
@@ -127,15 +127,12 @@ test_that("TF heatmap pages contain only their paginated TF rows", {
 
   pages <- .m3_qc_tf_topic_pages(
     optimization,
-    top_n_tfs = 4,
-    rows_per_page = 2
+    top_n_tfs = 4
   )
 
-  expect_length(pages, 2)
+  expect_length(pages, 1)
   expect_false(anyNA(pages[[1]]$data$row_label))
-  expect_false(anyNA(pages[[2]]$data$row_label))
-  expect_equal(length(unique(pages[[1]]$data$row_label)), 2)
-  expect_equal(length(unique(pages[[2]]$data$row_label)), 2)
+  expect_equal(length(unique(pages[[1]]$data$row_label)), 4)
 })
 
 test_that("topic structure and count heatmaps use square cells", {
@@ -176,4 +173,33 @@ test_that("UMAP display jitter is small and deterministic", {
   expect_equal(first, second)
   expect_true(max(abs(first$UMAP1 - coordinates$UMAP1)) <= 0.05)
   expect_true(max(abs(first$UMAP2 - coordinates$UMAP2)) <= 0.05)
+})
+
+test_that("condition correlation combines normalized link and gene profiles", {
+  links <- rbind(
+    A = c(10, 0, 0),
+    B = c(20, 0, 0),
+    C = c(0, 0, 10)
+  )
+  genes <- rbind(
+    A = c(5, 0, 0),
+    B = c(10, 0, 0),
+    C = c(0, 0, 5)
+  )
+
+  observed <- .m3_qc_condition_correlation(links, genes)
+  plot <- .m3_qc_correlation_plot(observed, "Condition correlation")
+
+  expect_equal(observed["A", "B"], 1)
+  expect_lt(observed["A", "C"], 0)
+  expect_equal(unname(diag(observed)), rep(1, 3))
+  expect_equal(observed, t(observed))
+  expect_equal(plot$coordinates$ratio, 1)
+})
+
+test_that("dense heatmap counts use compact integer labels", {
+  expect_equal(
+    .m3_qc_heatmap_count(c(999, 1157, 29640, 1500000)),
+    c("999", "1k", "30k", "2M")
+  )
 })
