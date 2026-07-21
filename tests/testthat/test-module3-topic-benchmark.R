@@ -1710,9 +1710,9 @@ test_that("condition pathway activity reuses fixed overall pathway genes", {
     genes = "G1;G2"
   )
   expression <- data.table::data.table(
-    condition_id = rep(c("A", "B"), each = 3L),
-    gene_key = rep(c("G1", "g2", "G3"), 2L),
-    gene_expr = c(16, 8, 1, 1, 2, 16)
+    condition_id = rep(c("A", "B"), each = 6L),
+    gene_key = rep(c("G1", "g2", "G3", "G4", "G5", "G6"), 2L),
+    gene_expr = c(16, 8, 1, 2, 3, 4, 1, 2, 16, 8, 7, 6)
   )
   gene_topics <- data.table::data.table(
     gene_key = c("G1", "G2", "G3"),
@@ -1728,6 +1728,7 @@ test_that("condition pathway activity reuses fixed overall pathway genes", {
   expect_true(out$activity[condition_id == "A", rank_enrichment] > 0)
   expect_true(out$activity[condition_id == "B", rank_enrichment] < 0)
   expect_true(out$activity[condition_id == "A", mean_gene_zscore] > out$activity[condition_id == "B", mean_gene_zscore])
+  expect_true(all(out$activity$n_expression_universe == 6L))
   expect_setequal(out$gene_expression$gene_key, c("G1", "g2"))
   expect_false("G3" %in% out$gene_expression$gene_key)
 })
@@ -1756,6 +1757,18 @@ test_that("condition pathway activity handles no expression overlap", {
       "n_expression_universe"
     )
   )
+})
+
+test_that("condition pathway expression normalizes Ensembl gene identifiers", {
+  skip_if_not_installed("AnnotationDbi")
+  skip_if_not_installed("org.Mm.eg.db")
+  expression <- data.table::data.table(
+    condition_id = "A",
+    gene_key = c("ENSMUSG00000000001", "Gnai3"),
+    gene_expr = c(3, 5)
+  )
+  observed <- craftgrn:::.m3cr_normalize_expression_gene_keys(expression)
+  expect_setequal(observed$gene_key, c("Gnai3"))
 })
 
 test_that("Module 3 condition payload filenames are Windows-safe and deterministic", {
