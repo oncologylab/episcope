@@ -66,25 +66,30 @@
       "comparison_aggr_lda",
       "comparison_aggr_multivi",
       "comparison_unique_lda",
-      "comparison_unique_multivi"
+      "comparison_unique_multivi",
+      "condition_gene_expression_lda"
     ),
-    method_order = seq_len(12L),
+    method_order = seq_len(13L),
     context_type = c(
       "condition", "condition", "condition", "condition", "condition", "condition",
-      "comparison", "comparison", "comparison", "comparison", "comparison", "comparison"
+      "comparison", "comparison", "comparison", "comparison", "comparison", "comparison",
+      "condition"
     ),
     fp_mode = c(
       "aggregate_weight", "aggregate_weight", "aggregate", "aggregate", "unique", "unique",
-      "aggregate_weight", "aggregate_weight", "aggregate", "aggregate", "unique", "unique"
+      "aggregate_weight", "aggregate_weight", "aggregate", "aggregate", "unique", "unique",
+      "gene_expression"
     ),
     backend = c(
       "warplda", "vae", "warplda", "vae", "warplda", "vae",
-      "warplda", "vae", "warplda", "vae", "warplda", "vae"
+      "warplda", "vae", "warplda", "vae", "warplda", "vae", "warplda"
     ),
     vae_variant = c(
       "warplda", "vae_mlp", "warplda", "multivi_encoder", "warplda", "multivi_encoder",
-      "warplda", "vae_mlp", "warplda", "multivi_encoder", "warplda", "multivi_encoder"
-    )
+      "warplda", "vae_mlp", "warplda", "multivi_encoder", "warplda", "multivi_encoder",
+      "warplda"
+    ),
+    experimental = c(rep(FALSE, 12L), TRUE)
   )
 }
 
@@ -130,6 +135,7 @@
       unique = "uniq",
       aggregate = "aggr",
       aggregate_weight = "aggr_weight",
+      gene_expression = "gene_expression",
       .m3tb_safe_label(row$fp_mode[[1L]])
     ),
     .m3tb_backend_slug(row$backend[[1L]], row$vae_variant[[1L]]),
@@ -143,13 +149,15 @@
     unique = "uniq",
     aggregate = "aggr",
     aggregate_weight = "aggr_weight",
+    gene_expression = "gene_expression",
     .log_abort("Unsupported Module 3 FP mode: {fp_mode}")
   )
   mode_label <- switch(
     as.character(fp_mode),
     unique = "fp uniq",
     aggregate = "fp aggr",
-    aggregate_weight = "fp aggr weight"
+    aggregate_weight = "fp aggr weight",
+    gene_expression = "gene expression"
   )
   combo_id <- paste(
     "doc_tf",
@@ -164,7 +172,11 @@
       setup = paste0("std_tf_cond_fp_", mode_tag),
       setup_label = paste("cond", mode_label),
       doc_design = "condition",
-      weight_label = "peak_score_gene_expr",
+      weight_label = if (identical(as.character(fp_mode), "gene_expression")) {
+        "target_gene_expression"
+      } else {
+        "peak_score_gene_expr"
+      },
       combo_id = combo_id
     )
   } else {
@@ -182,7 +194,7 @@
                                        k_grid = 10L) {
   dict <- .m3tb_method_dictionary()
   if (identical(methods, "default")) methods <- "comparison_aggr_multivi"
-  if (identical(methods, "all")) methods <- dict$method
+  if (identical(methods, "all")) methods <- dict[experimental == FALSE, method]
   keep <- dict[method %in% methods]
   if (!nrow(keep)) {
     .log_abort("No valid Module 3 topic benchmark methods were selected.")
@@ -201,6 +213,7 @@
       fp_mode = keep$fp_mode[[i]],
       backend = keep$backend[[i]],
       vae_variant = keep$vae_variant[[i]],
+      experimental = isTRUE(keep$experimental[[i]]),
       setup = info$setup,
       setup_label = info$setup_label,
       doc_design = info$doc_design,
@@ -938,12 +951,15 @@
   kind <- match.arg(kind)
   names_by_kind <- list(
     terms = if (identical(topic_space, "raw")) {
-      c("topic_terms_raw.csv")
+      c("topic_terms_raw.csv", "topic_terms.csv")
     } else {
       c("topic_terms.csv")
     },
     overall_pathways = if (identical(topic_space, "raw")) {
-      c("topic_pathway_enrichment_topic_terms_raw.csv")
+      c(
+        "topic_pathway_enrichment_topic_terms_raw.csv",
+        "topic_pathway_enrichment_topic_terms.csv"
+      )
     } else {
       c(
         "topic_pathway_enrichment_topic_terms_combined.csv",
@@ -951,7 +967,10 @@
       )
     },
     condition_pathways = if (identical(topic_space, "raw")) {
-      c("per_condition_topic_pathway_enrichment_raw.csv")
+      c(
+        "per_condition_topic_pathway_enrichment_raw.csv",
+        "per_condition_topic_pathway_enrichment.csv"
+      )
     } else {
       c(
         "per_condition_topic_pathway_enrichment_combined.csv",
@@ -2882,9 +2901,17 @@
   parallel::parLapplyLB(cl, x, fun)
 }
 
-.m3tb_review_row_error <- function(i, err) {
+.m3tb_review_row_error <- function(i, err, calls = sys.calls()) {
+  call_text <- vapply(calls, function(call) {
+    text <- paste(deparse(call, width.cutoff = 120L), collapse = " ")
+    gsub("[{}]", "", text)
+  }, character(1L))
   structure(
-    list(index = i, message = conditionMessage(err)),
+    list(
+      index = i,
+      message = conditionMessage(err),
+      calls = paste(utils::tail(call_text, 24L), collapse = " -> ")
+    ),
     class = "m3tb_review_row_error"
   )
 }
@@ -2964,21 +2991,29 @@
       "overall_pathways"
     )
   )
-  condition_pathways <- .m3tb_read_condition_pathway_tables(
-    extraction_dir,
-    model_dir = row$model_dir[[1L]],
-    compute_universe = TRUE,
-    pathway_file = .m3tb_topic_space_file(
-      extraction_dir,
-      topic_space,
-      "condition_pathways"
-    )
+  is_condition_context <- identical(
+    as.character(row$context_type[[1L]]),
+    "condition"
   )
+  condition_pathways <- if (is_condition_context) {
+    data.table::data.table()
+  } else {
+    .m3tb_read_condition_pathway_tables(
+      extraction_dir,
+      model_dir = row$model_dir[[1L]],
+      compute_universe = TRUE,
+      pathway_file = .m3tb_topic_space_file(
+        extraction_dir,
+        topic_space,
+        "condition_pathways"
+      )
+    )
+  }
   max_context_raw <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
   payload_disabled <- nzchar(max_context_raw) &&
     is.finite(suppressWarnings(as.integer(max_context_raw[[1L]]))) &&
     suppressWarnings(as.integer(max_context_raw[[1L]])) <= 0L
-  subgrn_manifest <- if (isTRUE(payload_disabled)) {
+  subgrn_manifest <- if (isTRUE(payload_disabled) || is_condition_context) {
     data.table::data.table()
   } else {
     .m3tb_write_pathway_subgrn_payload(
@@ -3002,7 +3037,11 @@
       report_key = .m3tb_topic_space_value(row, "report_key", paste0("k", k))
     )]
   }
-  condition_pathways_for_report <- condition_pathways
+  condition_pathways_for_report <- if (is_condition_context) {
+    topic_pathways
+  } else {
+    condition_pathways
+  }
 
   tf_topic <- .m3tb_tf_topic_rows(theta, row$context_type[[1L]])
   condition_report <- data.table::data.table()
@@ -3030,7 +3069,8 @@
         payload_dir = condition_pair_payload_dir,
         payload_name = paste0(slug, "_condition_pair"),
         payload_base = "../../assets/condition_pair_payloads",
-        topic_space = topic_space
+        topic_space = topic_space,
+        topic_pathways = topic_pathways
       )
     }
     .m3tb_condition_report_html(
@@ -3101,7 +3141,12 @@
     html,
     fixed = TRUE
   )
-  required <- if (schema5 || schema6) {
+  schema7 <- grepl(
+    "craftgrn-module3-report-schema\" content=\"7",
+    html,
+    fixed = TRUE
+  )
+  required <- if (schema5 || schema6 || schema7) {
     c(
       "Condition Probability",
       "TF Probability",
@@ -3151,7 +3196,7 @@
   }
   missing <- required[!vapply(required, grepl, logical(1L), x = html, fixed = TRUE)]
   obsolete <- grepl("Topic Waterfall", html, fixed = TRUE) ||
-    ((schema3 || schema4 || schema5 || schema6) && grepl("Topic Bar Plots", html, fixed = TRUE))
+    ((schema3 || schema4 || schema5 || schema6 || schema7) && grepl("Topic Bar Plots", html, fixed = TRUE))
   if (length(missing) || obsolete) {
     details <- c(
       if (length(missing)) paste0("missing: ", paste(missing, collapse = ", ")),
@@ -3207,7 +3252,10 @@
   subgrn_max_context_env <- Sys.getenv("CRAFTGRN_PATHWAY_SUBGRN_MAX_CONTEXTS", unset = "")
   subgrn_skip_payloads <- nzchar(subgrn_max_context_env) &&
     suppressWarnings(as.integer(subgrn_max_context_env[[1L]])) <= 0L
-  if (!isTRUE(subgrn_skip_payloads)) {
+  if (isTRUE(subgrn_skip_payloads)) {
+    unlink(subgrn_payload_dir, recursive = TRUE, force = TRUE)
+    dir.create(subgrn_payload_dir, recursive = TRUE, showWarnings = FALSE)
+  } else {
     unlink(list.files(subgrn_payload_dir, pattern = "[.]js$", full.names = TRUE))
   }
   model_rows <- attr(score_result, "model_rows")
@@ -3217,23 +3265,29 @@
   if (is.data.frame(model_rows) && nrow(model_rows)) {
     workers <- .m3tb_review_worker_count(nrow(model_rows))
     page_rows <- .m3tb_review_lapply(seq_len(nrow(model_rows)), function(i) {
+      captured_calls <- NULL
       tryCatch(
-        .m3tb_build_review_pages_for_row(
-          i = i,
-          model_rows = model_rows,
-          score_result = score_result,
-          topic_page_dir = "",
-          condition_page_dir = condition_page_dir,
-          subgrn_payload_dir = subgrn_payload_dir,
-          condition_pair_payload_dir = condition_pair_payload_dir
+        withCallingHandlers(
+          .m3tb_build_review_pages_for_row(
+            i = i,
+            model_rows = model_rows,
+            score_result = score_result,
+            topic_page_dir = "",
+            condition_page_dir = condition_page_dir,
+            subgrn_payload_dir = subgrn_payload_dir,
+            condition_pair_payload_dir = condition_pair_payload_dir
+          ),
+          error = function(e) {
+            captured_calls <<- sys.calls()
+          }
         ),
-        error = function(e) .m3tb_review_row_error(i, e)
+        error = function(e) .m3tb_review_row_error(i, e, calls = captured_calls)
       )
     }, workers = workers)
     failures <- vapply(page_rows, inherits, logical(1L), "m3tb_review_row_error")
     if (any(failures)) {
       msg <- vapply(page_rows[failures], function(x) {
-        sprintf("row %s: %s", x$index, x$message)
+        sprintf("row %s: %s\n%s", x$index, x$message, x$calls)
       }, character(1L))
       .log_abort(paste(c("Failed to build Module 3 review HTML pages.", msg), collapse = "\n"))
     }
@@ -4104,8 +4158,8 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #'   clusters. Required only when `doc_mode = "tf_cluster"`.
 #' @param doc_mode Document mode, either `"tf"` or `"tf_cluster"`.
 #' @param doc_design Document design, either `"condition"` or `"comparison"`.
-#' @param fp_term_mode Footprint term mode: `"aggregate_weight"`,
-#'   `"aggregate"`, or `"unique"`.
+#' @param fp_term_mode Term mode: `"aggregate_weight"`, `"aggregate"`,
+#'   `"unique"`, or gene-expression-only `"gene_expression"`.
 #' @param gene_term_mode Gene term mode passed to comparison document-term
 #'   construction.
 #' @param sample_subset Optional condition/sample labels to retain.
@@ -4147,7 +4201,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          input_source = c("differential_links", "condition_links"),
                                          doc_mode = c("tf", "tf_cluster"),
                                          doc_design = c("condition", "comparison"),
-                                         fp_term_mode = c("aggregate_weight", "aggregate", "unique"),
+                                         fp_term_mode = c("aggregate_weight", "aggregate", "unique", "gene_expression"),
                                          gene_term_mode = c("unique", "aggregate"),
                                          sample_subset = NULL,
                                          analysis_label = NULL,

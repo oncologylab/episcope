@@ -1,6 +1,7 @@
 test_that("public Module 3 topic-model defaults use native WarpLDA", {
   expect_identical(eval(formals(train_topic_models)$backend)[[1L]], "warplda")
   expect_identical(eval(formals(extract_regulatory_topics)$backend)[[1L]], "warplda")
+  expect_true("gene_expression" %in% eval(formals(extract_regulatory_topics)$weight_label))
 })
 
 test_that("Module 3 strict memory preflight enforces the available-memory fraction", {
@@ -1165,6 +1166,67 @@ test_that("GammaFit MaxProb retains only matching independent Gene and Peak maxi
     pair_assignment[target_gene == "G3", assignment_status],
     "no_shared_gammafit_topic"
   )
+})
+
+test_that("gene-expression terms use GammaFit followed by one maximum-probability topic", {
+  raw_phi <- cbind(
+    "GENE:G1" = c(0.70, 0.20, 0.10),
+    "GENE:G2" = c(0.10, 0.30, 0.60),
+    "GENE:G3" = c(0.20, 0.50, 0.30)
+  )
+  rownames(raw_phi) <- paste0("Topic", seq_len(nrow(raw_phi)))
+  candidate_mask <- cbind(
+    "GENE:G1" = c(TRUE, TRUE, FALSE),
+    "GENE:G2" = c(FALSE, TRUE, TRUE),
+    "GENE:G3" = c(FALSE, FALSE, FALSE)
+  )
+  candidates <- data.table::CJ(
+    topic = seq_len(nrow(raw_phi)),
+    term_id = colnames(raw_phi),
+    sorted = TRUE
+  )
+  candidates[, score := raw_phi[cbind(topic, match(term_id, colnames(raw_phi)))]]
+  candidates[, in_topic := candidate_mask[cbind(topic, match(term_id, colnames(candidate_mask)))]]
+
+  assigned <- .assign_topic_terms(
+    raw_phi = raw_phi,
+    score_mat = raw_phi,
+    candidate_terms = candidates,
+    method = "gammafit_maxprob"
+  )
+  passing <- assigned[.as_logical_flag(in_topic)]
+  expect_equal(passing[term_id == "GENE:G1", topic_num], 1L)
+  expect_equal(passing[term_id == "GENE:G2", topic_num], 3L)
+  expect_equal(passing[term_id == "GENE:G3", .N], 0L)
+  expect_true(all(passing[, .N, by = term_id]$N == 1L))
+
+  summary <- .topic_gene_assignment_table(assigned)
+  expect_true(summary[target_gene == "G1", assigned])
+  expect_equal(summary[target_gene == "G1", assigned_topic], 1L)
+  expect_false(summary[target_gene == "G3", assigned])
+})
+
+test_that("gene-expression document mode excludes peaks and footprint weighting", {
+  edges <- data.table::data.table(
+    condition_label = c("A", "A", "A"),
+    tf_doc = c("TF1", "TF1", "TF1"),
+    tf = c("TF1", "TF1", "TF1"),
+    gene_key = c("G1", "G1", "G2"),
+    peak_id = c("P1", "P2", "P3"),
+    fp_score_condition = c(1, 100, 2),
+    gene_expr_condition = c(4, 4, 8),
+    tf_expr_condition = 3
+  )
+  out <- build_doc_term_condition_union(
+    edges,
+    fp_term_mode = "gene_expression",
+    count_method = "log",
+    balance_mode = "min"
+  )
+  expect_setequal(out$term_id, c("GENE:G1", "GENE:G2"))
+  expect_false(any(grepl("^PEAK:", out$term_id)))
+  expect_equal(out[term_id == "GENE:G1", weight], 4)
+  expect_equal(out[term_id == "GENE:G2", weight], 8)
 })
 
 test_that("topic links can use the final unique Gene and Peak assignment", {

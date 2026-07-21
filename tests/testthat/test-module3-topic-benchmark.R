@@ -1479,7 +1479,7 @@ test_that("Module 3 review validation rejects outdated HTML", {
   )
 })
 
-test_that("Module 3 condition-pair report uses schema 6 polished paired panels", {
+test_that("Module 3 condition-pair report uses schema 7 expression pathway panels", {
   out_file <- tempfile(fileext = ".html")
   craftgrn:::.m3tb_condition_report_html(
     title = "Condition pair",
@@ -1528,7 +1528,7 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
     )
   )
   html <- paste(readLines(out_file, warn = FALSE), collapse = "\n")
-  expect_match(html, 'craftgrn-module3-report-schema" content="6', fixed = TRUE)
+  expect_match(html, 'craftgrn-module3-report-schema" content="7', fixed = TRUE)
   expect_match(html, "Condition Probability", fixed = TRUE)
   expect_match(html, "TF Probability", fixed = TRUE)
   expect_match(html, "id=\"tfButterflySvg\"", fixed = TRUE)
@@ -1543,8 +1543,8 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(html, "selected?30:24", fixed = TRUE)
   expect_match(html, "pointInset=38", fixed = TRUE)
   expect_match(html, "pointInset=22", fixed = TRUE)
-  expect_match(html, "yMin=Math.max(0,yLoRaw-yPad)", fixed = TRUE)
-  expect_match(html, "value=yMin+frac*(yMax-yMin)", fixed = TRUE)
+  expect_match(html, "fullY=[Math.max(0,yLoRaw-yPad)", fixed = TRUE)
+  expect_match(html, "value=yd[0]+frac*(yd[1]-yd[0])", fixed = TRUE)
   expect_match(html, "Math.log2((shareA+pseudo)/(shareB+pseudo))", fixed = TRUE)
   expect_match(html, "log2 relative activity", fixed = TRUE)
   expect_false(grepl(
@@ -1553,8 +1553,8 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
     fixed = TRUE
   ))
   expect_match(html, "Math.asinh(d.deltaShare/soft)", fixed = TRUE)
-  expect_match(html, "Normalized FP delta (pp):", fixed = TRUE)
-  expect_match(html, "symmetric asinh display scale", fixed = TRUE)
+  expect_match(html, "Normalized FP difference (pp):", fixed = TRUE)
+  expect_match(html, "activityViewDomain", fixed = TRUE)
   expect_false(grepl("pseudo-log", html, fixed = TRUE))
   expect_match(html, "id=\"conditionProbabilityTitle\"", fixed = TRUE)
   expect_match(html, "id=\"tfConditionProbabilityTitle\"", fixed = TRUE)
@@ -1579,13 +1579,13 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
     "if(['cond1','cond2','condition','tf'].includes(changed))refreshConditionData()",
     fixed = TRUE
   )
-  expect_match(html, "combined-score difference", fixed = TRUE)
+  expect_match(html, "ranked-expression enrichment z-score", fixed = TRUE)
   expect_match(html, "differentialConditionLabels", fixed = TRUE)
   expect_match(html, "rowH=Math.min(40", fixed = TRUE)
   expect_match(html, "rowH=Math.min(38", fixed = TRUE)
   expect_match(html, "rowH=Math.min(22", fixed = TRUE)
-  expect_match(html, "x:c2?ax.cx+gap:ax.cx", fixed = TRUE)
-  expect_match(html, "x:ax.cx-gap-w2", fixed = TRUE)
+  expect_match(html, "x:ax.cx+gap", fixed = TRUE)
+  expect_match(html, "x:c2?ax.cx-gap-w1:ax.cx", fixed = TRUE)
   expect_match(html, "pathLabelTopicSpecific", fixed = TRUE)
   expect_match(html, "pathLabelConditionSpecific", fixed = TRUE)
   expect_match(html, "labelContrast", fixed = TRUE)
@@ -1622,7 +1622,15 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(html, 'id="pathPageStatus"', fixed = TRUE)
   expect_match(html, "grid-template-columns:minmax(520px,1fr) minmax(700px,1.35fr)", fixed = TRUE)
   expect_match(html, "const PAGE_SIZE={topic:20,tf:20,path:35}", fixed = TRUE)
-  expect_match(html, "Enrichr combined score difference", fixed = TRUE)
+  expect_match(html, 'id="pathwayScoreMethod"', fixed = TRUE)
+  expect_match(html, 'id="activityZoomIn"', fixed = TRUE)
+  expect_match(html, '>Zoom out</button>', fixed = TRUE)
+  expect_match(html, '>Zoom in</button>', fixed = TRUE)
+  expect_false(grepl('id="activityZoomReset"', html, fixed = TRUE))
+  expect_match(html, "strength=.78+.18*clamp", fixed = TRUE)
+  expect_match(html, "condition1First=!c2||groupTopic(c1,topic)>=groupTopic(c2,topic)", fixed = TRUE)
+  expect_match(html, "Overall topic significance", fixed = TRUE)
+  expect_match(html, "pathwayStars", fixed = TRUE)
   expect_match(html, "r:sel?19:14", fixed = TRUE)
   expect_match(html, "selectMdsCondition", fixed = TRUE)
   expect_match(html, "ACTIVE_CONDITION_SIDE", fixed = TRUE)
@@ -1631,7 +1639,7 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(html, "configuredCondition(defaults,'condition_2'", fixed = TRUE)
   expect_match(html, "defaults[key+'_suffix']", fixed = TRUE)
   expect_false(grepl("rows[i-1].scoreA>=rows[i-1].scoreB", html, fixed = TRUE))
-  expect_match(html, "Dot size = overlap genes", fixed = TRUE)
+  expect_match(html, "Dot size = expression-matched genes", fixed = TRUE)
   expect_match(html, "class:'pathAxisTickLabel'", fixed = TRUE)
   expect_match(html, "Math.pow(2,value)-1", fixed = TRUE)
   expect_match(html, "xTitle.textContent='MDS1'", fixed = TRUE)
@@ -1678,6 +1686,76 @@ test_that("Module 3 condition-pair report uses schema 6 polished paired panels",
   expect_match(index_html, "optionsSignature", fixed = TRUE)
   expect_match(index_html, "paletteSignature", fixed = TRUE)
   expect_false(grepl("localStorage", index_html, fixed = TRUE))
+})
+
+test_that("experimental gene-expression LDA is explicit and excluded from all", {
+  experimental <- craftgrn:::.module3_topic_method_plan(
+    methods = "condition_gene_expression_lda",
+    k_grid = c(20L, 30L)
+  )
+  expect_equal(experimental$fp_mode, "gene_expression")
+  expect_equal(experimental$backend, "warplda")
+  expect_equal(experimental$weight_label, "target_gene_expression")
+  expect_true(experimental$experimental)
+  standard <- craftgrn:::.module3_topic_method_plan(methods = "all", k_grid = 10L)
+  expect_false("condition_gene_expression_lda" %in% standard$method)
+})
+
+test_that("condition pathway activity reuses fixed overall pathway genes", {
+  pathways <- data.table::data.table(
+    topic_num = 1L,
+    pathway_key = "path:a",
+    pathway = "Path A",
+    padj = 0.01,
+    genes = "G1;G2"
+  )
+  expression <- data.table::data.table(
+    condition_id = rep(c("A", "B"), each = 3L),
+    gene_key = rep(c("G1", "g2", "G3"), 2L),
+    gene_expr = c(16, 8, 1, 1, 2, 16)
+  )
+  gene_topics <- data.table::data.table(
+    gene_key = c("G1", "G2", "G3"),
+    topic_num = c(1L, 1L, 2L)
+  )
+  out <- craftgrn:::.m3cr_pathway_expression_scores(
+    pathways,
+    expression,
+    gene_topics,
+    min_genes = 2L
+  )
+  expect_equal(nrow(out$activity), 2L)
+  expect_true(out$activity[condition_id == "A", rank_enrichment] > 0)
+  expect_true(out$activity[condition_id == "B", rank_enrichment] < 0)
+  expect_true(out$activity[condition_id == "A", mean_gene_zscore] > out$activity[condition_id == "B", mean_gene_zscore])
+  expect_setequal(out$gene_expression$gene_key, c("G1", "g2"))
+  expect_false("G3" %in% out$gene_expression$gene_key)
+})
+
+test_that("condition pathway activity handles no expression overlap", {
+  out <- craftgrn:::.m3cr_pathway_expression_scores(
+    data.table::data.table(
+      topic_num = 1L,
+      pathway_key = "path:a",
+      genes = "G1;G2"
+    ),
+    data.table::data.table(
+      condition_id = "A",
+      gene_key = "G3",
+      gene_expr = 4
+    ),
+    data.table::data.table(gene_key = "G3", topic_num = 1L)
+  )
+  expect_equal(nrow(out$activity), 0L)
+  expect_equal(nrow(out$gene_expression), 0L)
+  expect_named(
+    out$activity,
+    c(
+      "topic_num", "pathway_key", "condition_id", "rank_enrichment",
+      "mean_gene_zscore", "mean_log2_expression", "n_expression_genes",
+      "n_expression_universe"
+    )
+  )
 })
 
 test_that("Module 3 condition payload filenames are Windows-safe and deterministic", {
@@ -2800,4 +2878,22 @@ test_that("Module 3 review exposes complete raw and combined topic spaces", {
     craftgrn:::.m3tb_review_report_slug(spaces[topic_space == "combined"], 4L),
     "lda_K4_combined_K3"
   )
+})
+
+test_that("raw topic-space reports fall back to canonical non-optimized files", {
+  extraction_dir <- tempfile("non-optimized-topics-")
+  dir.create(extraction_dir)
+  canonical <- c(
+    terms = "topic_terms.csv",
+    overall_pathways = "topic_pathway_enrichment_topic_terms.csv",
+    condition_pathways = "per_condition_topic_pathway_enrichment.csv"
+  )
+  file.create(file.path(extraction_dir, canonical))
+
+  for (kind in names(canonical)) {
+    expect_identical(
+      craftgrn:::.m3tb_topic_space_file(extraction_dir, "raw", kind),
+      file.path(extraction_dir, canonical[[kind]])
+    )
+  }
 })

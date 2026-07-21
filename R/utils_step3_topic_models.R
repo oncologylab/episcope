@@ -1833,6 +1833,48 @@ binarize_topics <- function(score_mat,
     valid_candidate <- valid & out$gammafit_candidate
     candidate_mat[cbind(topic_index[valid_candidate], term_index[valid_candidate])] <- TRUE
 
+    select_candidate_max <- function(indices) {
+      candidate <- candidate_mat[, indices, drop = FALSE]
+      probability <- phi_by_term[, indices, drop = FALSE]
+      probability[!candidate | !is.finite(probability)] <- 0
+      probability_sum <- colSums(probability)
+      has_candidate <- colSums(candidate) > 0L &
+        is.finite(probability_sum) & probability_sum > 0
+      probability <- sweep(
+        probability,
+        2L,
+        ifelse(has_candidate, probability_sum, 1),
+        "/"
+      )
+      probability[!is.finite(probability) | probability < 0] <- 0
+      selected_topic <- max.col(t(probability), ties.method = "first")
+      selected_topic[!has_candidate] <- NA_integer_
+      selected_probability <- rep(NA_real_, length(indices))
+      selected_probability[has_candidate] <- probability[cbind(
+        selected_topic[has_candidate],
+        which(has_candidate)
+      )]
+      runner_up_probability <- probability
+      if (any(has_candidate)) {
+        runner_up_probability[cbind(
+          selected_topic[has_candidate],
+          which(has_candidate)
+        )] <- -Inf
+      }
+      runner_up <- apply(runner_up_probability, 2L, max, na.rm = TRUE)
+      runner_up[!is.finite(runner_up)] <- 0
+      list(
+        candidate = candidate,
+        has_candidate = has_candidate,
+        topic = selected_topic,
+        probability = selected_probability,
+        margin = selected_probability - runner_up
+      )
+    }
+
+    gene_only_idx <- which(grepl("^GENE:", term_ids))
+    gene_only_mode <- length(gene_only_idx) && !any(grepl("^PEAK:", term_ids))
+
     term_pair_index <- rep(NA_integer_, length(term_ids))
     if (length(pair_keys)) {
       term_pair_index[gene_idx] <- seq_along(pair_keys)
@@ -1843,51 +1885,34 @@ binarize_topics <- function(score_mat,
     unmatched_rows <- out$term_group %in% c("GENE", "PEAK") & !paired_rows
 
     out[out$term_group %in% c("GENE", "PEAK"), in_topic := FALSE]
-    out$assignment_status[unmatched_rows] <- "missing_matching_gene_or_peak_term"
+    if (gene_only_mode) {
+      gene_max <- select_candidate_max(gene_only_idx)
+      gene_rows <- valid & out$term_group == "GENE"
+      gene_position <- match(term_index[gene_rows], gene_only_idx)
+      row_topic <- topic_index[gene_rows]
+      selected_topic <- gene_max$topic[gene_position]
+      out[gene_rows, `:=`(
+        in_topic = !is.na(selected_topic) & row_topic == selected_topic,
+        term_pair_key = sub("^GENE:", "", term_id),
+        common_candidate_count = colSums(gene_max$candidate)[gene_position],
+        term_maxprob_selected = !is.na(selected_topic) & row_topic == selected_topic,
+        term_maxprob_topic = selected_topic,
+        term_maxprob_probability = gene_max$probability[gene_position],
+        term_maxprob_margin = gene_max$margin[gene_position],
+        assignment_status = ifelse(
+          gene_max$has_candidate[gene_position],
+          "assigned_gammafit_maxprob_gene",
+          "no_gammafit_candidate"
+        )
+      )]
+    } else {
+      out$assignment_status[unmatched_rows] <- "missing_matching_gene_or_peak_term"
+    }
 
     if (length(pair_keys)) {
       shared_candidate <- candidate_mat[, gene_idx, drop = FALSE] &
         candidate_mat[, peak_idx, drop = FALSE]
       common_count <- colSums(shared_candidate)
-      select_candidate_max <- function(indices) {
-        candidate <- candidate_mat[, indices, drop = FALSE]
-        probability <- phi_by_term[, indices, drop = FALSE]
-        probability[!candidate | !is.finite(probability)] <- 0
-        probability_sum <- colSums(probability)
-        has_candidate <- colSums(candidate) > 0L &
-          is.finite(probability_sum) & probability_sum > 0
-        probability <- sweep(
-          probability,
-          2L,
-          ifelse(has_candidate, probability_sum, 1),
-          "/"
-        )
-        probability[!is.finite(probability) | probability < 0] <- 0
-        selected_topic <- max.col(t(probability), ties.method = "first")
-        selected_topic[!has_candidate] <- NA_integer_
-        selected_probability <- rep(NA_real_, length(indices))
-        selected_probability[has_candidate] <- probability[cbind(
-          selected_topic[has_candidate],
-          which(has_candidate)
-        )]
-        runner_up_probability <- probability
-        if (any(has_candidate)) {
-          runner_up_probability[cbind(
-            selected_topic[has_candidate],
-            which(has_candidate)
-          )] <- -Inf
-        }
-        runner_up <- apply(runner_up_probability, 2L, max, na.rm = TRUE)
-        runner_up[!is.finite(runner_up)] <- 0
-        list(
-          candidate = candidate,
-          has_candidate = has_candidate,
-          topic = selected_topic,
-          probability = selected_probability,
-          margin = selected_probability - runner_up
-        )
-      }
-
       # Select each term independently after GammaFit; retain only exact agreement.
       gene_max <- select_candidate_max(gene_idx)
       peak_max <- select_candidate_max(peak_idx)
@@ -2078,6 +2103,50 @@ binarize_topics <- function(score_mat,
   ))
   data.table::setorder(out, -assigned, target_gene)
   out[]
+}
+
+.topic_gene_assignment_table <- function(topic_terms) {
+  tt <- data.table::as.data.table(topic_terms)
+  required <- c(
+    "topic_num", "term_id", "term_group", "phi", "score", "in_topic",
+    "gammafit_candidate", "term_maxprob_probability", "term_maxprob_margin",
+    "assignment_status"
+  )
+  if (!nrow(tt) || length(setdiff(required, names(tt)))) {
+    return(data.table::data.table())
+  }
+  tt <- tt[term_group == "GENE"]
+  if (!nrow(tt)) return(data.table::data.table())
+  tt[, .(
+    target_gene = sub("^GENE:", "", term_id[[1L]]),
+    assigned = any(.as_logical_flag(in_topic)),
+    assigned_topic = {
+      value <- topic_num[.as_logical_flag(in_topic)]
+      if (length(value)) as.integer(value[[1L]]) else NA_integer_
+    },
+    assigned_phi = {
+      value <- phi[.as_logical_flag(in_topic)]
+      if (length(value)) as.numeric(value[[1L]]) else NA_real_
+    },
+    assigned_score = {
+      value <- score[.as_logical_flag(in_topic)]
+      if (length(value)) as.numeric(value[[1L]]) else NA_real_
+    },
+    gammafit_topic_count = sum(.as_logical_flag(gammafit_candidate)),
+    maxprob_probability = {
+      value <- unique(term_maxprob_probability[is.finite(term_maxprob_probability)])
+      if (length(value)) as.numeric(value[[1L]]) else NA_real_
+    },
+    maxprob_margin = {
+      value <- unique(term_maxprob_margin[is.finite(term_maxprob_margin)])
+      if (length(value)) as.numeric(value[[1L]]) else NA_real_
+    },
+    assignment_status = {
+      value <- unique(as.character(assignment_status))
+      value <- value[!is.na(value) & nzchar(value)]
+      if (length(value)) value[[1L]] else NA_character_
+    }
+  ), by = term_id][, term_id := NULL][]
 }
 
 .topic_gene_peak_assignment_summary <- function(pair_assignment,
@@ -5794,6 +5863,7 @@ compute_link_topic_scores <- function(edges_docs,
   if (x %in% c("fp_uniq", "fp_unique", "uniq", "unique")) return("unique")
   if (x %in% c("fp_aggr", "fp_agg", "agg", "aggregate")) return("aggregate")
   if (x %in% c("fp_aggr_weight", "fp_agg_weight", "aggregate_weight")) return("aggregate_weight")
+  if (x %in% c("gene_expression", "expression", "gene_only_expression")) return("gene_expression")
   .log_abort("Unsupported fp_term_mode: {x}")
 }
 
@@ -6223,7 +6293,7 @@ compute_topic_links <- function(edges_docs,
                                 use_final_term_assignment = FALSE,
                                 theta = NULL,
                                 topic_tf_membership_cutoff = 0.3,
-                                fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
+                                fp_term_mode = c("unique", "aggregate", "aggregate_weight", "gene_expression"),
                                 binarize_method = c("gammafit", "topn"),
                                 gammafit_scope = c("topic_term_group", "global_term_group"),
                                 link_method = c("gammafit", "theta_and_terms", "link_score_efdr", "link_score_prob", "gene_prob"),
@@ -6352,13 +6422,14 @@ compute_topic_links <- function(edges_docs,
     dt[, peak_term := paste0("PEAK:", peak_id)]
   }
   dt[, gene_term := paste0("GENE:", gene_key)]
-  if (identical(fp_term_mode, "aggregate_weight")) {
+  gene_only_terms <- fp_term_mode %in% c("aggregate_weight", "gene_expression")
+  if (gene_only_terms) {
     dt[, peak_idx := NA_integer_]
   } else {
     dt[, peak_idx := term_index[peak_term]]
   }
   dt[, gene_idx := term_index[gene_term]]
-  if (identical(fp_term_mode, "aggregate_weight")) {
+  if (gene_only_terms) {
     dt <- dt[!is.na(gene_idx)]
   } else {
     dt <- dt[!is.na(peak_idx) & !is.na(gene_idx)]
@@ -6441,7 +6512,7 @@ compute_topic_links <- function(edges_docs,
     if (!nrow(chunk_dt)) return(data.table::data.table())
     peak_idx <- chunk_dt$peak_idx
     gene_idx <- chunk_dt$gene_idx
-    has_peak_terms <- !identical(fp_term_mode, "aggregate_weight")
+    has_peak_terms <- !gene_only_terms
     if (has_peak_terms) {
       peak_scores_gate <- score_mat[, peak_idx, drop = FALSE]
       peak_scores_raw <- raw_score_mat[, peak_idx, drop = FALSE]
@@ -6497,7 +6568,7 @@ compute_topic_links <- function(edges_docs,
     } else if (!is.null(in_set_map)) {
       peak_allowed <- in_set_map[chunk_dt$peak_term]
       gene_allowed <- in_set_map[chunk_dt$gene_term]
-      peak_pass <- rep(identical(fp_term_mode, "aggregate_weight"), length(rep_topic))
+      peak_pass <- rep(gene_only_terms, length(rep_topic))
       gene_pass <- rep(FALSE, length(rep_topic))
       if (has_peak_terms) {
         for (i in seq_len(n)) {
@@ -6594,14 +6665,14 @@ compute_topic_links <- function(edges_docs,
   if (identical(link_method, "gammafit")) {
     n_before_gammafit <- n_candidate_rows
     n_pass_gammafit <- nrow(out)
-    gammafit_label <- if (identical(fp_term_mode, "aggregate_weight")) "gene_only" else "peak_and_gene"
+    gammafit_label <- if (gene_only_terms) "gene_only" else "peak_and_gene"
     .log_inform(
       "topic_links gammafit: {gammafit_label} pass {n_pass_gammafit}/{n_before_gammafit} rows."
     )
   } else if (identical(link_method, "theta_and_terms")) {
     n_before_theta <- n_candidate_rows
     n_pass_theta <- nrow(out)
-    theta_label <- if (identical(fp_term_mode, "aggregate_weight")) "theta_and_gene" else "theta_peak_and_gene"
+    theta_label <- if (gene_only_terms) "theta_and_gene" else "theta_peak_and_gene"
     .log_inform(
       "topic_links theta_and_terms: {theta_label} pass {n_pass_theta}/{n_before_theta} rows (theta>={theta_cutoff})."
     )
@@ -8254,7 +8325,6 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
   suffix <- paste0("_", topic_space)
   files <- c(
     topic_pathway_enrichment_topic_terms = "csv",
-    per_condition_topic_pathway_enrichment = "csv",
     topic_pathway_enrichment_dotplot = "csv",
     topic_pathway_enrichment_dotplot = "pdf",
     topic_pathway_gene_sets = "csv"
@@ -8271,7 +8341,6 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
   if (identical(topic_space, "combined")) {
     standard <- c(
       "topic_pathway_enrichment_topic_terms.csv",
-      "per_condition_topic_pathway_enrichment.csv",
       "topic_pathway_enrichment_dotplot.csv",
       "topic_pathway_enrichment_dotplot.pdf",
       "topic_pathway_gene_sets.csv"
@@ -8289,7 +8358,6 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
 .module3_rebuild_topic_space_pathways <- function(extraction_dir,
                                                    model_dir,
                                                    topic_space = c("raw", "combined"),
-                                                   edges_docs = NULL,
                                                    overwrite = FALSE,
                                                    enrichr_n_cores = 1L,
                                                    pathway_backend = NULL,
@@ -8324,28 +8392,15 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
     extraction_dir,
     paste0("topic_pathway_enrichment_topic_terms_", topic_space, ".csv")
   )
-  condition_target_file <- file.path(
-    extraction_dir,
-    paste0("per_condition_topic_pathway_enrichment_", topic_space, ".csv")
-  )
-  if (!isTRUE(overwrite) && file.exists(target_file) &&
-      file.exists(condition_target_file)) {
+  if (!isTRUE(overwrite) && file.exists(target_file)) {
     if (isTRUE(verbose)) {
       .log_inform(
         "Keeping existing {topic_space} pathways: {extraction_dir}"
       )
     }
-    return(invisible(list(
-      overall = target_file,
-      per_condition = condition_target_file
-    )))
+    return(invisible(list(overall = target_file)))
   }
   topic_terms <- data.table::fread(terms_file, showProgress = FALSE)
-  if (is.null(edges_docs)) {
-    edges_file <- file.path(model_dir, "rds", "edges_docs.rds")
-    if (!file.exists(edges_file)) .log_abort("Missing edges_docs: {edges_file}")
-    edges_docs <- readRDS(edges_file)
-  }
   topic_term_edges <- data.table::data.table(
     peak_id = character(),
     gene_key = character()
@@ -8420,29 +8475,6 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
       "No overall {topic_space} pathway table was produced for {extraction_dir}."
     )
   }
-  plot_topic_pathway_enrichment_by_condition_terms(
-    topic_terms = topic_terms,
-    edges_docs = edges_docs,
-    theta = theta,
-    out_dir = work_dir,
-    title_prefix = sprintf("%s | %s", basename(extraction_dir), topic_space),
-    dbs = settings$databases,
-    pathway_species = settings$species,
-    padj_cut = 0.05,
-    theta_min = 0.3,
-    include_peak_terms = TRUE,
-    use_all_terms = FALSE,
-    min_genes = 5L,
-    top_n_per_topic = Inf,
-    dot_top_n_per_topic = Inf,
-    max_pathways = 1000L,
-    make_dotplot = FALSE,
-    enrichr_cache_dir = cache_dir,
-    enrichr_n_cores = enrichr_n_cores,
-    pathway_backend = pathway_backend,
-    overall_pathway_file = overall_file,
-    overwrite = TRUE
-  )
   .module3_copy_topic_space_pathway_outputs(
     work_dir,
     extraction_dir,
@@ -8482,7 +8514,6 @@ plot_topic_pathway_enrichment_by_condition_terms <- function(topic_terms,
   )
   invisible(list(
     overall = target_file,
-    per_condition = condition_target_file,
     manifest = manifest_file
   ))
 }
@@ -9425,7 +9456,6 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_link_tf_max_topics = Inf,
                                               pathway_link_tf_top_n_per_topic = NA_integer_,
                                               pathway_per_comparison = FALSE,
-                                              pathway_per_condition = NULL,
                                               pathway_per_comparison_dir = ".",
                                               pathway_per_comparison_flat = TRUE,
                                               pathway_split_direction = TRUE,
@@ -9436,7 +9466,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               pathway_species = NULL,
                                               pathway_databases = NULL,
                                               run_link_topic_scores = FALSE,
-                                              fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
+                                              fp_term_mode = c("unique", "aggregate", "aggregate_weight", "gene_expression"),
                                               link_topic_gate_mode = "none",
                                               link_topic_top_k = 3L,
                                               link_topic_min_prob = 0,
@@ -9512,9 +9542,9 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   if (!is.finite(pathway_topic_term_theta_min)) pathway_topic_term_theta_min <- 0.3
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   if (identical(topic_term_assignment_method, "gammafit_maxprob") &&
-      !identical(fp_term_mode, "aggregate")) {
+      !fp_term_mode %in% c("aggregate", "gene_expression")) {
     .log_abort(
-      "gammafit_maxprob requires fp_term_mode = 'aggregate' so each GENE:<gene> has a matching PEAK:<gene>."
+      "gammafit_maxprob requires paired aggregate terms or gene_expression terms."
     )
   }
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
@@ -9537,11 +9567,6 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   }
   if (!all(link_topic_gate_mode %in% allowed_gate_modes)) {
     .log_abort("link_topic_gate_mode must be one of: {paste(allowed_gate_modes, collapse = ', ')}.")
-  }
-  pathway_per_condition <- if (is.null(pathway_per_condition)) {
-    identical(doc_design, "condition") && isTRUE(run_pathway_enrichment)
-  } else {
-    isTRUE(pathway_per_condition)
   }
   optimization_eligible <- identical(doc_design, "condition") &&
     identical(fp_term_mode, "aggregate") &&
@@ -9652,7 +9677,32 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   writeLines(topic_score_method, file.path(out_dir, "topic_score_method.txt"))
   writeLines(topic_term_assignment_method, file.path(out_dir, "topic_term_assignment_method.txt"))
   if (identical(topic_term_assignment_method, "gammafit_maxprob")) {
-    pair_assignment <- .topic_gene_peak_assignment_table(topic_terms)
+    gene_only_assignment <- identical(fp_term_mode, "gene_expression")
+    pair_assignment <- if (gene_only_assignment) {
+      .topic_gene_assignment_table(topic_terms)
+    } else {
+      .topic_gene_peak_assignment_table(topic_terms)
+    }
+    if (gene_only_assignment) {
+      if (!nrow(pair_assignment) || !any(pair_assignment$assigned)) {
+        .log_abort("gene_expression GammaFit-MaxProb did not assign any target genes.")
+      }
+      data.table::fwrite(
+        pair_assignment,
+        file.path(out_dir, "topic_gene_assignment.csv")
+      )
+      data.table::fwrite(
+        pair_assignment[, .(
+          assignment_method = topic_term_assignment_method,
+          fp_term_mode = fp_term_mode,
+          total_genes = .N,
+          assigned_genes = sum(assigned),
+          assigned_percent = 100 * mean(assigned),
+          thrP = thrP
+        )],
+        file.path(out_dir, "topic_term_assignment_summary.csv")
+      )
+    } else {
     pair_columns <- c("gene_term_id", "peak_term_id")
     matched_pair_count <- if (nrow(pair_assignment) && all(pair_columns %in% names(pair_assignment))) {
       pair_assignment[!is.na(gene_term_id) & !is.na(peak_term_id), .N]
@@ -9677,6 +9727,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       ),
       file.path(out_dir, "topic_term_assignment_summary.csv")
     )
+    }
     if (isTRUE(optimize_topics)) {
       raw_k <- nrow(phi)
       data.table::fwrite(
@@ -10078,7 +10129,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         pathway_backend = pathway_backend
       )
 
-      if (isTRUE(pathway_per_comparison) || isTRUE(pathway_per_condition)) {
+      if (isTRUE(pathway_per_comparison)) {
         retest_doc_design <- if (identical(doc_design, "condition")) "condition" else "comparison"
         plot_topic_pathway_enrichment_by_comparison_terms(
           topic_terms = topic_terms,
@@ -10232,7 +10283,7 @@ run_tfdocs_warplda_one_option <- function(edges_all,
                                           pathway_species = NULL,
                                           pathway_databases = NULL,
                                           run_link_topic_scores = FALSE,
-                                          fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
+                                          fp_term_mode = c("unique", "aggregate", "aggregate_weight", "gene_expression"),
                                           link_topic_gate_mode = "none",
                                           link_topic_top_k = 3L,
                                           link_topic_min_prob = 0,
@@ -11977,7 +12028,7 @@ train_topic_models <- function(Kgrid,
                                threshold_fp_score = 0,
                                threshold_tf_expr = -Inf,
                                gene_term_mode = c("aggregate", "unique"),
-                               fp_term_mode = c("aggregate", "unique", "aggregate_weight"),
+                               fp_term_mode = c("aggregate", "unique", "aggregate_weight", "gene_expression"),
                                include_tf_terms = FALSE,
                                count_input = NULL,
                                vae_variant = "multivi_encoder",
@@ -12531,9 +12582,7 @@ module3_train_topic_models <- function(k_grid,
 #' @param topic_report_args Optional list of overrides for report settings.
 #'   Standard extraction keeps pathway enrichment disabled by default for speed.
 #'   Set `run_pathway_enrichment = TRUE` for the overall topic pathway review.
-#'   Comparison-topic runs can also set `pathway_per_comparison = TRUE`;
-#'   condition-topic runs write per-condition pathway retests by default when
-#'   pathway enrichment is enabled unless `pathway_per_condition = FALSE`.
+#'   Comparison-topic runs can also set `pathway_per_comparison = TRUE`.
 #' @noRd
 extract_regulatory_topics <- function(k,
                                       model_dir,
@@ -12542,7 +12591,7 @@ extract_regulatory_topics <- function(k,
                                       backend = c("warplda", "vae"),
                                       vae_variant = "multivi_encoder",
                                       doc_mode = c("tf_cluster", "tf"),
-                                      weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr", "peak_score_gene_expr"),
+                                      weight_label = c("peak_log2fc_fp_gene_fc_expr", "peak_delta_fp_gene_fc_expr", "peak_score_gene_expr", "gene_expression"),
                                       flatten_single_output = FALSE,
                                       topic_score_method = NULL,
                                       topic_term_assignment_method = NULL,
@@ -12568,7 +12617,7 @@ extract_regulatory_topics <- function(k,
     )
   }
   topic_term_assignment_explicit <- !is.null(topic_report_args$topic_term_assignment_method)
-  report_doc_design <- if (identical(weight_label, "peak_score_gene_expr")) "condition" else "comparison"
+  report_doc_design <- if (weight_label %in% c("peak_score_gene_expr", "gene_expression")) "condition" else "comparison"
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -12670,7 +12719,6 @@ extract_regulatory_topics <- function(k,
       pathway_link_tf_max_topics = 5L,
       pathway_link_tf_top_n_per_topic = 30L,
       pathway_per_comparison = FALSE,
-      pathway_per_condition = NULL,
       pathway_per_comparison_dir = ".",
       pathway_per_comparison_flat = TRUE,
       pathway_split_direction = TRUE,
@@ -12719,7 +12767,7 @@ extract_regulatory_topics <- function(k,
       resolved_fp_term_mode <- .resolve_fp_term_mode(
         topic_report_args$fp_term_mode %||% defaults$fp_term_mode
       )
-      defaults$topic_term_assignment_method <- if (identical(resolved_fp_term_mode, "aggregate")) {
+      defaults$topic_term_assignment_method <- if (resolved_fp_term_mode %in% c("aggregate", "gene_expression")) {
         "gammafit_maxprob"
       } else {
         "max_phi"
@@ -13642,6 +13690,9 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
     fp_aggr_weight = "aggregate_weight",
     fp_agg_weight = "aggregate_weight",
     aggregate_weight = "aggregate_weight",
+    gene_expression = "gene_expression",
+    expression = "gene_expression",
+    gene_only_expression = "gene_expression",
     .log_abort("Unsupported fp_term_mode: {x}")
   )
 }
@@ -13743,7 +13794,7 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
                                           weight_type_peak,
                                           weight_type_gene,
                                           weight_type_tf = NULL,
-                                          fp_term_mode = c("aggregate", "unique", "aggregate_weight"),
+                                          fp_term_mode = c("aggregate", "unique", "aggregate_weight", "gene_expression"),
                                           include_tf_terms = FALSE,
                                           count_method = c("bin", "log"),
                                           count_scale = 50,
@@ -13759,6 +13810,16 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
 
   dt <- data.table::as.data.table(edges_docs)
   .topic_assert_has_cols(dt, c("doc_id", "tf", "gene_key", "peak_id", weight_type_peak, weight_type_gene), context = "build_doc_term_unified")
+  if (identical(fp_term_mode, "gene_expression")) {
+    keep <- unique(c(
+      "doc_id", "tf", "gene_key", weight_type_gene,
+      if (isTRUE(include_tf_terms)) weight_type_tf else NULL
+    ))
+    keep <- keep[!is.na(keep) & keep %in% names(dt)]
+    dt <- dt[, keep, with = FALSE]
+    dt[, `:=`(peak_id = NA_character_, fp_weight_source__ = 0)]
+    weight_type_peak <- "fp_weight_source__"
+  }
   dt[, `:=`(
     doc_id = as.character(doc_id),
     tf = as.character(tf),
@@ -13786,7 +13847,17 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
     gene_obs <- data.table::data.table(doc_id = character(), term_id = character(), weight_raw = numeric(), modality = character())
   }
 
-  fp_dt <- dt[!is.na(peak_id) & nzchar(peak_id) & !is.na(gene_key) & nzchar(gene_key) & is.finite(fp_weight) & fp_weight > 0]
+  if (identical(fp_term_mode, "gene_expression")) {
+    peak_obs <- data.table::data.table(
+      doc_id = character(), term_id = character(),
+      weight_raw = numeric(), modality = character()
+    )
+  } else {
+    fp_dt <- dt[
+      !is.na(peak_id) & nzchar(peak_id) &
+        !is.na(gene_key) & nzchar(gene_key) &
+        is.finite(fp_weight) & fp_weight > 0
+    ]
   if (identical(fp_term_mode, "unique")) {
     if (nrow(fp_dt)) {
       peak_obs <- .topic_collapse_value(
@@ -13823,8 +13894,11 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
       peak_obs <- data.table::data.table(doc_id = character(), term_id = character(), weight_raw = numeric(), modality = character())
     }
   }
+  }
 
-  if (identical(fp_term_mode, "aggregate_weight")) {
+  if (identical(fp_term_mode, "gene_expression")) {
+    balance_mode <- "none"
+  } else if (identical(fp_term_mode, "aggregate_weight")) {
     if (nrow(gene_obs) && nrow(peak_obs)) {
       peak_weight <- data.table::copy(peak_obs)
       peak_weight[, gene_term_id := sub("^PEAK:", "GENE:", term_id)]
@@ -13905,16 +13979,16 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
 #' Builds comparison-level document-term rows from links that already have a
 #' `doc_id`. Gene, peak, and optional TF self-term weights are converted to
 #' positive values before count conversion. `fp_term_mode` controls whether FP
-#' terms remain unique peaks, are aggregated by target gene, or are multiplied
-#' into gene weights.
+#' terms remain unique peaks, are aggregated by target gene, are multiplied
+#' into gene weights, or are excluded for a gene-expression-only experiment.
 #'
 #' @inheritParams build_doc_term_from_edges
 #' @param weight_type_peak Peak weight column, usually `log2fc_fp` for
 #'   comparison-mode runs.
 #' @param weight_type_gene Gene weight column, usually `log2fc_gene` for
 #'   comparison-mode runs.
-#' @param fp_term_mode FP term mode: unique peaks, target-gene aggregated
-#'   peaks, or gene-only aggregate weights.
+#' @param fp_term_mode Term mode: unique peaks, target-gene aggregated peaks,
+#'   gene-only aggregate weights, or gene-expression-only terms.
 #' @param balance_mode Modality balancing mode, either `"min"` or `"none"`.
 #' @param check_repeated_values Warn if repeated document-term rows have
 #'   inconsistent source values before deterministic collapse.
@@ -14000,8 +14074,8 @@ build_doc_term_joint <- function(edges_docs,
 #' @param include_tf_terms Whether to add the current TF as a gene-like
 #'   self-term in TF documents.
 #' @param require_tf_expr Whether the document row requires TF expression.
-#' @param fp_term_mode FP term mode: unique peaks, target-gene aggregated
-#'   peaks, or gene-only aggregate weights.
+#' @param fp_term_mode Term mode: unique peaks, target-gene aggregated peaks,
+#'   gene-only aggregate weights, or gene-expression-only terms.
 #' @param balance_mode Modality balancing mode, either `"min"` or `"none"`.
 #' @param check_repeated_values Warn if repeated document-term rows have
 #'   inconsistent source values before deterministic collapse.
@@ -14017,7 +14091,7 @@ build_doc_term_condition_union <- function(edges_condition,
                                            threshold_tf_expr = -Inf,
                                            include_tf_terms = FALSE,
                                            require_tf_expr = FALSE,
-                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight"),
+                                           fp_term_mode = c("unique", "aggregate", "aggregate_weight", "gene_expression"),
                                            balance_mode = c("min", "none"),
                                            check_repeated_values = TRUE) {
   .assert_pkg("data.table")
