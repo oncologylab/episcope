@@ -21,6 +21,16 @@ test_that("safe worker planning respects cores and current memory", {
   expect_equal(constrained$workers, 2L)
 })
 
+test_that("detected physical cores never exceed the host physical count", {
+  observed <- .available_physical_cores()
+  host_physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  expect_true(is.numeric(observed))
+  expect_gte(observed, 1L)
+  if (is.finite(host_physical)) {
+    expect_lte(observed, host_physical)
+  }
+})
+
 test_that("safe worker planning refuses an unaffordable worker", {
   plan <- .safe_worker_plan(
     requested = 4L,

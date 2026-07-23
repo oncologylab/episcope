@@ -49,13 +49,17 @@
 }
 
 .available_physical_cores <- function() {
-  cores <- if (requireNamespace("parallelly", quietly = TRUE)) {
+  physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  physical <- suppressWarnings(as.integer(physical[[1L]]))
+  if (!is.finite(physical) || physical < 1L) physical <- 1L
+  available <- if (requireNamespace("parallelly", quietly = TRUE)) {
     suppressWarnings(parallelly::availableCores())
   } else {
-    suppressWarnings(parallel::detectCores(logical = FALSE))
+    physical
   }
-  cores <- suppressWarnings(as.integer(cores[[1L]]))
-  if (!is.finite(cores) || cores < 1L) 1L else cores
+  available <- suppressWarnings(as.integer(available[[1L]]))
+  if (!is.finite(available) || available < 1L) available <- 1L
+  max(1L, min(physical, available))
 }
 
 .resource_policy <- function(max_memory_fraction = getOption("craftgrn.memory_max_fraction", 0.8),
