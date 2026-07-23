@@ -349,6 +349,26 @@ test_that("repeated condition IDs retain concise stable display labels", {
   )
 })
 
+test_that("topic assignment retention labels distinguish links and genes", {
+  expect_identical(
+    .m3_qc_retention_labels(),
+    list(
+      links = c(
+        "Total unique input links",
+        "Links pass gamma filter",
+        "Links pass max filter",
+        "Links pass TF filter"
+      ),
+      genes = c(
+        "Total unique input genes",
+        "Genes pass gamma filter",
+        "Genes pass max filter",
+        "Genes pass TF filter"
+      )
+    )
+  )
+})
+
 test_that("TF heatmap pools conditions and deduplicates targets per topic", {
   n_tfs <- 160L
   assignments <- data.table::data.table(

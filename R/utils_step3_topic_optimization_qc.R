@@ -2266,6 +2266,23 @@
     .m3_qc_theme()
 }
 
+.m3_qc_retention_labels <- function() {
+  list(
+    links = c(
+      "Total unique input links",
+      "Links pass gamma filter",
+      "Links pass max filter",
+      "Links pass TF filter"
+    ),
+    genes = c(
+      "Total unique input genes",
+      "Genes pass gamma filter",
+      "Genes pass max filter",
+      "Genes pass TF filter"
+    )
+  )
+}
+
 .m3_qc_style_heatmap_grob <- function(grob) {
   if (!is.null(grob$gp)) {
     grob$gp$font <- NULL
@@ -2756,18 +2773,9 @@
     if (!nrow(rows)) return(0L)
     nrow(unique(rows[, .(condition_id, tf_index, target_index)]))
   }
-  retention_link_labels <- c(
-    "Total unique input links",
-    "Links pass gamma filter",
-    "Links pass max filter",
-    "Links pass TF filter"
-  )
-  retention_gene_labels <- c(
-    "Total unique input genes",
-    "Links pass gamma genes",
-    "Links pass max genes",
-    "Links pass TF genes"
-  )
+  retention_labels <- .m3_qc_retention_labels()
+  retention_link_labels <- retention_labels$links
+  retention_gene_labels <- retention_labels$genes
   retention_links <- c(
     unique_link_count(assignments),
     unique_link_count(assignments[target_gamma[target_index] %in% TRUE]),
