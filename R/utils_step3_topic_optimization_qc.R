@@ -2283,6 +2283,18 @@
   )
 }
 
+.m3_qc_unique_link_count <- function(rows) {
+  rows <- data.table::as.data.table(rows)
+  if (!nrow(rows)) return(0L)
+  data.table::uniqueN(rows, by = c("tf_index", "target_index"))
+}
+
+.m3_qc_unique_target_count <- function(values) {
+  values <- values[!is.na(values)]
+  if (is.character(values)) values <- values[nzchar(values)]
+  data.table::uniqueN(values)
+}
+
 .m3_qc_style_heatmap_grob <- function(grob) {
   if (!is.null(grob$gp)) {
     grob$gp$font <- NULL
@@ -2768,29 +2780,30 @@
     suppressWarnings(as.integer(optimization$raw_pair_assignment$assigned_topic))
   )
   link_max <- target_max[assignments$target_index]
-  unique_link_count <- function(rows) {
-    rows <- data.table::as.data.table(rows)
-    if (!nrow(rows)) return(0L)
-    nrow(unique(rows[, .(condition_id, tf_index, target_index)]))
-  }
   retention_labels <- .m3_qc_retention_labels()
   retention_link_labels <- retention_labels$links
   retention_gene_labels <- retention_labels$genes
   retention_links <- c(
-    unique_link_count(assignments),
-    unique_link_count(assignments[target_gamma[target_index] %in% TRUE]),
-    unique_link_count(assignments[link_max %in% TRUE]),
-    unique_link_count(assignments[raw_aligned == TRUE])
+    .m3_qc_unique_link_count(assignments),
+    .m3_qc_unique_link_count(
+      assignments[target_gamma[target_index] %in% TRUE]
+    ),
+    .m3_qc_unique_link_count(assignments[link_max %in% TRUE]),
+    .m3_qc_unique_link_count(assignments[raw_aligned == TRUE])
   )
   retention_genes <- c(
-    data.table::uniqueN(optimization$raw_pair_assignment$target_gene),
-    data.table::uniqueN(
+    .m3_qc_unique_target_count(
+      optimization$raw_pair_assignment$target_gene
+    ),
+    .m3_qc_unique_target_count(
       optimization$raw_pair_assignment[target_gamma %in% TRUE, target_gene]
     ),
-    data.table::uniqueN(
+    .m3_qc_unique_target_count(
       optimization$raw_pair_assignment[target_max %in% TRUE, target_gene]
     ),
-    data.table::uniqueN(assignments[raw_aligned == TRUE, target_index])
+    .m3_qc_unique_target_count(
+      assignments[raw_aligned == TRUE, target_index]
+    )
   )
   retention_page <- .m3_qc_arrange(
     .m3_qc_retention_plot(

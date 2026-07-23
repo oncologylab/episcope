@@ -369,6 +369,20 @@ test_that("topic assignment retention labels distinguish links and genes", {
   )
 })
 
+test_that("topic retention counts links and genes uniquely across conditions", {
+  links <- data.table::data.table(
+    condition_id = c("A", "B", "A", "B", "A"),
+    tf_index = c(1L, 1L, 2L, 2L, 1L),
+    target_index = c(1L, 1L, 1L, 1L, 2L)
+  )
+
+  expect_identical(.m3_qc_unique_link_count(links), 3L)
+  expect_identical(
+    .m3_qc_unique_target_count(c("G1", "G1", "G2", NA_character_, "")),
+    2L
+  )
+})
+
 test_that("TF heatmap pools conditions and deduplicates targets per topic", {
   n_tfs <- 160L
   assignments <- data.table::data.table(
