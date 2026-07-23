@@ -113,7 +113,7 @@
     "threshold_tf_target_corr_r",
     "threshold_tf_expr", "topic_benchmark_enabled", "topic_benchmark_k_grid",
     "topic_benchmark_methods", "topic_binarize_method", "topic_count_input",
-    "topic_count_method", "topic_dir_name", "topic_gammafit_min_terms",
+    "topic_count_method", "topic_count_scale", "topic_dir_name", "topic_gammafit_min_terms",
     "topic_gammafit_scope", "topic_gammafit_scopes", "topic_gammafit_thrP",
     "topic_k", "topic_k_grid", "topic_link_method", "topic_link_output",
     "topic_link_prob_cutoff", "topic_method", "topic_score_method",
@@ -121,14 +121,24 @@
     "topic_optimize_topics", "topic_merge_min_genes",
     "topic_merge_min_links", "topic_merge_similarity_threshold",
     "topic_assignment_qc", "topic_qc_umap_links_per_condition",
-    "topic_qc_top_tfs", "topic_qc_seed",
+    "topic_qc_top_tfs", "topic_qc_reference_condition",
+    "topic_condition_gene_weighting", "topic_condition_gene_expression_file",
+    "topic_condition_peak_weighting",
+    "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
+    "topic_condition_specificity_expression_min",
+    "topic_condition_gene_expression_min",
+    "topic_qc_upregulated_log2fc_min",
+    "topic_qc_upregulated_pseudocount", "topic_qc_seed",
+    "topic_raw_theta_document_heatmap", "run_raw_theta_document_heatmap",
     "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
     "topic_vae_batch_size", "topic_vae_device", "warplda_iterations",
+    "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed",
     "waterfall_min_abs_net",
     paste0("module3_", c(
       "pathway_backend", "pathway_databases", "pathway_organism",
       "pathway_species", "topic_benchmark_enabled", "topic_benchmark_k_grid",
       "topic_benchmark_methods", "topic_count_input", "topic_count_method",
+      "topic_count_scale",
       "topic_gammafit_min_terms", "topic_gammafit_scope",
       "topic_gammafit_scopes", "topic_gammafit_thrP", "topic_k",
       "topic_k_grid", "topic_link_method", "topic_link_output",
@@ -137,15 +147,26 @@
       "topic_optimize_topics", "topic_merge_min_genes",
       "topic_merge_min_links", "topic_merge_similarity_threshold",
       "topic_assignment_qc", "topic_qc_umap_links_per_condition",
-      "topic_qc_top_tfs", "topic_qc_seed",
+      "topic_qc_top_tfs", "topic_qc_reference_condition",
+      "topic_condition_gene_weighting", "topic_condition_gene_expression_file",
+      "topic_condition_peak_weighting",
+      "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
+      "topic_condition_specificity_expression_min",
+      "topic_condition_gene_expression_min",
+      "topic_qc_upregulated_log2fc_min",
+      "topic_qc_upregulated_pseudocount", "topic_qc_seed",
+      "topic_raw_theta_document_heatmap",
       "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
-      "topic_vae_batch_size", "topic_vae_device", "warplda_iterations"
+      "topic_vae_batch_size", "topic_vae_device", "warplda_iterations",
+      "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed"
     )),
     "topic_warplda_iterations",
     paste0("module3_", c(
       "optimize_topics", "merge_min_genes", "merge_min_links",
       "merge_similarity_threshold", "run_topic_assignment_qc",
-      "qc_umap_links_per_condition", "qc_top_tfs", "qc_seed"
+      "qc_umap_links_per_condition", "qc_top_tfs",
+      "qc_reference_condition", "qc_upregulated_log2fc_min",
+      "qc_upregulated_pseudocount", "qc_seed"
     ))
   )
 }
@@ -404,6 +425,9 @@
     "topic_benchmark_enabled", "module3_topic_benchmark_enabled",
     "topic_optimize_topics", "module3_topic_optimize_topics",
     "topic_assignment_qc", "module3_topic_assignment_qc",
+    "topic_raw_theta_document_heatmap",
+    "module3_topic_raw_theta_document_heatmap",
+    "run_raw_theta_document_heatmap",
     "module3_optimize_topics", "module3_run_topic_assignment_qc"
   ), names(cfg))
   bad_logical <- logical_keys[!vapply(cfg[logical_keys], .project_config_scalar, logical(1L), type = "logical")]
@@ -424,13 +448,97 @@
     "module3_merge_min_genes", "module3_merge_min_links",
     "module3_qc_umap_links_per_condition", "module3_qc_top_tfs",
     "module3_qc_seed",
-    "warplda_iterations", "topic_warplda_iterations", "module3_warplda_iterations"
+    "warplda_iterations", "topic_warplda_iterations", "module3_warplda_iterations",
+    "topic_warplda_seed", "module3_topic_warplda_seed"
   ), names(cfg))
   bad_integer <- positive_integer_keys[!vapply(cfg[positive_integer_keys], function(x) {
     .project_config_scalar(x, "integer") && x >= 1L
   }, logical(1L))]
   if (length(bad_integer)) {
     cli::cli_abort("Project config entries must be positive integers: {paste(bad_integer, collapse = ', ')}.")
+  }
+
+  positive_numeric_keys <- intersect(c(
+    "topic_count_scale", "module3_topic_count_scale",
+    "topic_warplda_beta", "module3_topic_warplda_beta",
+    "topic_condition_specificity_temperature",
+    "module3_topic_condition_specificity_temperature"
+  ), names(cfg))
+  bad_numeric <- positive_numeric_keys[!vapply(cfg[positive_numeric_keys], function(x) {
+    is.null(x) || (.project_config_scalar(x, "numeric") && x > 0)
+  }, logical(1L))]
+  if (length(bad_numeric)) {
+    cli::cli_abort("Project config entries must be null or positive numbers: {paste(bad_numeric, collapse = ', ')}.")
+  }
+
+  sampler_keys <- intersect(c(
+    "topic_warplda_sampler", "module3_topic_warplda_sampler"
+  ), names(cfg))
+  allowed_samplers <- c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync")
+  bad_sampler <- sampler_keys[!vapply(cfg[sampler_keys], function(x) {
+    .project_config_scalar(x, "character") && x %in% allowed_samplers
+  }, logical(1L))]
+  if (length(bad_sampler)) {
+    cli::cli_abort("Topic WarpLDA samplers must be one of: {paste(allowed_samplers, collapse = ', ')}.")
+  }
+
+  reference_keys <- intersect(c(
+    "topic_qc_reference_condition", "module3_topic_qc_reference_condition",
+    "module3_qc_reference_condition"
+  ), names(cfg))
+  bad_reference <- reference_keys[!vapply(cfg[reference_keys], function(x) {
+    is.null(x) || (.project_config_scalar(x, "character") && nzchar(trimws(x)))
+  }, logical(1L))]
+  if (length(bad_reference)) {
+    cli::cli_abort(
+      "Topic QC reference conditions must be one non-empty condition ID or null: {paste(bad_reference, collapse = ', ')}."
+    )
+  }
+  expression_file_keys <- intersect(c(
+    "topic_condition_gene_expression_file",
+    "module3_topic_condition_gene_expression_file"
+  ), names(cfg))
+  bad_expression_file <- expression_file_keys[!vapply(cfg[expression_file_keys], function(x) {
+    is.null(x) || (.project_config_scalar(x, "character") && nzchar(trimws(x)))
+  }, logical(1L))]
+  if (length(bad_expression_file)) {
+    cli::cli_abort(
+      "Condition gene expression files must be one non-empty path or null: {paste(bad_expression_file, collapse = ', ')}."
+    )
+  }
+
+  nonnegative_qc_keys <- intersect(c(
+    "topic_condition_gene_expression_min",
+    "module3_topic_condition_gene_expression_min",
+    "topic_condition_specificity_expression_min",
+    "module3_topic_condition_specificity_expression_min",
+    "topic_qc_upregulated_log2fc_min",
+    "module3_topic_qc_upregulated_log2fc_min",
+    "module3_qc_upregulated_log2fc_min"
+  ), names(cfg))
+  bad_nonnegative_qc <- nonnegative_qc_keys[
+    !vapply(cfg[nonnegative_qc_keys], function(x) {
+      .project_config_scalar(x, "numeric") && x >= 0
+    }, logical(1L))
+  ]
+  if (length(bad_nonnegative_qc)) {
+    cli::cli_abort(
+      "Module 3 expression and QC log2FC cutoffs must be non-negative: {paste(bad_nonnegative_qc, collapse = ', ')}."
+    )
+  }
+
+  positive_qc_keys <- intersect(c(
+    "topic_qc_upregulated_pseudocount",
+    "module3_topic_qc_upregulated_pseudocount",
+    "module3_qc_upregulated_pseudocount"
+  ), names(cfg))
+  bad_positive_qc <- positive_qc_keys[!vapply(cfg[positive_qc_keys], function(x) {
+    .project_config_scalar(x, "numeric") && x > 0
+  }, logical(1L))]
+  if (length(bad_positive_qc)) {
+    cli::cli_abort(
+      "Topic QC upregulated pseudocounts must be positive: {paste(bad_positive_qc, collapse = ', ')}."
+    )
   }
 
   gammafit_probability_keys <- intersect(c(
@@ -491,6 +599,20 @@
   if (length(bad_probability)) {
     cli::cli_abort("Probability config entries must be between 0 and 1 or null: {paste(bad_probability, collapse = ', ')}.")
   }
+  specificity_floor_keys <- intersect(c(
+    "topic_condition_specificity_floor",
+    "module3_topic_condition_specificity_floor"
+  ), names(cfg))
+  bad_specificity_floor <- specificity_floor_keys[
+    !vapply(cfg[specificity_floor_keys], function(x) {
+      .project_config_scalar(x, "numeric") && x > 0 && x < 1
+    }, logical(1L))
+  ]
+  if (length(bad_specificity_floor)) {
+    cli::cli_abort(
+      "Condition specificity floors must be strictly between 0 and 1: {paste(bad_specificity_floor, collapse = ', ')}."
+    )
+  }
   correlation_keys <- grep("^threshold_.*_corr_(abs_)?r$", names(cfg), value = TRUE)
   bad_correlation <- correlation_keys[!vapply(correlation_keys, function(key) {
     value <- cfg[[key]]
@@ -528,6 +650,10 @@
     module3_topic_score_method = c("normtop_specificity", "rowmax_phi"),
     topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
     module3_topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
+    topic_condition_gene_weighting = c("none", "specificity"),
+    module3_topic_condition_gene_weighting = c("none", "specificity"),
+    topic_condition_peak_weighting = c("none", "tf_expression"),
+    module3_topic_condition_peak_weighting = c("none", "tf_expression"),
     topic_vae_device = c("auto", "cpu", "cuda"),
     module3_topic_vae_device = c("auto", "cpu", "cuda")
   )

@@ -4,6 +4,27 @@ test_that("public Module 3 topic-model defaults use native WarpLDA", {
   expect_true("gene_expression" %in% eval(formals(extract_regulatory_topics)$weight_label))
 })
 
+test_that("flat single-K extraction roots retain trained-K inference", {
+  root <- tempfile("module3-flat-k-")
+  extraction_dir <- file.path(root, "topic_extraction")
+  model_dir <- file.path(root, "topic_models")
+  dir.create(extraction_dir, recursive = TRUE)
+  dir.create(file.path(model_dir, "vae_models"), recursive = TRUE)
+  data.table::fwrite(
+    data.table::data.table(raw_k = 30L),
+    file.path(extraction_dir, "topic_assignment_qc_settings.csv")
+  )
+
+  expect_identical(
+    .module3_extraction_trained_k(extraction_dir, model_dir),
+    30L
+  )
+  expect_identical(
+    .module3_extraction_trained_k(file.path(root, "K20")),
+    20L
+  )
+})
+
 test_that("Module 3 strict memory preflight enforces the available-memory fraction", {
   ok <- .module3_memory_preflight(
     estimated_bytes = 80,
@@ -1204,6 +1225,81 @@ test_that("gene-expression terms use GammaFit followed by one maximum-probabilit
   expect_true(summary[target_gene == "G1", assigned])
   expect_equal(summary[target_gene == "G1", assigned_topic], 1L)
   expect_false(summary[target_gene == "G3", assigned])
+})
+
+test_that("gene-expression assignments adapt deterministically for topic optimization", {
+  topic_terms <- data.table::data.table(
+    topic_num = rep(1:3, each = 2),
+    term_id = rep(c("GENE:G1", "GENE:G2"), 3),
+    term_group = "GENE",
+    gammafit_candidate = c(TRUE, FALSE, TRUE, TRUE, FALSE, TRUE)
+  )
+  assignments <- data.table::data.table(
+    target_gene = c("G1", "G2"),
+    assigned = c(TRUE, TRUE),
+    assigned_topic = c(1L, 3L),
+    gammafit_topic_count = c(2L, 2L)
+  )
+
+  observed <- .topic_gene_assignment_for_optimization(assignments, topic_terms)
+
+  expect_equal(observed[target_gene == "G1", gene_gammafit_topics], "1;2")
+  expect_equal(observed[target_gene == "G2", gene_gammafit_topics], "2;3")
+  expect_identical(observed$gene_term_id, observed$peak_term_id)
+  expect_identical(observed$gene_gammafit_topics, observed$peak_gammafit_topics)
+})
+
+test_that("standard gene-expression extraction optimizes gene-only assignments", {
+  theta <- rbind(
+    `C1::TF1` = c(0.9, 0.1),
+    `C2::TF1` = c(0.1, 0.9)
+  )
+  colnames(theta) <- c("Topic1", "Topic2")
+  phi <- rbind(
+    Topic1 = c(0.9, 0.1),
+    Topic2 = c(0.1, 0.9)
+  )
+  colnames(phi) <- c("GENE:G1", "GENE:G2")
+  dtm <- Matrix::Matrix(
+    matrix(c(5, 1, 1, 5), nrow = 2, byrow = TRUE),
+    sparse = TRUE,
+    dimnames = list(rownames(theta), colnames(phi))
+  )
+  edges <- data.table::data.table(
+    doc_id = rownames(theta),
+    condition_id = c("C1", "C2"),
+    tf = "TF1",
+    gene_key = c("G1", "G2"),
+    gene_expr_condition = c(5, 5)
+  )
+  out_dir <- withr::local_tempdir()
+
+  run_tfdocs_report_from_topic_base(
+    topic_base = list(theta = theta, phi = phi),
+    dtm = dtm,
+    edges_docs = edges,
+    out_dir = out_dir,
+    doc_design = "condition",
+    fp_term_mode = "gene_expression",
+    binarize_method = "topn",
+    top_n_terms = 1L,
+    in_topic_min_terms = 1L,
+    topic_term_assignment_method = "gammafit_maxprob",
+    optimize_topics = TRUE,
+    run_topic_assignment_qc = FALSE,
+    topic_merge_min_genes = 1L,
+    topic_merge_min_links = 1L,
+    topic_merge_similarity_threshold = 1,
+    topic_tf_membership_cutoff = 0,
+    extraction_steps = "topic_terms"
+  )
+
+  expect_true(file.exists(file.path(out_dir, "topic_gene_assignment.csv")))
+  expect_true(file.exists(file.path(out_dir, "topic_gene_assignment_raw.csv")))
+  expect_false(file.exists(file.path(out_dir, "topic_gene_peak_assignment.csv")))
+  summary <- data.table::fread(file.path(out_dir, "topic_term_assignment_summary.csv"))
+  expect_identical(summary$fp_term_mode, "gene_expression")
+  expect_identical(summary$assignment_method, "gammafit_maxprob_optimized")
 })
 
 test_that("gene-expression document mode excludes peaks and footprint weighting", {
@@ -2872,7 +2968,7 @@ test_that("pairwise condition gene log2FC uses the requested condition order", {
   expect_equal(observed$log2fc_condition_1_vs_2, c(log2(10 / 4), 0, log2(1 / 8)))
 })
 
-test_that("condition comparison-union filtering is condition specific", {
+test_that("condition comparison-union filtering uses one global gene universe", {
   expression <- matrix(
     c(
       3, 3, 1, 1,
@@ -2920,32 +3016,51 @@ test_that("condition comparison-union filtering is condition specific", {
     comparisons = comparisons,
     conditions = colnames(expression),
     abs_log2fc_min = 1,
+    expression_min = 2,
     pseudocount = 1,
     overwrite = TRUE,
     verbose = FALSE
   )
 
   expect_equal(nrow(unique(observed$comparison_genes[, .(comparison_id)])), 2L)
+  expect_setequal(observed$global_gene_union$gene_key, c("GeneAB", "GeneAC", "GeneB"))
   expect_setequal(
     observed$condition_gene_union[condition_id == "ConditionA", gene_key],
-    c("GeneAB", "GeneAC", "GeneB")
+    c("GeneAB", "GeneAC")
   )
   expect_setequal(
     observed$condition_gene_union[condition_id == "ConditionB", gene_key],
-    c("GeneAB", "GeneB")
+    c("GeneAC", "GeneB")
   )
   expect_setequal(
     observed$condition_gene_union[condition_id == "ConditionC", gene_key],
-    "GeneAC"
+    "GeneAB"
   )
   condition_c <- data.table::fread(
     observed$manifest[condition_id == "ConditionC", path],
     showProgress = FALSE
   )
-  expect_setequal(condition_c$gene_key, "GeneAC")
-  expect_true(all(observed$manifest$filter == "target_gene_comparison_union_abs_log2fc"))
-  expect_true(all(observed$manifest$filter_scope == "condition"))
+  expect_setequal(condition_c$gene_key, "GeneAB")
+  expect_true(all(observed$manifest$filter == "target_gene_global_comparison_union_abs_log2fc_and_expression"))
+  expect_true(all(observed$manifest$filter_scope == "global_comparison_union_then_condition_expression"))
+  expect_true(all(nzchar(observed$manifest$comparison_signature)))
+  expect_true(file.exists(file.path(output_dir, "global_differential_gene_union.csv")))
+  expect_true(file.exists(file.path(output_dir, "condition_gene_expression.csv")))
   expect_true(file.exists(file.path(output_dir, "condition_comparison_gene_filter_summary.csv")))
+
+  rebuilt <- .module3_filter_condition_links_by_comparison_union(
+    input_dir = input_dir,
+    output_dir = output_dir,
+    gene_expression = expression,
+    comparisons = comparisons,
+    conditions = colnames(expression),
+    abs_log2fc_min = 0.5,
+    expression_min = 2,
+    pseudocount = 1,
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  expect_true(all(rebuilt$manifest$abs_log2fc_min == 0.5))
 })
 
 test_that("condition document-term QC separates gene and peak terms", {
@@ -2959,4 +3074,133 @@ test_that("condition document-term QC separates gene and peak terms", {
   expect_setequal(observed$term_type, c("Gene", "Peak"))
   expect_equal(observed[doc_id == "A::TF1" & term_type == "Gene", n_terms], 1)
   expect_equal(observed[doc_id == "A::TF1" & term_type == "Peak", term_mass], 3)
+})
+
+test_that("condition gene specificity preserves mass and paired term weights", {
+  doc_term <- data.table::data.table(
+    doc_id = rep(c("A::TF1", "B::TF1"), each = 4L),
+    term_id = rep(c("GENE:G1", "PEAK:G1", "GENE:G2", "PEAK:G2"), 2L),
+    pseudo_count_log = 10
+  )
+  expression_file <- tempfile(fileext = ".csv")
+  data.table::fwrite(data.table::data.table(
+    condition_id = rep(c("A", "B"), each = 2L),
+    gene_key = rep(c("G1", "G2"), 2L),
+    expression = c(3, 2, 1, 2)
+  ), expression_file)
+
+  observed <- .module3_apply_condition_gene_specificity(
+    doc_term = doc_term,
+    expression_file = expression_file,
+    count_column = "pseudo_count_log",
+    expression_min = 1,
+    temperature = 0.5,
+    uniform_floor = 0.1
+  )
+  weighted <- observed$doc_term
+
+  expect_equal(weighted[, sum(pseudo_count_log), by = doc_id]$V1, c(40, 40))
+  expect_true(all(weighted$pseudo_count_log >= 1))
+  expect_equal(
+    weighted[doc_id == "A::TF1" & term_id == "GENE:G1", pseudo_count_log],
+    weighted[doc_id == "A::TF1" & term_id == "PEAK:G1", pseudo_count_log]
+  )
+  expect_gt(
+    weighted[doc_id == "A::TF1" & term_id == "GENE:G1", pseudo_count_log],
+    weighted[doc_id == "B::TF1" & term_id == "GENE:G1", pseudo_count_log]
+  )
+  expect_equal(observed$audit$max_document_token_difference, 0)
+  expect_equal(observed$audit$expression_matched_fraction, 1)
+})
+
+test_that("condition TF expression weights balanced aggregate Peaks before count conversion", {
+  edges <- data.table::data.table(
+    condition_label = rep(c("A", "B"), each = 2L),
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = rep(c("G1", "G2"), 2L),
+    peak_id = rep(c("P1", "P2"), 2L),
+    fp_score_condition = 2,
+    gene_expr_condition = 10,
+    tf_expr_condition = rep(c(255, 3), each = 2L)
+  )
+
+  baseline <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    count_scale = 50,
+    fp_term_mode = "aggregate",
+    condition_peak_weighting = "none"
+  )
+  implicit_baseline <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    count_scale = 50,
+    fp_term_mode = "aggregate"
+  )
+  weighted <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    count_scale = 50,
+    fp_term_mode = "aggregate",
+    condition_peak_weighting = "tf_expression"
+  )
+
+  expect_equal(implicit_baseline, baseline)
+  expect_equal(
+    weighted[term_id == "GENE:G1", pseudo_count_log],
+    baseline[term_id == "GENE:G1", pseudo_count_log]
+  )
+  expect_gt(
+    weighted[doc_id == "A::TF1" & term_id == "PEAK:G1", pseudo_count_log],
+    baseline[doc_id == "A::TF1" & term_id == "PEAK:G1", pseudo_count_log]
+  )
+  expect_lt(
+    weighted[doc_id == "B::TF1" & term_id == "PEAK:G1", pseudo_count_log],
+    baseline[doc_id == "B::TF1" & term_id == "PEAK:G1", pseudo_count_log]
+  )
+  expect_gt(
+    weighted[doc_id == "A::TF1" & term_id == "PEAK:G1", weight],
+    weighted[doc_id == "B::TF1" & term_id == "PEAK:G1", weight]
+  )
+
+  audit <- attr(weighted, "condition_peak_weighting_audit")
+  expect_equal(audit$weighting, "tf_expression")
+  expect_equal(audit$scaling, "per_tf_log2p1_median")
+  expect_equal(audit$multiplier_median, 1)
+  expect_lt(audit$multiplier_min, 1)
+  expect_gt(audit$multiplier_max, 1)
+  expect_equal(audit$balanced_before_tf_weighting_total_peak_gene_ratio, 1)
+})
+
+test_that("single-condition TF expression leaves aggregate Peak weights unchanged", {
+  edges <- data.table::data.table(
+    condition_label = "A",
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = c("G1", "G2"),
+    peak_id = c("P1", "P2"),
+    fp_score_condition = c(2, 3),
+    gene_expr_condition = c(8, 12),
+    tf_expr_condition = 100
+  )
+  baseline <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    fp_term_mode = "aggregate"
+  )
+  weighted <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    fp_term_mode = "aggregate",
+    condition_peak_weighting = "tf_expression"
+  )
+
+  for (column in names(baseline)) {
+    expect_equal(weighted[[column]], baseline[[column]])
+  }
+  audit <- attr(weighted, "condition_peak_weighting_audit")
+  expect_equal(audit$n_single_condition_tfs, 1L)
+  expect_equal(audit$multiplier_min, 1)
+  expect_equal(audit$multiplier_max, 1)
 })

@@ -295,8 +295,8 @@
   out[]
 }
 
-# Filter each condition's links to genes that are differential in at least one
-# configured comparison involving that condition. Link files are read and
+# Select one gene union from every configured comparison, then filter each
+# condition to union genes expressed in that condition. Link files are read and
 # written one condition at a time to keep peak memory bounded.
 #
 # @noRd
@@ -306,6 +306,7 @@
                                                                  comparisons,
                                                                  conditions = NULL,
                                                                  abs_log2fc_min = 1,
+                                                                 expression_min = 0,
                                                                  pseudocount = 1,
                                                                  overwrite = FALSE,
                                                                  verbose = TRUE) {
@@ -318,9 +319,13 @@
     .log_abort("gene_expression gene row names must be unique.")
   }
   abs_log2fc_min <- as.numeric(abs_log2fc_min[[1L]])
+  expression_min <- as.numeric(expression_min[[1L]])
   pseudocount <- as.numeric(pseudocount[[1L]])
   if (!is.finite(abs_log2fc_min) || abs_log2fc_min < 0) {
     .log_abort("abs_log2fc_min must be a non-negative number.")
+  }
+  if (!is.finite(expression_min) || expression_min < 0) {
+    .log_abort("expression_min must be a non-negative number.")
   }
   if (!is.finite(pseudocount) || pseudocount <= 0) {
     .log_abort("pseudocount must be a positive number.")
@@ -349,27 +354,59 @@
       "Condition(s) missing from gene_expression: {paste(missing_expression, collapse = ', ')}"
     )
   }
+  signature_rows <- comparison_map[
+    order(comparison_id, condition_1, condition_2),
+    .(comparison_id, condition_1, condition_2)
+  ]
+  comparison_signature <- digest::digest(
+    paste(
+      signature_rows$comparison_id,
+      signature_rows$condition_1,
+      signature_rows$condition_2,
+      sep = "\t",
+      collapse = "\n"
+    ),
+    algo = "xxhash64",
+    serialize = FALSE
+  )
 
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   manifest_path <- file.path(output_dir, "condition_links_manifest.csv")
   summary_path <- file.path(output_dir, "condition_links_summary.csv")
   comparison_path <- file.path(output_dir, "condition_comparison_gene_log2fc.csv")
-  union_path <- file.path(output_dir, "condition_differential_gene_union.csv")
+  union_path <- file.path(output_dir, "global_differential_gene_union.csv")
+  expression_path <- file.path(output_dir, "condition_gene_expression.csv")
   comparison_summary_path <- file.path(output_dir, "condition_comparison_gene_filter_summary.csv")
   required_outputs <- c(
-    manifest_path, summary_path, comparison_path, union_path,
+    manifest_path, summary_path, comparison_path, union_path, expression_path,
     comparison_summary_path
   )
   if (!isTRUE(overwrite) && all(file.exists(required_outputs))) {
-    if (isTRUE(verbose)) {
-      .log_inform("Reusing comparison-union-filtered condition links in {output_dir}.")
+    existing_manifest <- data.table::fread(manifest_path, showProgress = FALSE)
+    reusable <- all(c(
+      "filter_scope", "comparison_signature", "abs_log2fc_min",
+      "expression_min", "pseudocount"
+    ) %in% names(existing_manifest)) &&
+      all(existing_manifest$filter_scope == "global_comparison_union_then_condition_expression") &&
+      all(existing_manifest$comparison_signature == comparison_signature) &&
+      all(as.numeric(existing_manifest$abs_log2fc_min) == abs_log2fc_min) &&
+      all(as.numeric(existing_manifest$expression_min) == expression_min) &&
+      all(as.numeric(existing_manifest$pseudocount) == pseudocount)
+    if (isTRUE(reusable)) {
+      if (isTRUE(verbose)) {
+        .log_inform("Reusing global-comparison-union-filtered condition links in {output_dir}.")
+      }
+      return(invisible(list(
+        manifest = existing_manifest,
+        summary = data.table::fread(summary_path, showProgress = FALSE),
+        comparison_genes = data.table::fread(comparison_path, showProgress = FALSE),
+        global_gene_union = data.table::fread(union_path, showProgress = FALSE),
+        condition_gene_expression = data.table::fread(expression_path, showProgress = FALSE)
+      )))
     }
-    return(invisible(list(
-      manifest = data.table::fread(manifest_path, showProgress = FALSE),
-      summary = data.table::fread(summary_path, showProgress = FALSE),
-      comparison_genes = data.table::fread(comparison_path, showProgress = FALSE),
-      condition_gene_union = data.table::fread(union_path, showProgress = FALSE)
-    )))
+    if (isTRUE(verbose)) {
+      .log_warn("Existing condition links use an obsolete filter scope or expression threshold; rebuilding them.")
+    }
   }
 
   comparison_rows <- lapply(seq_len(nrow(comparison_map)), function(i) {
@@ -410,22 +447,31 @@
   if (!nrow(passing)) {
     .log_abort("No genes pass abs(log2FC) >= {abs_log2fc_min} in the configured comparisons.")
   }
-  union_long <- data.table::rbindlist(list(
-    passing[, .(condition_id = condition_1, gene_key, comparison_id, abs_log2fc)],
-    passing[, .(condition_id = condition_2, gene_key, comparison_id, abs_log2fc)]
-  ))
-  condition_union <- union_long[, .(
+  global_union <- passing[, .(
     max_abs_log2fc = max(abs_log2fc),
     n_comparisons_passed = data.table::uniqueN(comparison_id),
     supporting_comparisons = paste(sort(unique(comparison_id)), collapse = ";")
-  ), by = .(condition_id, gene_key)]
-  condition_union[, `:=`(
+  ), by = gene_key]
+  global_union[, `:=`(
     pass_abs_log2fc = TRUE,
     abs_log2fc_min = abs_log2fc_min,
     pseudocount = pseudocount
   )]
-  data.table::setorder(condition_union, condition_id, -max_abs_log2fc, gene_key)
-  data.table::fwrite(condition_union, union_path)
+  data.table::setorder(global_union, -max_abs_log2fc, gene_key)
+  data.table::fwrite(global_union, union_path)
+
+  expression_rows <- lapply(involved, function(condition) {
+    data.table::data.table(
+      condition_id = condition,
+      gene_key = global_union$gene_key,
+      expression = as.numeric(gene_expression[global_union$gene_key, condition]),
+      expression_min = expression_min
+    )
+  })
+  condition_expression <- data.table::rbindlist(expression_rows)
+  condition_expression[, expressed := is.finite(expression) & expression >= expression_min]
+  data.table::setorder(condition_expression, condition_id, gene_key)
+  data.table::fwrite(condition_expression, expression_path)
 
   comparison_summary <- comparison_genes[, .(
     n_genes_tested = .N,
@@ -453,11 +499,15 @@
 
   manifest_rows <- vector("list", nrow(source_manifest))
   summary_rows <- vector("list", nrow(source_manifest))
+  unlink(file.path(output_dir, "condition_differential_gene_union.csv"), force = TRUE)
   for (i in seq_len(nrow(source_manifest))) {
     condition <- as.character(source_manifest$condition_id[[i]])
     format <- tolower(as.character(source_manifest$format[[i]]))
     source <- as.character(source_manifest$path[[i]])
-    genes <- condition_union[condition_id == condition, gene_key]
+    genes <- condition_expression[
+      condition_id == condition & expressed %in% TRUE,
+      gene_key
+    ]
     links <- data.table::as.data.table(.module3_read_table(
       source,
       format,
@@ -483,11 +533,14 @@
       format = format,
       n_rows_scanned = as.double(n_source),
       n_links = as.double(nrow(links)),
-      filter = "target_gene_comparison_union_abs_log2fc",
-      filter_scope = "condition",
+      filter = "target_gene_global_comparison_union_abs_log2fc_and_expression",
+      filter_scope = "global_comparison_union_then_condition_expression",
+      comparison_signature = comparison_signature,
       abs_log2fc_min = abs_log2fc_min,
+      expression_min = expression_min,
       pseudocount = pseudocount,
-      n_condition_differential_genes = as.double(length(genes))
+      n_global_differential_genes = as.double(nrow(global_union)),
+      n_expressed_global_genes = as.double(length(genes))
     )
     summary_rows[[i]] <- data.table::data.table(
       condition_id = condition,
@@ -501,8 +554,10 @@
       } else {
         NA_real_
       },
-      n_condition_differential_genes = as.double(length(genes)),
+      n_global_differential_genes = as.double(nrow(global_union)),
+      n_expressed_global_genes = as.double(length(genes)),
       abs_log2fc_min = abs_log2fc_min,
+      expression_min = expression_min,
       pseudocount = pseudocount
     )
     rm(links)
@@ -514,18 +569,23 @@
   data.table::fwrite(summary, summary_path)
   if (isTRUE(verbose)) {
     .log_inform(
-      "Filtered {nrow(manifest)} condition-link files using per-condition differential-gene unions in {output_dir}."
+      "Filtered {nrow(manifest)} condition-link files using one global comparison-gene union followed by condition expression in {output_dir}."
     )
   }
   invisible(list(
     manifest = manifest,
     summary = summary,
     comparison_genes = comparison_genes,
-    condition_gene_union = condition_union,
+    global_gene_union = global_union,
+    condition_gene_expression = condition_expression,
+    condition_gene_union = condition_expression[expressed %in% TRUE, .(
+      condition_id, gene_key
+    )],
     manifest_path = manifest_path,
     summary_path = summary_path,
     comparison_genes_path = comparison_path,
-    condition_gene_union_path = union_path,
+    global_gene_union_path = union_path,
+    condition_gene_expression_path = expression_path,
     comparison_summary_path = comparison_summary_path
   ))
 }

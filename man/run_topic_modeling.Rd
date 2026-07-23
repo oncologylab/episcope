@@ -13,9 +13,19 @@ run_topic_modeling(
   method = NULL,
   k_grid = NULL,
   warplda_iterations = NULL,
+  warplda_sampler = NULL,
+  warplda_beta = NULL,
+  warplda_seed = NULL,
   topic_link_output = NULL,
   count_method = NULL,
+  count_scale = NULL,
   count_input = NULL,
+  condition_gene_weighting = NULL,
+  condition_peak_weighting = NULL,
+  condition_gene_expression_file = NULL,
+  condition_specificity_temperature = NULL,
+  condition_specificity_floor = NULL,
+  condition_specificity_expression_min = NULL,
   topic_score_method = NULL,
   topic_term_assignment_method = NULL,
   optimize_topics = NULL,
@@ -25,6 +35,9 @@ run_topic_modeling(
   topic_merge_similarity_threshold = NULL,
   topic_qc_umap_links_per_condition = NULL,
   topic_qc_top_tfs = NULL,
+  topic_qc_reference_condition = NULL,
+  topic_qc_upregulated_log2fc_min = NULL,
+  topic_qc_upregulated_pseudocount = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
   pathway_backend = NULL,
@@ -74,14 +87,48 @@ or use `10`.}
 \item{warplda_iterations}{Number of native WarpLDA iterations. If `NULL`,
 read from `project_config` or use `2000`.}
 
+\item{warplda_sampler}{Native WarpLDA sampler. If `NULL`, read from project
+config or use `"warp_omp"`.}
+
+\item{warplda_beta}{Topic-word prior. `NULL` uses `1/K`.}
+
+\item{warplda_seed}{Integer random seed for native WarpLDA.}
+
 \item{topic_link_output}{Topic-link output mode. If `NULL`, read from
 `project_config` or use `"pass"`.}
 
 \item{count_method}{Topic count conversion method. If `NULL`, read from
 `project_config` or use `"log"`.}
 
+\item{count_scale}{Positive pseudo-count scaling factor. If `NULL`, read
+from project config or use `50`.}
+
 \item{count_input}{Topic count column for model fitting. If `NULL`, inferred
 from `count_method`.}
+
+\item{condition_gene_weighting}{Condition-mode target-gene weighting. Use
+`"specificity"` to emphasize relative expression across conditions while
+retaining every document term and conserving document token totals.}
+
+\item{condition_peak_weighting}{Condition-mode aggregated-Peak weighting.
+Use `"tf_expression"` to multiply balanced Peak weights by the selected
+TF's condition-specific log expression relative to its median across
+included conditions before pseudo-count conversion.}
+
+\item{condition_gene_expression_file}{Long condition-gene expression CSV.
+If `NULL`, specificity weighting reads `condition_gene_expression.csv`
+under `filtered_dir`.}
+
+\item{condition_specificity_temperature}{Positive expression-specificity
+softmax temperature. If `NULL`, read from project config or use `0.5`.}
+
+\item{condition_specificity_floor}{Uniform expressed-condition share retained
+during specificity weighting. If `NULL`, read from project config or use
+`0.1`.}
+
+\item{condition_specificity_expression_min}{Minimum expression used to define
+expressed condition-gene pairs. If `NULL`, training reuses
+`threshold_gene_expr`.}
 
 \item{topic_score_method}{Topic-term score method for extraction. If `NULL`,
 read from `project_config` or use `"normtop_specificity"`.}
@@ -114,6 +161,15 @@ size per condition. Full-universe counts are not sampled.}
 
 \item{topic_qc_top_tfs}{Number of globally ranked TFs shown in the pooled
 TF-by-topic QC heatmap.}
+
+\item{topic_qc_reference_condition}{Optional reference condition for the
+upregulated assigned-target QC panel.}
+
+\item{topic_qc_upregulated_log2fc_min}{Minimum log2 fold change above the
+reference condition in that panel.}
+
+\item{topic_qc_upregulated_pseudocount}{Positive expression pseudocount for
+that log2 fold change.}
 
 \item{vae_device}{VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 If `NULL`, read from `project_config` or use `"auto"`.}

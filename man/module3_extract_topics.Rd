@@ -18,6 +18,10 @@ module3_extract_topics(
   run_topic_assignment_qc = NULL,
   topic_qc_umap_links_per_condition = 3000L,
   topic_qc_top_tfs = 150L,
+  topic_qc_condition_expression_file = NULL,
+  topic_qc_reference_condition = NULL,
+  topic_qc_upregulated_log2fc_min = 1,
+  topic_qc_upregulated_pseudocount = 1,
   k_workers = NULL,
   k_max_workers = 4L,
   k_memory_gb = NULL,
@@ -68,6 +72,19 @@ size per condition. Full-universe counts are never sampled.}
 
 \item{topic_qc_top_tfs}{Number of globally ranked TFs shown in the pooled
 TF-by-topic QC heatmap.}
+
+\item{topic_qc_condition_expression_file}{Optional complete condition-pair
+gene-expression audit CSV. When supplied, QC expression summaries use
+this complete matrix instead of the condition-filtered link rows.}
+
+\item{topic_qc_reference_condition}{Optional reference condition used to
+count assigned target genes with increased expression in the QC report.}
+
+\item{topic_qc_upregulated_log2fc_min}{Minimum log2 fold change above the
+reference condition for the upregulated-target QC panel.}
+
+\item{topic_qc_upregulated_pseudocount}{Positive expression pseudocount used
+for the reference-condition log2 fold change.}
 
 \item{k_workers}{Number of K values to extract concurrently. `NULL` selects
 workers adaptively from current memory and CPU headroom.}

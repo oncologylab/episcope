@@ -42,6 +42,10 @@ test_that("native WarpLDA returns normalized topic matrices", {
   expect_equal(colnames(fit$phi), colnames(dtm))
   expect_true(is.finite(fit$metrics$perplexity))
   expect_true(fit$metrics$n_tokens > 0)
+  expect_identical(fit$metrics$iterations_requested, 20L)
+  expect_identical(fit$metrics$iterations_completed, 20L)
+  expect_false(fit$metrics$converged)
+  expect_true(is.na(fit$metrics$final_check_relative_change))
 })
 
 test_that("native WarpLDA is deterministic with one thread and fixed seed", {
@@ -241,6 +245,14 @@ test_that("run_warplda_models uses native fit files and cache reuse", {
     verbose = FALSE
   )
   expect_equal(out1$metrics$K, c(2L, 3L))
+  expect_true(all(c(
+    "iterations_requested", "iterations_completed",
+    "final_check_relative_change", "converged",
+    "alpha", "beta", "seed", "threads"
+  ) %in% names(out1$metrics)))
+  expect_equal(out1$metrics$alpha, c(0.5, 0.5))
+  expect_equal(out1$metrics$beta, c(0.1, 0.1))
+  expect_equal(out1$metrics$seed, c(9L, 9L))
   expect_true(all(file.exists(out1$fit_files)))
   fit_k2 <- readRDS(out1$fit_files[["2"]])
   expect_identical(fit_k2$model$backend, "craftgrn_native_warplda")

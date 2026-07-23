@@ -61,6 +61,12 @@ test_that("project config validation rejects unknown and malformed entries", {
   )
   expect_true(validate(base))
 
+  expression_filter <- base
+  expression_filter$topic_condition_gene_expression_min <- 10
+  expect_true(validate(expression_filter))
+  expression_filter$topic_condition_gene_expression_min <- -1
+  expect_error(validate(expression_filter), "non-negative", fixed = TRUE)
+
   misspelled <- base
   misspelled$topic_link_prob_cutof <- 0.3
   expect_error(
@@ -182,6 +188,11 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
       topic_k_grid = c(10L, 20L, 30L),
       topic_term_assignment_method = "gammafit_maxprob",
       topic_gammafit_thrP = list(lda = 0.8, multivi = 0.85),
+      topic_condition_gene_weighting = "specificity",
+      topic_condition_peak_weighting = "tf_expression",
+      topic_condition_specificity_temperature = 0.5,
+      topic_condition_specificity_floor = 0.1,
+      topic_condition_specificity_expression_min = 10,
       topic_vae_device = "cpu",
       pathway_species = "human"
     )
@@ -209,6 +220,18 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
   bad_gammafit <- cfg
   bad_gammafit$module3$topic_gammafit_thrP$multivi <- 1.2
   expect_error(validate(bad_gammafit), "GammaFit probability", fixed = TRUE)
+
+  bad_specificity <- cfg
+  bad_specificity$module3$topic_condition_specificity_floor <- 1
+  expect_error(validate(bad_specificity), "specificity floors", fixed = TRUE)
+
+  bad_peak_weighting <- cfg
+  bad_peak_weighting$module3$topic_condition_peak_weighting <- "raw_expression"
+  expect_error(
+    validate(bad_peak_weighting),
+    "module3_topic_condition_peak_weighting",
+    fixed = TRUE
+  )
 
   unknown_module3 <- cfg
   unknown_module3$module3$pathway_speces <- "human"

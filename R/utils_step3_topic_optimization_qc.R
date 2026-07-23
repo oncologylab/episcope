@@ -223,6 +223,12 @@
 
   gene <- select_group(pairs$gene_term_id, candidate_gene)
   peak <- select_group(pairs$peak_term_id, candidate_peak)
+  raw_status <- if ("assignment_status" %in% names(pairs)) {
+    as.character(pairs$assignment_status)
+  } else {
+    rep(NA_character_, nrow(pairs))
+  }
+  pairs[, raw_assignment_status := raw_status]
   pairs[, `:=`(
     raw_assigned_topic = suppressWarnings(as.integer(assigned_topic)),
     optimized_gene_topic = gene$topic,
@@ -294,8 +300,18 @@
     reason <- NULL
     if (length(groups) <= min_topics) break
     if (length(small)) {
-      source_pos <- small[order(links[small], genes[small], groups[small])][[1L]]
-      target_pos <- which.max(similarity[source_pos, ])
+      small <- small[order(links[small], genes[small], groups[small])]
+      nearest <- vapply(small, function(source) {
+        which.max(similarity[source, ])
+      }, integer(1L))
+      nearest_similarity <- similarity[cbind(small, nearest)]
+      eligible <- which(
+        is.finite(nearest_similarity) &
+          nearest_similarity >= similarity_threshold
+      )
+      if (!length(eligible)) break
+      source_pos <- small[eligible[[1L]]]
+      target_pos <- nearest[eligible[[1L]]]
       reason <- data.table::fcase(
         links[[source_pos]] < min_links & genes[[source_pos]] < min_genes, "small_links_and_genes",
         links[[source_pos]] < min_links, "small_links",
@@ -507,17 +523,33 @@
   )]
   raw <- x[raw_aligned == TRUE]
   optimized <- x[optimized_aligned == TRUE]
-  raw_counts <- raw[, .(
+  raw_counts <- unique(raw[, .(
+    raw_topic = raw_target_topic,
+    tf_index,
+    target_index
+  )])[, .(
     links = .N,
-    genes = data.table::uniqueN(target_index)
-  ), by = .(raw_topic = raw_target_topic)]
-  optimized_counts <- optimized[, .(
+    genes = data.table::uniqueN(target_index),
+    tfs = data.table::uniqueN(tf_index)
+  ), by = raw_topic]
+  optimized_counts <- unique(optimized[, .(
+    optimized_topic,
+    tf_index,
+    target_index
+  )])[, .(
     links = .N,
-    genes = data.table::uniqueN(target_index)
+    genes = data.table::uniqueN(target_index),
+    tfs = data.table::uniqueN(tf_index)
   ), by = optimized_topic]
-  condition_topic <- optimized[, .(
+  condition_topic <- unique(optimized[, .(
+    condition_id,
+    optimized_topic,
+    tf_index,
+    target_index
+  )])[, .(
     links = .N,
-    genes = data.table::uniqueN(target_index)
+    genes = data.table::uniqueN(target_index),
+    tfs = data.table::uniqueN(tf_index)
   ), by = .(condition_id, optimized_topic)]
 
   raw_unique <- unique(raw[, .(
@@ -591,7 +623,11 @@
                                                dtm,
                                                topic_terms,
                                                pair_assignment,
+                                               assignment_mode = c("gene_peak", "gene_only"),
                                                condition_gene_expression = NULL,
+                                               condition_upregulated_genes = NULL,
+                                               upregulation_reference_condition = NULL,
+                                               upregulated_log2fc_min = 1,
                                                min_genes = 50L,
                                                min_links = 200L,
                                                similarity_threshold = 0.90,
@@ -599,6 +635,7 @@
                                                umap_max_links_per_condition = 10000L,
                                                seed = 20260716L,
                                                chunk_size = 50000L) {
+  assignment_mode <- match.arg(assignment_mode)
   min_genes <- suppressWarnings(as.integer(min_genes)[[1L]])
   min_links <- suppressWarnings(as.integer(min_links)[[1L]])
   similarity_threshold <- suppressWarnings(as.numeric(similarity_threshold)[[1L]])
@@ -786,13 +823,22 @@
     raw_phi = phi,
     raw_topic_terms = topic_terms,
     raw_pair_assignment = pair_assignment,
+    assignment_mode = assignment_mode,
     condition_gene_expression = condition_gene_expression,
+    condition_upregulated_genes = condition_upregulated_genes,
+    upregulation_reference_condition = upregulation_reference_condition,
+    upregulated_log2fc_min = upregulated_log2fc_min,
     raw_to_optimized = stats::setNames(merge$mapping, raw_topic_ids),
     merge_audit = merge$audit,
     sample_rows = sample_rows,
     raw_sample_probability = raw_sample_posterior$sample_probability,
     optimized_sample_probability = optimized_sample_posterior$sample_probability,
     tf_topic_cutoff = tf_topic_cutoff,
+    min_genes = min_genes,
+    min_links = min_links,
+    similarity_threshold = similarity_threshold,
+    umap_max_links_per_condition = umap_max_links_per_condition,
+    qc_seed = as.integer(seed),
     qc = qc
   )
 }
@@ -920,25 +966,41 @@
                                    title,
                                    subtitle = NULL,
                                    row_order = NULL,
-                                   column_order = NULL) {
+                                   column_order = NULL,
+                                   autoscale = FALSE) {
   if (is.null(row_order)) row_order <- .m3_qc_cluster_order(x, "row")
   if (is.null(column_order)) {
     column_order <- .m3_qc_cluster_order(x, "column")
   }
   long <- .m3_qc_matrix_long(x, row_order, column_order)
-  ggplot2::ggplot(
+  p <- ggplot2::ggplot(
     long,
     ggplot2::aes(column_label, row_label, fill = value)
   ) +
-    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.2) +
-    ggplot2::scale_fill_gradient2(
+    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.2)
+  if (isTRUE(autoscale)) {
+    values <- long$value[is.finite(long$value)]
+    limits <- range(values)
+    if (length(values) == 0L || diff(limits) <= 0) {
+      limits <- c(0, max(c(values, 1), na.rm = TRUE))
+    }
+    p <- p + ggplot2::scale_fill_viridis_c(
+      option = "C",
+      limits = limits,
+      oob = scales::squish,
+      name = "Mean Jaccard"
+    )
+  } else {
+    p <- p + ggplot2::scale_fill_gradient2(
       low = "#2166AC",
       mid = "#F7F7F7",
       high = "#B2182B",
       midpoint = 0.5,
       limits = c(0, 1),
       name = "Similarity"
-    ) +
+    )
+  }
+  p +
     ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
     ggplot2::coord_fixed(ratio = 1) +
     .m3_qc_theme() +
@@ -1213,19 +1275,25 @@
   gap <- max(1, k * 0.04)
   link_start <- k + gap
   gene_start <- link_start + bar_width + gap
+  tf_start <- gene_start + bar_width + gap
   link_max <- max(count_data$links, na.rm = TRUE)
   gene_max <- max(count_data$genes, na.rm = TRUE)
+  tf_max <- max(count_data$tfs, na.rm = TRUE)
   if (!is.finite(link_max) || link_max <= 0) link_max <- 1
   if (!is.finite(gene_max) || gene_max <= 0) gene_max <- 1
+  if (!is.finite(tf_max) || tf_max <= 0) tf_max <- 1
   count_data[, `:=`(
     link_xmax = link_start + links / link_max * bar_width,
     gene_xmax = gene_start + genes / gene_max * bar_width,
+    tf_xmax = tf_start + tfs / tf_max * bar_width,
     link_label = .m3_qc_compact_count(links),
     gene_label = .m3_qc_compact_count(genes),
+    tf_label = .m3_qc_compact_count(tfs),
     link_inside = links / link_max >= 0.28,
-    gene_inside = genes / gene_max >= 0.28
+    gene_inside = genes / gene_max >= 0.28,
+    tf_inside = tfs / tf_max >= 0.28
   )]
-  right_edge <- gene_start + bar_width + 1.1
+  right_edge <- tf_start + bar_width + 1.1
   title_y <- k + 1.15
 
   ggplot2::ggplot() +
@@ -1258,6 +1326,18 @@
         ymax = y + 0.40
       ),
       fill = "#D97824",
+      colour = "#30383F",
+      linewidth = 0.2
+    ) +
+    ggplot2::geom_rect(
+      data = count_data,
+      ggplot2::aes(
+        xmin = tf_start,
+        xmax = tf_xmax,
+        ymin = y - 0.40,
+        ymax = y + 0.40
+      ),
+      fill = "#6A5ACD",
       colour = "#30383F",
       linewidth = 0.2
     ) +
@@ -1297,6 +1377,24 @@
       fontface = "bold",
       size = 3.0
     ) +
+    ggplot2::geom_text(
+      data = count_data[tf_inside == TRUE],
+      ggplot2::aes(tf_xmax - 0.12, y, label = tf_label),
+      hjust = 1,
+      colour = "white",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
+    ggplot2::geom_text(
+      data = count_data[tf_inside == FALSE],
+      ggplot2::aes(tf_xmax + 0.12, y, label = tf_label),
+      hjust = 0,
+      colour = "#20272E",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.0
+    ) +
     ggplot2::annotate(
       "text",
       x = link_start + bar_width / 2,
@@ -1311,6 +1409,15 @@
       x = gene_start + bar_width / 2,
       y = title_y,
       label = "Target genes",
+      family = "Helvetica",
+      fontface = "bold",
+      size = 3.5
+    ) +
+    ggplot2::annotate(
+      "text",
+      x = tf_start + bar_width / 2,
+      y = title_y,
+      label = "TFs",
       family = "Helvetica",
       fontface = "bold",
       size = 3.5
@@ -1399,8 +1506,10 @@
                              colors = NULL,
                              background = NULL,
                              label_column = NULL,
+                             label_style = c("box", "text"),
                              seed = 20260716L,
                              compact = FALSE) {
+  label_style <- match.arg(label_style)
   foreground <- data[!is.na(get(colour_column))]
   p <- ggplot2::ggplot()
   point_layer <- function(data, mapping, colour = NULL, alpha, size) {
@@ -1443,27 +1552,49 @@
       UMAP2 = stats::median(UMAP2),
       label = as.character(get(label_column)[[1L]])
     ), by = .(colour_value__ = get(colour_column))]
-    p <- p + ggrepel::geom_label_repel(
-      data = centroids,
-      ggplot2::aes(
-        UMAP1,
-        UMAP2,
-        label = label,
-        fill = colour_value__
-      ),
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.2,
-      colour = "white",
-      box.padding = 0.3,
-      point.padding = 0.18,
-      min.segment.length = 0,
-      max.overlaps = Inf,
-      seed = as.integer(seed),
-      label.size = 0.22,
-      segment.colour = NA,
-      show.legend = FALSE
-    )
+    if (identical(label_style, "text")) {
+      p <- p + ggrepel::geom_text_repel(
+        data = centroids,
+        ggplot2::aes(
+          UMAP1,
+          UMAP2,
+          label = label,
+          colour = colour_value__
+        ),
+        family = "Helvetica",
+        fontface = "bold",
+        size = 3.2,
+        box.padding = 0.25,
+        point.padding = 0.14,
+        min.segment.length = 0,
+        max.overlaps = Inf,
+        seed = as.integer(seed),
+        segment.colour = NA,
+        show.legend = FALSE
+      )
+    } else {
+      p <- p + ggrepel::geom_label_repel(
+        data = centroids,
+        ggplot2::aes(
+          UMAP1,
+          UMAP2,
+          label = label,
+          fill = colour_value__
+        ),
+        family = "Helvetica",
+        fontface = "bold",
+        size = 3.2,
+        colour = "white",
+        box.padding = 0.3,
+        point.padding = 0.18,
+        min.segment.length = 0,
+        max.overlaps = Inf,
+        seed = as.integer(seed),
+        label.size = 0.22,
+        segment.colour = NA,
+        show.legend = FALSE
+      )
+    }
   }
   p <- p +
     ggplot2::scale_colour_manual(values = colors, guide = "none") +
@@ -1671,6 +1802,307 @@
   out
 }
 
+.m3_qc_document_supported_topic_expression_matrix <- function(optimization,
+                                                               conditions,
+                                                               topics) {
+  out <- matrix(
+    NA_real_,
+    nrow = length(conditions),
+    ncol = length(topics),
+    dimnames = list(conditions, paste0("Topic ", topics))
+  )
+  assignments <- data.table::as.data.table(optimization$qc$assignments)
+  expression <- data.table::as.data.table(
+    optimization$condition_gene_expression
+  )
+  target_levels <- as.character(optimization$qc$target_levels)
+  required_assignments <- c(
+    "doc_index", "target_index", "condition_id", "optimized_topic"
+  )
+  required_expression <- c("condition_id", "target_gene", "expression")
+  if (!all(required_assignments %in% names(assignments)) ||
+      !all(required_expression %in% names(expression)) ||
+      !length(target_levels)) {
+    return(out)
+  }
+  values <- assignments[
+    condition_id %in% conditions &
+      is.finite(target_index) & target_index >= 1L &
+      target_index <= length(target_levels) &
+      is.finite(optimized_topic) & optimized_topic %in% topics,
+    .(
+      doc_index = as.integer(doc_index),
+      condition_id = as.character(condition_id),
+      target_gene = target_levels[as.integer(target_index)],
+      topic = as.integer(optimized_topic)
+    )
+  ]
+  values <- unique(values)
+  if (!nrow(values)) return(out)
+  values <- merge(
+    values,
+    expression[condition_id %in% conditions],
+    by = c("condition_id", "target_gene"),
+    all = FALSE,
+    sort = FALSE
+  )
+  values <- values[is.finite(expression) & expression >= 0]
+  if (!nrow(values)) return(out)
+  values[, expression_log2 := log2(as.numeric(expression) + 1)]
+  means <- values[, .(
+    mean_expression = mean(expression_log2),
+    supporting_documents = data.table::uniqueN(doc_index),
+    supporting_targets = data.table::uniqueN(target_gene)
+  ), by = .(condition_id, topic)]
+  rows <- match(means$condition_id, conditions)
+  columns <- match(means$topic, topics)
+  valid <- is.finite(rows) & is.finite(columns)
+  out[cbind(rows[valid], columns[valid])] <- means$mean_expression[valid]
+  attr(out, "support") <- means
+  out
+}
+
+.m3_qc_document_expression_topic_share_matrix <- function(optimization,
+                                                           conditions,
+                                                           topics) {
+  out <- matrix(
+    0,
+    nrow = length(conditions),
+    ncol = length(topics),
+    dimnames = list(conditions, paste0("Topic ", topics))
+  )
+  assignments <- data.table::as.data.table(optimization$qc$assignments)
+  expression <- data.table::as.data.table(
+    optimization$condition_gene_expression
+  )
+  target_levels <- as.character(optimization$qc$target_levels)
+  required_assignments <- c(
+    "doc_index", "target_index", "condition_id", "optimized_topic"
+  )
+  required_expression <- c("condition_id", "target_gene", "expression")
+  if (!all(required_assignments %in% names(assignments)) ||
+      !all(required_expression %in% names(expression)) ||
+      !length(target_levels)) {
+    return(out)
+  }
+  documents <- unique(assignments[
+    condition_id %in% conditions,
+    .(doc_index = as.integer(doc_index), condition_id = as.character(condition_id))
+  ])
+  document_counts <- documents[, .(document_count = .N), by = condition_id]
+  values <- assignments[
+    condition_id %in% conditions &
+      is.finite(target_index) & target_index >= 1L &
+      target_index <= length(target_levels) &
+      is.finite(optimized_topic) & optimized_topic %in% topics,
+    .(
+      doc_index = as.integer(doc_index),
+      condition_id = as.character(condition_id),
+      target_gene = target_levels[as.integer(target_index)],
+      topic = as.integer(optimized_topic)
+    )
+  ]
+  values <- unique(values)
+  if (!nrow(values)) return(out)
+  values <- merge(
+    values,
+    expression[condition_id %in% conditions],
+    by = c("condition_id", "target_gene"),
+    all = FALSE,
+    sort = FALSE
+  )
+  values <- values[is.finite(expression) & expression >= 0]
+  if (!nrow(values)) return(out)
+  values[, expression_mass := log2(as.numeric(expression) + 1)]
+  document_topic <- values[, .(
+    expression_mass = sum(expression_mass)
+  ), by = .(doc_index, condition_id, topic)]
+  document_topic[, topic_share := expression_mass / sum(expression_mass), by = doc_index]
+  means <- document_topic[, .(
+    topic_share_sum = sum(topic_share)
+  ), by = .(condition_id, topic)]
+  means <- merge(means, document_counts, by = "condition_id", all.x = TRUE)
+  means[, mean_topic_share := topic_share_sum / document_count]
+  rows <- match(means$condition_id, conditions)
+  columns <- match(means$topic, topics)
+  valid <- is.finite(rows) & is.finite(columns)
+  out[cbind(rows[valid], columns[valid])] <- means$mean_topic_share[valid]
+  out
+}
+
+.m3_qc_upregulated_genes_from_comparisons <- function(comparison_genes,
+                                                       genes = NULL,
+                                                       reference_condition,
+                                                       log2fc_min = 1,
+                                                       pseudocount = 1) {
+  expression <- .m3_qc_condition_expression_from_comparisons(
+    comparison_genes,
+    genes = genes
+  )
+  .m3_qc_upregulated_genes_vs_reference(
+    expression,
+    reference_condition = reference_condition,
+    log2fc_min = log2fc_min,
+    pseudocount = pseudocount
+  )
+}
+
+.m3_qc_condition_expression_from_comparisons <- function(comparison_genes,
+                                                           genes = NULL) {
+  x <- data.table::as.data.table(comparison_genes)
+  long_required <- c("condition_id", "gene_key", "expression")
+  if (all(long_required %in% names(x))) {
+    if (!is.null(genes)) {
+      genes <- unique(as.character(genes))
+      genes <- genes[!is.na(genes) & nzchar(genes)]
+      x <- x[gene_key %in% genes]
+    }
+    out <- x[
+      !is.na(condition_id) & nzchar(condition_id) &
+        !is.na(gene_key) & nzchar(gene_key) &
+        is.finite(expression) & expression >= 0,
+      .(expression = max(as.numeric(expression))),
+      by = .(
+        condition_id = as.character(condition_id),
+        target_gene = as.character(gene_key)
+      )
+    ]
+    data.table::setorder(out, condition_id, target_gene)
+    return(out[])
+  }
+  required <- c(
+    "condition_1", "condition_2", "gene_key", "expression_1", "expression_2"
+  )
+  if (!all(required %in% names(x))) {
+    return(data.table::data.table(
+      condition_id = character(),
+      target_gene = character(),
+      expression = numeric()
+    ))
+  }
+  if (!is.null(genes)) {
+    genes <- unique(as.character(genes))
+    genes <- genes[!is.na(genes) & nzchar(genes)]
+    x <- x[gene_key %in% genes]
+  }
+  out <- data.table::rbindlist(list(
+    x[, .(
+      condition_id = as.character(condition_1),
+      target_gene = as.character(gene_key),
+      expression = as.numeric(expression_1)
+    )],
+    x[, .(
+      condition_id = as.character(condition_2),
+      target_gene = as.character(gene_key),
+      expression = as.numeric(expression_2)
+    )]
+  ))
+  out <- out[
+    !is.na(condition_id) & nzchar(condition_id) &
+      !is.na(target_gene) & nzchar(target_gene) &
+      is.finite(expression) & expression >= 0,
+    .(expression = max(expression)),
+    by = .(condition_id, target_gene)
+  ]
+  data.table::setorder(out, condition_id, target_gene)
+  out[]
+}
+
+.m3_qc_upregulated_genes_vs_reference <- function(condition_gene_expression,
+                                                   reference_condition,
+                                                   log2fc_min = 1,
+                                                   pseudocount = 1) {
+  expression <- data.table::copy(
+    data.table::as.data.table(condition_gene_expression)
+  )
+  reference_condition <- as.character(reference_condition %||% "")[[1L]]
+  log2fc_min <- suppressWarnings(as.numeric(log2fc_min)[[1L]])
+  pseudocount <- suppressWarnings(as.numeric(pseudocount)[[1L]])
+  empty <- data.table::data.table(
+    condition_id = character(),
+    target_gene = character()
+  )
+  required <- c("condition_id", "target_gene", "expression")
+  if (!nzchar(reference_condition) ||
+      !all(required %in% names(expression)) ||
+      !is.finite(log2fc_min) || log2fc_min < 0 ||
+      !is.finite(pseudocount) || pseudocount <= 0) {
+    return(empty)
+  }
+  expression <- expression[
+    !is.na(condition_id) & nzchar(condition_id) &
+      !is.na(target_gene) & nzchar(target_gene) &
+      is.finite(expression) & expression >= 0,
+    .(expression = max(as.numeric(expression))),
+    by = .(
+      condition_id = as.character(condition_id),
+      target_gene = as.character(target_gene)
+    )
+  ]
+  reference <- expression[
+    condition_id == reference_condition,
+    .(target_gene, reference_expression = expression)
+  ]
+  if (!nrow(reference)) return(empty)
+  values <- merge(
+    expression[condition_id != reference_condition],
+    reference,
+    by = "target_gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  values[, log2fc_vs_reference := log2(
+    (expression + pseudocount) / (reference_expression + pseudocount)
+  )]
+  out <- unique(values[
+    is.finite(log2fc_vs_reference) & log2fc_vs_reference >= log2fc_min,
+    .(condition_id, target_gene)
+  ])
+  data.table::setorder(out, condition_id, target_gene)
+  out[]
+}
+
+.m3_qc_condition_topic_upregulated_matrix <- function(condition_upregulated_genes,
+                                                        pair_assignment,
+                                                        conditions,
+                                                        topics) {
+  out <- matrix(
+    0,
+    nrow = length(conditions),
+    ncol = length(topics),
+    dimnames = list(conditions, paste0("Topic ", topics))
+  )
+  upregulated <- data.table::as.data.table(condition_upregulated_genes)
+  pairs <- data.table::as.data.table(pair_assignment)
+  if (!all(c("condition_id", "target_gene") %in% names(upregulated)) ||
+      !all(c("target_gene", "optimized_assigned_topic") %in% names(pairs))) {
+    return(out)
+  }
+  assigned <- unique(pairs[
+    is.finite(optimized_assigned_topic),
+    .(
+      target_gene = as.character(target_gene),
+      topic = as.integer(optimized_assigned_topic)
+    )
+  ])
+  values <- merge(
+    unique(upregulated[condition_id %in% conditions]),
+    assigned[topic %in% topics],
+    by = "target_gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  if (!nrow(values)) return(out)
+  counts <- values[, .(
+    upregulated_genes = data.table::uniqueN(target_gene)
+  ), by = .(condition_id, topic)]
+  rows <- match(counts$condition_id, conditions)
+  columns <- match(counts$topic, topics)
+  valid <- is.finite(rows) & is.finite(columns)
+  out[cbind(rows[valid], columns[valid])] <- counts$upregulated_genes[valid]
+  out
+}
+
 .m3_qc_pooled_tf_topic_matrix <- function(optimization,
                                            top_n_tfs = 150L) {
   top_n_tfs <- suppressWarnings(as.integer(top_n_tfs)[[1L]])
@@ -1681,12 +2113,23 @@
   x <- qc$assignments[optimized_aligned == TRUE]
   topics <- as.integer(qc$optimized_topic_ids)
   if (!nrow(x) || !length(topics)) return(matrix(numeric(), 0L, 0L))
+  per_topic_n <- max(1L, floor(top_n_tfs / length(topics)))
+  topic_counts <- x[, .(
+    targets = data.table::uniqueN(target_index)
+  ), by = .(tf_index, optimized_topic)]
+  topic_counts[, tf := as.character(qc$tf_levels[tf_index])]
+  data.table::setorder(topic_counts, optimized_topic, -targets, tf)
+  selected_ids <- unique(topic_counts[
+    optimized_topic %in% topics,
+    head(.SD, per_topic_n),
+    by = optimized_topic
+  ]$tf_index)
   totals <- x[, .(
     targets = data.table::uniqueN(target_index)
   ), by = tf_index]
   totals[, tf := as.character(qc$tf_levels[tf_index])]
   data.table::setorder(totals, -targets, tf)
-  selected <- head(totals, top_n_tfs)
+  selected <- totals[tf_index %in% selected_ids]
   counts <- x[tf_index %in% selected$tf_index, .(
     targets = data.table::uniqueN(target_index)
   ), by = .(tf_index, optimized_topic)]
@@ -1700,6 +2143,7 @@
   columns <- match(counts$optimized_topic, topics)
   valid <- is.finite(rows) & is.finite(columns)
   out[cbind(rows[valid], columns[valid])] <- counts$targets[valid]
+  attr(out, "selection_per_topic") <- per_topic_n
   out
 }
 
@@ -1778,14 +2222,17 @@
   out[rank <= top_n]
 }
 
-.m3_qc_funnel_plot <- function(labels,
-                               counts,
-                               title,
-                               fill = "#007C78") {
+.m3_qc_retention_plot <- function(labels,
+                                  counts,
+                                  title,
+                                  fill = "#007C78") {
   x <- data.table::data.table(
     stage = factor(labels, levels = rev(labels)),
     count = as.numeric(counts)
   )
+  count_max <- max(x$count, na.rm = TRUE)
+  if (!is.finite(count_max) || count_max <= 0) count_max <- 1
+  x[, label_inside := count >= 0.16 * count_max]
   ggplot2::ggplot(x, ggplot2::aes(count, stage)) +
     ggplot2::geom_col(
       width = 0.72,
@@ -1794,19 +2241,40 @@
       linewidth = 0.25
     ) +
     ggplot2::geom_text(
-      ggplot2::aes(label = scales::comma(count)),
-      hjust = 1.06,
-      colour = "white",
+      ggplot2::aes(
+        label = scales::comma(count),
+        hjust = data.table::fifelse(label_inside, 1.06, -0.08),
+        colour = label_inside
+      ),
       family = "Helvetica",
       fontface = "bold",
       size = 3.2
     ) +
+    ggplot2::scale_colour_manual(
+      values = c(`TRUE` = "white", `FALSE` = "#171717"),
+      guide = "none"
+    ) +
     ggplot2::scale_x_continuous(
       labels = scales::label_comma(),
-      expand = ggplot2::expansion(mult = c(0, 0.05))
+      expand = ggplot2::expansion(mult = c(0, 0.12))
     ) +
     ggplot2::labs(title = title, x = "Full-universe count", y = NULL) +
     .m3_qc_theme()
+}
+
+.m3_qc_style_heatmap_grob <- function(grob) {
+  if (!is.null(grob$gp)) {
+    grob$gp$font <- NULL
+    grob$gp$fontfamily <- "Helvetica"
+    grob$gp$fontface <- "bold"
+  }
+  if (!is.null(grob$children) && length(grob$children)) {
+    grob$children <- lapply(grob$children, .m3_qc_style_heatmap_grob)
+  }
+  if (!is.null(grob$grobs) && length(grob$grobs)) {
+    grob$grobs <- lapply(grob$grobs, .m3_qc_style_heatmap_grob)
+  }
+  grob
 }
 
 .m3_qc_tf_topic_pages <- function(optimization,
@@ -1816,40 +2284,65 @@
     top_n_tfs = top_n_tfs
   )
   if (!nrow(mat) || !ncol(mat)) return(list())
-  row_order <- .m3_qc_cluster_order(mat, "row")
   column_order <- .m3_qc_cluster_order(mat, "column")
-  plot <- .m3_qc_count_heatmap(
-    mat,
-    title = "Unique assigned target genes",
-    row_order = row_order,
-    column_order = column_order,
-    label_min = 1L,
-    square_cells = FALSE,
-    show_legend = TRUE,
-    show_labels = FALSE
-  ) +
-    ggplot2::theme(
-      axis.text.y = ggplot2::element_text(
-        family = "Helvetica",
-        face = "bold",
-        size = 5,
-        margin = ggplot2::margin(r = 1)
-      ),
-      axis.text.x = ggplot2::element_text(
-        family = "Helvetica",
-        face = "bold",
-        size = 7,
-        angle = 90,
-        hjust = 1,
-        vjust = 0.5
-      ),
-      plot.margin = ggplot2::margin(2, 5, 2, 2)
-    )
+  work <- sqrt(pmax(mat, 0))
+  means <- rowMeans(work)
+  sds <- apply(work, 1L, stats::sd)
+  sds[!is.finite(sds) | sds == 0] <- 1
+  cluster_work <- sweep(sweep(work, 1L, means, "-"), 1L, sds, "/")
+  cluster_work[!is.finite(cluster_work)] <- 0
+  row_cluster <- if (nrow(cluster_work) >= 2L) {
+    stats::hclust(stats::dist(cluster_work), method = "ward.D2")
+  } else {
+    FALSE
+  }
+  colors <- grDevices::colorRampPalette(
+    c("#F5F7F7", "#2A788E", "#FDE725")
+  )(100L)
+  raw_max <- max(mat, na.rm = TRUE)
+  legend_labels <- unique(c(
+    0,
+    pretty(c(0, raw_max), n = 4L),
+    raw_max
+  ))
+  legend_labels <- legend_labels[
+    is.finite(legend_labels) & legend_labels >= 0 & legend_labels <= raw_max
+  ]
+  legend_labels <- sort(unique(round(legend_labels)))
+  legend_breaks <- sqrt(legend_labels)
+  color_limits <- range(work, finite = TRUE)
+  if (length(color_limits) != 2L || !all(is.finite(color_limits)) ||
+      diff(color_limits) <= 0) {
+    color_limits <- c(0, max(c(work, 1), na.rm = TRUE))
+  }
+  ph <- pheatmap::pheatmap(
+    work[, column_order, drop = FALSE],
+    cluster_rows = row_cluster,
+    cluster_cols = FALSE,
+    color = colors,
+    breaks = seq(color_limits[[1L]], color_limits[[2L]], length.out = 101L),
+    border_color = "#D6DCE1",
+    treeheight_row = if (nrow(work) >= 2L) 42 else 0,
+    treeheight_col = 0,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    fontsize = 9,
+    fontsize_row = 5,
+    fontsize_col = 7,
+    angle_col = 90,
+    main = "Unique assigned target genes",
+    legend_breaks = legend_breaks,
+    legend_labels = scales::comma(legend_labels),
+    legend = TRUE,
+    silent = TRUE
+  )
+  plot <- .m3_qc_style_heatmap_grob(ph$gtable)
   list(.m3_qc_arrange(
     plot,
     ncol = 1L,
     title = sprintf(
-      "Top %d TFs by unique assigned target genes across all conditions",
+      "Top TFs balanced across topics (%d candidates/topic; %d unique TFs)",
+      as.integer(attr(mat, "selection_per_topic") %||% 1L),
       nrow(mat)
     )
   ))
@@ -2037,9 +2530,16 @@
     condition_values,
     qc$optimized_topic_ids
   )
+  tf_matrix <- .m3_qc_condition_topic_matrix(
+    qc$condition_topic,
+    "tfs",
+    condition_values,
+    qc$optimized_topic_ids
+  )
   display_conditions <- .m3_qc_short_condition_labels(rownames(link_matrix))
   rownames(link_matrix) <- display_conditions
   rownames(gene_matrix) <- display_conditions
+  rownames(tf_matrix) <- display_conditions
   condition_correlation <- .m3_qc_condition_correlation(
     link_matrix,
     gene_matrix
@@ -2066,7 +2566,8 @@
   )
   clustering_matrix <- cbind(
     .m3_opt_row_normalize(link_matrix),
-    .m3_opt_row_normalize(gene_matrix)
+    .m3_opt_row_normalize(gene_matrix),
+    .m3_opt_row_normalize(tf_matrix)
   )
   row_order <- .m3_qc_cluster_order(clustering_matrix, "row")
   column_order <- .m3_qc_cluster_order(link_matrix + gene_matrix, "column")
@@ -2076,39 +2577,67 @@
     paste0("Topic ", qc$optimized_topic_ids),
     drop = FALSE
   ]
-  expression_matrix <- .m3_qc_condition_topic_expression_matrix(
-    condition_gene_expression = optimization$condition_gene_expression,
-    pair_assignment = optimization$pair_assignment,
+  condition_theta_ids <- condition_theta
+  expression_matrix <- .m3_qc_document_expression_topic_share_matrix(
+    optimization = optimization,
     conditions = condition_values,
     topics = qc$optimized_topic_ids
   )
   rownames(condition_theta) <- display_conditions
   rownames(expression_matrix) <- display_conditions
+  page_link_matrix <- link_matrix
+  page_tf_matrix <- tf_matrix
+  page_condition_theta <- condition_theta
+  page_expression_matrix <- expression_matrix
+  page_column_order <- column_order
+  expression_values <- as.numeric(page_expression_matrix)
+  expression_values <- expression_values[is.finite(expression_values)]
+  expression_limits <- if (length(unique(expression_values)) > 1L) {
+    as.numeric(stats::quantile(
+      expression_values,
+      probs = c(0.05, 0.95),
+      na.rm = TRUE,
+      names = FALSE
+    ))
+  } else {
+    NULL
+  }
+  if (!is.null(expression_limits) && diff(expression_limits) <= 0) {
+    expression_limits <- NULL
+  }
   page4_plots <- .m3_qc_align_plot_dimensions(list(
     .m3_qc_count_heatmap(
-      link_matrix,
-      "Aligned TF-target links",
+      page_link_matrix,
+      "Unique aligned TF-target links",
       row_order = row_order,
-      column_order = column_order,
+      column_order = page_column_order,
       square_cells = FALSE,
-      show_x_axis = FALSE
-    ),
+      show_labels = FALSE
+    ) + ggplot2::labs(x = "Topic"),
+    .m3_qc_count_heatmap(
+      page_tf_matrix,
+      "Unique TFs",
+      row_order = row_order,
+      column_order = page_column_order,
+      square_cells = FALSE,
+      show_labels = FALSE
+    ) + ggplot2::labs(x = "Topic"),
     .m3_qc_value_heatmap(
-      condition_theta,
+      page_condition_theta,
       "Mean condition topic probability",
       "Mean theta",
       row_order = row_order,
-      column_order = column_order,
-      show_x_axis = FALSE
-    ),
+      column_order = page_column_order
+    ) + ggplot2::labs(x = "Topic"),
     .m3_qc_value_heatmap(
-      expression_matrix,
-      "Mean expression of assigned target genes",
-      "Mean log2(expression + 1)",
+      page_expression_matrix,
+      "Mean expression of assigned target genes (topic share)",
+      "Mean expression share",
       row_order = row_order,
-      column_order = column_order,
+      column_order = page_column_order,
+      limits = expression_limits,
       color_transform = "identity"
-    )
+    ) + ggplot2::labs(x = "Topic")
   ))
   page4 <- do.call(.m3_qc_arrange, c(page4_plots, list(
     ncol = 1L,
@@ -2116,50 +2645,26 @@
   )))
 
   cross <- qc$condition_topic_similarity$mean
-  pair_table <- data.table::as.data.table(as.table(cross))
-  data.table::setnames(pair_table, c("condition_id", "topic", "similarity"))
-  pair_table[, `:=`(
-    condition_id = as.character(condition_id),
-    topic = as.character(topic),
-    topic_num = suppressWarnings(as.integer(as.character(topic)))
-  )]
-  data.table::setorder(pair_table, -similarity, condition_id, topic_num)
-  chosen <- pair_table[0]
-  used_conditions <- character()
-  used_topics <- integer()
-  for (i in seq_len(nrow(pair_table))) {
-    candidate <- pair_table[i]
-    if (candidate$condition_id %in% used_conditions ||
-        candidate$topic_num %in% used_topics) next
-    chosen <- data.table::rbindlist(list(chosen, candidate))
-    used_conditions <- c(used_conditions, candidate$condition_id)
-    used_topics <- c(used_topics, candidate$topic_num)
-    if (nrow(chosen) >= 6L) break
-  }
   condition_top_topics <- .m3_qc_top_condition_topics(
-    condition_theta,
+    condition_theta_ids,
     cross,
     top_n = 3L
   )
-  pair_plots <- unlist(lapply(seq_len(nrow(chosen)), function(i) {
-    candidate <- chosen[i]
-    condition_label <- .m3_qc_short_condition_labels(candidate$condition_id)
+  ordered_conditions <- condition_values[order(
+    .m3_qc_short_condition_labels(condition_values),
+    condition_values
+  )]
+  pair_plot_groups <- lapply(seq_along(ordered_conditions), function(i) {
+    selected_condition_id <- ordered_conditions[[i]]
+    condition_label <- .m3_qc_short_condition_labels(selected_condition_id)
     selected_topics <- condition_top_topics[
-      condition_id == candidate$condition_id
+      condition_id == selected_condition_id
     ]
     selected_labels <- selected_topics$topic_label
     selected_short <- sub("^Topic ", "T", selected_labels)
-    selected_annotations <- stats::setNames(
-      sprintf(
-        "%s\n%.2f / %.2f",
-        selected_short,
-        selected_topics$mean_theta,
-        selected_topics$mean_jaccard
-      ),
-      selected_labels
-    )
+    selected_annotations <- stats::setNames(selected_short, selected_labels)
     condition_highlight <- optimized_sample[
-      condition_id == candidate$condition_id
+      condition_id == selected_condition_id
     ]
     condition_highlight[, selected := condition_label]
     topic_highlight <- optimized_sample[topic %in% selected_labels]
@@ -2168,13 +2673,13 @@
       .m3_qc_umap_plot(
         condition_highlight,
         "selected",
-        paste0(condition_label, " (condition)"),
+        paste0(condition_label, "\n(condition)"),
         sprintf(
           "Top mean-theta topic %s",
           if (length(selected_short)) selected_short[[1L]] else "not available"
         ),
         colors = stats::setNames(
-          condition_colors[[candidate$condition_id]],
+          condition_colors[[selected_condition_id]],
           condition_label
         ),
         background = optimized_sample,
@@ -2183,35 +2688,49 @@
       .m3_qc_umap_plot(
         topic_highlight,
         "topic",
-        "Top theta topics (topic)",
-        "Label: theta / Jaccard",
+        "Top theta topics\n(topic)",
+        "Top mean-theta topics",
         colors = topic_palette[selected_labels],
         background = optimized_sample,
         label_column = "topic_annotation",
+        label_style = "text",
         seed = seed + 30L + i,
         compact = TRUE
       )
     )
-  }), recursive = FALSE)
+  })
   cross_display <- cross
   rownames(cross_display) <- .m3_qc_short_condition_labels(rownames(cross_display))
   cross_plot <- .m3_qc_similarity_plot(
     cross_display,
     "Condition-topic similarity",
-    "Mean Jaccard of unique TF-target pairs and target genes"
+    "Mean Jaccard of unique TF-target pairs and target genes",
+    autoscale = TRUE
   )
-  page5_args <- c(list(cross_plot), pair_plots, list(
-    title = "Top condition-topic matches"
-  ))
-  pair_count <- length(pair_plots) %/% 2L
-  if (pair_count > 0L) {
-    pair_layout <- .m3_qc_pair_layout(pair_count)
-    page5_args$layout_matrix <- pair_layout$layout_matrix
-    page5_args$heights <- pair_layout$heights
-  } else {
-    page5_args$ncol <- 1L
-  }
-  page5 <- do.call(.m3_qc_arrange, page5_args)
+  page5 <- .m3_qc_arrange(
+    cross_plot,
+    ncol = 1L,
+    title = "Condition-topic similarity"
+  )
+  pair_chunks <- split(
+    seq_along(pair_plot_groups),
+    ceiling(seq_along(pair_plot_groups) / 6L)
+  )
+  pair_pages <- lapply(seq_along(pair_chunks), function(page_index) {
+    indices <- pair_chunks[[page_index]]
+    plots <- unlist(pair_plot_groups[indices], recursive = FALSE)
+    do.call(.m3_qc_arrange, c(
+      plots,
+      list(
+        ncol = 4L,
+        title = sprintf(
+          "Condition-topic UMAP pairs (%d/%d)",
+          page_index,
+          length(pair_chunks)
+        )
+      )
+    ))
+  })
 
   pair_candidates <- .m3_opt_parse_topics(
     optimization$raw_pair_assignment$gene_gammafit_topics,
@@ -2226,52 +2745,51 @@
     suppressWarnings(as.integer(optimization$raw_pair_assignment$assigned_topic))
   )
   link_max <- target_max[assignments$target_index]
-  funnel_link_labels <- c(
-    "Input universe",
-    "Raw target topic assigned",
-    "Raw link posterior agrees",
-    sprintf("Raw posterior + TF theta >= %.2f", optimization$tf_topic_cutoff),
-    "Optimized target topic assigned",
-    "Optimized link posterior agrees",
-    sprintf(
-      "Optimized posterior + TF theta >= %.2f",
-      optimization$tf_topic_cutoff
-    )
+  unique_link_count <- function(rows) {
+    rows <- data.table::as.data.table(rows)
+    if (!nrow(rows)) return(0L)
+    nrow(unique(rows[, .(condition_id, tf_index, target_index)]))
+  }
+  retention_link_labels <- c(
+    "Total unique input links",
+    "Links pass gamma filter",
+    "Links pass max filter",
+    "Links pass TF filter"
   )
-  funnel_gene_labels <- c(
-    "Input target genes",
-    "Gene and Peak pass GammaFit",
-    "Raw Gene/Peak MaxProb agree",
-    "Optimized Gene/Peak MaxProb agree"
+  retention_gene_labels <- c(
+    "Total unique input genes",
+    "Links pass gamma genes",
+    "Links pass max genes",
+    "Links pass TF genes"
   )
-  optimized_target <- is.finite(assignments$optimized_topic)
-  funnel_links <- c(
-    nrow(assignments),
-    sum(link_max),
-    sum(assignments$raw_posterior_agrees),
-    sum(assignments$raw_aligned),
-    sum(optimized_target),
-    sum(assignments$optimized_posterior_agrees),
-    sum(assignments$optimized_aligned)
+  retention_links <- c(
+    unique_link_count(assignments),
+    unique_link_count(assignments[target_gamma[target_index] %in% TRUE]),
+    unique_link_count(assignments[link_max %in% TRUE]),
+    unique_link_count(assignments[raw_aligned == TRUE])
   )
-  funnel_genes <- c(
-    nrow(optimization$raw_pair_assignment),
-    sum(target_gamma),
-    sum(target_max),
-    sum(.as_logical_flag(optimization$pair_assignment$assigned))
-  )
-  funnel_page <- .m3_qc_arrange(
-    .m3_qc_funnel_plot(
-      funnel_gene_labels,
-      funnel_genes,
-      "Target-gene assignment funnel",
-      fill = "#D97824"
+  retention_genes <- c(
+    data.table::uniqueN(optimization$raw_pair_assignment$target_gene),
+    data.table::uniqueN(
+      optimization$raw_pair_assignment[target_gamma %in% TRUE, target_gene]
     ),
-    .m3_qc_funnel_plot(
-      funnel_link_labels,
-      funnel_links,
-      "TF-target link assignment funnel",
+    data.table::uniqueN(
+      optimization$raw_pair_assignment[target_max %in% TRUE, target_gene]
+    ),
+    data.table::uniqueN(assignments[raw_aligned == TRUE, target_index])
+  )
+  retention_page <- .m3_qc_arrange(
+    .m3_qc_retention_plot(
+      retention_link_labels,
+      retention_links,
+      "TF-target links",
       fill = "#007C78"
+    ),
+    .m3_qc_retention_plot(
+      retention_gene_labels,
+      retention_genes,
+      "Target genes",
+      fill = "#D97824"
     ),
     ncol = 1L,
     title = "Topic assignment retention"
@@ -2302,12 +2820,16 @@
   grid::grid.draw(page4)
   grid::grid.newpage()
   grid::grid.draw(page5)
+  for (page in pair_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
   for (page in tf_pages) {
     grid::grid.newpage()
     grid::grid.draw(page)
   }
   grid::grid.newpage()
-  grid::grid.draw(funnel_page)
+  grid::grid.draw(retention_page)
   invisible(out_file)
 }
 
@@ -2331,13 +2853,24 @@
     file.path(out_dir, "topic_optimization_merge_audit.csv")
   )
   summary <- data.table::data.table(
+    assignment_mode = optimization$assignment_mode %||% "gene_peak",
     raw_topics = length(unique(mapping$raw_topic)),
     optimized_topics = length(unique(mapping$optimized_topic)),
     merged_topics = length(unique(mapping$raw_topic)) -
       length(unique(mapping$optimized_topic)),
-    input_links = nrow(optimization$qc$assignments),
-    raw_aligned_links = sum(optimization$qc$assignments$raw_aligned),
-    optimized_aligned_links = sum(optimization$qc$assignments$optimized_aligned),
+    input_links = nrow(unique(optimization$qc$assignments[, .(
+      condition_id, tf_index, target_index
+    )])),
+    raw_aligned_links = nrow(unique(
+      optimization$qc$assignments[raw_aligned == TRUE, .(
+        condition_id, tf_index, target_index
+      )]
+    )),
+    optimized_aligned_links = nrow(unique(
+      optimization$qc$assignments[optimized_aligned == TRUE, .(
+        condition_id, tf_index, target_index
+      )]
+    )),
     raw_pair_assigned_genes = sum(.as_logical_flag(
       optimization$raw_pair_assignment$assigned
     )),
@@ -2356,6 +2889,29 @@
   data.table::fwrite(
     summary,
     file.path(out_dir, "topic_optimization_summary.csv")
+  )
+  settings <- data.table::data.table(
+    raw_k = as.integer(raw_k),
+    assignment_mode = optimization$assignment_mode %||% "gene_peak",
+    min_genes = as.integer(optimization$min_genes %||% NA_integer_),
+    min_links = as.integer(optimization$min_links %||% NA_integer_),
+    similarity_threshold = as.numeric(optimization$similarity_threshold %||% NA_real_),
+    tf_topic_cutoff = as.numeric(optimization$tf_topic_cutoff),
+    umap_max_links_per_condition = as.integer(
+      optimization$umap_max_links_per_condition %||% length(optimization$sample_rows)
+    ),
+    qc_top_tfs = as.integer(top_n_tfs),
+    upregulation_reference_condition = as.character(
+      optimization$upregulation_reference_condition %||% NA_character_
+    ),
+    upregulated_log2fc_min = as.numeric(
+      optimization$upregulated_log2fc_min %||% NA_real_
+    ),
+    qc_seed = as.integer(seed)
+  )
+  data.table::fwrite(
+    settings,
+    file.path(out_dir, "topic_assignment_qc_settings.csv")
   )
   data.table::fwrite(
     data.table::data.table(
