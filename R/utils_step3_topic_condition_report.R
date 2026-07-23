@@ -8,7 +8,9 @@
     payload_base = "",
     conditions = character(),
     n_tf_gene = 0L,
-    n_tf_peak_gene = 0L
+    n_tf_peak_gene = 0L,
+    n_expression_rows = 0L,
+    expression_source = ""
   )
 }
 
@@ -32,6 +34,15 @@
     serialize = FALSE
   )
   paste0("cp_", substr(key, 1L, 12L))
+}
+
+.m3cr_condition_expression_file <- function(condition_id) {
+  key <- digest::digest(
+    as.character(condition_id)[[1L]],
+    algo = "xxhash64",
+    serialize = FALSE
+  )
+  paste0("ce_", substr(key, 1L, 12L), ".js")
 }
 
 .m3cr_report_data_file <- function(out_html) {
@@ -247,6 +258,147 @@
     condition_id, gene_key
   )]
   out
+}
+
+.m3cr_multiomic_expression_rows <- function(multiomic_data,
+                                             conditions = NULL) {
+  empty <- data.table::data.table(
+    condition_id = character(),
+    gene_key = character(),
+    gene_expr = numeric()
+  )
+  if (is.null(multiomic_data)) return(empty)
+  if (!is_multiomic_object(multiomic_data)) {
+    .log_abort(
+      "Complete HTML RNA input must be a CraftGRN multiomic object."
+    )
+  }
+  validate_multiomic_object(multiomic_data)
+  expression <- multiomic_data$matrices$gene_expr
+  if (!is.null(conditions)) {
+    conditions <- unique(as.character(conditions))
+    conditions <- conditions[!is.na(conditions) & nzchar(conditions)]
+    missing_conditions <- setdiff(conditions, colnames(expression))
+    if (length(missing_conditions)) {
+      .log_abort(
+        paste0(
+          "Complete HTML RNA input is missing requested conditions: ",
+          paste(missing_conditions, collapse = ", ")
+        )
+      )
+    }
+    expression <- expression[, conditions, drop = FALSE]
+  }
+  conditions <- colnames(expression)
+  genes <- data.table::as.data.table(multiomic_data$features$gene)
+  gene_key <- as.character(genes$gene_id)
+  if ("hgnc_symbol" %in% names(genes)) {
+    symbols <- as.character(genes$hgnc_symbol)
+    use_symbol <- !is.na(symbols) & nzchar(trimws(symbols))
+    gene_key[use_symbol] <- symbols[use_symbol]
+  }
+  if (is.null(conditions) || length(conditions) != ncol(expression) ||
+      length(gene_key) != nrow(expression)) {
+    .log_abort(
+      "Complete HTML RNA input has inconsistent gene or condition dimensions."
+    )
+  }
+  out <- data.table::data.table(
+    condition_id = rep(as.character(conditions), each = nrow(expression)),
+    gene_key = rep(gene_key, times = ncol(expression)),
+    gene_expr = as.numeric(expression)
+  )
+  out <- out[
+    !is.na(condition_id) & nzchar(condition_id) &
+      !is.na(gene_key) & nzchar(gene_key) & is.finite(gene_expr)
+  ]
+  out <- .m3cr_normalize_expression_gene_keys(out)
+  out <- out[, .(gene_expr = max(gene_expr)), by = .(
+    condition_id, gene_key
+  )]
+  attr(out, "expression_source") <- "multiomic_data$matrices$gene_expr"
+  out[]
+}
+
+.m3cr_tf_match_key <- function(x) {
+  key <- toupper(trimws(as.character(x)))
+  key[key == "TBET"] <- "TBX21"
+  key
+}
+
+.m3cr_apply_full_tf_expression <- function(activity,
+                                            expression,
+                                            replace_missing = FALSE) {
+  activity <- data.table::copy(data.table::as.data.table(activity))
+  expression <- data.table::copy(data.table::as.data.table(expression))
+  if (!nrow(activity) || !nrow(expression) ||
+      !all(c("condition_id", "tf_expr") %in% names(activity)) ||
+      !all(c("condition_id", "gene_key", "gene_expr") %in% names(expression))) {
+    return(activity)
+  }
+  tf_col <- if ("tf_upper" %in% names(activity)) "tf_upper" else "tf"
+  if (!tf_col %in% names(activity)) return(activity)
+  data.table::set(
+    activity,
+    j = "tf_match",
+    value = .m3cr_tf_match_key(activity[[tf_col]])
+  )
+  data.table::set(
+    expression,
+    j = "condition_id",
+    value = as.character(expression[["condition_id"]])
+  )
+  data.table::set(
+    expression,
+    j = "tf_match",
+    value = .m3cr_tf_match_key(expression[["gene_key"]])
+  )
+  data.table::set(
+    expression,
+    j = "normalized_tf_expr",
+    value = suppressWarnings(as.numeric(expression[["gene_expr"]]))
+  )
+  expression <- expression[
+    !is.na(expression[["condition_id"]]) &
+      nzchar(expression[["condition_id"]]) &
+      !is.na(expression[["tf_match"]]) &
+      nzchar(expression[["tf_match"]]) &
+      is.finite(expression[["normalized_tf_expr"]])
+  ]
+  expression <- expression[
+    ,
+    list(normalized_tf_expr = max(.SD[[1L]])),
+    by = c("condition_id", "tf_match"),
+    .SDcols = "normalized_tf_expr"
+  ]
+  activity_key <- paste(
+    activity[["condition_id"]],
+    activity[["tf_match"]],
+    sep = "\r"
+  )
+  expression_key <- paste(
+    expression[["condition_id"]],
+    expression[["tf_match"]],
+    sep = "\r"
+  )
+  data.table::set(
+    activity,
+    j = "normalized_tf_expr",
+    value = expression[["normalized_tf_expr"]][
+      match(activity_key, expression_key)
+    ]
+  )
+  tf_expression <- activity[["tf_expr"]]
+  if (isTRUE(replace_missing)) tf_expression[] <- NA_real_
+  matched <- is.finite(activity[["normalized_tf_expr"]])
+  tf_expression[matched] <- activity[["normalized_tf_expr"]][matched]
+  data.table::set(activity, j = "tf_expr", value = tf_expression)
+  data.table::set(
+    activity,
+    j = c("tf_match", "normalized_tf_expr"),
+    value = NULL
+  )
+  activity[]
 }
 
 .m3cr_normalize_expression_gene_keys <- function(expression) {
@@ -484,7 +636,8 @@
                                            payload_base,
                                            topic_space = "combined",
                                            topic_pathways = NULL,
-                                           condition_pathways = NULL) {
+                                           condition_pathways = NULL,
+                                           condition_expression = NULL) {
   condition_links_dir <- .m3tb_subgrn_condition_links_dir(
     model_dir = model_dir,
     extraction_dir = extraction_dir
@@ -512,17 +665,65 @@
       gene_expr = max(gene_expr, na.rm = TRUE)
     ), by = .(condition_id, gene_key)]
   }), use.names = TRUE, fill = TRUE)
-  gene_expr <- data.table::rbindlist(
-    list(.m3cr_expression_audit_rows(condition_links_dir), edge_gene_expr),
-    use.names = TRUE,
-    fill = TRUE
+  supplied_expression <- data.table::copy(
+    data.table::as.data.table(condition_expression)
   )
+  expression_source <- as.character(
+    attr(condition_expression, "expression_source") %||% ""
+  )[[1L]]
+  if (nrow(supplied_expression) &&
+      !all(c("condition_id", "gene_key", "gene_expr") %in%
+           names(supplied_expression))) {
+    .log_abort(
+      "Complete HTML RNA input must contain condition_id, gene_key, and gene_expr."
+    )
+  }
+  full_gene_expr <- if (nrow(supplied_expression)) {
+    supplied_expression
+  } else {
+    .m3cr_expression_audit_rows(condition_links_dir)
+  }
+  full_gene_expr <- .m3cr_normalize_expression_gene_keys(full_gene_expr)
+  if (nrow(supplied_expression)) {
+    missing_conditions <- setdiff(
+      as.character(manifest$condition_id),
+      unique(as.character(full_gene_expr$condition_id))
+    )
+    if (length(missing_conditions)) {
+      .log_abort(
+        paste0(
+          "Complete HTML RNA input is missing report conditions: ",
+          paste(missing_conditions, collapse = ", ")
+        )
+      )
+    }
+  }
+  if (nrow(full_gene_expr)) {
+    full_gene_expr <- full_gene_expr[
+      condition_id %in% as.character(manifest$condition_id)
+    ]
+  }
+  gene_expr <- if (nrow(full_gene_expr)) {
+    data.table::copy(full_gene_expr)
+  } else {
+    data.table::copy(edge_gene_expr)
+  }
+  gene_expr <- .m3cr_normalize_expression_gene_keys(gene_expr)
   if (nrow(gene_expr)) {
     gene_expr <- gene_expr[
       is.finite(gene_expr),
       .(gene_expr = max(gene_expr)),
       by = .(condition_id, gene_key)
     ]
+  }
+  condition_expression <- if (nrow(full_gene_expr)) {
+    full_gene_expr[
+      is.finite(gene_expr),
+      .(gene_expr = max(gene_expr)),
+      by = .(condition_id, gene_key)
+    ]
+  } else {
+    data.table::copy(gene_expr)
   }
   pathway_scores <- .m3cr_pathway_expression_scores(
     topic_pathways = topic_pathways,
@@ -601,6 +802,11 @@
       tf_expr = max(tf_expr, na.rm = TRUE)
     ), by = .(condition_id, tf, tf_upper)]
   }), use.names = TRUE, fill = TRUE)
+  activity <- .m3cr_apply_full_tf_expression(
+    activity,
+    condition_expression,
+    replace_missing = nrow(supplied_expression) > 0L
+  )
   .m3cr_write_compressed_payload_file(
     list(
       tf_activity = activity,
@@ -620,6 +826,7 @@
     edge_file <- paste0(prefix, "_e.js")
     peak_file <- paste0(prefix, "_p.js")
     pathway_file <- paste0(prefix, "_w.js")
+    expression_file <- .m3cr_condition_expression_file(condition_key)
     .m3cr_write_compressed_payload_file(
       list(tf_gene = parts[[i]]$tf_gene),
       payload_dir,
@@ -639,10 +846,20 @@
       payload_dir,
       pathway_file
     )
+    .m3cr_write_compressed_payload_file(
+      list(
+        condition_expression = condition_expression[
+          condition_id == condition_key
+        ]
+      ),
+      payload_dir,
+      expression_file
+    )
     condition_files[[condition_key]] <- list(
       edge_file = edge_file,
       peak_file = peak_file,
-      pathway_file = pathway_file
+      pathway_file = pathway_file,
+      expression_file = expression_file
     )
   }
   n_tf_gene <- sum(vapply(parts, function(x) nrow(x$tf_gene), integer(1L)))
@@ -654,7 +871,16 @@
     payload_base = payload_base,
     conditions = sort(unique(as.character(manifest$condition_id))),
     n_tf_gene = n_tf_gene,
-    n_tf_peak_gene = n_tf_peak_gene
+    n_tf_peak_gene = n_tf_peak_gene,
+    n_expression_rows = nrow(condition_expression),
+    expression_source = if (nrow(supplied_expression)) {
+      if (nzchar(expression_source)) expression_source else
+        "complete_normalized_rna"
+    } else if (nrow(full_gene_expr)) {
+      "condition_gene_expression.csv"
+    } else {
+      "condition_link_fallback"
+    }
   )
 }
 
@@ -735,8 +961,8 @@ const NETWORK_COLOR_PRESETS={default:['#2563eb','#dc2626','#9ca3af','#f59e0b'],n
 const byId=id=>document.getElementById(id),cond1Select=byId('cond1Select'),cond2Select=byId('cond2Select'),cond1Color=byId('cond1Color'),cond2Color=byId('cond2Color'),topicSelect=byId('topicSelect'),tfSelect=byId('tfSelect'),pathwaySelect=byId('pathwaySelect'),conditionTopicMetric=byId('conditionTopicMetric'),pathwayScoreMethod=byId('pathwayScoreMethod'),pathwayDeOnly=byId('pathwayDeOnly');
 const PAGE_SIZE={topic:20,tf:20,path:35};
 let PAYLOAD={tf_activity:[],tf_gene:[],tf_peak_gene:[],gene_topics:[],condition_topic_expression:[],gene_expr:[],pathway_activity:[],pathway_gene_expression:[]},PAYLOAD_PROMISES=new Map(),LOADED_EDGE_CONDITIONS=new Set(),LOADED_PEAK_CONDITIONS=new Set(),CONDITION_COLORS=Object.assign({},REPORT_STATE.condition_colors||{}),EDGE_BY_COND=new Map(),PEAK_BY_COND_PAIR=new Map(),GENE_EXPR_INDEX=new Map(),GENE_ACTIVITY_INDEX=new Map(),EXPR_TOPIC_INDEX=new Map(),PATH_ACTIVITY_INDEX=new Map(),TF_TOPIC_INDEX=new Map(),TF_BY_CONDITION=new Map(),TF_LABELS=new Map(),PATH_ROWS=[],PAGE_INDEX={topic:0,tf:0,path:0},DATA_VERSION=0,RNA_TOPIC_CACHE={key:'',left:new Map(),right:new Map(),genes:0},MDS_RENDER_KEY='',ACTIVITY_RENDER_KEY='',ACTIVE_CONDITION_SIDE=1,ACTIVITY_VIEW={k:1,ox:0,oy:0},networkOpen=false,lastNetworkTrigger=null,networkState={nodes:[],edges:[],view:{x:0,y:0,k:1},drag:null,pan:null,selected:''};
-let LOADED_PATHWAY_CONDITIONS=new Set(),CONDITION_PATHWAYS_BY_COND=new Map(),TF_EXPR_INDEX=new Map(),LOADING_COUNT=1;
-function el(n,a){const x=document.createElementNS(NS,n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}function num(x,d=0){const v=Number(x);return Number.isFinite(v)?v:d}function clamp(x,a,b){return Math.max(a,Math.min(b,x))}function topicNum(x){return Number(String(x||'').replace(/^Topic/,''))}function tfKey(x){return String(x||'').trim().toUpperCase()}function pathKey(x){return String(x||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')}function splitGenes(x){return String(x||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean)}
+let LOADED_PATHWAY_CONDITIONS=new Set(),LOADED_EXPRESSION_CONDITIONS=new Set(),CONDITION_PATHWAYS_BY_COND=new Map(),TF_EXPR_INDEX=new Map(),LOADING_COUNT=1;
+function el(n,a){const x=document.createElementNS(NS,n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}function num(x,d=0){if(x===null||x===undefined||x==='')return d;const v=Number(x);return Number.isFinite(v)?v:d}function clamp(x,a,b){return Math.max(a,Math.min(b,x))}function topicNum(x){return Number(String(x||'').replace(/^Topic/,''))}function tfKey(x){return String(x||'').trim().toUpperCase()}function pathKey(x){return String(x||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')}function splitGenes(x){return String(x||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean)}
 function setLoading(active,message='Loading...'){const overlay=byId('loadingOverlay');if(!overlay)return;if(active)LOADING_COUNT++;else LOADING_COUNT=Math.max(0,LOADING_COUNT-1);if(active)byId('loadingMessage').textContent=message;const busy=LOADING_COUNT>0;overlay.hidden=!busy;document.body.setAttribute('aria-busy',busy?'true':'false')}
 tfKey=x=>{const key=String(x||'').trim().toUpperCase();return key==='TBET'?'TBX21':key};
 function tooltip(id,ev,msg){const t=byId(id),host=t.offsetParent||t.parentElement;t.innerHTML=esc(msg).replace(/\n/g,'<br/>');t.style.display='block';const box=host.getBoundingClientRect(),left=ev.clientX-box.left+12,top=ev.clientY-box.top+12;t.style.left=clamp(left,8,Math.max(8,box.width-t.offsetWidth-8))+'px';t.style.top=clamp(top,8,Math.max(8,box.height-t.offsetHeight-8))+'px'}function hideTip(id){byId(id).style.display='none'}
@@ -769,14 +995,16 @@ function loadOverviewPayload(){return loadPayloadFile(CONDITION_PAYLOAD.payload_
 function loadNetworkPayload(){const file=CONDITION_PAYLOAD.network_payload_file;if(!file)return Promise.resolve(PAYLOAD);return loadPayloadFile(file).then(mergePayload)}
 function conditionPayloadFiles(cond){return(CONDITION_PAYLOAD.condition_payload_files||{})[String(cond)]||{}}
 function overallMode(){return!cond1Select.value}function selectedConditions(){return[cond1Select.value,cond2Select.value].filter(Boolean)}
-function setExpressionIndexValue(index,key,value){const v=Number(value),old=index.get(key);if(Number.isFinite(v)&&(!Number.isFinite(old)||v>old))index.set(key,v)}
+function setExpressionIndexValue(index,key,value){if(value===null||value===undefined||value==='')return;const v=Number(value),old=index.get(key);if(Number.isFinite(v)&&(!Number.isFinite(old)||v>old))index.set(key,v)}
 function indexEdgeExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),tf=tfKey(d.tf_upper||d.tf),gene=String(d.gene_key||'');if(c&&tf)setExpressionIndexValue(TF_EXPR_INDEX,c+'\t'+tf,d.tf_expr);if(c&&gene)setExpressionIndexValue(GENE_EXPR_INDEX,c+'\t'+gene,d.gene_expr)})}
-function indexConditionPart(cond,kind,x){const condition=String(cond);if(kind==='peak'){const cm=new Map();(x.tf_peak_gene||[]).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,(x.condition_pathways||[]).filter(d=>String(d.condition_id)===condition))}else{const rows=(x.tf_gene||[]).filter(d=>String(d.condition_id)===condition);EDGE_BY_COND.set(condition,rows);indexEdgeExpressionRows(rows)}DATA_VERSION++}
-function loadConditionPart(cond,kind){const files=conditionPayloadFiles(cond),file=kind==='peak'?files.peak_file:kind==='pathway'?files.pathway_file:files.edge_file,loaded=kind==='peak'?LOADED_PEAK_CONDITIONS:kind==='pathway'?LOADED_PATHWAY_CONDITIONS:LOADED_EDGE_CONDITIONS;if(!file||loaded.has(String(cond)))return Promise.resolve(PAYLOAD);setLoading(true,kind==='pathway'?'Loading condition pathways...':kind==='peak'?'Loading peak support...':'Loading direct targets...');return loadPayloadFile(file).then(x=>{indexConditionPart(cond,kind,x);loaded.add(String(cond));PAYLOAD_PROMISES.delete(file);return PAYLOAD}).finally(()=>setLoading(false))}
+function indexFullExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),gene=String(d.gene_key||''),v=Number(d.gene_expr);if(!c||!gene||!Number.isFinite(v))return;GENE_EXPR_INDEX.set(c+'\t'+gene,v);TF_EXPR_INDEX.set(c+'\t'+tfKey(gene),v)})}
+function indexConditionPart(cond,kind,x){const condition=String(cond);if(kind==='peak'){const cm=new Map();(x.tf_peak_gene||[]).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,(x.condition_pathways||[]).filter(d=>String(d.condition_id)===condition))}else if(kind==='expression'){indexFullExpressionRows((x.condition_expression||[]).filter(d=>String(d.condition_id)===condition))}else{const rows=(x.tf_gene||[]).filter(d=>String(d.condition_id)===condition);EDGE_BY_COND.set(condition,rows);indexEdgeExpressionRows(rows)}DATA_VERSION++}
+function loadConditionPart(cond,kind){const files=conditionPayloadFiles(cond),file=kind==='peak'?files.peak_file:kind==='pathway'?files.pathway_file:kind==='expression'?files.expression_file:files.edge_file,loaded=kind==='peak'?LOADED_PEAK_CONDITIONS:kind==='pathway'?LOADED_PATHWAY_CONDITIONS:kind==='expression'?LOADED_EXPRESSION_CONDITIONS:LOADED_EDGE_CONDITIONS;if(!file||loaded.has(String(cond)))return Promise.resolve(PAYLOAD);setLoading(true,kind==='pathway'?'Loading condition pathways...':kind==='peak'?'Loading peak support...':kind==='expression'?'Loading normalized RNA...':'Loading direct targets...');return loadPayloadFile(file).then(x=>{indexConditionPart(cond,kind,x);loaded.add(String(cond));PAYLOAD_PROMISES.delete(file);return PAYLOAD}).finally(()=>setLoading(false))}
 function loadSelectedConditionParts(kind){const conditions=selectedConditions();if(location.protocol!=='file:')return Promise.all(conditions.map(c=>loadConditionPart(c,kind)));return conditions.reduce((promise,condition)=>promise.then(()=>loadConditionPart(condition,kind)),Promise.resolve())}
 function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}
 function ensureSelectedConditionPeaks(){return loadSelectedConditionParts('peak')}
 function ensureSelectedConditionPathways(){return cond1Select.value&&!cond2Select.value?loadConditionPart(cond1Select.value,'pathway'):Promise.resolve(PAYLOAD)}
+function ensureSelectedConditionExpressions(){return loadSelectedConditionParts('expression')}
 function indexPayload(){EDGE_BY_COND=new Map();PEAK_BY_COND_PAIR=new Map();GENE_EXPR_INDEX=new Map();GENE_ACTIVITY_INDEX=new Map();EXPR_TOPIC_INDEX=new Map();PATH_ACTIVITY_INDEX=new Map();TF_EXPR_INDEX=new Map();PAYLOAD.tf_gene.forEach(d=>{const c=String(d.condition_id),a=EDGE_BY_COND.get(c)||[];a.push(d);EDGE_BY_COND.set(c,a)});indexEdgeExpressionRows(PAYLOAD.tf_gene);PAYLOAD.tf_peak_gene.forEach(d=>{const c=String(d.condition_id),cm=PEAK_BY_COND_PAIR.get(c)||new Map(),k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a);PEAK_BY_COND_PAIR.set(c,cm)});(PAYLOAD.tf_activity||[]).forEach(d=>setExpressionIndexValue(TF_EXPR_INDEX,String(d.condition_id)+'\t'+tfKey(d.tf_upper||d.tf),d.tf_expr));(PAYLOAD.condition_topic_expression||[]).forEach(d=>EXPR_TOPIC_INDEX.set(String(d.condition_id)+'\t'+Number(d.topic_num),num(d.expression_topic_share,0)));(PAYLOAD.pathway_gene_expression||[]).forEach(d=>{const key=String(d.condition_id)+'\t'+String(d.gene_key);setExpressionIndexValue(GENE_EXPR_INDEX,key,d.gene_expr);GENE_ACTIVITY_INDEX.set(key,d)});(PAYLOAD.pathway_activity||[]).forEach(d=>PATH_ACTIVITY_INDEX.set(Number(d.topic_num)+'\t'+pathKey(d.pathway_key)+'\t'+String(d.condition_id),d))}
 function indexTfTopics(){TF_TOPIC_INDEX=new Map();TF_BY_CONDITION=new Map();TF_LABELS=new Map();const cols=TF_TOPIC&&TF_TOPIC.columns||[],data=TF_TOPIC&&TF_TOPIC.data||[],at=name=>data[cols.indexOf(name)]||[],condition=at('comparison_label').length?at('comparison_label'):at('group_label'),tf=at('tf_upper').length?at('tf_upper'):at('tf'),display=at('tf_display').length?at('tf_display'):at('tf'),topic=at('topic_num').length?at('topic_num'):at('topic'),theta=at('theta'),n=theta.length;for(let i=0;i<n;i++){const c=String(condition[i]||''),key=tfKey(tf[i]),t=topicNum(topic[i]),v=num(theta[i],NaN);if(!c||!key||!Number.isFinite(t)||!Number.isFinite(v))continue;const idx=c+'\t'+key+'\t'+t,old=TF_TOPIC_INDEX.get(idx);if(old===undefined||v>old)TF_TOPIC_INDEX.set(idx,v);if(!TF_BY_CONDITION.has(c))TF_BY_CONDITION.set(c,new Set());TF_BY_CONDITION.get(c).add(key);if(!TF_LABELS.has(key))TF_LABELS.set(key,String(display[i]||tf[i]||key))}}
 function setActiveConditionSide(side){ACTIVE_CONDITION_SIDE=Number(side)===2?2:1;cond1Select.classList.toggle('conditionTarget',ACTIVE_CONDITION_SIDE===1);cond2Select.classList.toggle('conditionTarget',ACTIVE_CONDITION_SIDE===2)}
@@ -789,7 +1017,7 @@ function showItemPage(rows,key,predicate){const i=rows.findIndex(predicate);if(i
 function resetPages(){PAGE_INDEX={topic:0,tf:0,path:0}}
 function conditionLabels(){const out=new Map();GROUP_MDS.forEach(d=>out.set(String(d.comparison_label||d.group_label),String(d.display_label||d.comparison_label||d.group_label)));return out}
 function configuredCondition(defaults,key,conditions,exclude=''){const exact=String(defaults[key]||'');if(exact!==exclude&&conditions.includes(exact))return exact;const suffix=String(defaults[key+'_suffix']||'');if(suffix){const match=conditions.find(x=>x!==exclude&&String(x).endsWith(suffix));if(match)return match}return''}
-function initControls(){const labels=conditionLabels(),rank=new Map((REPORT_STATE.condition_order||[]).map((x,i)=>[String(x),i])),conditions=(CONDITION_PAYLOAD.conditions||Array.from(labels.keys())).slice().sort((a,b)=>(rank.get(String(a))??1e9)-(rank.get(String(b))??1e9)||(labels.get(a)||a).localeCompare(labels.get(b)||b,undefined,{sensitivity:'base'})),topics=Array.from(new Set(GROUP_TOPIC.map(d=>topicNum(d.topic_num||d.topic)))).filter(Number.isFinite).sort((a,b)=>a-b),tfs=Array.from(TF_LABELS.entries()).sort((a,b)=>a[1].localeCompare(b[1],undefined,{sensitivity:'base'})),defaults=REPORT_STATE.defaults||{},configured2=configuredCondition(defaults,'condition_2',conditions),default2=configured2||(conditions.length===2?conditions[1]:''),configured1=configuredCondition(defaults,'condition_1',conditions,default2),default1=configured1||conditions.find(x=>x!==default2)||conditions[0]||'';fillSelect(cond1Select,[{value:'',label:'Overall pathways'}].concat(conditions.map(x=>({value:x,label:labels.get(x)||x}))),default1);fillSelect(cond2Select,[{value:'',label:'None'}].concat(conditions.map(x=>({value:x,label:labels.get(x)||x}))),default2);fillSelect(topicSelect,topics.map(x=>({value:x,label:'Topic '+x})),topics.includes(Number(defaults.topic))?Number(defaults.topic):topics[0]||1);fillSelect(tfSelect,[{value:'',label:'All'}].concat(tfs.map(x=>({value:x[0],label:x[1]}))),defaults.tf||'');fillSelect(pathwaySelect,[{value:'',label:'None'}],'');byId('shortConditionNames').checked=defaults.short_condition_names!==false}
+function initControls(){const labels=conditionLabels(),rank=new Map((REPORT_STATE.condition_order||[]).map((x,i)=>[String(x),i])),conditions=(CONDITION_PAYLOAD.conditions||Array.from(labels.keys())).slice().sort((a,b)=>(rank.get(String(a))??1e9)-(rank.get(String(b))??1e9)||(labels.get(a)||a).localeCompare(labels.get(b)||b,undefined,{sensitivity:'base'})),topics=Array.from(new Set(GROUP_TOPIC.map(d=>topicNum(d.topic_num||d.topic)))).filter(Number.isFinite).sort((a,b)=>a-b),tfs=Array.from(TF_LABELS.entries()).sort((a,b)=>a[1].localeCompare(b[1],undefined,{sensitivity:'base'})),defaults=REPORT_STATE.defaults||{},configured2=configuredCondition(defaults,'condition_2',conditions),default2=configured2||(conditions.length===2?conditions[1]:''),configured1=configuredCondition(defaults,'condition_1',conditions,default2),default1=configured1||conditions.find(x=>x!==default2)||conditions[0]||'',configuredTopic=Number(defaults.topic),topRow=GROUP_TOPIC.filter(d=>String(d.comparison_label||d.group_label)===String(default1)).sort((a,b)=>num(b.theta_mean)-num(a.theta_mean)||topicNum(a.topic_num||a.topic)-topicNum(b.topic_num||b.topic))[0]||{},topTopic=topicNum(topRow.topic_num||topRow.topic)||topics[0]||1,defaultTopic=topics.includes(configuredTopic)?configuredTopic:topTopic;fillSelect(cond1Select,[{value:'',label:'Overall pathways'}].concat(conditions.map(x=>({value:x,label:labels.get(x)||x}))),default1);fillSelect(cond2Select,[{value:'',label:'None'}].concat(conditions.map(x=>({value:x,label:labels.get(x)||x}))),default2);fillSelect(topicSelect,topics.map(x=>({value:x,label:'Topic '+x})),defaultTopic);fillSelect(tfSelect,[{value:'',label:'All'}].concat(tfs.map(x=>({value:x[0],label:x[1]}))),defaults.tf||'');fillSelect(pathwaySelect,[{value:'',label:'None'}],'');byId('shortConditionNames').checked=defaults.short_condition_names!==false}
 function matchedTfKeys(){const c1=String(cond1Select.value||''),c2=String(cond2Select.value||''),a=TF_BY_CONDITION.get(c1)||new Set(),b=TF_BY_CONDITION.get(c2)||new Set();return c2?Array.from(a).filter(tf=>b.has(tf)):Array.from(a)}
 function groupTheta(cond,topic){const mode=byId('thetaAggregation')?byId('thetaAggregation').value:'all';if(mode==='matched'&&cond2Select.value){const keys=matchedTfKeys();if(keys.length)return keys.reduce((s,tf)=>s+tfTheta(cond,tf,topic),0)/keys.length}const r=GROUP_TOPIC.find(d=>String(d.comparison_label||d.group_label)===String(cond)&&topicNum(d.topic_num||d.topic)===Number(topic));return r?num(r.theta_mean):0}
 function pairwiseRnaTopicProfiles(){const c1=String(cond1Select.value||''),c2=String(cond2Select.value||''),cfg=directionConfig(),key=[DATA_VERSION,c1,c2,cfg.exprMin,cfg.pseudocount].join('\t');if(RNA_TOPIC_CACHE.key===key)return RNA_TOPIC_CACHE;const assignments=new Map();(PAYLOAD.gene_topics||[]).forEach(d=>{const gene=String(d.gene_key||''),topic=Number(d.topic_num),score=num(d.topic_score,0),old=assignments.get(gene);if(gene&&Number.isFinite(topic)&&(!old||score>old.score||(score===old.score&&topic<old.topic)))assignments.set(gene,{topic,score})});const left=new Map(),right=new Map();let genes=0;assignments.forEach((assignment,gene)=>{const a=auditGeneExpr(c1,gene,NaN),b=c2?auditGeneExpr(c2,gene,NaN):NaN,expressedA=Number.isFinite(a)&&a>=cfg.exprMin,expressedB=Number.isFinite(b)&&b>=cfg.exprMin;if(!expressedA&&!expressedB)return;genes++;if(c2){const delta=Math.log2((Math.max(0,Number.isFinite(a)?a:0)+cfg.pseudocount)/(Math.max(0,Number.isFinite(b)?b:0)+cfg.pseudocount));if(delta>0)left.set(assignment.topic,(left.get(assignment.topic)||0)+delta);else if(delta<0)right.set(assignment.topic,(right.get(assignment.topic)||0)-delta)}else if(expressedA){left.set(assignment.topic,(left.get(assignment.topic)||0)+Math.log2(Math.max(0,a)+cfg.pseudocount))}});const normalize=values=>{const total=Array.from(values.values()).reduce((sum,value)=>sum+value,0);if(total>0)values.forEach((value,topic)=>values.set(topic,value/total));return values};RNA_TOPIC_CACHE={key,left:normalize(left),right:normalize(right),genes};return RNA_TOPIC_CACHE}
@@ -802,7 +1030,7 @@ function colorScale(v,limit,palette='rdbu',single=false){const diverging={rdbu:[
 function conditionColorForId(id){return CONDITION_COLORS[String(id)]||'#7F7F7F'}function conditionColor(side){return conditionColorForId(side===2?cond2Select.value:cond1Select.value)}function syncSelectedColorInputs(){cond1Color.value=conditionColor(1);cond2Color.value=conditionColor(2)}
 function ensureConditionColors(){Array.from(cond1Select.options).filter(o=>o.value).sort((a,b)=>a.textContent.localeCompare(b.textContent,undefined,{sensitivity:'base'})).forEach((o,i)=>{if(!/^#[0-9a-f]{6}$/i.test(String(CONDITION_COLORS[o.value]||'')))CONDITION_COLORS[o.value]=PAL[i%PAL.length]});syncSelectedColorInputs()}
 function fillRgb(fill){const s=String(fill||'').trim();if(s.startsWith('#')){const q=parseInt(s.slice(1),16);return[(q>>16)&255,(q>>8)&255,q&255]}const m=s.match(/[\d.]+/g);return m&&m.length>=3?m.slice(0,3).map(Number):[127,127,127]}function labelContrast(fill){const rgb=fillRgb(fill).map(v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)}),lum=.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2],dark=lum>.42;return{fill:dark?'#111':'#fff',stroke:dark?'#fff':'#333'}}
-function edgeRows(cond){return EDGE_BY_COND.get(String(cond))||[]}function auditGeneExpr(cond,gene,fallback){const v=GENE_EXPR_INDEX.get(String(cond)+'\t'+String(gene));return Number.isFinite(v)?v:fallback}function tfExpression(cond,tf,fallback=NaN){const v=TF_EXPR_INDEX.get(String(cond)+'\t'+tfKey(tf));return Number.isFinite(v)?v:fallback}function decorateLinkDirection(r){const cfg=directionConfig(),paired=!!cond2Select.value,geneLfc=paired?Math.log2((Math.max(0,Number.isFinite(r.gexprA)?r.gexprA:0)+cfg.pseudocount)/(Math.max(0,Number.isFinite(r.gexprB)?r.gexprB:0)+cfg.pseudocount)):NaN,tfLfc=paired?Math.log2((Math.max(0,Number.isFinite(r.exprA??r.tfExprA)?(r.exprA??r.tfExprA):0)+cfg.pseudocount)/(Math.max(0,Number.isFinite(r.exprB??r.tfExprB)?(r.exprB??r.tfExprB):0)+cfg.pseudocount)):NaN,fpChange=paired?(cfg.fpMode==='log2fc'?Math.log2((Math.max(0,r.a)+cfg.pseudocount)/(Math.max(0,r.b)+cfg.pseudocount)):r.a-r.b):r.a,targetPass=paired&&Math.abs(geneLfc)>=cfg.geneCut,fpPass=paired&&Math.abs(fpChange)>=cfg.fpCut,sameDirection=targetPass&&fpPass&&Math.sign(geneLfc)===Math.sign(fpChange),tfOpposing=paired&&Number.isFinite(tfLfc)&&Math.abs(tfLfc)>=cfg.tfCut&&Math.sign(tfLfc)===-Math.sign(geneLfc);return Object.assign(r,{delta:paired?r.a-r.b:r.a,geneLfc,tfLfc,fpChange,correctDirection:paired&&sameDirection&&!tfOpposing,tfOpposing})}function edgePair(){const c1=cond1Select.value,c2=cond2Select.value,m=new Map();edgeRows(c1).forEach(d=>m.set(tfKey(d.tf)+'\t'+d.gene_key,{tf:d.tf,tfu:tfKey(d.tf),gene:String(d.gene_key),a:num(d.fp_sum),b:0,exprA:tfExpression(c1,d.tf,num(d.tf_expr,NaN)),exprB:NaN,gexprA:num(d.gene_expr,NaN),gexprB:NaN,nA:num(d.n_peaks),nB:0}));if(c2)edgeRows(c2).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,r=m.get(k)||{tf:d.tf,tfu:tfKey(d.tf),gene:String(d.gene_key),a:0,b:0,exprA:tfExpression(c1,d.tf,NaN),exprB:NaN,gexprA:NaN,gexprB:NaN,nA:0,nB:0};r.b=num(d.fp_sum);r.exprB=tfExpression(c2,d.tf,num(d.tf_expr,NaN));r.gexprB=num(d.gene_expr,NaN);r.nB=num(d.n_peaks);m.set(k,r)});return Array.from(m.values()).map(r=>decorateLinkDirection(Object.assign(r,{exprA:tfExpression(c1,r.tfu,r.exprA),exprB:c2?tfExpression(c2,r.tfu,r.exprB):NaN,gexprA:auditGeneExpr(c1,r.gene,r.gexprA),gexprB:c2?auditGeneExpr(c2,r.gene,r.gexprB):NaN})))}
+function edgeRows(cond){return EDGE_BY_COND.get(String(cond))||[]}function auditGeneExpr(cond,gene,fallback){const v=GENE_EXPR_INDEX.get(String(cond)+'\t'+String(gene));return Number.isFinite(v)?v:LOADED_EXPRESSION_CONDITIONS.has(String(cond))?NaN:fallback}function tfExpression(cond,tf,fallback=NaN){const v=TF_EXPR_INDEX.get(String(cond)+'\t'+tfKey(tf));return Number.isFinite(v)?v:LOADED_EXPRESSION_CONDITIONS.has(String(cond))?NaN:fallback}function decorateLinkDirection(r){const cfg=directionConfig(),paired=!!cond2Select.value,geneReady=paired&&Number.isFinite(r.gexprA)&&Number.isFinite(r.gexprB),tfA=r.exprA??r.tfExprA,tfB=r.exprB??r.tfExprB,tfReady=paired&&Number.isFinite(tfA)&&Number.isFinite(tfB),geneLfc=geneReady?Math.log2((Math.max(0,r.gexprA)+cfg.pseudocount)/(Math.max(0,r.gexprB)+cfg.pseudocount)):NaN,tfLfc=tfReady?Math.log2((Math.max(0,tfA)+cfg.pseudocount)/(Math.max(0,tfB)+cfg.pseudocount)):NaN,fpChange=paired?(cfg.fpMode==='log2fc'?Math.log2((Math.max(0,r.a)+cfg.pseudocount)/(Math.max(0,r.b)+cfg.pseudocount)):r.a-r.b):r.a,targetPass=paired&&Number.isFinite(geneLfc)&&Math.abs(geneLfc)>=cfg.geneCut,fpPass=paired&&Math.abs(fpChange)>=cfg.fpCut,sameDirection=targetPass&&fpPass&&Math.sign(geneLfc)===Math.sign(fpChange),tfOpposing=paired&&Number.isFinite(tfLfc)&&Math.abs(tfLfc)>=cfg.tfCut&&Math.sign(tfLfc)===-Math.sign(geneLfc);return Object.assign(r,{delta:paired?r.a-r.b:r.a,geneLfc,tfLfc,fpChange,correctDirection:paired&&sameDirection&&!tfOpposing,tfOpposing})}function edgePair(){const c1=cond1Select.value,c2=cond2Select.value,m=new Map();edgeRows(c1).forEach(d=>m.set(tfKey(d.tf)+'\t'+d.gene_key,{tf:d.tf,tfu:tfKey(d.tf),gene:String(d.gene_key),a:num(d.fp_sum),b:0,exprA:tfExpression(c1,d.tf,num(d.tf_expr,NaN)),exprB:NaN,gexprA:num(d.gene_expr,NaN),gexprB:NaN,nA:num(d.n_peaks),nB:0}));if(c2)edgeRows(c2).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,r=m.get(k)||{tf:d.tf,tfu:tfKey(d.tf),gene:String(d.gene_key),a:0,b:0,exprA:tfExpression(c1,d.tf,NaN),exprB:NaN,gexprA:NaN,gexprB:NaN,nA:0,nB:0};r.b=num(d.fp_sum);r.exprB=tfExpression(c2,d.tf,num(d.tf_expr,NaN));r.gexprB=num(d.gene_expr,NaN);r.nB=num(d.n_peaks);m.set(k,r)});return Array.from(m.values()).map(r=>decorateLinkDirection(Object.assign(r,{exprA:tfExpression(c1,r.tfu,r.exprA),exprB:c2?tfExpression(c2,r.tfu,r.exprB):NaN,gexprA:auditGeneExpr(c1,r.gene,r.gexprA),gexprB:c2?auditGeneExpr(c2,r.gene,r.gexprB):NaN})))}
 function selectMdsCondition(id){const target=ACTIVE_CONDITION_SIDE===2?cond2Select:cond1Select,other=ACTIVE_CONDITION_SIDE===2?cond1Select:cond2Select,previous=target.value;if(other.value===id){target.value=id;other.value=previous}else target.value=id;pathwaySelect.value='';resetPages();refresh();refreshConditionData()}
 function drawMds(){const g=byId('mdsLayer');g.replaceChildren();const W=760,H=760,pad=72,pointInset=38,rows=GROUP_MDS,sx=scale(rows.map(d=>num(d.MDS1)),pad+pointInset,W-pad-pointInset),sy=scale(rows.map(d=>num(d.MDS2)),H-pad-pointInset,pad+pointInset),selected=new Map([[cond1Select.value,conditionColor(1)],[cond2Select.value,conditionColor(2)]]),shorten=byId('shortConditionNames')&&byId('shortConditionNames').checked,labelMap=shorten?mdsShortLabelMap():mdsFullLabelMap(),labels=[];g.appendChild(el('line',{x1:pad,y1:H-pad,x2:W-pad,y2:H-pad,stroke:'#111','stroke-width':1.5}));g.appendChild(el('line',{x1:pad,y1:pad,x2:pad,y2:H-pad,stroke:'#111','stroke-width':1.5}));const xTitle=el('text',{x:W/2,y:H-18,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834'});xTitle.textContent='MDS1';g.appendChild(xTitle);const yTitle=el('text',{x:20,y:H/2,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834',transform:'rotate(-90 20 '+(H/2)+')'});yTitle.textContent='MDS2';g.appendChild(yTitle);rows.forEach(d=>{const id=String(d.comparison_label||d.group_label),x=sx(num(d.MDS1)),y=sy(num(d.MDS2)),sel=selected.get(id),c=conditionColorForId(id),raw=String(d.mds_label||d.display_label||id).replace(/_/g,' ').trim(),text=labelMap.get(raw)||raw,p=el('circle',{cx:x,cy:y,r:sel?19:14,fill:c,stroke:sel?'#111':'#fff','stroke-width':sel?4:2.5,style:'cursor:pointer','data-condition-id':id});p.addEventListener('click',()=>selectMdsCondition(id));p.addEventListener('mousemove',ev=>tooltip('mdsTooltip',ev,(d.display_label||id)+'\ndocuments: '+num(d.n_docs)));p.addEventListener('mouseout',()=>hideTip('mdsTooltip'));g.appendChild(p);labels.push({d,id,pointX:x,pointY:y,x,y,c,p,text,selected:!!sel})});mdsLayoutLabels(labels,W,H,pad).forEach(q=>{const e=mdsLeaderEndpoints(q);g.appendChild(el('line',{x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,stroke:'#59635e','stroke-width':1.25,opacity:.66}));const t=el('text',{x:q.x+5,y:q.y+25,'text-anchor':'start','font-size':18,'font-weight':700,fill:q.c,style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});t.textContent=q.text;t.addEventListener('click',()=>q.p.dispatchEvent(new MouseEvent('click')));t.addEventListener('mousemove',ev=>tooltip('mdsTooltip',ev,(q.d.display_label||q.id)+'\ndocuments: '+num(q.d.n_docs)));t.addEventListener('mouseout',()=>hideTip('mdsTooltip'));g.appendChild(t)});styleMdsPlot();byId('mdsStats').textContent=rows.length+' conditions'}function scale(vals,lo,hi){const x=vals.filter(Number.isFinite);if(!x.length)return()=>((lo+hi)/2);const a=Math.min(...x),b=Math.max(...x);return v=>a===b?(lo+hi)/2:lo+(v-a)/(b-a)*(hi-lo)}
 function activityRows(){const c1=cond1Select.value,c2=cond2Select.value,detailed=LOADED_EDGE_CONDITIONS.has(String(c1))&&(!c2||LOADED_EDGE_CONDITIONS.has(String(c2)));let rows;if(!detailed){rows=(PAYLOAD.tf_activity||[]).filter(d=>[c1,c2].includes(String(d.condition_id))).reduce((m,d)=>{const key=tfKey(d.tf_upper||d.tf),q=m.get(key)||{tf:d.tf,tfu:key,a:0,b:0,y:0,exprA:0,exprB:0};if(String(d.condition_id)===String(c1)){q.a=num(d.fp_sum);q.y=Math.max(q.y,num(d.n_targets));q.exprA=num(d.tf_expr)}else{q.b=num(d.fp_sum);q.y=Math.max(q.y,num(d.n_targets));q.exprB=num(d.tf_expr)}m.set(key,q);return m},new Map());rows=Array.from(rows.values())}else{const by=new Map();edgePair().forEach(r=>{const q=by.get(r.tfu)||{tf:r.tf,tfu:r.tfu,a:0,b:0,targets:new Set(),exprA:[],exprB:[]};q.a+=r.a;q.b+=r.b;if(!c2||Math.abs(r.delta)>=1)q.targets.add(r.gene);if(Number.isFinite(r.exprA))q.exprA.push(r.exprA);if(Number.isFinite(r.exprB))q.exprB.push(r.exprB);by.set(r.tfu,q)});rows=Array.from(by.values()).map(q=>Object.assign(q,{y:q.targets.size,exprA:q.exprA.length?Math.max(...q.exprA):0,exprB:q.exprB.length?Math.max(...q.exprB):0}))}const totalA=rows.reduce((s,d)=>s+Math.max(0,d.a),0),totalB=rows.reduce((s,d)=>s+Math.max(0,d.b),0),positive=[];rows.forEach(d=>{if(d.a>0&&totalA>0)positive.push(d.a/totalA);if(c2&&d.b>0&&totalB>0)positive.push(d.b/totalB)});const pseudo=Math.max(1e-12,(positive.length?Math.min(...positive):1e-8)/2);return rows.map(d=>{const shareA=totalA>0?Math.max(0,d.a)/totalA:0,shareB=totalB>0?Math.max(0,d.b)/totalB:0;return Object.assign(d,{shareA,shareB,deltaShare:shareA-shareB,relativeLog2:Math.log2((shareA+pseudo)/(shareB+pseudo)),expr:Math.max(d.exprA||0,d.exprB||0),logfc:c2?Math.log2((d.exprA+1)/(d.exprB+1)):tfTheta(c1,d.tfu,topicSelect.value)})})}
@@ -929,11 +1157,11 @@ function bindNetworkPointer(){const svg=byId('networkSvg'),ng=byId('networkNodes
 function screenPoint(ev){const p=byId('networkSvg').createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;return p.matrixTransform(byId('networkSvg').getScreenCTM().inverse())}function worldPoint(ev){const p=screenPoint(ev),v=networkState.view;return{x:(p.x-v.x)/v.k,y:(p.y-v.y)/v.k}}function applyNetworkView(){const v=networkState.view;byId('networkView').setAttribute('transform','translate('+v.x+' '+v.y+') scale('+v.k+')')}function markSelected(){byId('networkNodes').querySelectorAll('.node').forEach(x=>x.classList.toggle('selected',x.dataset.id===networkState.selected))}function redrawNetwork(){const by=new Map(networkState.nodes.map(n=>[n.id,n]));byId('networkNodes').querySelectorAll('.node').forEach(s=>{const n=by.get(s.dataset.id);if(!n)return;if(s.tagName==='rect'){s.setAttribute('x',n.x-n.boxW/2);s.setAttribute('y',n.y-n.r*.8)}else{s.setAttribute('cx',n.x);s.setAttribute('cy',n.y)}});byId('networkLabelsLayer').querySelectorAll('[data-id]').forEach(t=>{const n=by.get(t.dataset.id);if(n){t.setAttribute('x',n.type==='TF'?n.x:n.x+n.r+6);t.setAttribute('y',n.y+4)}});byId('networkEdges').querySelectorAll('[data-from]').forEach(line=>{const a=by.get(line.dataset.from),b=by.get(line.dataset.to);if(!a||!b)return;const dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),endR=b.type==='TF'?Math.max(b.r+3,b.boxW/2+3):b.r+3;line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x-dx/d*endR);line.setAttribute('y2',b.y-dy/d*endR)})}
 function syncReportMode(){byId('showPathwaysMode').classList.toggle('active',!networkOpen);byId('showGrnMode').classList.toggle('active',networkOpen);byId('showGrnMode').disabled=overallMode();byId('networkPathwayFocus').disabled=!currentPath()}
 function updateNetworkHeading(){const path=currentPath(),title=path?path.pathway:'Topic '+topicSelect.value+' GRN',context=conditionLabel(cond1Select.value)+(cond2Select.value?' vs '+conditionLabel(cond2Select.value):'')+' | Topic '+topicSelect.value+(tfSelect.value?' | TF '+tfLabel():' | All TFs')+(path?' | Pathway highlighted':'');byId('networkTitle').textContent=title;byId('networkTitle').title=title;byId('networkContext').textContent=context;syncReportMode()}
-function openNetwork(){if(overallMode())return;networkOpen=true;document.body.classList.add('network-open');byId('networkPanel').style.display='flex';updateNetworkHeading();byId('networkStats').textContent='Loading compressed network data...';networkState.view={x:0,y:0,k:1};setLoading(true,'Loading topic GRN...');const loads=[ensureSelectedConditionEdges(),loadNetworkPayload()];if(byId('networkMode').value==='tf_peak_gene')loads.push(ensureSelectedConditionPeaks());Promise.all(loads).then(()=>{if(networkOpen){updateNetworkHeading();drawNetwork()}}).catch(e=>{byId('networkStats').textContent=e.message}).finally(()=>setLoading(false));byId('networkBack').focus()}function closeNetwork(){networkOpen=false;document.body.classList.remove('network-open');byId('networkPanel').style.display='none';syncReportMode();if(lastNetworkTrigger&&typeof lastNetworkTrigger.focus==='function')lastNetworkTrigger.focus()}
+function openNetwork(){if(overallMode())return;networkOpen=true;document.body.classList.add('network-open');byId('networkPanel').style.display='flex';updateNetworkHeading();byId('networkStats').textContent='Loading compressed network data...';networkState.view={x:0,y:0,k:1};setLoading(true,'Loading topic GRN...');const loads=[ensureSelectedConditionExpressions(),ensureSelectedConditionEdges(),loadNetworkPayload()];if(byId('networkMode').value==='tf_peak_gene')loads.push(ensureSelectedConditionPeaks());Promise.all(loads).then(()=>{if(networkOpen){updateNetworkHeading();drawNetwork()}}).catch(e=>{byId('networkStats').textContent=e.message}).finally(()=>setLoading(false));byId('networkBack').focus()}function closeNetwork(){networkOpen=false;document.body.classList.remove('network-open');byId('networkPanel').style.display='none';syncReportMode();if(lastNetworkTrigger&&typeof lastNetworkTrigger.focus==='function')lastNetworkTrigger.focus()}
 function exportSvg(svg,name){const clone=svg.cloneNode(true);clone.setAttribute('xmlns',NS);clone.setAttribute('width',1600);clone.setAttribute('height',900);const blob=new Blob([new XMLSerializer().serializeToString(clone)],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href)}
 function updateProbabilityPanelTitles(){const label=tfSelect.value?' - '+tfLabel():'',rna=conditionTopicMetric&&conditionTopicMetric.value==='rna_delta',matched=byId('thetaAggregation').value==='matched'&&cond2Select.value,n=matched?matchedTfKeys().length:0;byId('conditionProbabilityTitle').textContent=rna?'Differential RNA Activity':'Topic Activity';byId('conditionProbabilityTitle').title=rna?'The same expressed assigned genes are compared in both conditions; positive log2 expression differences are summed and normalized by topic.':matched?'Equal-weight mean theta over the same '+n+' TF documents in both selected conditions.':'Equal-weight mean theta over every available condition::TF document in each condition.';byId('tfConditionProbabilityTitle').textContent='TF Probability'+label;byId('tfConditionProbabilityTitle').title=tfSelect.value?'Condition::TF topic probabilities for '+tfLabel():'TF probabilities for the selected topic'}
 function refresh(){['mdsTooltip','activityTooltip','butterflyTooltip','tfButterflyTooltip','pathTooltip','networkTooltip'].forEach(hideTip);ensureConditionColors();const overall=overallMode();if(overall){cond2Select.value='';tfSelect.value='';pathwayDeOnly.checked=false;if(networkOpen)closeNetwork()}else if(cond2Select.value===cond1Select.value)cond2Select.value='';const paired=!!cond2Select.value;cond2Select.disabled=overall;cond1Color.disabled=overall;cond2Color.disabled=overall||!paired;byId('thetaAggregation').disabled=overall;conditionTopicMetric.disabled=overall;tfSelect.disabled=overall;pathwayScoreMethod.disabled=overall;pathwayDeOnly.disabled=!paired;byId('networkCorrectDirectionOnly').disabled=!paired;if(!pathwayDeOnly.dataset.bound){pathwayDeOnly.dataset.bound='1';pathwayDeOnly.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}})}const directionOnly=byId('networkCorrectDirectionOnly');if(!directionOnly.dataset.bound){directionOnly.dataset.bound='1';directionOnly.addEventListener('change',()=>{if(networkOpen)drawNetwork()})}updateProbabilityPanelTitles();drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();syncReportMode();if(networkOpen){updateNetworkHeading();drawNetwork()}sendState(false)}
-function refreshConditionData(){if(overallMode())return Promise.resolve(PAYLOAD);const tasks=[];if(!cond2Select.value)tasks.push(ensureSelectedConditionPathways());if(tfSelect.value||networkOpen){const edgeConditions=[cond1Select.value,cond2Select.value].filter(Boolean),needsEdges=edgeConditions.some(x=>!LOADED_EDGE_CONDITIONS.has(String(x)));if(needsEdges)byId('activityStats').textContent='Loading direct target data...';tasks.push(ensureSelectedConditionEdges())}if(!tasks.length)return Promise.resolve(PAYLOAD);return Promise.all(tasks).then(()=>refresh()).catch(e=>{byId('activityStats').textContent=e.message})}
+function refreshConditionData(){if(overallMode())return Promise.resolve(PAYLOAD);const tasks=[];if(!cond2Select.value)tasks.push(ensureSelectedConditionPathways());if(tfSelect.value||networkOpen){const edgeConditions=[cond1Select.value,cond2Select.value].filter(Boolean),needsEdges=edgeConditions.some(x=>!LOADED_EDGE_CONDITIONS.has(String(x)));if(needsEdges)byId('activityStats').textContent='Loading direct target data...';tasks.push(ensureSelectedConditionExpressions(),ensureSelectedConditionEdges())}if(!tasks.length)return Promise.resolve(PAYLOAD);return Promise.all(tasks).then(()=>refresh()).catch(e=>{byId('activityStats').textContent=e.message})}
 function bindActivityZoom(){const svg=byId('activitySvg');let drag=null;svg.addEventListener('wheel',ev=>{ev.preventDefault();changeActivityZoom(ev.deltaY<0?1.25:.8)},{passive:false});svg.addEventListener('mousedown',ev=>{if(ACTIVITY_VIEW.k<=1)return;drag={x:ev.clientX,y:ev.clientY,ox:ACTIVITY_VIEW.ox,oy:ACTIVITY_VIEW.oy};svg.style.cursor='grabbing'});window.addEventListener('mousemove',ev=>{if(!drag)return;ACTIVITY_VIEW.ox=clamp(drag.ox-(ev.clientX-drag.x)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_VIEW.oy=clamp(drag.oy+(ev.clientY-drag.y)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_RENDER_KEY='';drawActivity()});window.addEventListener('mouseup',()=>{drag=null;svg.style.cursor=''});svg.addEventListener('dblclick',()=>{resetActivityZoom();drawActivity()});byId('activityZoomIn').onclick=()=>changeActivityZoom(1.5);byId('activityZoomOut').onclick=()=>changeActivityZoom(1/1.5)}
 function applyExternalState(s,changed){if(!s)return;if(changed==='cond1')setActiveConditionSide(1);if(changed==='cond2')setActiveConditionSide(2);if(s.activeConditionSide)setActiveConditionSide(s.activeConditionSide);if(s.cond1!==undefined&&Array.from(cond1Select.options).some(o=>o.value===String(s.cond1)))cond1Select.value=String(s.cond1);if(s.cond2!==undefined&&Array.from(cond2Select.options).some(o=>o.value===String(s.cond2)))cond2Select.value=String(s.cond2);if(s.topic&&Array.from(topicSelect.options).some(o=>o.value===String(s.topic)))topicSelect.value=String(s.topic);if(s.tf!==undefined&&Array.from(tfSelect.options).some(o=>o.value===String(s.tf)))tfSelect.value=String(s.tf);if(s.metric&&Array.from(conditionTopicMetric.options).some(o=>o.value===String(s.metric)))conditionTopicMetric.value=String(s.metric);if(['method','k','condition','cond1','cond2','topic','tf','metric'].includes(changed))pathwaySelect.value='';if(changed==='condition'||changed==='cond1'||changed==='cond2'){resetPages();resetActivityZoom()}if(changed==='metric'){PAGE_INDEX.topic=0;PAGE_INDEX.path=0}if(changed==='tf'&&tfSelect.value)selectTopTfTopic(tfSelect.value);if(changed==='topic'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}if(changed==='tf'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh();if(['cond1','cond2','condition','tf'].includes(changed))refreshConditionData();if(s.pathway!==undefined&&Array.from(pathwaySelect.options).some(o=>o.value===String(s.pathway))){pathwaySelect.value=String(s.pathway);showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();}if(changed==='pathway'&&pathwaySelect.value)openNetwork();else if(networkOpen){updateNetworkHeading();refreshConditionData()}}
 function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[cond1Select,1],[cond2Select,2]].forEach(([x,side])=>{x.addEventListener('focus',()=>setActiveConditionSide(side));x.addEventListener('change',()=>{setActiveConditionSide(side);pathwaySelect.value='';resetPages();resetActivityZoom();refresh()})});topicSelect.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));refresh()});tfSelect.addEventListener('change',()=>{if(tfSelect.value)selectTopTfTopic(tfSelect.value);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh()});pathwayScoreMethod.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}});pathwaySelect.addEventListener('change',()=>{showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();sendState(false);if(pathwaySelect.value){lastNetworkTrigger=pathwaySelect;openNetwork()}else if(networkOpen){updateNetworkHeading();drawNetwork()}});byId('topicPrev').onclick=()=>movePage('topic',-1,drawButterfly);byId('topicNext').onclick=()=>movePage('topic',1,drawButterfly);byId('tfPrev').onclick=()=>movePage('tf',-1,drawTfButterfly);byId('tfNext').onclick=()=>movePage('tf',1,drawTfButterfly);byId('pathPrev').onclick=()=>movePage('path',-1,drawPathways);byId('pathNext').onclick=()=>movePage('path',1,drawPathways);['networkTfScope','networkThetaCutoff','networkPhiCutoff','networkPrimaryOnly','networkMode','networkTopTf','networkTopLinks','networkLayout','networkTfPalette','networkGenePalette','networkEdgePalette','networkTfSingleColor','networkGeneSingleColor','networkEdgeSingleColor','networkTfMin','networkTfMax','networkLabels','networkArrows','networkPathwayFocus'].forEach(id=>{const x=byId(id);x.addEventListener('change',drawNetwork);x.addEventListener('input',drawNetwork)});[['networkThetaPreset','networkThetaCutoff'],['networkPhiPreset','networkPhiCutoff']].forEach(([presetId,inputId])=>{const preset=byId(presetId),input=byId(inputId);preset.addEventListener('change',()=>{if(preset.value!=='custom')input.value=preset.value;drawNetwork()});input.addEventListener('input',()=>{const match=Array.from(preset.options).find(o=>o.value!=='custom'&&Number(o.value)===Number(input.value));preset.value=match?match.value:'custom'})});const spacing=byId('networkSpacing'),spacingValue=byId('networkSpacingValue');spacing.addEventListener('input',()=>{spacingValue.value=spacing.value;drawNetwork()});spacingValue.addEventListener('input',()=>{spacing.value=clamp(num(spacingValue.value,1),.5,2);drawNetwork()});document.querySelectorAll('[data-network-tab]').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('[data-network-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('[data-network-panel]').forEach(x=>x.classList.toggle('active',x.dataset.networkPanel===tab.dataset.networkTab))}));byId('showPathwaysMode').onclick=closeNetwork;byId('showGrnMode').onclick=()=>{lastNetworkTrigger=byId('showGrnMode');openNetwork()};byId('networkBack').onclick=closeNetwork;byId('networkFit').onclick=fitNetworkView;byId('networkReset').onclick=()=>{networkState.view={x:0,y:0,k:1};drawNetwork()};byId('networkExport').onclick=()=>exportSvg(byId('networkSvg'),'condition_topic_grn.svg');byId('exportSvgButton').onclick=()=>exportSvg(networkOpen?byId('networkSvg'):byId('pathSvg'),'condition_topic_report.svg');byId('networkNodeSelect').onchange=()=>{networkState.selected=byId('networkNodeSelect').value;markSelected()};document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&networkOpen)closeNetwork()});let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();if(networkOpen)fitNetworkView()},100)});window.addEventListener('message',ev=>{if(ev.data&&ev.data.type==='m3cr-set-state')applyExternalState(ev.data.state,ev.data.changed);if(ev.data&&ev.data.type==='m3cr-active-condition')setActiveConditionSide(ev.data.side);if(ev.data&&ev.data.type==='m3cr-action'&&ev.data.action==='export')byId('exportSvgButton').click()});refresh();sendState(true);refreshConditionData()}

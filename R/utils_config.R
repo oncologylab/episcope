@@ -248,10 +248,20 @@
     if (length(bad_char)) {
       cli::cli_abort("Report defaults must be non-empty strings or null: {paste(bad_char, collapse = ', ')}.")
     }
-    if (!is.null(defaults[["topic"]]) &&
-        (!.project_config_scalar(defaults[["topic"]], "integer") ||
-          defaults[["topic"]] < 1L)) {
-      cli::cli_abort("`report.defaults.topic` must be a positive integer.")
+    if (!is.null(defaults[["topic"]])) {
+      topic_is_top <- .project_config_scalar(
+        defaults[["topic"]],
+        "character"
+      ) && identical(defaults[["topic"]], "top")
+      topic_is_integer <- .project_config_scalar(
+        defaults[["topic"]],
+        "integer"
+      ) && defaults[["topic"]] >= 1L
+      if (!topic_is_top && !topic_is_integer) {
+        cli::cli_abort(
+          "`report.defaults.topic` must be a positive integer or `top`."
+        )
+      }
     }
     if (!is.null(defaults[["trained_k"]]) &&
         (!.project_config_scalar(defaults[["trained_k"]], "integer") ||

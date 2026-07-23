@@ -59,7 +59,9 @@ run_topic_modeling(
 files.}
 
 \item{multiomic_data}{Optional CraftGRN multiomic object. Required when
-`replicate_documents = TRUE`.}
+`replicate_documents = TRUE`. In condition mode, supply the complete
+object so HTML RNA values and pathway-expression scores use the full
+normalized `matrices$gene_expr` matrix rather than filtered link rows.}
 
 \item{comparisons}{Comparison or condition grouping table, or a CSV path.}
 
@@ -76,7 +78,9 @@ supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 define `condition_colors`, `condition_order`, and initial `defaults` for
 generated reports without creating package or browser-persistent state.
 Defaults may use exact `condition_1` and `condition_2` IDs or reusable
-`condition_1_suffix` and `condition_2_suffix` selectors.}
+`condition_1_suffix` and `condition_2_suffix` selectors. Set
+`report.defaults.topic: top` to start at the highest mean-theta topic for
+the initial Condition 1.}
 
 \item{method}{Single Module 3 method ID. If `NULL`, read from
 `project_config` or use the package default.}
@@ -112,15 +116,16 @@ retaining every document term and conserving document token totals.}
 
 \item{condition_peak_weighting}{Condition-mode aggregated-Peak weighting.
 Use `"tf_expression"` to multiply balanced Peak weights by the selected
-TF's condition-specific log expression relative to its median across
+TF condition-specific log expression relative to its median across
 included conditions before pseudo-count conversion.}
 
 \item{condition_gene_expression_file}{Long condition-gene expression CSV.
 If `NULL`, specificity weighting reads `condition_gene_expression.csv`
 under `filtered_dir`.}
 
-\item{condition_specificity_temperature}{Positive expression-specificity
-softmax temperature. If `NULL`, read from project config or use `0.5`.}
+\item{condition_specificity_temperature}{Positive temperature for
+expression-specific weighting. If `NULL`, read from project config or use
+`0.5`.}
 
 \item{condition_specificity_floor}{Uniform expressed-condition share retained
 during specificity weighting. If `NULL`, read from project config or use

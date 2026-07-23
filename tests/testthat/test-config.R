@@ -153,6 +153,13 @@ test_that("project config validation checks nested report state", {
       )
     )
   ))
+  expect_true(validate_config(
+    required = character(),
+    numeric_required = character(),
+    project_config = list(
+      report = list(defaults = list(topic = "top"))
+    )
+  ))
 })
 
 test_that("project resource and batch-correction configuration is validated", {

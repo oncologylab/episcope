@@ -2990,7 +2990,8 @@
                                              topic_page_dir,
                                              condition_page_dir,
                                              subgrn_payload_dir,
-                                             condition_pair_payload_dir) {
+                                             condition_pair_payload_dir,
+                                             condition_expression = NULL) {
   old_dt_threads <- data.table::getDTthreads()
   on.exit(data.table::setDTthreads(old_dt_threads), add = TRUE)
   data.table::setDTthreads(1L)
@@ -3111,7 +3112,8 @@
         payload_base = "../cp",
         topic_space = topic_space,
         topic_pathways = topic_pathways,
-        condition_pathways = condition_pathways
+        condition_pathways = condition_pathways,
+        condition_expression = condition_expression
       )
     }
     .m3tb_condition_report_html(
@@ -3154,7 +3156,9 @@
       payload_file = condition_payload$payload_file,
       network_payload_file = condition_payload$network_payload_file,
       n_tf_gene = condition_payload$n_tf_gene,
-      n_tf_peak_gene = condition_payload$n_tf_peak_gene
+      n_tf_peak_gene = condition_payload$n_tf_peak_gene,
+      n_expression_rows = condition_payload$n_expression_rows,
+      expression_source = condition_payload$expression_source
     )
   )
 }
@@ -3326,7 +3330,11 @@
   invisible(TRUE)
 }
 
-.m3tb_write_review_html <- function(output_dir, score_result, link_summary, review_dir = NULL) {
+.m3tb_write_review_html <- function(output_dir,
+                                    score_result,
+                                    link_summary,
+                                    review_dir = NULL,
+                                    condition_expression = NULL) {
   output_dir <- normalizePath(as.character(output_dir)[[1L]], winslash = "/", mustWork = FALSE)
   force(score_result)
   force(link_summary)
@@ -3399,7 +3407,8 @@
             topic_page_dir = "",
             condition_page_dir = condition_page_dir,
             subgrn_payload_dir = subgrn_payload_dir,
-            condition_pair_payload_dir = condition_pair_payload_dir
+            condition_pair_payload_dir = condition_pair_payload_dir,
+            condition_expression = condition_expression
           ),
           error = function(e) {
             captured_calls <<- sys.calls()
@@ -3470,10 +3479,20 @@
   files
 }
 
-.m3tb_write_review_outputs <- function(output_dir, score_result, link_summary, review_dir = NULL) {
+.m3tb_write_review_outputs <- function(output_dir,
+                                       score_result,
+                                       link_summary,
+                                       review_dir = NULL,
+                                       condition_expression = NULL) {
   if (is.null(review_dir)) review_dir <- file.path(output_dir, "review_topic_experiments")
   dir.create(review_dir, recursive = TRUE, showWarnings = FALSE)
-  html <- .m3tb_write_review_html(output_dir, score_result, link_summary, review_dir = review_dir)
+  html <- .m3tb_write_review_html(
+    output_dir,
+    score_result,
+    link_summary,
+    review_dir = review_dir,
+    condition_expression = condition_expression
+  )
   invisible(html)
 }
 
@@ -3875,7 +3894,9 @@
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files, or condition-link files when `input_source = "condition_links"`.
 #' @param multiomic_data Optional CraftGRN multiomic object. Required when
-#'   `replicate_documents = TRUE`.
+#'   `replicate_documents = TRUE`. In condition mode, supply the complete
+#'   object so HTML RNA values and pathway-expression scores use the full
+#'   normalized `matrices$gene_expr` matrix rather than filtered link rows.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #'   For condition separation scoring, use columns `condition_label` and
 #'   `condition_group`.
@@ -4248,6 +4269,14 @@ run_module3_topic_benchmark <- function(filtered_dir,
   fibroblast_paper_recovery <- NULL
   if (isTRUE(run_reports)) {
     if (isTRUE(verbose)) .log_inform("Scoring Module 3 theta separation and writing review reports.")
+    condition_expression <- if (identical(input_source, "condition_links")) {
+      .m3cr_multiomic_expression_rows(
+        multiomic_data,
+        conditions = sample_subset
+      )
+    } else {
+      data.table::data.table()
+    }
     report_model_rows <- .m3tb_topic_space_rows(model_rows)
     score_prefix <- if (isTRUE(replicate_documents)) {
       "theta_condition_replicate_separation"
@@ -4266,7 +4295,13 @@ run_module3_topic_benchmark <- function(filtered_dir,
     attr(score_result, "model_rows") <- report_model_rows
     attr(score_result, "report_state") <- report_state
     link_summary <- .m3tb_summarize_topic_links(output_dir, model_rows, review_dir = review_dir)
-    html <- .m3tb_write_review_outputs(output_dir, score_result, link_summary, review_dir = review_dir)
+    html <- .m3tb_write_review_outputs(
+      output_dir,
+      score_result,
+      link_summary,
+      review_dir = review_dir,
+      condition_expression = condition_expression
+    )
     if (isTRUE(run_fibroblast_paper_recovery) && !is.null(paper_benchmark_csv)) {
       fibroblast_paper_recovery <- .m3fb_score_existing_models(
         output_dir = output_dir,
@@ -4917,7 +4952,9 @@ visualize_differential_grns <- function(differential_links_dir,
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files, or condition-link files when `input_source = "condition_links"`.
 #' @param multiomic_data Optional CraftGRN multiomic object. Required when
-#'   `replicate_documents = TRUE`.
+#'   `replicate_documents = TRUE`. In condition mode, supply the complete
+#'   object so HTML RNA values and pathway-expression scores use the full
+#'   normalized `matrices$gene_expr` matrix rather than filtered link rows.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #' @param output_dir Topic output directory.
 #' @param method Single Module 3 method ID.
@@ -5673,7 +5710,9 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files.
 #' @param multiomic_data Optional CraftGRN multiomic object. Required when
-#'   `replicate_documents = TRUE`.
+#'   `replicate_documents = TRUE`. In condition mode, supply the complete
+#'   object so HTML RNA values and pathway-expression scores use the full
+#'   normalized `matrices$gene_expr` matrix rather than filtered link rows.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #' @param output_dir Topic output directory.
 #' @param project_config Optional project YAML path or config list. When
@@ -5687,7 +5726,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   define `condition_colors`, `condition_order`, and initial `defaults` for
 #'   generated reports without creating package or browser-persistent state.
 #'   Defaults may use exact `condition_1` and `condition_2` IDs or reusable
-#'   `condition_1_suffix` and `condition_2_suffix` selectors.
+#'   `condition_1_suffix` and `condition_2_suffix` selectors. Set
+#'   `report.defaults.topic: top` to start at the highest mean-theta topic for
+#'   the initial Condition 1.
 #' @param method Single Module 3 method ID. If `NULL`, read from
 #'   `project_config` or use the package default.
 #' @param k_grid Integer topic numbers. If `NULL`, read from `project_config`
@@ -5711,13 +5752,14 @@ run_regulatory_topics <- function(filtered_dir,
 #'   retaining every document term and conserving document token totals.
 #' @param condition_peak_weighting Condition-mode aggregated-Peak weighting.
 #'   Use `"tf_expression"` to multiply balanced Peak weights by the selected
-#'   TF's condition-specific log expression relative to its median across
+#'   TF condition-specific log expression relative to its median across
 #'   included conditions before pseudo-count conversion.
 #' @param condition_gene_expression_file Long condition-gene expression CSV.
 #'   If `NULL`, specificity weighting reads `condition_gene_expression.csv`
 #'   under `filtered_dir`.
-#' @param condition_specificity_temperature Positive expression-specificity
-#'   softmax temperature. If `NULL`, read from project config or use `0.5`.
+#' @param condition_specificity_temperature Positive temperature for
+#'   expression-specific weighting. If `NULL`, read from project config or use
+#'   `0.5`.
 #' @param condition_specificity_floor Uniform expressed-condition share retained
 #'   during specificity weighting. If `NULL`, read from project config or use
 #'   `0.1`.

@@ -1564,6 +1564,18 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "function indexConditionPart", fixed = TRUE)
   expect_match(html, "EDGE_BY_COND.set(condition", fixed = TRUE)
   expect_match(html, "function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}", fixed = TRUE)
+  expect_match(html, "LOADED_EXPRESSION_CONDITIONS", fixed = TRUE)
+  expect_match(html, "function indexFullExpressionRows", fixed = TRUE)
+  expect_match(
+    html,
+    "function ensureSelectedConditionExpressions(){return loadSelectedConditionParts('expression')}",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "const loads=[ensureSelectedConditionExpressions(),ensureSelectedConditionEdges(),loadNetworkPayload()]",
+    fixed = TRUE
+  )
   expect_match(html, "const drawMdsUncached=drawMds", fixed = TRUE)
   expect_match(html, "const drawActivityUncached=drawActivity", fixed = TRUE)
   expect_match(html, "if(n&&!isFile)url.searchParams.set", fixed = TRUE)
@@ -1711,6 +1723,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "function networkExpressionLimit", fixed = TRUE)
   expect_match(html, "tfv=networkTfRnaValue(r.tfu)", fixed = TRUE)
   expect_match(html, "gv=networkGeneRnaValue(r.gene)", fixed = TRUE)
+  expect_match(html, "topTopic=topicNum(topRow.topic_num||topRow.topic)", fixed = TRUE)
   expect_match(
     html,
     "RNA log2FC ('+conditionLabel(cond1Select.value)+' / '+conditionLabel(cond2Select.value)+')",
@@ -2960,6 +2973,93 @@ test_that("condition report payload keeps bounded strongest peak support", {
     out$tf_peak_gene[gene_key == "Gene1", uniqueN(tf_upper)],
     2L
   )
+})
+
+test_that("condition reports use full normalized RNA for TF expression", {
+  activity <- data.table::data.table(
+    condition_id = c("A", "A", "B"),
+    tf = c("Tbet", "TF1", "TF1"),
+    tf_upper = c("TBET", "TF1", "TF1"),
+    tf_expr = c(2, 3, 4)
+  )
+  expression <- data.table::data.table(
+    condition_id = c("A", "A", "B"),
+    gene_key = c("Tbx21", "TF1", "TF1"),
+    gene_expr = c(12, 8, 5)
+  )
+
+  out <- craftgrn:::.m3cr_apply_full_tf_expression(activity, expression)
+
+  expect_equal(out[condition_id == "A" & tf == "Tbet", tf_expr], 12)
+  expect_equal(out[condition_id == "A" & tf == "TF1", tf_expr], 8)
+  expect_equal(out[condition_id == "B" & tf == "TF1", tf_expr], 5)
+  expect_false(any(c("tf_match", "normalized_tf_expr") %in% names(out)))
+})
+
+test_that("condition reports convert complete multiomic RNA to long rows", {
+  multiomic <- list(
+    schema = "craftgrn_multiomic_v1",
+    features = list(
+      fp = data.frame(fp_id = "peak1"),
+      gene = data.frame(
+        gene_id = c("ENSMUSG1", "Tbx21"),
+        hgnc_symbol = c("Batf", "Tbx21")
+      )
+    ),
+    matrices = list(
+      fp_score = matrix(1, 1, 2, dimnames = list("peak1", c("A", "B"))),
+      fp_bound = matrix(TRUE, 1, 2, dimnames = list("peak1", c("A", "B"))),
+      gene_expr = matrix(
+        c(3, 7, 5, 11),
+        2,
+        2,
+        dimnames = list(c("ENSMUSG1", "Tbx21"), c("A", "B"))
+      ),
+      gene_on = matrix(
+        TRUE,
+        2,
+        2,
+        dimnames = list(c("ENSMUSG1", "Tbx21"), c("A", "B"))
+      ),
+      atac_score = NULL,
+      atac_open = NULL
+    )
+  )
+
+  out <- craftgrn:::.m3cr_multiomic_expression_rows(
+    multiomic,
+    conditions = "B"
+  )
+
+  expect_equal(nrow(out), 2L)
+  expect_equal(out[condition_id == "B" & gene_key == "Tbx21", gene_expr], 11)
+  expect_equal(
+    attr(out, "expression_source"),
+    "multiomic_data$matrices$gene_expr"
+  )
+})
+
+test_that("complete normalized RNA clears link-derived TF fallback values", {
+  activity <- data.table::data.table(
+    condition_id = c("A", "A"),
+    tf = c("TF1", "NO_RNA"),
+    tf_upper = c("TF1", "NO_RNA"),
+    tf_expr = c(2, 99)
+  )
+  expression <- data.table::data.table(
+    condition_id = "A",
+    gene_key = "TF1",
+    gene_expr = 8
+  )
+
+  out <- craftgrn:::.m3cr_apply_full_tf_expression(
+    activity,
+    expression,
+    replace_missing = TRUE
+  )
+
+  expect_equal(out[tf == "TF1", tf_expr], 8)
+  expect_true(is.na(out[tf == "NO_RNA", tf_expr]))
 })
 
 test_that("Module 3 topic-link summary forces path arguments before socket workers", {
