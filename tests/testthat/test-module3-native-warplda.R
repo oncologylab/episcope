@@ -181,12 +181,14 @@ test_that("native WarpLDA estimates memory before large fits", {
   dtm <- make_native_warplda_dtm()
 
   estimate <- .warplda_memory_estimate(dtm, K = 2L, n_threads = 4L, safety_factor = 1)
+  conservative <- .warplda_memory_estimate(dtm, K = 2L, n_threads = 4L)
 
   expect_identical(estimate$n_tokens, as.numeric(sum(dtm)))
   expect_identical(estimate$n_threads, 4L)
   expect_gt(estimate$base_bytes, 0)
   expect_gte(estimate$estimated_peak_bytes, estimate$base_bytes)
   expect_gt(estimate$estimated_peak_gb, 0)
+  expect_equal(conservative$estimated_peak_bytes, ceiling(estimate$base_bytes * 2.5))
 })
 
 test_that("native WarpLDA defaults to available cores unless capped", {

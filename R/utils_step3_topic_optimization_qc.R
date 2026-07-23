@@ -865,14 +865,18 @@
 
 .m3_qc_short_condition_labels <- function(x) {
   original <- as.character(x)
-  out <- sub("^[^_]+_", "", original)
+  unique_original <- unique(original)
+  prefixes <- sub("_.*$", "", unique_original)
+  strip_prefix <- length(unique_original) > 1L &&
+    length(unique(prefixes)) == 1L
+  out <- if (strip_prefix) sub("^[^_]+_", "", original) else original
   out <- sub("_Ctrl$", "", out)
   out <- sub("_TGFb$", " TGFb", out)
   out <- gsub("_", " ", out, fixed = TRUE)
   mapping <- unique(data.table::data.table(original, short = out))
   duplicated_label <- duplicated(mapping$short) |
     duplicated(mapping$short, fromLast = TRUE)
-  mapping[duplicated_label, short := original]
+  mapping[duplicated_label, short := gsub("_", " ", original, fixed = TRUE)]
   mapping$short[match(original, mapping$original)]
 }
 
@@ -2656,7 +2660,9 @@
   )]
   pair_plot_groups <- lapply(seq_along(ordered_conditions), function(i) {
     selected_condition_id <- ordered_conditions[[i]]
-    condition_label <- .m3_qc_short_condition_labels(selected_condition_id)
+    condition_label <- condition_labels[
+      match(selected_condition_id, condition_values)
+    ]
     selected_topics <- condition_top_topics[
       condition_id == selected_condition_id
     ]

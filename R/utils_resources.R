@@ -48,8 +48,27 @@
   if (!length(values)) NA_real_ else min(values)
 }
 
+.linux_physical_cores <- function() {
+  cpu_dirs <- Sys.glob("/sys/devices/system/cpu/cpu[0-9]*")
+  if (!length(cpu_dirs)) return(NA_integer_)
+  topology <- vapply(cpu_dirs, function(cpu_dir) {
+    core_path <- file.path(cpu_dir, "topology", "core_id")
+    package_path <- file.path(cpu_dir, "topology", "physical_package_id")
+    if (!file.exists(core_path) || !file.exists(package_path)) return(NA_character_)
+    core <- trimws(readLines(core_path, n = 1L, warn = FALSE))
+    package <- trimws(readLines(package_path, n = 1L, warn = FALSE))
+    if (!nzchar(core) || !nzchar(package)) return(NA_character_)
+    paste(package, core, sep = ":")
+  }, character(1L))
+  topology <- unique(topology[!is.na(topology) & nzchar(topology)])
+  if (!length(topology)) NA_integer_ else as.integer(length(topology))
+}
+
 .available_physical_cores <- function() {
-  physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  physical <- .linux_physical_cores()
+  if (!is.finite(physical) || physical < 1L) {
+    physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  }
   physical <- suppressWarnings(as.integer(physical[[1L]]))
   if (!is.finite(physical) || physical < 1L) physical <- 1L
   available <- if (requireNamespace("parallelly", quietly = TRUE)) {

@@ -23,7 +23,12 @@ test_that("safe worker planning respects cores and current memory", {
 
 test_that("detected physical cores never exceed the host physical count", {
   observed <- .available_physical_cores()
-  host_physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  linux_physical <- .linux_physical_cores()
+  host_physical <- if (is.finite(linux_physical)) {
+    linux_physical
+  } else {
+    suppressWarnings(parallel::detectCores(logical = FALSE))
+  }
   expect_true(is.numeric(observed))
   expect_gte(observed, 1L)
   if (is.finite(host_physical)) {

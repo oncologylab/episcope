@@ -334,6 +334,19 @@ test_that("repeated condition IDs retain concise stable display labels", {
   ))
 
   expect_equal(observed, c("0 FBS", "0 FBS", "10 FBS"))
+
+  tcell <- c(
+    "BATF_FloxedOut",
+    "IRF4_FloxedOut",
+    "WT_FloxedOut",
+    "BATF_FloxReady",
+    "IRF4_FloxReady",
+    "WT_FloxReady"
+  )
+  expect_equal(
+    .m3_qc_short_condition_labels(tcell),
+    gsub("_", " ", tcell, fixed = TRUE)
+  )
 })
 
 test_that("TF heatmap pools conditions and deduplicates targets per topic", {

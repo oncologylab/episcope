@@ -989,7 +989,7 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
 .warplda_memory_estimate <- function(dtm,
                                      K,
                                      n_threads = NULL,
-                                     safety_factor = 1.6) {
+                                     safety_factor = 2.5) {
   .assert_pkg("Matrix")
   if (!inherits(dtm, "dgCMatrix")) dtm <- methods::as(dtm, "dgCMatrix")
 
@@ -998,7 +998,7 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
 
   n_threads <- .warplda_default_threads(n_threads)
   safety_factor <- suppressWarnings(as.numeric(safety_factor[[1L]]))
-  if (!is.finite(safety_factor) || safety_factor < 1) safety_factor <- 1.6
+  if (!is.finite(safety_factor) || safety_factor < 1) safety_factor <- 2.5
 
   n_doc <- as.numeric(nrow(dtm))
   n_word <- as.numeric(ncol(dtm))
@@ -1008,7 +1008,10 @@ build_sparse_dtm <- function(doc_term, count_col = "pseudo_count") {
   bytes_int <- 4
   bytes_double <- 8
 
-  token_bytes <- n_tokens * bytes_int * 5
+  # Native WarpLDA simultaneously retains three token-index vectors and three
+  # token-topic work vectors. The peak factor covers allocator and conversion
+  # overhead observed during production fits.
+  token_bytes <- n_tokens * bytes_int * 6
   sparse_index_bytes <- ((n_doc + 1) + (n_word + 1) + (n_nz * 3)) * bytes_int
   count_bytes <- ((n_doc * K) + (n_word * K) + K) * bytes_int
   output_bytes <- ((n_doc * K) + (n_word * K) + (n_doc * K)) * bytes_double
