@@ -1540,7 +1540,13 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "mdsLeaderConflictPenalty", fixed = TRUE)
   expect_match(html, "mdsPruneLeaderLines", fixed = TRUE)
   expect_match(html, "fill-opacity", fixed = TRUE)
-  expect_match(html, "selected?30:24", fixed = TRUE)
+  expect_match(
+    html,
+    "querySelectorAll('circle[data-condition-id]')",
+    fixed = TRUE
+  )
+  expect_match(html, "'data-selection-marker':'true'", fixed = TRUE)
+  expect_no_match(html, "selected?30:24", fixed = TRUE)
   expect_match(html, "pointInset=38", fixed = TRUE)
   expect_match(html, "pointInset=22", fixed = TRUE)
   expect_match(html, "fullY=[Math.max(0,yLoRaw-yPad)", fixed = TRUE)
@@ -1662,7 +1668,9 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_no_match(html, "Overall topic significance", fixed = TRUE)
   expect_match(html, "significant pathways", fixed = TRUE)
   expect_match(html, "pathwayStars", fixed = TRUE)
-  expect_match(html, "r:sel?19:14", fixed = TRUE)
+  expect_match(html, "r:14,fill:c,stroke:'#fff'", fixed = TRUE)
+  expect_match(html, "r:7,fill:'#111'", fixed = TRUE)
+  expect_no_match(html, "r:sel?19:14", fixed = TRUE)
   expect_match(html, "selectMdsCondition", fixed = TRUE)
   expect_match(html, "ACTIVE_CONDITION_SIDE", fixed = TRUE)
   expect_match(html, '"condition_colors":{"A":"#E15759","B":"#4E79A7"}', fixed = TRUE)
@@ -1691,6 +1699,8 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "else if(networkOpen){updateNetworkHeading();drawNetwork()}", fixed = TRUE)
   expect_match(html, "byId('showPathwaysMode').onclick=closeNetwork", fixed = TRUE)
   expect_match(html, "byId('showGrnMode').onclick", fixed = TRUE)
+  expect_false(grepl('id="networkBack"', html, fixed = TRUE))
+  expect_false(grepl("byId('networkBack')", html, fixed = TRUE))
   expect_match(html, 'id="networkThetaPreset"', fixed = TRUE)
   expect_match(html, 'id="networkPhiPreset"', fixed = TRUE)
   expect_match(html, 'id="networkPrimaryOnly"', fixed = TRUE)
