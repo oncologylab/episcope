@@ -1704,6 +1704,20 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "refreshConditionData()", fixed = TRUE)
   expect_match(html, "TF_EXPR_INDEX", fixed = TRUE)
   expect_match(html, "tfExpression(c1,r.tfu", fixed = TRUE)
+  expect_match(html, "function setExpressionIndexValue", fixed = TRUE)
+  expect_match(html, "indexEdgeExpressionRows(rows)", fixed = TRUE)
+  expect_match(html, "function networkTfRnaValue", fixed = TRUE)
+  expect_match(html, "function networkGeneRnaValue", fixed = TRUE)
+  expect_match(html, "function networkExpressionLimit", fixed = TRUE)
+  expect_match(html, "tfv=networkTfRnaValue(r.tfu)", fixed = TRUE)
+  expect_match(html, "gv=networkGeneRnaValue(r.gene)", fixed = TRUE)
+  expect_match(
+    html,
+    "RNA log2FC ('+conditionLabel(cond1Select.value)+' / '+conditionLabel(cond2Select.value)+')",
+    fixed = TRUE
+  )
+  expect_no_match(html, "tfv=nodeLogfc(r.exprA,r.exprB)", fixed = TRUE)
+  expect_no_match(html, "gv=nodeLogfc(r.gexprA,r.gexprB)", fixed = TRUE)
   expect_match(html, "showItemPage", fixed = TRUE)
   expect_true(craftgrn:::.m3tb_validate_current_report_html(out_file))
 
