@@ -1531,6 +1531,24 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "P(topic | condition::TF)", fixed = TRUE)
   expect_match(html, "TF Activity", fixed = TRUE)
   expect_match(html, 'id="shortConditionNames" type="checkbox" checked', fixed = TRUE)
+  expect_match(html, 'id="mdsConditionFilter"', fixed = TRUE)
+  expect_match(html, 'id="mdsConditionFilterList"', fixed = TRUE)
+  expect_match(html, 'id="mdsConditionAll"', fixed = TRUE)
+  expect_match(html, 'id="mdsConditionSelected"', fixed = TRUE)
+  expect_match(html, "function initMdsConditionFilter", fixed = TRUE)
+  expect_match(html, "function mdsVisibleRows", fixed = TRUE)
+  expect_match(
+    html,
+    "Array.from(MDS_VISIBLE_CONDITIONS).sort().join('|')",
+    fixed = TRUE
+  )
+  expect_match(html, "EDGE_BY_COND_TF", fixed = TRUE)
+  expect_match(html, "TF_TARGETS_BY_COND", fixed = TRUE)
+  expect_match(html, "LOADED_TARGET_CONDITIONS", fixed = TRUE)
+  expect_match(html, "EDGE_PAIR_CACHE", fixed = TRUE)
+  expect_match(html, "function edgePairIndex", fixed = TRUE)
+  expect_match(html, "pairIndex.byGene.get(gene)", fixed = TRUE)
+  expect_match(html, "ensureSelectedConditionTargets", fixed = TRUE)
   expect_match(html, "mdsShortLabelMap", fixed = TRUE)
   expect_match(html, "mdsLabelCandidates", fixed = TRUE)
   expect_match(html, "mdsFinalLabelPenalty", fixed = TRUE)
@@ -2954,13 +2972,13 @@ test_that("condition report payload keeps bounded strongest peak support", {
   skip_if_not_installed("dplyr")
   path <- tempfile(fileext = ".parquet")
   links <- data.table::data.table(
-    condition_id = rep("condition_a", 5L),
-    tf = c("TF1", "TF1", "TF1", "TF2", "TF2"),
-    gene_key = c("Gene1", "Gene1", "Gene1", "Gene1", "Gene2"),
-    peak_id = c("peak_a", "peak_a", "peak_b", "peak_a", "peak_c"),
-    fp_score_condition = c(0.4, 0.8, 0.6, 0.7, 0.5),
-    gene_expr_condition = rep(2, 5L),
-    tf_expr_condition = rep(3, 5L)
+    condition_id = rep("condition_a", 6L),
+    tf = c("TF1", "TF1", "TF1", "TF2", "TF2", "TF2"),
+    gene_key = c("Gene1", "Gene1", "Gene1", "Gene1", "Gene2", "Gene3"),
+    peak_id = c("peak_a", "peak_a", "peak_b", "peak_a", "peak_c", "peak_d"),
+    fp_score_condition = c(0.4, 0.8, 0.6, 0.7, 0.5, 0.9),
+    gene_expr_condition = rep(2, 6L),
+    tf_expr_condition = rep(3, 6L)
   )
   arrow::write_parquet(links, path)
 
@@ -2970,6 +2988,8 @@ test_that("condition report payload keeps bounded strongest peak support", {
     max_peaks_per_tf_gene = 1L
   )
 
+  expect_false("Gene3" %in% out$tf_gene$gene_key)
+  expect_equal(out$tf_activity[tf_upper == "TF2", n_targets], 3L)
   expect_equal(nrow(out$tf_peak_gene), 3L)
   expect_equal(
     out$tf_peak_gene[tf_upper == "TF1" & gene_key == "Gene1", peak_id],
