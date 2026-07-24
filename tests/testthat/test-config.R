@@ -99,6 +99,10 @@ test_that("project config validation checks nested report state", {
       condition_colors = list(
         HPAFII_0_BCAA_Ctrl = "#3C5488",
         HPAFII_10_FBS_Ctrl = "#FF9DA7"
+      ),
+      condition_short_labels = list(
+        HPAFII_0_BCAA_Ctrl = "0 BCAA",
+        HPAFII_10_FBS_Ctrl = "10 FBS"
       )
     )
   )
@@ -141,6 +145,18 @@ test_that("project config validation checks nested report state", {
       project_config = bad_topic_space
     ),
     "raw or combined",
+    fixed = TRUE
+  )
+
+  duplicate_labels <- cfg
+  duplicate_labels$report$condition_short_labels[[2L]] <- "0 BCAA"
+  expect_error(
+    validate_config(
+      required = character(),
+      numeric_required = character(),
+      project_config = duplicate_labels
+    ),
+    "must be unique",
     fixed = TRUE
   )
 

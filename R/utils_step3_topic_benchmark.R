@@ -4957,9 +4957,12 @@ visualize_differential_grns <- function(differential_links_dir,
 #'   normalized `matrices$gene_expr` matrix rather than filtered link rows.
 #' @param comparisons Comparison or condition grouping table, or a CSV path.
 #' @param output_dir Topic output directory.
-#' @param method Single Module 3 method ID.
+#' @param method One or more Module 3 method IDs.
 #' @param k_grid Integer topic numbers. Multiple K values are allowed for
 #'   standard K review within the selected method.
+#' @param output_layout Output folder layout. `"auto"` uses the standard flat
+#'   layout for one method and the shallow benchmark layout for multiple
+#'   methods.
 #' @param replicate_documents Whether theta document labels are replicate
 #'   resolved for condition-separation scoring.
 #' @param reuse_if_exists Reuse existing model outputs where possible.
@@ -4989,6 +4992,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   output_dir,
                                   method = "comparison_aggr_multivi",
                                   k_grid = 10L,
+                                  output_layout = c("auto", "standard", "benchmark", "legacy"),
                                   replicate_documents = FALSE,
                                   reuse_if_exists = TRUE,
                                   local_threads = NULL,
@@ -5034,7 +5038,7 @@ run_regulatory_topics <- function(filtered_dir,
   condition_peak_weighting <- match.arg(condition_peak_weighting)
   input_source <- match.arg(input_source)
   memory_safety <- match.arg(memory_safety)
-  if (length(method) != 1L) .log_abort("run_regulatory_topics() expects one selected method.")
+  output_layout <- match.arg(output_layout)
   extraction_args <- modifyList(
     list(
       link_topic_output = topic_link_output,
@@ -5050,7 +5054,7 @@ run_regulatory_topics <- function(filtered_dir,
     output_dir = output_dir,
     methods = method,
     k_grid = k_grid,
-    output_layout = "standard",
+    output_layout = output_layout,
     replicate_documents = replicate_documents,
     reuse_if_exists = reuse_if_exists,
     local_threads = local_threads,
@@ -5194,6 +5198,29 @@ run_regulatory_topics <- function(filtered_dir,
   }
   condition_order <- unique(as.character(report$condition_order %||% character()))
   condition_order <- condition_order[!is.na(condition_order) & nzchar(condition_order)]
+  short_labels <- report$condition_short_labels %||% list()
+  if (is.atomic(short_labels) && !is.null(names(short_labels))) {
+    short_labels <- as.list(short_labels)
+  }
+  if (!is.list(short_labels)) {
+    .log_abort(
+      "`report.condition_short_labels` must be a named mapping of condition IDs to labels."
+    )
+  }
+  if (length(short_labels)) {
+    if (is.null(names(short_labels)) || any(!nzchar(names(short_labels)))) {
+      .log_abort(
+        "Every `report.condition_short_labels` entry must have a condition ID."
+      )
+    }
+    values <- trimws(unlist(short_labels, use.names = FALSE))
+    if (any(!nzchar(values)) || anyDuplicated(tolower(values))) {
+      .log_abort(
+        "`report.condition_short_labels` values must be non-empty and unique."
+      )
+    }
+    short_labels <- stats::setNames(as.list(values), names(short_labels))
+  }
   defaults <- report$defaults %||% list()
   if (!is.list(defaults)) .log_abort("`report.defaults` in the project config must be a mapping.")
   numeric_cutoff <- function(key, fallback) {
@@ -5206,6 +5233,7 @@ run_regulatory_topics <- function(filtered_dir,
   list(
     condition_colors = colors,
     condition_order = condition_order,
+    condition_short_labels = short_labels,
     defaults = defaults,
     link_direction = list(
       gene_log2fc_cutoff = gene_log2fc_cutoff,
@@ -5705,7 +5733,7 @@ run_regulatory_topics <- function(filtered_dir,
 #'
 #' @description
 #' Wrapper function to conduct the full regulatory topic-modeling workflow for
-#' one selected topic-document construction method.
+#' one or more topic-document construction methods.
 #'
 #' @param filtered_dir Directory containing Module 3 filtered differential-link
 #'   files.
@@ -5723,16 +5751,20 @@ run_regulatory_topics <- function(filtered_dir,
 #'   `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 #'   `topic_raw_theta_document_heatmap` are used for arguments that are left as
 #'   `NULL` or as default extraction settings. A nested `report` mapping can
-#'   define `condition_colors`, `condition_order`, and initial `defaults` for
-#'   generated reports without creating package or browser-persistent state.
+#'   define `condition_colors`, `condition_order`, `condition_short_labels`,
+#'   and initial `defaults` for generated reports without creating package or
+#'   browser-persistent state.
 #'   Defaults may use exact `condition_1` and `condition_2` IDs or reusable
 #'   `condition_1_suffix` and `condition_2_suffix` selectors. Set
 #'   `report.defaults.topic: top` to start at the highest mean-theta topic for
 #'   the initial Condition 1.
-#' @param method Single Module 3 method ID. If `NULL`, read from
+#' @param method One or more Module 3 method IDs. If `NULL`, read from
 #'   `project_config` or use the package default.
 #' @param k_grid Integer topic numbers. If `NULL`, read from `project_config`
 #'   or use `10`.
+#' @param output_layout Output folder layout. `"auto"` uses the standard flat
+#'   layout for one method and the shallow benchmark layout for multiple
+#'   methods.
 #' @param warplda_iterations Number of native WarpLDA iterations. If `NULL`,
 #'   read from `project_config` or use `2000`.
 #' @param warplda_sampler Native WarpLDA sampler. If `NULL`, read from project
@@ -5839,6 +5871,7 @@ run_topic_modeling <- function(filtered_dir,
                                project_config = NULL,
                                method = NULL,
                                k_grid = NULL,
+                               output_layout = c("auto", "standard", "benchmark", "legacy"),
                                warplda_iterations = NULL,
                                warplda_sampler = NULL,
                                warplda_beta = NULL,
@@ -5881,6 +5914,7 @@ run_topic_modeling <- function(filtered_dir,
                                ...) {
   input_source <- match.arg(input_source)
   memory_safety <- match.arg(memory_safety)
+  output_layout <- match.arg(output_layout)
   resolved <- .module3_resolve_topic_run_config(
     project_config = project_config,
     method = method,
@@ -5935,6 +5969,7 @@ run_topic_modeling <- function(filtered_dir,
     output_dir = output_dir,
     method = resolved$method,
     k_grid = resolved$k_grid,
+    output_layout = output_layout,
     warplda_iterations = resolved$warplda_iterations,
     warplda_sampler = resolved$warplda_sampler,
     warplda_beta = resolved$warplda_beta,

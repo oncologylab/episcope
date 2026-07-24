@@ -205,7 +205,9 @@
 .validate_report_config <- function(report) {
   if (is.null(report)) return(invisible(TRUE))
   .project_config_assert_mapping(report, "report")
-  allowed <- c("condition_colors", "condition_order", "defaults")
+  allowed <- c(
+    "condition_colors", "condition_order", "condition_short_labels", "defaults"
+  )
   unknown <- setdiff(names(report), allowed)
   if (length(unknown)) {
     cli::cli_abort("Unknown `report` entries: {paste(unknown, collapse = ', ')}.")
@@ -226,6 +228,21 @@
     vals <- unlist(colors, use.names = FALSE)
     if (!is.character(vals) || any(!grepl("^#[0-9A-Fa-f]{6}$", vals))) {
       cli::cli_abort("`report.condition_colors` values must be six-digit hex colors such as `#4E79A7`.")
+    }
+  }
+  if (!is.null(report$condition_short_labels)) {
+    labels <- report$condition_short_labels
+    .project_config_assert_mapping(labels, "report.condition_short_labels")
+    vals <- unlist(labels, use.names = FALSE)
+    if (!is.character(vals) || anyNA(vals) || any(!nzchar(trimws(vals)))) {
+      cli::cli_abort(
+        "`report.condition_short_labels` values must be non-empty strings."
+      )
+    }
+    if (anyDuplicated(tolower(trimws(vals)))) {
+      cli::cli_abort(
+        "`report.condition_short_labels` values must be unique."
+      )
     }
   }
   if (!is.null(report$defaults)) {

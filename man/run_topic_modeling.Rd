@@ -12,6 +12,7 @@ run_topic_modeling(
   project_config = NULL,
   method = NULL,
   k_grid = NULL,
+  output_layout = c("auto", "standard", "benchmark", "legacy"),
   warplda_iterations = NULL,
   warplda_sampler = NULL,
   warplda_beta = NULL,
@@ -75,18 +76,23 @@ supplied, `topic_method`, `topic_k` or `topic_k_grid`,
 `topic_tf_membership_cutoff`, `topic_tf_primary_margin_cutoff`, and
 `topic_raw_theta_document_heatmap` are used for arguments that are left as
 `NULL` or as default extraction settings. A nested `report` mapping can
-define `condition_colors`, `condition_order`, and initial `defaults` for
-generated reports without creating package or browser-persistent state.
+define `condition_colors`, `condition_order`, `condition_short_labels`,
+and initial `defaults` for generated reports without creating package or
+browser-persistent state.
 Defaults may use exact `condition_1` and `condition_2` IDs or reusable
 `condition_1_suffix` and `condition_2_suffix` selectors. Set
 `report.defaults.topic: top` to start at the highest mean-theta topic for
 the initial Condition 1.}
 
-\item{method}{Single Module 3 method ID. If `NULL`, read from
+\item{method}{One or more Module 3 method IDs. If `NULL`, read from
 `project_config` or use the package default.}
 
 \item{k_grid}{Integer topic numbers. If `NULL`, read from `project_config`
 or use `10`.}
+
+\item{output_layout}{Output folder layout. `"auto"` uses the standard flat
+layout for one method and the shallow benchmark layout for multiple
+methods.}
 
 \item{warplda_iterations}{Number of native WarpLDA iterations. If `NULL`,
 read from `project_config` or use `2000`.}
@@ -229,5 +235,5 @@ An invisible list with topic input/model/extraction paths, review
 }
 \description{
 Wrapper function to conduct the full regulatory topic-modeling workflow for
-one selected topic-document construction method.
+one or more topic-document construction methods.
 }

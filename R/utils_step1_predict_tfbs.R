@@ -1090,7 +1090,30 @@ predict_tfbs <- function(omics_data,
   }
 
   if (isTRUE(verbose)) .log_inform("Module 1 TFBS prediction: prediction correlations.")
-  prediction_pair_count <- 0
+  prediction_pair_count <- as.double(nrow(prediction_footprints)) *
+    as.double(length(expressed_tfs))
+  full_stats_pair_limit <- getOption(
+    "craftgrn.module1_full_stats_pair_limit",
+    prediction_return_limit
+  )
+  full_stats_pair_limit <- suppressWarnings(as.numeric(full_stats_pair_limit)[[1L]])
+  if (!is.finite(full_stats_pair_limit) || full_stats_pair_limit < 0) {
+    full_stats_pair_limit <- prediction_return_limit
+  }
+  if (isTRUE(write_stats) && prediction_pair_count > full_stats_pair_limit) {
+    if (!isTRUE(write_outputs)) {
+      .log_abort(
+        "Full Module 1 statistics require materializing {format(prediction_pair_count, scientific = FALSE)} FP-TF pairs, above the safety limit of {format(full_stats_pair_limit, scientific = FALSE)}. Enable write_outputs for streamed statistics, reduce the input, or explicitly raise option craftgrn.module1_full_stats_pair_limit."
+      )
+    }
+    if (isTRUE(verbose)) {
+      .log_warn(
+        "Full Module 1 statistics would materialize {format(prediction_pair_count, scientific = FALSE)} FP-TF pairs, above the safety limit of {format(full_stats_pair_limit, scientific = FALSE)}. Streaming passing prediction statistics instead."
+      )
+    }
+    write_stats <- FALSE
+    return_prediction_stats <- FALSE
+  }
   keep_prediction_stats <- if (is.null(return_prediction_stats)) {
     !isTRUE(write_outputs) || (as.double(nrow(prediction_footprints)) * as.double(length(expressed_tfs))) <= prediction_return_limit
   } else {

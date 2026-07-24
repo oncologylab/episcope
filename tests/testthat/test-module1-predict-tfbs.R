@@ -167,6 +167,34 @@ test_that("predict_tfbs defaults do not write to the working directory", {
   expect_length(result$reports, 0L)
 })
 
+test_that("predict_tfbs streams unsafe full-stat requests", {
+  fixture <- module1_tiny_fixture()
+  out_dir <- file.path(
+    tempdir(),
+    paste0("craftgrn-module1-stream-", sample.int(1e8, 1L))
+  )
+  withr::local_options(list(craftgrn.module1_full_stats_pair_limit = 0))
+
+  result <- predict_tfbs(
+    omics_data = craftgrn:::as_multiomic_object(
+      fixture$omics_data,
+      verbose = FALSE
+    ),
+    out_dir = out_dir,
+    r_cutoff = 0.8,
+    write_outputs = TRUE,
+    write_stats = TRUE,
+    write_qc_report = FALSE,
+    write_tfbs_explorer = FALSE,
+    output_format = "csv",
+    verbose = FALSE
+  )
+
+  expect_false(result$parameters$write_stats)
+  expect_false(result$parameters$return_prediction_stats)
+  expect_true(file.exists(result$reports$prediction_stats_manifest))
+})
+
 test_that("predict_tfbs can retain all bound FPs after canonical-bound labeling", {
   fixture <- module1_tiny_fixture()
   strict <- predict_tfbs(

@@ -19,7 +19,7 @@ test_that("Module 3 report API exposes publication-facing helpers", {
 
 test_that("run_topic_modeling exposes condition subset controls", {
   args <- names(formals(run_topic_modeling))
-  expect_true(all(c("sample_subset", "analysis_label") %in% args))
+  expect_true(all(c("sample_subset", "analysis_label", "output_layout") %in% args))
 })
 
 test_that("Module 3 Enrichr helpers default to fast request scheduling", {

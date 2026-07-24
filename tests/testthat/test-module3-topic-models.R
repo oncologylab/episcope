@@ -2968,7 +2968,7 @@ test_that("pairwise condition gene log2FC uses the requested condition order", {
   expect_equal(observed$log2fc_condition_1_vs_2, c(log2(10 / 4), 0, log2(1 / 8)))
 })
 
-test_that("condition comparison-union filtering uses one global gene universe", {
+test_that("condition comparison-union filtering uses relevant comparisons", {
   expression <- matrix(
     c(
       3, 3, 1, 1,
@@ -3030,21 +3030,19 @@ test_that("condition comparison-union filtering uses one global gene universe", 
   )
   expect_setequal(
     observed$condition_gene_union[condition_id == "ConditionB", gene_key],
-    c("GeneAC", "GeneB")
+    "GeneB"
   )
-  expect_setequal(
-    observed$condition_gene_union[condition_id == "ConditionC", gene_key],
-    "GeneAB"
-  )
+  expect_length(observed$condition_gene_union[condition_id == "ConditionC", gene_key], 0L)
   condition_c <- data.table::fread(
     observed$manifest[condition_id == "ConditionC", path],
     showProgress = FALSE
   )
-  expect_setequal(condition_c$gene_key, "GeneAB")
-  expect_true(all(observed$manifest$filter == "target_gene_global_comparison_union_abs_log2fc_and_expression"))
-  expect_true(all(observed$manifest$filter_scope == "global_comparison_union_then_condition_expression"))
+  expect_equal(nrow(condition_c), 0L)
+  expect_true(all(observed$manifest$filter == "target_gene_condition_comparison_union_abs_log2fc_and_expression"))
+  expect_true(all(observed$manifest$filter_scope == "condition_comparison_union_then_condition_expression"))
   expect_true(all(nzchar(observed$manifest$comparison_signature)))
   expect_true(file.exists(file.path(output_dir, "global_differential_gene_union.csv")))
+  expect_true(file.exists(file.path(output_dir, "condition_differential_gene_union.csv")))
   expect_true(file.exists(file.path(output_dir, "condition_gene_expression.csv")))
   expect_true(file.exists(file.path(output_dir, "condition_comparison_gene_filter_summary.csv")))
 

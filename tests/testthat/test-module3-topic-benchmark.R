@@ -1505,6 +1505,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     report_state = list(
       condition_colors = list(A = "#E15759", B = "#4E79A7"),
       condition_order = c("B", "A"),
+      condition_short_labels = list(A = "Condition A", B = "Condition B"),
       defaults = list(condition_1 = "B", condition_2 = "A", topic = 2L)
     )
   )
@@ -1550,6 +1551,10 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "pairIndex.byGene.get(gene)", fixed = TRUE)
   expect_match(html, "ensureSelectedConditionTargets", fixed = TRUE)
   expect_match(html, "mdsShortLabelMap", fixed = TRUE)
+  expect_match(html, "new Map(labels.map(x=>[x.d.id", fixed = TRUE)
+  expect_match(html, "labelMap.get(id)", fixed = TRUE)
+  expect_match(html, "function fitSvgText", fixed = TRUE)
+  expect_match(html, "fitSvgText(t1", fixed = TRUE)
   expect_match(html, "mdsLabelCandidates", fixed = TRUE)
   expect_match(html, "mdsFinalLabelPenalty", fixed = TRUE)
   expect_match(html, "mdsRectOverlap", fixed = TRUE)
@@ -1707,6 +1712,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "ACTIVE_CONDITION_SIDE", fixed = TRUE)
   expect_match(html, '"condition_colors":{"A":"#E15759","B":"#4E79A7"}', fixed = TRUE)
   expect_match(html, "REPORT_STATE.condition_order", fixed = TRUE)
+  expect_match(html, "REPORT_STATE.condition_short_labels", fixed = TRUE)
   expect_match(html, "configuredCondition(defaults,'condition_2'", fixed = TRUE)
   expect_match(html, "defaults[key+'_suffix']", fixed = TRUE)
   expect_false(grepl("rows[i-1].scoreA>=rows[i-1].scoreB", html, fixed = TRUE))
@@ -2688,6 +2694,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     report = list(
       condition_colors = list(A = "#E15759", B = "#4E79A7"),
       condition_order = c("B", "A"),
+      condition_short_labels = list(A = "A short", B = "B short"),
       defaults = list(condition_1 = "B")
     ),
     topic_benchmark_enabled = TRUE,
@@ -2714,6 +2721,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$extraction_args$pathway_databases, cfg$pathway_databases)
   expect_equal(resolved$report_state$condition_colors$A, "#E15759")
   expect_equal(resolved$report_state$condition_order, c("B", "A"))
+  expect_equal(resolved$report_state$condition_short_labels$A, "A short")
   expect_equal(resolved$report_state$defaults$condition_1, "B")
   expect_true(resolved$benchmark$enabled)
   expect_equal(resolved$benchmark$methods, cfg$topic_benchmark_methods)
@@ -3081,6 +3089,53 @@ test_that("condition reports convert complete multiomic RNA to long rows", {
     attr(out, "expression_source"),
     "multiomic_data$matrices$gene_expr"
   )
+})
+
+test_that("condition reports resolve project-prefixed RNA columns", {
+  multiomic <- list(
+    schema = "craftgrn_multiomic_v1",
+    project = list(project_id = "GSE1"),
+    features = list(
+      fp = data.frame(fp_id = "peak1"),
+      gene = data.frame(gene_id = "Gene1", hgnc_symbol = "Gene1")
+    ),
+    matrices = list(
+      fp_score = matrix(
+        1,
+        1,
+        2,
+        dimnames = list("peak1", c("GSE1_A", "GSE1_B"))
+      ),
+      fp_bound = matrix(
+        TRUE,
+        1,
+        2,
+        dimnames = list("peak1", c("GSE1_A", "GSE1_B"))
+      ),
+      gene_expr = matrix(
+        c(3, 7),
+        1,
+        2,
+        dimnames = list("Gene1", c("GSE1_A", "GSE1_B"))
+      ),
+      gene_on = matrix(
+        TRUE,
+        1,
+        2,
+        dimnames = list("Gene1", c("GSE1_A", "GSE1_B"))
+      ),
+      atac_score = NULL,
+      atac_open = NULL
+    )
+  )
+
+  out <- craftgrn:::.m3cr_multiomic_expression_rows(
+    multiomic,
+    conditions = c("B", "A")
+  )
+
+  expect_equal(out[condition_id == "A", gene_expr], 3)
+  expect_equal(out[condition_id == "B", gene_expr], 7)
 })
 
 test_that("complete normalized RNA clears link-derived TF fallback values", {
