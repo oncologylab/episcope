@@ -1590,6 +1590,20 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}", fixed = TRUE)
   expect_match(html, "LOADED_EXPRESSION_CONDITIONS", fixed = TRUE)
   expect_match(html, "function indexFullExpressionRows", fixed = TRUE)
+  expect_match(html, "function geneKey(x)", fixed = TRUE)
+  expect_match(
+    html,
+    "GENE_EXPR_INDEX.get(String(cond)+'\\t'+geneKey(gene))",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "GENE_ACTIVITY_INDEX.get(String(condition)+'\\t'+geneKey(gene))",
+    fixed = TRUE
+  )
+  expect_match(html, "new Set(splitGenes(d.genes).map(geneKey))", fixed = TRUE)
+  expect_match(html, "new Set(p.genes.map(geneKey))", fixed = TRUE)
+  expect_match(html, "genes.has(geneKey(n.label))", fixed = TRUE)
   expect_match(
     html,
     "function ensureSelectedConditionExpressions(){return loadSelectedConditionParts('expression')}",
