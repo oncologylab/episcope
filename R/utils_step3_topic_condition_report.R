@@ -14,16 +14,69 @@
   )
 }
 
-.m3cr_write_compressed_payload_file <- function(obj, payload_dir, payload_file) {
-  packed <- lapply(obj, .module2_report_browser_browser_payload_to_columnar)
+.m3cr_compact_payload_table <- function(x) {
+  if (!is.data.frame(x)) return(x)
+  out <- data.table::copy(data.table::as.data.table(x))
+  numeric_cols <- names(out)[vapply(out, is.double, logical(1L))]
+  for (column in numeric_cols) {
+    values <- out[[column]]
+    finite <- is.finite(values)
+    values[finite] <- signif(values[finite], digits = 8L)
+    data.table::set(out, j = column, value = values)
+  }
+  out
+}
+
+.m3cr_write_compressed_payload_file <- function(obj,
+                                                 payload_dir,
+                                                 payload_file = NULL,
+                                                 payload_kind = NULL) {
+  packed <- lapply(obj, function(x) {
+    .module2_report_browser_browser_payload_to_columnar(
+      .m3cr_compact_payload_table(x)
+    )
+  })
   payload_b64 <- .module2_report_browser_encode_browser_json_deflate_base64(packed)
+  if (is.null(payload_file)) {
+    payload_kind <- gsub(
+      "[^A-Za-z0-9]+",
+      "",
+      tolower(as.character(payload_kind %||% "data")[[1L]])
+    )
+    if (!nzchar(payload_kind)) payload_kind <- "data"
+    payload_hash <- digest::digest(
+      payload_b64,
+      algo = "xxhash64",
+      serialize = FALSE
+    )
+    payload_file <- paste0(
+      "d_", substr(payload_hash, 1L, 16L), "_", payload_kind, ".js"
+    )
+  }
+  payload_file <- basename(as.character(payload_file)[[1L]])
   js <- paste0(
     "window.CRAFTGRN_CONDITION_PAYLOADS=window.CRAFTGRN_CONDITION_PAYLOADS||{};\n",
     "window.CRAFTGRN_CONDITION_PAYLOADS[",
     jsonlite::toJSON(payload_file, auto_unbox = TRUE),
     "]={compressed_columnar:'", payload_b64, "'};\n"
   )
-  writeLines(js, file.path(payload_dir, payload_file), useBytes = TRUE)
+  dir.create(payload_dir, recursive = TRUE, showWarnings = FALSE)
+  output_path <- file.path(payload_dir, payload_file)
+  if (!file.exists(output_path)) {
+    temporary_path <- tempfile(
+      pattern = paste0(".", payload_file, "-"),
+      tmpdir = payload_dir
+    )
+    on.exit(unlink(temporary_path, force = TRUE), add = TRUE)
+    writeLines(js, temporary_path, useBytes = TRUE)
+    renamed <- file.rename(temporary_path, output_path)
+    if (!isTRUE(renamed) && !file.exists(output_path)) {
+      copied <- file.copy(temporary_path, output_path, overwrite = FALSE)
+      if (!isTRUE(copied)) {
+        .log_abort("Unable to write condition report payload: {output_path}")
+      }
+    }
+  }
   invisible(payload_file)
 }
 
@@ -34,15 +87,6 @@
     serialize = FALSE
   )
   paste0("cp_", substr(key, 1L, 12L))
-}
-
-.m3cr_condition_expression_file <- function(condition_id) {
-  key <- digest::digest(
-    as.character(condition_id)[[1L]],
-    algo = "xxhash64",
-    serialize = FALSE
-  )
-  paste0("ce_", substr(key, 1L, 12L), ".js")
 }
 
 .m3cr_report_data_file <- function(out_html) {
@@ -840,7 +884,6 @@
   payload_stem <- .m3cr_payload_stem(payload_name)
   unlink(file.path(payload_dir, paste0(payload_name, "*.js")), force = TRUE)
   unlink(file.path(payload_dir, paste0(payload_stem, "*.js")), force = TRUE)
-  payload_file <- paste0(payload_stem, "_o.js")
   activity <- data.table::rbindlist(
     lapply(parts, `[[`, "tf_activity"),
     use.names = TRUE,
@@ -851,7 +894,31 @@
     condition_expression,
     replace_missing = nrow(supplied_expression) > 0L
   )
-  .m3cr_write_compressed_payload_file(
+  if (nrow(activity)) {
+    data.table::setorder(activity, condition_id, tf_upper, tf)
+  }
+  if (nrow(gene_topics)) {
+    data.table::setorder(gene_topics, topic_num, gene_key, -topic_score)
+  }
+  if (nrow(condition_topic_expression)) {
+    data.table::setorder(
+      condition_topic_expression,
+      condition_id, topic_num
+    )
+  }
+  if (nrow(pathway_scores$activity)) {
+    data.table::setorder(
+      pathway_scores$activity,
+      topic_num, pathway_key, condition_id
+    )
+  }
+  if (nrow(pathway_scores$gene_expression)) {
+    data.table::setorder(
+      pathway_scores$gene_expression,
+      condition_id, gene_key
+    )
+  }
+  payload_file <- .m3cr_write_compressed_payload_file(
     list(
       tf_activity = activity,
       gene_topics = gene_topics,
@@ -860,53 +927,64 @@
       pathway_gene_expression = pathway_scores$gene_expression
     ),
     payload_dir,
-    payload_file
+    payload_kind = "overview"
   )
   condition_files <- vector("list", nrow(manifest))
   names(condition_files) <- as.character(manifest$condition_id)
   for (i in seq_len(nrow(manifest))) {
     condition_key <- as.character(manifest$condition_id[[i]])
-    prefix <- sprintf("%s_c%02d", payload_stem, i)
-    edge_file <- paste0(prefix, "_e.js")
-    peak_file <- paste0(prefix, "_p.js")
-    target_file <- paste0(prefix, "_t.js")
-    pathway_file <- paste0(prefix, "_w.js")
-    expression_file <- .m3cr_condition_expression_file(condition_key)
-    .m3cr_write_compressed_payload_file(
-      list(tf_gene = parts[[i]]$tf_gene),
+    edge_rows <- parts[[i]]$tf_gene[, .(
+      tf, gene_key, fp_sum, n_peaks
+    )]
+    peak_rows <- parts[[i]]$tf_peak_gene[, .(
+      tf, gene_key, peak_id, fp_score
+    )]
+    data.table::setorder(edge_rows, tf, gene_key)
+    data.table::setorder(peak_rows, tf, gene_key, peak_id)
+    edge_file <- .m3cr_write_compressed_payload_file(
+      list(tf_gene = edge_rows),
       payload_dir,
-      edge_file
+      payload_kind = "edges"
     )
-    .m3cr_write_compressed_payload_file(
-      list(tf_peak_gene = parts[[i]]$tf_peak_gene),
+    peak_file <- .m3cr_write_compressed_payload_file(
+      list(tf_peak_gene = peak_rows),
       payload_dir,
-      peak_file
+      payload_kind = "peaks"
     )
     tf_targets <- parts[[i]]$tf_gene[, .(
       genes = paste(sort(unique(gene_key)), collapse = ";")
-    ), by = .(condition_id, tf, tf_upper)]
-    .m3cr_write_compressed_payload_file(
+    ), by = .(tf)]
+    data.table::setorder(tf_targets, tf)
+    condition_pathway_rows <- condition_pathways[
+      condition_id == condition_key,
+      setdiff(names(condition_pathways), "condition_id"),
+      with = FALSE
+    ]
+    data.table::setorder(condition_pathway_rows, topic_num, pathway_key)
+    condition_expression_rows <- condition_expression[
+      condition_id == condition_key,
+      setdiff(names(condition_expression), "condition_id"),
+      with = FALSE
+    ]
+    data.table::setorder(condition_expression_rows, gene_key)
+    target_file <- .m3cr_write_compressed_payload_file(
       list(tf_targets = tf_targets),
       payload_dir,
-      target_file
+      payload_kind = "targets"
     )
-    .m3cr_write_compressed_payload_file(
+    pathway_file <- .m3cr_write_compressed_payload_file(
       list(
-        condition_pathways = condition_pathways[
-          condition_id == condition_key
-        ]
+        condition_pathways = condition_pathway_rows
       ),
       payload_dir,
-      pathway_file
+      payload_kind = "pathways"
     )
-    .m3cr_write_compressed_payload_file(
+    expression_file <- .m3cr_write_compressed_payload_file(
       list(
-        condition_expression = condition_expression[
-          condition_id == condition_key
-        ]
+        condition_expression = condition_expression_rows
       ),
       payload_dir,
-      expression_file
+      payload_kind = "expression"
     )
     condition_files[[condition_key]] <- list(
       edge_file = edge_file,
@@ -1055,7 +1133,7 @@ function setExpressionIndexValue(index,key,value){if(value===null||value===undef
 function indexEdgeExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),tf=tfKey(d.tf_upper||d.tf),gene=geneKey(d.gene_key);if(c&&tf)setExpressionIndexValue(TF_EXPR_INDEX,c+'\t'+tf,d.tf_expr);if(c&&gene)setExpressionIndexValue(GENE_EXPR_INDEX,c+'\t'+gene,d.gene_expr)})}
 function indexFullExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),gene=geneKey(d.gene_key),v=Number(d.gene_expr);if(!c||!gene||!Number.isFinite(v))return;GENE_EXPR_INDEX.set(c+'\t'+gene,v);TF_EXPR_INDEX.set(c+'\t'+tfKey(gene),v)})}
 function indexEdgesForCondition(condition,rows){const byTf=new Map();rows.forEach(d=>{const key=tfKey(d.tf),bucket=byTf.get(key)||[];bucket.push(d);byTf.set(key,bucket)});EDGE_BY_COND.set(condition,rows);EDGE_BY_COND_TF.set(condition,byTf);indexEdgeExpressionRows(rows)}
-function indexConditionPart(cond,kind,x){const condition=String(cond);if(kind==='peak'){const cm=new Map();(x.tf_peak_gene||[]).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='target'){const byTf=new Map();(x.tf_targets||[]).filter(d=>String(d.condition_id)===condition).forEach(d=>byTf.set(tfKey(d.tf_upper||d.tf),new Set(splitGenes(d.genes).map(geneKey))));TF_TARGETS_BY_COND.set(condition,byTf)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,(x.condition_pathways||[]).filter(d=>String(d.condition_id)===condition))}else if(kind==='expression'){indexFullExpressionRows((x.condition_expression||[]).filter(d=>String(d.condition_id)===condition))}else{indexEdgesForCondition(condition,(x.tf_gene||[]).filter(d=>String(d.condition_id)===condition))}DATA_VERSION++}
+function indexConditionPart(cond,kind,x){const condition=String(cond),withCondition=rows=>(rows||[]).map(d=>Object.assign(d,{condition_id:condition}));if(kind==='peak'){const cm=new Map();withCondition(x.tf_peak_gene).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='target'){const byTf=new Map();withCondition(x.tf_targets).forEach(d=>byTf.set(tfKey(d.tf_upper||d.tf),new Set(splitGenes(d.genes).map(geneKey))));TF_TARGETS_BY_COND.set(condition,byTf)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,withCondition(x.condition_pathways))}else if(kind==='expression'){indexFullExpressionRows(withCondition(x.condition_expression))}else{indexEdgesForCondition(condition,withCondition(x.tf_gene))}DATA_VERSION++}
 function loadConditionPart(cond,kind){const files=conditionPayloadFiles(cond),file=kind==='peak'?files.peak_file:kind==='target'?files.target_file:kind==='pathway'?files.pathway_file:kind==='expression'?files.expression_file:files.edge_file,loaded=kind==='peak'?LOADED_PEAK_CONDITIONS:kind==='target'?LOADED_TARGET_CONDITIONS:kind==='pathway'?LOADED_PATHWAY_CONDITIONS:kind==='expression'?LOADED_EXPRESSION_CONDITIONS:LOADED_EDGE_CONDITIONS;if(!file||loaded.has(String(cond)))return Promise.resolve(PAYLOAD);setLoading(true,kind==='pathway'?'Loading condition pathways...':kind==='peak'?'Loading peak support...':kind==='expression'?'Loading normalized RNA...':kind==='target'?'Loading TF target index...':'Loading direct targets...');return loadPayloadFile(file).then(x=>{indexConditionPart(cond,kind,x);loaded.add(String(cond));PAYLOAD_PROMISES.delete(file);return PAYLOAD}).finally(()=>setLoading(false))}
 function loadSelectedConditionParts(kind){const conditions=selectedConditions();if(location.protocol!=='file:')return Promise.all(conditions.map(c=>loadConditionPart(c,kind)));return conditions.reduce((promise,condition)=>promise.then(()=>loadConditionPart(condition,kind)),Promise.resolve())}
 function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}

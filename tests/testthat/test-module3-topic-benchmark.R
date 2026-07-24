@@ -1591,6 +1591,11 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "Failed to load condition report payload after retries", fixed = TRUE)
   expect_match(html, "PAYLOAD_PROMISES.delete(file)", fixed = TRUE)
   expect_match(html, "function indexConditionPart", fixed = TRUE)
+  expect_match(
+    html,
+    "withCondition=rows=>(rows||[]).map(d=>Object.assign(d,{condition_id:condition}))",
+    fixed = TRUE
+  )
   expect_match(html, "EDGE_BY_COND.set(condition", fixed = TRUE)
   expect_match(html, "function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}", fixed = TRUE)
   expect_match(html, "LOADED_EXPRESSION_CONDITIONS", fixed = TRUE)
@@ -2003,6 +2008,36 @@ test_that("Module 3 condition payload filenames are Windows-safe and determinist
   )
   expect_match(subgrn_stem, "^sg_[a-f0-9]{12}$")
   expect_lte(nchar(paste0(subgrn_stem, "_chunk_999.js")), 30L)
+})
+
+test_that("Module 3 condition payload files are compact and content addressed", {
+  payload_dir <- tempfile("condition-payload-")
+  rows <- data.table::data.table(
+    tf = c("BATF", "IRF4"),
+    gene_key = c("GeneA", "GeneB"),
+    fp_sum = c(1.23456789123, 9.87654321987)
+  )
+
+  first <- craftgrn:::.m3cr_write_compressed_payload_file(
+    list(tf_gene = rows),
+    payload_dir,
+    payload_kind = "edges"
+  )
+  second <- craftgrn:::.m3cr_write_compressed_payload_file(
+    list(tf_gene = data.table::copy(rows)),
+    payload_dir,
+    payload_kind = "edges"
+  )
+
+  expect_identical(first, second)
+  expect_match(first, "^d_[a-f0-9]{16}_edges[.]js$")
+  expect_lte(nchar(first), 30L)
+  expect_length(list.files(payload_dir, pattern = "[.]js$"), 1L)
+  payload_text <- paste(
+    readLines(file.path(payload_dir, first), warn = FALSE),
+    collapse = "\n"
+  )
+  expect_match(payload_text, first, fixed = TRUE)
 })
 
 test_that("Module 3 stage methods preserve the full method layout", {
