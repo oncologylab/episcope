@@ -254,6 +254,21 @@ def _prepare_matrix(doc_term: pd.DataFrame) -> tuple[sp.csr_matrix, List[str], L
     return X, doc_ids, term_ids
 
 
+def _matched_gene_peak_indices(term_ids: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    term_position = {term: index for index, term in enumerate(term_ids)}
+    genes = []
+    peaks = []
+    for term, gene_position in term_position.items():
+        if not term.startswith("GENE:"):
+            continue
+        peak_position = term_position.get(f"PEAK:{term[5:]}")
+        if peak_position is None:
+            continue
+        genes.append(gene_position)
+        peaks.append(peak_position)
+    return np.asarray(genes, dtype=np.int64), np.asarray(peaks, dtype=np.int64)
+
+
 def _train_one(
     X: sp.csr_matrix,
     n_topics: int,
@@ -265,6 +280,7 @@ def _train_one(
     device: str,
     variant: str,
     term_ids: list[str],
+    paired_term_regularization: float = 0.0,
     save_path: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict, str]:
     rng = np.random.default_rng(seed)
@@ -291,6 +307,9 @@ def _train_one(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     dataset = BowDataset(X)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+    pair_gene_idx, pair_peak_idx = _matched_gene_peak_indices(term_ids)
+    pair_gene_idx_t = torch.tensor(pair_gene_idx, dtype=torch.long, device=device)
+    pair_peak_idx_t = torch.tensor(pair_peak_idx, dtype=torch.long, device=device)
 
     model.train()
     for _epoch in range(int(epochs)):
@@ -301,6 +320,34 @@ def _train_one(
             recon_loss = -(batch * torch.log(recon)).sum(dim=1)
             kl = 0.5 * torch.sum(torch.exp(logvar) + mu * mu - 1.0 - logvar, dim=1)
             loss = (recon_loss + kl).mean()
+            if paired_term_regularization > 0 and pair_gene_idx_t.numel() > 0:
+                phi = model.topic_word_dist()
+                gene_topic = phi.index_select(1, pair_gene_idx_t)
+                peak_topic = phi.index_select(1, pair_peak_idx_t)
+                gene_topic = gene_topic / gene_topic.sum(dim=0, keepdim=True).clamp_min(1e-12)
+                peak_topic = peak_topic / peak_topic.sum(dim=0, keepdim=True).clamp_min(1e-12)
+                mean_topic = 0.5 * (gene_topic + peak_topic)
+                pair_js = 0.5 * (
+                    (
+                        gene_topic
+                        * (
+                            gene_topic.clamp_min(1e-12).log()
+                            - mean_topic.clamp_min(1e-12).log()
+                        )
+                    ).sum(dim=0)
+                    + (
+                        peak_topic
+                        * (
+                            peak_topic.clamp_min(1e-12).log()
+                            - mean_topic.clamp_min(1e-12).log()
+                        )
+                    ).sum(dim=0)
+                ).mean()
+                token_scale = batch.sum(dim=1).mean().detach().clamp_min(1.0)
+                loss = (
+                    loss
+                    + float(paired_term_regularization) * token_scale * pair_js
+                )
             if not torch.isfinite(loss):
                 raise RuntimeError(
                     f"Non-finite VAE loss for variant={variant}, K={n_topics}, epoch={_epoch + 1}"
@@ -336,12 +383,59 @@ def _train_one(
             recon_loss = -(batch * torch.log(recon)).sum(dim=1)
             nll += float(recon_loss.sum().cpu().numpy())
 
+    paired_term_js = np.nan
+    paired_term_argmax_agreement = np.nan
+    if pair_gene_idx.size > 0:
+        gene_topic = phi[:, pair_gene_idx]
+        peak_topic = phi[:, pair_peak_idx]
+        gene_topic = gene_topic / np.maximum(gene_topic.sum(axis=0, keepdims=True), 1e-12)
+        peak_topic = peak_topic / np.maximum(peak_topic.sum(axis=0, keepdims=True), 1e-12)
+        mean_topic = 0.5 * (gene_topic + peak_topic)
+        paired_term_js = float(
+            np.mean(
+                0.5
+                * (
+                    np.sum(
+                        gene_topic
+                        * (
+                            np.log(np.maximum(gene_topic, 1e-12))
+                            - np.log(np.maximum(mean_topic, 1e-12))
+                        ),
+                        axis=0,
+                    )
+                    + np.sum(
+                        peak_topic
+                        * (
+                            np.log(np.maximum(peak_topic, 1e-12))
+                            - np.log(np.maximum(mean_topic, 1e-12))
+                        ),
+                        axis=0,
+                    )
+                )
+            )
+        )
+        paired_term_argmax_agreement = float(
+            np.mean(
+                np.argmax(gene_topic, axis=0)
+                == np.argmax(peak_topic, axis=0)
+            )
+        )
+
     if variant == "vae_mlp":
         variant_detail = "Encoder: shared MLP (log1p input)\nDecoder: free topic-term matrix (beta)"
     elif variant == "moetm_encoder_decoder":
         variant_detail = "Encoder: shared MLP (log1p input)\nDecoder: factorized topic_emb x word_emb (ETM-style)"
     elif variant == "multivi_encoder":
-        variant_detail = "Encoder: modality-split MLP (gene/peak) with fusion\nDecoder: free topic-term matrix (beta)"
+        variant_detail = "\n".join(
+            [
+                "Encoder: modality-split MLP (gene/peak) with fusion",
+                "Decoder: free topic-term matrix (beta)",
+                (
+                    "Matched Gene/Peak topic regularization: "
+                    f"{paired_term_regularization}"
+                ),
+            ]
+        )
     else:
         variant_detail = "Encoder/Decoder: unspecified"
 
@@ -377,6 +471,8 @@ def _train_one(
                     "requested_device": str(requested_device),
                     "resolved_device": str(device),
                     "variant": str(variant),
+                    "paired_term_regularization": float(paired_term_regularization),
+                    "matched_gene_peak_terms": int(pair_gene_idx.size),
                 },
             },
             save_path,
@@ -397,6 +493,10 @@ def _train_one(
         "variant": str(variant),
         "requested_device": str(requested_device),
         "resolved_device": str(device),
+        "paired_term_regularization": float(paired_term_regularization),
+        "matched_gene_peak_terms": int(pair_gene_idx.size),
+        "paired_term_js": paired_term_js,
+        "paired_term_argmax_agreement": paired_term_argmax_agreement,
     }
     return theta, phi, metrics, model_summary
 
@@ -411,6 +511,7 @@ def main() -> None:
     ap.add_argument("--hidden", type=int, default=128)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--seed", type=int, default=123)
+    ap.add_argument("--paired-term-regularization", type=float, default=0.0)
     ap.add_argument("--device", choices=["cpu", "cuda", "auto"], default="auto")
     ap.add_argument(
         "--variant",
@@ -419,6 +520,8 @@ def main() -> None:
     )
     ap.add_argument("--progress-log", default=None, help="Optional TSV progress log path")
     args = ap.parse_args()
+    if not np.isfinite(args.paired_term_regularization) or args.paired_term_regularization < 0:
+        raise ValueError("--paired-term-regularization must be a finite non-negative number")
 
     try:
         torch_threads = int(os.environ.get("OMP_NUM_THREADS", os.environ.get("NUMEXPR_NUM_THREADS", "1")))
@@ -477,6 +580,7 @@ def main() -> None:
             device=args.device,
             variant=args.variant,
             term_ids=term_ids,
+            paired_term_regularization=args.paired_term_regularization,
             save_path=save_path,
         )
         metrics_rows.append(metrics)
@@ -513,6 +617,12 @@ def main() -> None:
                 "seed": int(args.seed),
                 "requested_device": str(args.device),
                 "resolved_device": str(metrics.get("resolved_device")),
+                "paired_term_regularization": float(args.paired_term_regularization),
+                "matched_gene_peak_terms": int(metrics.get("matched_gene_peak_terms", 0)),
+                "paired_term_js": metrics.get("paired_term_js"),
+                "paired_term_argmax_agreement": metrics.get(
+                    "paired_term_argmax_agreement"
+                ),
             }
         )
         _append_progress(args.progress_log, "train_k", int(k), "done", f"elapsed_sec={round(time.time() - t_k, 1)}")

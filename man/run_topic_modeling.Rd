@@ -41,6 +41,7 @@ run_topic_modeling(
   topic_qc_upregulated_pseudocount = NULL,
   vae_device = NULL,
   vae_batch_size = NULL,
+  vae_paired_term_regularization = NULL,
   pathway_backend = NULL,
   pathway_species = NULL,
   pathway_databases = NULL,
@@ -187,6 +188,11 @@ If `NULL`, read from `project_config` or use `"auto"`.}
 
 \item{vae_batch_size}{VAE mini-batch size. If `NULL`, read from
 `project_config` or use `64`.}
+
+\item{vae_paired_term_regularization}{Non-negative strength for matching the
+topic distributions of paired Gene and Peak terms. If `NULL`, read from
+project config and otherwise use `5` for MultiVI and `0` for other VAE
+variants.}
 
 \item{pathway_backend}{Pathway enrichment backend. Use `"enrichly"` for
 local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,

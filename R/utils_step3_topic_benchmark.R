@@ -3929,6 +3929,9 @@
 #' @param vae_seed VAE random seed.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
+#' @param vae_paired_term_regularization Non-negative strength for matching the
+#'   topic distributions of paired Gene and Peak terms. `NULL` uses `5` for
+#'   MultiVI and `0` for other VAE variants.
 #' @param input_source Input source type passed to topic training. Use
 #'   `"differential_links"` for comparison links and `"condition_links"` for
 #'   condition-native links.
@@ -4008,6 +4011,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         vae_lr = 1e-3,
                                         vae_seed = 123L,
                                         vae_device = "auto",
+                                        vae_paired_term_regularization = NULL,
                                         input_source = c("differential_links", "condition_links"),
                                         sample_subset = NULL,
                                         analysis_label = NULL,
@@ -4146,6 +4150,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         vae_lr = vae_lr,
         vae_seed = vae_seed,
         vae_device = vae_device,
+        vae_paired_term_regularization = vae_paired_term_regularization,
         save_full_doc_term_csv = FALSE,
         flat_output = .m3tb_flat_output_for_layout(output_layout),
         topic_report_args = list()
@@ -5016,6 +5021,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   vae_lr = 1e-3,
                                   vae_seed = 123L,
                                   vae_device = "auto",
+                                  vae_paired_term_regularization = NULL,
                                   input_source = c("differential_links", "condition_links"),
                                   sample_subset = NULL,
                                   analysis_label = NULL,
@@ -5078,6 +5084,7 @@ run_regulatory_topics <- function(filtered_dir,
     vae_lr = vae_lr,
     vae_seed = vae_seed,
     vae_device = vae_device,
+    vae_paired_term_regularization = vae_paired_term_regularization,
     input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
@@ -5277,6 +5284,7 @@ run_regulatory_topics <- function(filtered_dir,
                                              topic_term_assignment_method = NULL,
                                              vae_device = NULL,
                                              vae_batch_size = NULL,
+                                             vae_paired_term_regularization = NULL,
                                              pathway_backend = NULL,
                                              pathway_species = NULL,
                                              pathway_databases = NULL) {
@@ -5453,6 +5461,27 @@ run_regulatory_topics <- function(filtered_dir,
     suppressWarnings(as.integer(vae_batch_size[[1L]]))
   }
   if (!is.finite(vae_batch_size) || vae_batch_size < 1L) vae_batch_size <- 64L
+  vae_paired_term_regularization <- if (is.null(vae_paired_term_regularization)) {
+    .module3_cfg_value(
+      cfg,
+      c(
+        "topic_vae_paired_term_regularization",
+        "module3_topic_vae_paired_term_regularization"
+      ),
+      NULL
+    )
+  } else {
+    vae_paired_term_regularization
+  }
+  if (!is.null(vae_paired_term_regularization)) {
+    vae_paired_term_regularization <- suppressWarnings(as.numeric(
+      vae_paired_term_regularization[[1L]]
+    ))
+    if (!is.finite(vae_paired_term_regularization) ||
+        vae_paired_term_regularization < 0) {
+      .log_abort("topic_vae_paired_term_regularization must be non-negative.")
+    }
+  }
   pathway_backend <- if (is.null(pathway_backend)) {
     as.character(.module3_cfg_value(cfg, c("pathway_backend", "module3_pathway_backend"), "enrichly"))[[1L]]
   } else {
@@ -5692,6 +5721,7 @@ run_regulatory_topics <- function(filtered_dir,
     condition_specificity_expression_min = condition_specificity_expression_min,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
+    vae_paired_term_regularization = vae_paired_term_regularization,
     pathway_backend = pathway_backend,
     report_state = .module3_report_state(cfg),
     extraction_args = list(
@@ -5831,6 +5861,10 @@ run_regulatory_topics <- function(filtered_dir,
 #'   If `NULL`, read from `project_config` or use `"auto"`.
 #' @param vae_batch_size VAE mini-batch size. If `NULL`, read from
 #'   `project_config` or use `64`.
+#' @param vae_paired_term_regularization Non-negative strength for matching the
+#'   topic distributions of paired Gene and Peak terms. If `NULL`, read from
+#'   project config and otherwise use `5` for MultiVI and `0` for other VAE
+#'   variants.
 #' @param pathway_backend Pathway enrichment backend. Use `"enrichly"` for
 #'   local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 #'   read from `project_config` or use `"enrichly"`.
@@ -5900,6 +5934,7 @@ run_topic_modeling <- function(filtered_dir,
                                topic_qc_upregulated_pseudocount = NULL,
                                vae_device = NULL,
                                vae_batch_size = NULL,
+                               vae_paired_term_regularization = NULL,
                                pathway_backend = NULL,
                                pathway_species = NULL,
                                pathway_databases = NULL,
@@ -5937,6 +5972,7 @@ run_topic_modeling <- function(filtered_dir,
     topic_term_assignment_method = topic_term_assignment_method,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
+    vae_paired_term_regularization = vae_paired_term_regularization,
     pathway_backend = pathway_backend,
     pathway_species = pathway_species,
     pathway_databases = pathway_databases
@@ -5989,6 +6025,7 @@ run_topic_modeling <- function(filtered_dir,
     extraction_topic_report_args = modifyList(resolved$extraction_args, extraction_topic_report_args),
     vae_device = resolved$vae_device,
     vae_batch_size = resolved$vae_batch_size,
+    vae_paired_term_regularization = resolved$vae_paired_term_regularization,
     input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,

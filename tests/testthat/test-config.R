@@ -217,6 +217,7 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
       topic_condition_specificity_floor = 0.1,
       topic_condition_specificity_expression_min = 10,
       topic_vae_device = "cpu",
+      topic_vae_paired_term_regularization = 5,
       pathway_species = "human"
     )
   )
@@ -253,6 +254,14 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
   expect_error(
     validate(bad_peak_weighting),
     "module3_topic_condition_peak_weighting",
+    fixed = TRUE
+  )
+
+  bad_pair_regularization <- cfg
+  bad_pair_regularization$module3$topic_vae_paired_term_regularization <- -1
+  expect_error(
+    validate(bad_pair_regularization),
+    "non-negative numbers",
     fixed = TRUE
   )
 

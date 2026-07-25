@@ -131,7 +131,8 @@
     "topic_qc_upregulated_pseudocount", "topic_qc_seed",
     "topic_raw_theta_document_heatmap", "run_raw_theta_document_heatmap",
     "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
-    "topic_vae_batch_size", "topic_vae_device", "warplda_iterations",
+    "topic_vae_batch_size", "topic_vae_device",
+    "topic_vae_paired_term_regularization", "warplda_iterations",
     "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed",
     "waterfall_min_abs_net",
     paste0("module3_", c(
@@ -157,7 +158,8 @@
       "topic_qc_upregulated_pseudocount", "topic_qc_seed",
       "topic_raw_theta_document_heatmap",
       "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
-      "topic_vae_batch_size", "topic_vae_device", "warplda_iterations",
+      "topic_vae_batch_size", "topic_vae_device",
+      "topic_vae_paired_term_regularization", "warplda_iterations",
       "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed"
     )),
     "topic_warplda_iterations",
@@ -496,6 +498,21 @@
   }, logical(1L))]
   if (length(bad_numeric)) {
     cli::cli_abort("Project config entries must be null or positive numbers: {paste(bad_numeric, collapse = ', ')}.")
+  }
+
+  nonnegative_numeric_keys <- intersect(c(
+    "topic_vae_paired_term_regularization",
+    "module3_topic_vae_paired_term_regularization"
+  ), names(cfg))
+  bad_nonnegative_numeric <- nonnegative_numeric_keys[
+    !vapply(cfg[nonnegative_numeric_keys], function(x) {
+      is.null(x) || (.project_config_scalar(x, "numeric") && x >= 0)
+    }, logical(1L))
+  ]
+  if (length(bad_nonnegative_numeric)) {
+    cli::cli_abort(
+      "Project config entries must be null or non-negative numbers: {paste(bad_nonnegative_numeric, collapse = ', ')}."
+    )
   }
 
   sampler_keys <- intersect(c(

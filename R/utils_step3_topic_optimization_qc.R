@@ -976,6 +976,7 @@
   if (is.null(column_order)) {
     column_order <- .m3_qc_cluster_order(x, "column")
   }
+  layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
   long <- .m3_qc_matrix_long(x, row_order, column_order)
   p <- ggplot2::ggplot(
     long,
@@ -1009,9 +1010,11 @@
     ggplot2::coord_fixed(ratio = 1) +
     .m3_qc_theme() +
     ggplot2::theme(
+      axis.text = ggplot2::element_text(size = layout_spec$axis_size),
       axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5),
       panel.grid = ggplot2::element_blank(),
-      legend.position = "right"
+      legend.position = "right",
+      plot.margin = layout_spec$plot_margin
     )
 }
 
@@ -1049,6 +1052,7 @@
                                     order = NULL) {
   x <- as.matrix(x)
   if (is.null(order)) order <- .m3_qc_cluster_order(x, "row")
+  layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
   long <- .m3_qc_matrix_long(x, order, order)
   ggplot2::ggplot(
     long,
@@ -1067,13 +1071,15 @@
     ggplot2::coord_fixed(ratio = 1) +
     .m3_qc_theme() +
     ggplot2::theme(
+      axis.text = ggplot2::element_text(size = layout_spec$axis_size),
       axis.text.x = ggplot2::element_text(
         angle = 90,
         hjust = 1,
         vjust = 0.5
       ),
       panel.grid = ggplot2::element_blank(),
-      legend.position = "right"
+      legend.position = "right",
+      plot.margin = layout_spec$plot_margin
     )
 }
 
@@ -1260,14 +1266,15 @@
     rownames(similarity)
   )))
   ordered_ids <- topic_ids[topic_order]
-  ordered_labels <- paste0("Topic ", ordered_ids)
+  source_labels <- paste0("Topic ", ordered_ids)
+  ordered_labels <- paste0("T", ordered_ids)
   k <- length(ordered_ids)
   reordered <- similarity[topic_order, topic_order, drop = FALSE]
   heatmap <- data.table::as.data.table(as.table(reordered))
   data.table::setnames(heatmap, c("row_label", "column_label", "similarity"))
   heatmap[, `:=`(
-    x = match(as.character(column_label), ordered_labels),
-    y = k - match(as.character(row_label), ordered_labels) + 1L,
+    x = match(as.character(column_label), source_labels),
+    y = k - match(as.character(row_label), source_labels) + 1L,
     similarity = as.numeric(similarity)
   )]
 
@@ -2499,6 +2506,7 @@
       seed = seed + 1L
     ),
     ncol = 1L,
+    heights = if (length(condition_values) > 18L) c(0.72, 1.28) else c(1, 1),
     title = paste0(title_prefix, ": filtered aligned-link UMAP")
   )
 
@@ -2581,22 +2589,40 @@
     condition_correlation,
     "row"
   )
-  page2 <- .m3_qc_arrange(
-    raw_topic_structure_plot,
-    .m3_qc_correlation_plot(
-      condition_correlation,
-      "Condition correlation by topic composition",
-      paste(
-        "Pearson correlation of separately normalized TF-target-link",
-        "and target-gene topic profiles",
-        sep = "\n"
-      ),
-      order = condition_correlation_order
+  condition_correlation_plot <- .m3_qc_correlation_plot(
+    condition_correlation,
+    "Condition correlation by topic composition",
+    paste(
+      "Pearson correlation of separately normalized TF-target-link",
+      "and target-gene topic profiles",
+      sep = "\n"
     ),
-    ncol = 1L,
-    heights = c(1.1, 0.9),
-    title = "Topic and condition assignment structure"
+    order = condition_correlation_order
   )
+  structure_pages <- if (
+    max(length(condition_values), length(qc$raw_topic_ids)) > 24L
+  ) {
+    list(
+      .m3_qc_arrange(
+        raw_topic_structure_plot,
+        ncol = 1L,
+        title = "Raw topic assignment structure"
+      ),
+      .m3_qc_arrange(
+        condition_correlation_plot,
+        ncol = 1L,
+        title = "Condition correlation by topic composition"
+      )
+    )
+  } else {
+    list(.m3_qc_arrange(
+      raw_topic_structure_plot,
+      condition_correlation_plot,
+      ncol = 1L,
+      heights = c(1.1, 0.9),
+      title = "Topic and condition assignment structure"
+    ))
+  }
   clustering_matrix <- cbind(
     .m3_opt_row_normalize(link_matrix),
     .m3_opt_row_normalize(gene_matrix),
@@ -2672,10 +2698,29 @@
       color_transform = "identity"
     ) + ggplot2::labs(x = "Topic")
   ))
-  page4 <- do.call(.m3_qc_arrange, c(page4_plots, list(
-    ncol = 1L,
-    title = "Condition-topic assignment profiles"
-  )))
+  profile_chunks <- if (length(condition_values) > 22L) {
+    as.list(seq_along(page4_plots))
+  } else if (length(condition_values) > 12L) {
+    list(1:2, 3:4)
+  } else {
+    list(seq_along(page4_plots))
+  }
+  profile_pages <- lapply(seq_along(profile_chunks), function(page_index) {
+    indices <- profile_chunks[[page_index]]
+    page_title <- if (length(profile_chunks) > 1L) {
+      sprintf(
+        "Condition-topic assignment profiles (%d/%d)",
+        page_index,
+        length(profile_chunks)
+      )
+    } else {
+      "Condition-topic assignment profiles"
+    }
+    do.call(.m3_qc_arrange, c(
+      page4_plots[indices],
+      list(ncol = 1L, title = page_title)
+    ))
+  })
 
   cross <- qc$condition_topic_similarity$mean
   condition_top_topics <- .m3_qc_top_condition_topics(
@@ -2747,9 +2792,10 @@
     ncol = 1L,
     title = "Condition-topic similarity"
   )
+  pairs_per_page <- if (length(ordered_conditions) > 18L) 4L else 6L
   pair_chunks <- split(
     seq_along(pair_plot_groups),
-    ceiling(seq_along(pair_plot_groups) / 6L)
+    ceiling(seq_along(pair_plot_groups) / pairs_per_page)
   )
   pair_pages <- lapply(seq_along(pair_chunks), function(page_index) {
     indices <- pair_chunks[[page_index]]
@@ -2837,14 +2883,18 @@
   on.exit(grDevices::dev.off(), add = TRUE)
   grid::grid.newpage()
   grid::grid.draw(page1)
-  grid::grid.newpage()
-  grid::grid.draw(page2)
+  for (page in structure_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
   if (!identity_map) {
     grid::grid.newpage()
     grid::grid.draw(page3)
   }
-  grid::grid.newpage()
-  grid::grid.draw(page4)
+  for (page in profile_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
   grid::grid.newpage()
   grid::grid.draw(page5)
   for (page in pair_pages) {

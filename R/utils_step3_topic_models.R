@@ -2464,13 +2464,115 @@ binarize_topics <- function(score_mat,
   assignments[]
 }
 
+.topic_assignment_quality_fields <- function(assigned_topics,
+                                             total_genes,
+                                             expected_topic_count) {
+  assigned_topics <- suppressWarnings(as.integer(assigned_topics))
+  assigned_topics <- assigned_topics[is.finite(assigned_topics)]
+  total_genes <- suppressWarnings(as.integer(total_genes[[1L]]))
+  expected_topic_count <- suppressWarnings(as.integer(expected_topic_count[[1L]]))
+  if (!is.finite(total_genes) || total_genes < 1L) total_genes <- 0L
+  if (!is.finite(expected_topic_count) || expected_topic_count < 1L) {
+    expected_topic_count <- if (length(assigned_topics)) {
+      max(assigned_topics)
+    } else {
+      0L
+    }
+  }
+  assigned_genes <- length(assigned_topics)
+  required_genes <- as.integer(if (total_genes >= 4000L) {
+    ceiling(max(3000, 0.5 * total_genes))
+  } else {
+    ceiling(0.6 * total_genes)
+  })
+  topic_counts <- if (length(assigned_topics)) {
+    tabulate(assigned_topics, nbins = expected_topic_count)
+  } else {
+    integer(expected_topic_count)
+  }
+  min_topic_genes_required <- if (expected_topic_count > 0L) {
+    max(10L, floor(required_genes / expected_topic_count * 0.2))
+  } else {
+    0L
+  }
+  assigned_topic_count <- sum(topic_counts > 0L)
+  min_assigned_topic_genes <- if (length(topic_counts)) min(topic_counts) else 0L
+  median_assigned_topic_genes <- if (length(topic_counts)) {
+    stats::median(topic_counts)
+  } else {
+    0
+  }
+  coverage_ok <- assigned_genes >= required_genes
+  topics_ok <- expected_topic_count > 0L &&
+    assigned_topic_count == expected_topic_count &&
+    min_assigned_topic_genes >= min_topic_genes_required
+  reasons <- character()
+  if (!coverage_ok) {
+    reasons <- c(
+      reasons,
+      sprintf("assigned_genes_%d_below_required_%d", assigned_genes, required_genes)
+    )
+  }
+  if (expected_topic_count < 1L) {
+    reasons <- c(reasons, "expected_topic_count_missing")
+  } else if (assigned_topic_count < expected_topic_count) {
+    reasons <- c(
+      reasons,
+      sprintf(
+        "assigned_topics_%d_below_expected_%d",
+        assigned_topic_count,
+        expected_topic_count
+      )
+    )
+  } else if (min_assigned_topic_genes < min_topic_genes_required) {
+    reasons <- c(
+      reasons,
+      sprintf(
+        "min_topic_genes_%d_below_required_%d",
+        min_assigned_topic_genes,
+        min_topic_genes_required
+      )
+    )
+  }
+  quality_status <- if (total_genes < 100L) {
+    "not_applicable"
+  } else if (coverage_ok && topics_ok) {
+    "pass"
+  } else {
+    "review"
+  }
+  quality_reason <- if (identical(quality_status, "not_applicable")) {
+    "fewer_than_100_genes"
+  } else if (length(reasons)) {
+    paste(reasons, collapse = ";")
+  } else {
+    "coverage_and_topic_occupancy_pass"
+  }
+  list(
+    expected_topic_count = expected_topic_count,
+    assigned_topic_count = assigned_topic_count,
+    required_assigned_genes = required_genes,
+    min_topic_genes_required = min_topic_genes_required,
+    min_assigned_topic_genes = min_assigned_topic_genes,
+    median_assigned_topic_genes = as.numeric(median_assigned_topic_genes),
+    assignment_quality_status = quality_status,
+    assignment_quality_reason = quality_reason
+  )
+}
+
 .topic_gene_assignment_summary <- function(gene_assignment,
                                            thrP,
                                            assignment_method,
-                                           model_family = NA_character_) {
+                                           model_family = NA_character_,
+                                           expected_topic_count = NA_integer_) {
   x <- data.table::as.data.table(gene_assignment)
   assigned <- x[.as_logical_flag(assigned)]
-  data.table::data.table(
+  quality <- .topic_assignment_quality_fields(
+    assigned_topics = assigned$assigned_topic,
+    total_genes = nrow(x),
+    expected_topic_count = expected_topic_count
+  )
+  cbind(data.table::data.table(
     assignment_method = as.character(assignment_method),
     model_family = as.character(model_family),
     fp_term_mode = "gene_expression",
@@ -2493,13 +2595,14 @@ binarize_topics <- function(score_mat,
     } else {
       0L
     }
-  )
+  ), data.table::as.data.table(quality))
 }
 
 .topic_gene_peak_assignment_summary <- function(pair_assignment,
                                                 thrP,
                                                 assignment_method,
-                                                model_family = NA_character_) {
+                                                model_family = NA_character_,
+                                                expected_topic_count = NA_integer_) {
   x <- data.table::as.data.table(pair_assignment)
   matched <- x[!is.na(gene_term_id) & !is.na(peak_term_id)]
   assigned <- matched[.as_logical_flag(assigned)]
@@ -2513,7 +2616,12 @@ binarize_topics <- function(score_mat,
     if (!length(value)) return(NA_real_)
     as.numeric(stats::quantile(value, probability, names = FALSE, type = 7L))
   }
-  data.table::data.table(
+  quality <- .topic_assignment_quality_fields(
+    assigned_topics = assigned$assigned_topic,
+    total_genes = nrow(matched),
+    expected_topic_count = expected_topic_count
+  )
+  cbind(data.table::data.table(
     assignment_method = as.character(assignment_method),
     model_family = as.character(model_family),
     gammafit_thrP = as.numeric(thrP),
@@ -2559,7 +2667,7 @@ binarize_topics <- function(score_mat,
     min_maxprob_probability_median = finite_quantile(assigned$min_maxprob_probability, 0.5),
     min_maxprob_margin_p10 = finite_quantile(assigned$min_maxprob_margin, 0.1),
     min_maxprob_margin_median = finite_quantile(assigned$min_maxprob_margin, 0.5)
-  )
+  ), data.table::as.data.table(quality))
 }
 
 # Gamma-fit diagnostic plots (cisTopic-like)
@@ -10099,13 +10207,15 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         pair_assignment,
         file.path(out_dir, "topic_gene_assignment.csv")
       )
+      assignment_summary <- .topic_gene_assignment_summary(
+        pair_assignment,
+        thrP = thrP,
+        assignment_method = topic_term_assignment_method,
+        model_family = topic_model_family,
+        expected_topic_count = nrow(phi)
+      )
       data.table::fwrite(
-        .topic_gene_assignment_summary(
-          pair_assignment,
-          thrP = thrP,
-          assignment_method = topic_term_assignment_method,
-          model_family = topic_model_family
-        ),
+        assignment_summary,
         file.path(out_dir, "topic_term_assignment_summary.csv")
       )
     } else {
@@ -10124,15 +10234,23 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       pair_assignment,
       file.path(out_dir, "topic_gene_peak_assignment.csv")
     )
+    assignment_summary <- .topic_gene_peak_assignment_summary(
+      pair_assignment,
+      thrP = thrP,
+      assignment_method = topic_term_assignment_method,
+      model_family = topic_model_family,
+      expected_topic_count = nrow(phi)
+    )
     data.table::fwrite(
-      .topic_gene_peak_assignment_summary(
-        pair_assignment,
-        thrP = thrP,
-        assignment_method = topic_term_assignment_method,
-        model_family = topic_model_family
-      ),
+      assignment_summary,
       file.path(out_dir, "topic_term_assignment_summary.csv")
     )
+    }
+    if (nrow(assignment_summary) &&
+        identical(assignment_summary$assignment_quality_status[[1L]], "review")) {
+      .log_warn(
+        "Topic assignment requires review: {assignment_summary$assignment_quality_reason[[1L]]}."
+      )
     }
     if (isTRUE(optimize_topics)) {
       raw_k <- nrow(phi)
@@ -10225,20 +10343,28 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           pair_assignment,
           thrP = thrP,
           assignment_method = "gammafit_maxprob_optimized",
-          model_family = topic_model_family
+          model_family = topic_model_family,
+          expected_topic_count = nrow(phi)
         )
       } else {
         .topic_gene_peak_assignment_summary(
           pair_assignment,
           thrP = thrP,
           assignment_method = "gammafit_maxprob_optimized",
-          model_family = topic_model_family
+          model_family = topic_model_family,
+          expected_topic_count = nrow(phi)
         )
       }
       data.table::fwrite(
         assignment_summary,
         file.path(out_dir, "topic_term_assignment_summary.csv")
       )
+      if (nrow(assignment_summary) &&
+          identical(assignment_summary$assignment_quality_status[[1L]], "review")) {
+        .log_warn(
+          "Optimized topic assignment requires review: {assignment_summary$assignment_quality_reason[[1L]]}."
+        )
+      }
       if (isTRUE(run_topic_assignment_qc)) {
         .record_step(
           "topic_assignment_qc",
@@ -11416,6 +11542,19 @@ build_tf_cluster_map_from_motif <- function(motif_path) {
   variant
 }
 
+.resolve_vae_paired_term_regularization <- function(vae_variant,
+                                                    value = NULL) {
+  variant <- .normalize_vae_python_variant(vae_variant)
+  if (is.null(value) || !length(value)) {
+    return(if (identical(variant, "multivi_encoder")) 5 else 0)
+  }
+  value <- suppressWarnings(as.numeric(value[[1L]]))
+  if (!is.finite(value) || value < 0) {
+    .log_abort("`vae_paired_term_regularization` must be a finite non-negative number.")
+  }
+  value
+}
+
 .reset_topic_model_artifacts <- function(out_dir, backend, reuse_if_exists) {
   if (isTRUE(reuse_if_exists)) {
     return(invisible(FALSE))
@@ -11465,6 +11604,7 @@ run_vae_topic_report_py <- function(doc_term,
                                     vae_lr = 1e-3,
                                     vae_seed = 123L,
                                     vae_device = "auto",
+                                    vae_paired_term_regularization = NULL,
                                     reuse_if_exists = TRUE,
                                     do_report = TRUE,
                                     chosen_K = NULL,
@@ -11530,6 +11670,10 @@ run_vae_topic_report_py <- function(doc_term,
   k_grid <- k_grid[is.finite(k_grid)]
   if (!length(k_grid)) .log_abort("k_grid must contain at least one finite K value.")
   vae_python_variant <- .normalize_vae_python_variant(vae_variant)
+  vae_paired_term_regularization <- .resolve_vae_paired_term_regularization(
+    vae_python_variant,
+    vae_paired_term_regularization
+  )
 
   metrics_path <- file.path(out_dir, "model_metrics.csv")
   manifest_path <- file.path(out_dir, "vae_model_manifest.csv")
@@ -11543,7 +11687,16 @@ run_vae_topic_report_py <- function(doc_term,
   if (file.exists(manifest_path)) {
     old_manifest <- tryCatch(data.table::fread(manifest_path, showProgress = FALSE), error = function(e) data.table::data.table())
   }
-  if (nrow(old_metrics) && "K" %in% names(old_metrics) && dir.exists(models_dir)) {
+  pair_metadata_ok <- nrow(old_metrics) &&
+    all(c("K", "paired_term_regularization") %in% names(old_metrics)) &&
+    all(
+      abs(
+        suppressWarnings(as.numeric(old_metrics$paired_term_regularization)) -
+          vae_paired_term_regularization
+      ) < sqrt(.Machine$double.eps),
+      na.rm = FALSE
+    )
+  if (isTRUE(pair_metadata_ok) && dir.exists(models_dir)) {
     metrics_k <- unique(as.integer(old_metrics$K))
     file_k <- k_grid[
       file.exists(file.path(models_dir, sprintf("theta_K%d.csv", k_grid))) &
@@ -11575,6 +11728,7 @@ run_vae_topic_report_py <- function(doc_term,
       "--seed", as.character(vae_seed),
       "--device", vae_device,
       "--variant", vae_python_variant,
+      "--paired-term-regularization", as.character(vae_paired_term_regularization),
       "--progress-log", file.path(out_dir, "vae_progress.tsv")
     )
     .log_inform("Running VAE Python with doc-term input {basename(doc_term_input)}; K grid: {k_grid_txt}.")
@@ -12449,6 +12603,9 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param vae_seed VAE random seed.
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
+#' @param vae_paired_term_regularization Non-negative strength for matching the
+#'   topic distributions of paired `GENE:<gene>` and `PEAK:<gene>` terms.
+#'   `NULL` uses `5` for MultiVI and `0` for other VAE variants.
 #' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
@@ -12522,6 +12679,7 @@ train_topic_models <- function(Kgrid,
                                vae_lr = 1e-3,
                                vae_seed = 123L,
                                vae_device = "auto",
+                               vae_paired_term_regularization = NULL,
                                warplda_iterations = 2000L,
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
@@ -12567,6 +12725,14 @@ train_topic_models <- function(Kgrid,
   input_source <- match.arg(input_source)
   condition_gene_weighting <- match.arg(condition_gene_weighting)
   condition_peak_weighting <- match.arg(condition_peak_weighting)
+  vae_paired_term_regularization <- if (identical(backend, "vae")) {
+    .resolve_vae_paired_term_regularization(
+      vae_variant,
+      vae_paired_term_regularization
+    )
+  } else {
+    0
+  }
   if (identical(input_source, "condition_links") && !identical(doc_design, "condition")) {
     .log_abort("input_source = 'condition_links' requires doc_design = 'condition'.")
   }
@@ -12928,7 +13094,12 @@ train_topic_models <- function(Kgrid,
       n_documents = as.double(data.table::uniqueN(doc_term$doc_id)),
       n_terms = as.double(data.table::uniqueN(doc_term$term_id)),
       n_nonzero = as.double(sum(.safe_num(doc_term[[count_input_effective]]) > 0, na.rm = TRUE)),
-      n_model_tokens = as.double(token_cap$tokens)
+      n_model_tokens = as.double(token_cap$tokens),
+      vae_paired_term_regularization = if (identical(backend, "vae")) {
+        vae_paired_term_regularization
+      } else {
+        0
+      }
     )
     data.table::fwrite(topic_input_summary, file.path(out_dir, "topic_input_summary.csv"))
     metrics_path <- file.path(out_dir, "model_metrics.csv")
@@ -12948,6 +13119,17 @@ train_topic_models <- function(Kgrid,
           all(as.character(old_metrics$count_method) == count_method) &&
           all(as.character(old_metrics$count_input_effective) == count_input_effective) &&
           all(as.character(old_metrics$input_signature) == input_signature)
+        if (identical(backend, "vae")) {
+          model_metadata_ok <- model_metadata_ok &&
+            "paired_term_regularization" %in% names(old_metrics) &&
+            all(
+              abs(
+                suppressWarnings(as.numeric(old_metrics$paired_term_regularization)) -
+                  vae_paired_term_regularization
+              ) < sqrt(.Machine$double.eps),
+              na.rm = FALSE
+            )
+        }
         if (identical(backend, "warplda")) {
           model_metadata_ok <- model_metadata_ok &&
             "sampler" %in% names(old_metrics) &&
@@ -13012,6 +13194,7 @@ train_topic_models <- function(Kgrid,
         vae_lr = vae_lr,
         vae_seed = vae_seed,
         vae_device = vae_device,
+        vae_paired_term_regularization = vae_paired_term_regularization,
         do_report = FALSE,
         reuse_if_exists = reuse_if_exists,
         count_input = count_input_effective,
@@ -13025,7 +13208,8 @@ train_topic_models <- function(Kgrid,
           count_method = count_method,
           count_scale = as.numeric(count_scale),
           count_input_requested = count_input_requested,
-          count_input_effective = count_input_effective
+          count_input_effective = count_input_effective,
+          paired_term_regularization = vae_paired_term_regularization
         )]
         data.table::fwrite(metrics_tbl, metrics_path)
         .save_all(out_dir, "model_metrics", metrics_tbl)

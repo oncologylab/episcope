@@ -25,6 +25,16 @@ test_that("flat single-K extraction roots retain trained-K inference", {
   )
 })
 
+test_that("dense Module 3 QC heatmaps retain readable axis text", {
+  small <- .m3_qc_heatmap_layout_spec(6L, 10L)
+  dense <- .m3_qc_heatmap_layout_spec(31L, 50L)
+
+  expect_equal(small$axis_size, 11)
+  expect_gte(dense$axis_size, 9)
+  expect_lte(dense$axis_size, small$axis_size)
+  expect_lt(dense$tile_linewidth, small$tile_linewidth)
+})
+
 test_that("Module 3 strict memory preflight enforces the available-memory fraction", {
   ok <- .module3_memory_preflight(
     estimated_bytes = 80,
@@ -182,7 +192,12 @@ test_that("VAE training reuses complete K values and trains missing K values", {
   dir.create(models_dir, recursive = TRUE, showWarnings = FALSE)
 
   data.table::fwrite(
-    data.table::data.table(K = 2L, perplexity = 10, loglik = -10),
+    data.table::data.table(
+      K = 2L,
+      perplexity = 10,
+      loglik = -10,
+      paired_term_regularization = 0
+    ),
     file.path(out_dir, "model_metrics.csv")
   )
   data.table::fwrite(
@@ -203,8 +218,9 @@ test_that("VAE training reuses complete K values and trains missing K values", {
     "val <- function(flag) args[match(flag, args) + 1L]",
     "out_dir <- val('--out-dir')",
     "ks <- as.integer(strsplit(val('--k-grid'), ',', fixed = TRUE)[[1]])",
+    "pair_reg <- as.numeric(val('--paired-term-regularization'))",
     "dir.create(file.path(out_dir, 'vae_models'), recursive = TRUE, showWarnings = FALSE)",
-    "metrics <- data.frame(K = ks, perplexity = 100 + ks, loglik = -100 - ks)",
+    "metrics <- data.frame(K = ks, perplexity = 100 + ks, loglik = -100 - ks, paired_term_regularization = pair_reg)",
     "write.csv(metrics, file.path(out_dir, 'model_metrics.csv'), row.names = FALSE)",
     "write.csv(data.frame(K = ks), file.path(out_dir, 'vae_model_manifest.csv'), row.names = FALSE)",
     "for (k in ks) {",
@@ -234,6 +250,7 @@ test_that("VAE training reuses complete K values and trains missing K values", {
     vae_script = fake_trainer,
     k_grid = c(2L, 3L),
     vae_python = file.path(R.home("bin"), "Rscript"),
+    vae_paired_term_regularization = 0,
     reuse_if_exists = TRUE,
     do_report = FALSE,
     count_input = "pseudo_count_bin"
@@ -248,6 +265,58 @@ test_that("VAE training reuses complete K values and trains missing K values", {
   expect_true(file.exists(file.path(models_dir, "theta_K3.csv")))
   expect_equal(metrics[K == 2L, perplexity], 10)
   expect_equal(metrics[K == 3L, perplexity], 103)
+})
+
+test_that("paired-term regularization defaults are model-specific", {
+  expect_equal(
+    craftgrn:::.resolve_vae_paired_term_regularization("multivi_encoder"),
+    5
+  )
+  expect_equal(
+    craftgrn:::.resolve_vae_paired_term_regularization("vae_mlp"),
+    0
+  )
+  expect_equal(
+    craftgrn:::.resolve_vae_paired_term_regularization(
+      "multivi_encoder",
+      2.5
+    ),
+    2.5
+  )
+  expect_error(
+    craftgrn:::.resolve_vae_paired_term_regularization(
+      "multivi_encoder",
+      -1
+    ),
+    "non-negative",
+    fixed = TRUE
+  )
+})
+
+test_that("topic assignment quality uses absolute and relative coverage gates", {
+  large_pass <- craftgrn:::.topic_assignment_quality_fields(
+    assigned_topics = rep(seq_len(10L), each = 400L),
+    total_genes = 7000L,
+    expected_topic_count = 10L
+  )
+  expect_identical(large_pass$required_assigned_genes, 3500L)
+  expect_identical(large_pass$assignment_quality_status, "pass")
+
+  large_sparse <- craftgrn:::.topic_assignment_quality_fields(
+    assigned_topics = rep(seq_len(10L), each = 200L),
+    total_genes = 7000L,
+    expected_topic_count = 10L
+  )
+  expect_identical(large_sparse$assignment_quality_status, "review")
+  expect_match(large_sparse$assignment_quality_reason, "below_required")
+
+  small_pass <- craftgrn:::.topic_assignment_quality_fields(
+    assigned_topics = rep(seq_len(10L), each = 100L),
+    total_genes = 1500L,
+    expected_topic_count = 10L
+  )
+  expect_identical(small_pass$required_assigned_genes, 900L)
+  expect_identical(small_pass$assignment_quality_status, "pass")
 })
 
 test_that("condition doc_tf applies condition thresholds and TF self terms", {
