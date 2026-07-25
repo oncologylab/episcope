@@ -708,6 +708,40 @@ test_that("condition pathway sub-GRN reader enforces bounds and reuses cache", {
   expect_identical(readRDS(cache_files[[1L]])$cache_version, 2L)
 })
 
+test_that("condition report finds links above deeply nested benchmark runs", {
+  root <- tempfile("condition-links-ancestor-")
+  analysis_dir <- file.path(root, "analysis")
+  condition_links_dir <- file.path(analysis_dir, "condition_links")
+  model_dir <- file.path(
+    analysis_dir,
+    "topic_runs",
+    "final_review",
+    "run_002_condition_aggr_multivi",
+    "topic_models"
+  )
+  extraction_dir <- file.path(
+    analysis_dir,
+    "topic_runs",
+    "final_review",
+    "run_002_condition_aggr_multivi",
+    "topic_extraction",
+    "K10"
+  )
+  dir.create(condition_links_dir, recursive = TRUE)
+  dir.create(model_dir, recursive = TRUE)
+  dir.create(extraction_dir, recursive = TRUE)
+
+  found <- craftgrn:::.m3tb_subgrn_condition_links_dir(
+    model_dir = model_dir,
+    extraction_dir = extraction_dir
+  )
+
+  expect_identical(
+    normalizePath(found, winslash = "/"),
+    normalizePath(condition_links_dir, winslash = "/")
+  )
+})
+
 test_that("pathway sub-GRN chunks use compressed columnar browser payloads", {
   obj <- list(
     manifest = data.table::data.table(subgrn_context_id = "ctx1"),

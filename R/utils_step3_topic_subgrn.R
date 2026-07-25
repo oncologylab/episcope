@@ -801,25 +801,29 @@
 }
 
 .m3tb_subgrn_condition_links_dir <- function(model_dir, extraction_dir = NULL) {
-  candidates <- character()
-  if (!is.null(model_dir) && nzchar(as.character(model_dir)[[1L]])) {
-    model_dir <- normalizePath(as.character(model_dir)[[1L]], winslash = "/", mustWork = FALSE)
-    candidates <- c(
-      candidates,
-      file.path(dirname(dirname(dirname(model_dir))), "condition_links"),
-      file.path(dirname(dirname(model_dir)), "condition_links"),
-      file.path(dirname(model_dir), "condition_links")
-    )
+  ancestor_candidates <- function(path, max_depth = 8L) {
+    if (is.null(path) || !length(path) ||
+        !nzchar(as.character(path)[[1L]])) {
+      return(character())
+    }
+    current <- dirname(normalizePath(
+      as.character(path)[[1L]],
+      winslash = "/",
+      mustWork = FALSE
+    ))
+    out <- character()
+    for (depth in seq_len(max_depth)) {
+      out <- c(out, file.path(current, "condition_links"))
+      parent <- dirname(current)
+      if (identical(parent, current)) break
+      current <- parent
+    }
+    out
   }
-  if (!is.null(extraction_dir) && nzchar(as.character(extraction_dir)[[1L]])) {
-    extraction_dir <- normalizePath(as.character(extraction_dir)[[1L]], winslash = "/", mustWork = FALSE)
-    candidates <- c(
-      candidates,
-      file.path(dirname(dirname(dirname(extraction_dir))), "condition_links"),
-      file.path(dirname(dirname(extraction_dir)), "condition_links"),
-      file.path(dirname(extraction_dir), "condition_links")
-    )
-  }
+  candidates <- c(
+    ancestor_candidates(model_dir),
+    ancestor_candidates(extraction_dir)
+  )
   candidates <- unique(candidates)
   hit <- candidates[dir.exists(candidates)]
   if (length(hit)) hit[[1L]] else NA_character_
