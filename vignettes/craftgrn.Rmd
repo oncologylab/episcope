@@ -245,7 +245,12 @@ Module 2 produces normalized tables:
 - `module2_links`: final TF-FP-target links as keys and pass flags.
 - `module2_condition_activity`: long condition-level activity flags.
 - `module2_qc_summary`: counts before and after each filter.
-- `module2_qc_report.html`: an HTML QC report summarizing handoff checks, TF-target and FP-target correlation filters, FP-target candidate source and distance-to-TSS evidence, final-link integrity checks, condition activity, warning checks, top TF/target/FP summaries, output manifests, and related HTML browser reports. The report uses relational flow diagrams, density and cumulative distance plots, scatter summaries, heatmaps, and lollipop rank plots.
+- `module2_qc_report.html`: a compact HTML review with sticky navigation and
+  tabbed views for handoff checks, per-condition QC, TF-target and FP-target
+  correlation filters, candidate source and distance-to-TSS evidence,
+  final-link integrity, and top TF and target-gene summaries. Detailed values,
+  warnings, output manifests, and related reports remain available in the
+  technical appendix.
 
 ## Module 3: Learn regulatory topics and visualize differential GRNs
 

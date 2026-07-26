@@ -343,6 +343,12 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(file.exists(html))
   page <- paste(readLines(html, warn = FALSE), collapse = "\n")
   expect_true(grepl("Module 2 QC Report", page, fixed = TRUE))
+  expect_true(grepl("1. Run Summary", page, fixed = TRUE))
+  expect_true(grepl("2. Per-Condition QC", page, fixed = TRUE))
+  expect_true(grepl("3. Correlation Evidence", page, fixed = TRUE))
+  expect_true(grepl("4. Candidate Evidence", page, fixed = TRUE))
+  expect_true(grepl("5. Final Regulatory Links", page, fixed = TRUE))
+  expect_true(grepl("Technical Appendix", page, fixed = TRUE))
   expect_true(grepl("Run Parameters", page, fixed = TRUE))
   expect_true(grepl("Input Handoff", page, fixed = TRUE))
   expect_true(grepl("Condition Context", page, fixed = TRUE))
@@ -371,6 +377,44 @@ test_that("Module 2 QC report writes an HTML summary", {
   expect_true(grepl("qc-plot-scatter", page, fixed = TRUE))
   expect_true(grepl("qc-plot-heatmap", page, fixed = TRUE))
   expect_true(grepl("qc-plot-lollipop", page, fixed = TRUE))
+  expect_true(grepl("class=\"qc-nav\"", page, fixed = TRUE))
+  expect_true(grepl("data-qc-group=\"module2-condition\"", page, fixed = TRUE))
+  expect_true(grepl("data-qc-group=\"module2-correlation\"", page, fixed = TRUE))
+  expect_true(grepl("data-qc-group=\"module2-final-links\"", page, fixed = TRUE))
+  expect_true(grepl("role=\"tab\"", page, fixed = TRUE))
+  expect_true(grepl("role=\"tabpanel\"", page, fixed = TRUE))
+  expect_true(grepl("aria-controls=", page, fixed = TRUE))
+  expect_true(grepl("tabindex=\"0\"", page, fixed = TRUE))
+  expect_true(grepl("tabindex=\"-1\"", page, fixed = TRUE))
+  expect_true(grepl("ArrowLeft", page, fixed = TRUE))
+  expect_true(grepl("How to read this section", page, fixed = TRUE))
+  expect_true(grepl("status-badge", page, fixed = TRUE))
+  expect_true(grepl("distinct row universes", page, fixed = TRUE))
+  section_tags <- regmatches(page, gregexpr("<section id=", page, fixed = TRUE))[[1L]]
+  expect_length(section_tags, 6L)
+  html_ids <- regmatches(page, gregexpr("id=\"[^\"]+\"", page, perl = TRUE))[[1L]]
+  expect_equal(length(html_ids), length(unique(html_ids)))
+})
+
+test_that("QC metric heatmaps preserve readable metric labels", {
+  values <- tibble::tibble(
+    source = "tss_window",
+    `Target genes` = 12,
+    `Median |distance|` = 2500
+  )
+
+  svg <- craftgrn:::.qc_metric_heatmap_svg(
+    values,
+    row_col = "source",
+    value_cols = c("Target genes", "Median |distance|"),
+    title = "Candidate evidence"
+  )
+
+  expect_match(svg, "Target genes", fixed = TRUE)
+  expect_match(svg, "Median |distance|", fixed = TRUE)
+  expect_match(svg, ">12</text>", fixed = TRUE)
+  expect_match(svg, ">2,500</text>", fixed = TRUE)
+  expect_false(grepl("fill=\"\"", svg, fixed = TRUE))
 })
 
 test_that("Module 2 streamed condition activity is reported as skipped", {

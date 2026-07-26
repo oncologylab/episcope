@@ -18,6 +18,10 @@
 * Corrected Module 1 correlation QC to persist all-evaluated Pearson, Spearman,
   and best-R histograms with the actual run cutoffs, including negative
   correlations and an explicit legacy recomputation path.
+* Redesigned the Module 2 QC report around the Module 1 review hierarchy with
+  sticky navigation, accessible tabbed diagnostics, compact condition and
+  correlation views, clearer candidate and final-link evidence, and a
+  collapsed technical appendix that preserves all detailed checks.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

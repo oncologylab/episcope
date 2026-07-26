@@ -127,7 +127,11 @@ Primary package functions:
 - `predict_tf_targets()` predicts TF target genes from predicted TFBS, TF-target
   correlations, FP-target correlations, genomic proximity, and optional
   regulatory priors.
-- `build_module2_qc_report()` writes an HTML QC report for compact handoff checks, TF-target and FP-target filters, candidate source and distance-to-TSS evidence, final-link integrity, condition activity, warning checks, top TF/target/FP summaries, and related browser reports. The report combines relational flow diagrams, density and cumulative distance plots, scatter summaries, heatmaps, and lollipop rank plots.
+- `build_module2_qc_report()` writes a compact HTML review with Module 1-style
+  navigation and tabs for handoff checks, per-condition QC, TF-target and
+  FP-target evidence, candidate source and distance-to-TSS evidence, final-link
+  integrity, and top TF and target-gene summaries. Detailed values, manifests,
+  warnings, and related reports remain available in a technical appendix.
 
 <img src="https://raw.githubusercontent.com/oncologylab/craftgrn/main/figures/module_2.svg" alt="Module 2 workflow" width="800">
 

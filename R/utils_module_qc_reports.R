@@ -250,6 +250,90 @@
   paste0("<figure class=\"", cls, "\">", plot[[1L]], "</figure>")
 }
 
+.qc_tabset_html <- function(group, panels, active = 1L, aria_label = NULL, intro = NULL) {
+  if (!is.list(panels) || !length(panels) || is.null(names(panels))) return("")
+  group <- tolower(gsub("[^A-Za-z0-9]+", "-", as.character(group[[1L]])))
+  group <- gsub("(^-+|-+$)", "", group)
+  if (!nzchar(group)) group <- "qc-tabs"
+  labels <- names(panels)
+  keys <- tolower(gsub("[^A-Za-z0-9]+", "-", labels))
+  keys <- gsub("(^-+|-+$)", "", keys)
+  keys[!nzchar(keys)] <- paste0("view-", which(!nzchar(keys)))
+  active <- suppressWarnings(as.integer(active[[1L]]))
+  if (!is.finite(active) || active < 1L || active > length(panels)) active <- 1L
+  aria_label <- as.character(aria_label %||% group)
+  buttons <- vapply(seq_along(panels), function(i) {
+    paste0(
+      "<button type=\"button\"",
+      if (i == active) " class=\"active\"" else "",
+      " id=\"", .qc_html_escape(paste0(group, "-tab-", keys[[i]])), "\"",
+      " role=\"tab\" aria-selected=\"", if (i == active) "true" else "false", "\"",
+      " tabindex=\"", if (i == active) "0" else "-1", "\"",
+      " aria-controls=\"", .qc_html_escape(paste0(group, "-panel-", keys[[i]])), "\"",
+      " data-qc-group=\"", .qc_html_escape(group), "\"",
+      " data-qc-view=\"", .qc_html_escape(keys[[i]]), "\">",
+      .qc_html_escape(labels[[i]]),
+      "</button>"
+    )
+  }, character(1L))
+  views <- vapply(seq_along(panels), function(i) {
+    paste0(
+      "<div class=\"qc-view", if (i == active) " active" else "", "\"",
+      " id=\"", .qc_html_escape(paste0(group, "-panel-", keys[[i]])), "\"",
+      " role=\"tabpanel\" aria-labelledby=\"",
+      .qc_html_escape(paste0(group, "-tab-", keys[[i]])), "\"",
+      " data-qc-panel-group=\"", .qc_html_escape(group), "\"",
+      " data-qc-panel=\"", .qc_html_escape(keys[[i]]), "\"",
+      if (i == active) "" else " hidden",
+      ">", as.character(panels[[i]]), "</div>"
+    )
+  }, character(1L))
+  paste0(
+    if (is.null(intro) || !nzchar(as.character(intro[[1L]]))) "" else {
+      paste0("<p class=\"qc-view-intro\">", .qc_html_escape(intro[[1L]]), "</p>")
+    },
+    "<div class=\"qc-tabset\"><div class=\"qc-view-tabs\" role=\"tablist\" aria-label=\"",
+    .qc_html_escape(aria_label), "\">", paste(buttons, collapse = ""), "</div>",
+    paste(views, collapse = ""), "</div>"
+  )
+}
+
+.qc_tabs_script_html <- function() {
+  paste0(
+    "<script>(()=>{",
+    "const activate=(button,focus=false)=>{const group=button.dataset.qcGroup,view=button.dataset.qcView;",
+    "document.querySelectorAll('[data-qc-view]').forEach(x=>{if(x.dataset.qcGroup===group){const on=x.dataset.qcView===view;x.classList.toggle('active',on);x.setAttribute('aria-selected',on?'true':'false');x.tabIndex=on?0:-1;if(on&&focus)x.focus()}});",
+    "document.querySelectorAll('[data-qc-panel]').forEach(x=>{if(x.dataset.qcPanelGroup===group){const on=x.dataset.qcPanel===view;x.classList.toggle('active',on);x.hidden=!on}})};",
+    "document.querySelectorAll('[data-qc-view]').forEach(button=>{button.addEventListener('click',()=>activate(button));button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;",
+    "const tabs=[...button.closest('[role=tablist]').querySelectorAll('[data-qc-view]')],at=tabs.indexOf(button);let next=at;if(event.key==='ArrowLeft')next=(at-1+tabs.length)%tabs.length;if(event.key==='ArrowRight')next=(at+1)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;event.preventDefault();activate(tabs[next],true)})});",
+    "})()</script>"
+  )
+}
+
+.qc_status_table_html <- function(x) {
+  x <- .qc_status_table(x)
+  if (!nrow(x)) return("<p class=\"empty\">No status rows available.</p>")
+  rows <- vapply(seq_len(nrow(x)), function(i) {
+    status <- toupper(as.character(x$status[[i]]))
+    cls <- if (identical(status, "PASS")) {
+      "status-pass"
+    } else if (identical(status, "CHECK")) {
+      "status-warn"
+    } else {
+      "status-skip"
+    }
+    paste0(
+      "<tr><td>", .qc_html_escape(x$check[[i]]), "</td><td><span class=\"status-badge ",
+      cls, "\">", .qc_html_escape(status), "</span></td><td>",
+      .qc_html_escape(x$detail[[i]]), "</td></tr>"
+    )
+  }, character(1L))
+  paste0(
+    "<table class=\"status-table\"><tr><th>check</th><th>status</th><th>detail</th></tr>",
+    paste(rows, collapse = ""), "</table>"
+  )
+}
+
 .qc_finite_numeric <- function(x) {
   x <- suppressWarnings(as.numeric(x))
   x[is.finite(x)]
@@ -503,7 +587,11 @@
   value_cols <- intersect(value_cols, names(x))
   if (!is.data.frame(x) || !nrow(x) || !(row_col %in% names(x)) || !length(value_cols)) return("<p class=\"empty\">No plot data available.</p>")
   x <- as.data.frame(utils::head(x, max_rows), stringsAsFactors = FALSE)
-  mat <- as.data.frame(lapply(x[value_cols], function(v) suppressWarnings(as.numeric(v))), stringsAsFactors = FALSE)
+  mat <- as.data.frame(
+    lapply(x[value_cols], function(v) suppressWarnings(as.numeric(v))),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
   keep <- rowSums(is.finite(as.matrix(mat))) > 0
   x <- x[keep, , drop = FALSE]
   mat <- mat[keep, , drop = FALSE]
@@ -513,7 +601,11 @@
   right <- 20L
   col_w <- (width - left - right) / length(value_cols)
   height <- top + nrow(x) * cell_h + 24L
-  scaled <- as.data.frame(lapply(mat, function(v) .qc_rescale(v, to = c(0, 1))), stringsAsFactors = FALSE)
+  scaled <- as.data.frame(
+    lapply(mat, function(v) .qc_rescale(v, to = c(0, 1))),
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
   cells <- list()
   k <- 1L
   for (i in seq_len(nrow(x))) {
@@ -695,13 +787,13 @@
     ".card{border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-radius:0;padding:9px 11px;background:#fff}.card-label{font-size:11px;color:#4b5563;font-weight:750;text-transform:uppercase;letter-spacing:.02em}.card-value{font-size:21px;font-weight:760;margin-top:3px;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}",
     ".callout{border:1px solid #d7dde6;border-left:3px solid var(--accent);border-radius:2px;background:#fafbfc;padding:12px 14px;margin:10px 0}.callout-warn{border-left-color:var(--warn);background:#fffaf2}.qc-bullets{margin:0;padding-left:18px}.qc-bullets li{margin:4px 0}",
     ".report-row{padding:4px 0 2px}.report-row+.report-row{border-top:2px solid #aeb9c8;margin-top:22px;padding-top:22px}.run-setup{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:18px;align-items:start}.run-setup>*{min-width:0}.condition-summary{border:1px solid var(--line);padding:14px;background:var(--soft)}.condition-count{font-size:30px;font-weight:800;color:var(--navy)}.condition-list{margin-top:8px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}",
-    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:10px;align-items:start;margin-top:6px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:10px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:8px 10px;overflow:hidden;max-width:620px;width:100%}.plot-grid .plot-card,.plot-card-wide{margin-top:6px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:8px}.counts-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 7px;padding:3px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:5px 9px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 5px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 6px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:4px 7px;font-size:11px}.qc-guide .callout{margin-top:6px}",
+    ".plot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:10px;align-items:start;margin-top:6px}.plot-grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:10px;align-items:start}.plot-card{margin:0;background:#fff;border:1px solid #e1e6ee;border-radius:4px;padding:8px 10px;overflow:hidden;max-width:620px;width:100%}.plot-grid .plot-card,.plot-card-wide{margin-top:6px;max-width:none;width:100%}.plot-grid-three .plot-card{max-width:none;padding:8px}.counts-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.condition-activity-grid{display:grid;grid-template-columns:minmax(380px,.75fr) minmax(720px,1.75fr);gap:10px;align-items:start;margin-top:6px}.condition-activity-grid .plot-card{max-width:none}.qc-tabset{min-width:0}.qc-view-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 7px;padding:3px;border-bottom:1px solid var(--line)}.qc-view-tabs button{appearance:none;border:1px solid transparent;border-radius:4px;background:transparent;color:#526071;font:inherit;font-size:12px;font-weight:750;padding:5px 9px;cursor:pointer}.qc-view-tabs button:hover{background:#f0f4f8}.qc-view-tabs button.active{background:#e8f0f8;border-color:#9fb4cc;color:#173d69}.qc-view{display:none}.qc-view.active{display:block}.qc-view-intro{margin:0 0 5px;color:var(--muted);font-size:12px}.qc-guide{margin:0 0 6px;border:0;padding:0}.qc-guide summary{display:inline-block;border:1px solid #c8d2df;border-radius:4px;background:#f7f9fb;padding:4px 7px;font-size:11px}.qc-guide .callout{margin-top:6px}",
     ".table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;border:1px solid #dfe5ed}th,td{border:1px solid #dfe5ed;padding:7px 9px;text-align:left;vertical-align:top}th{background:#f0f3f7;color:#253246;font-weight:750;white-space:nowrap}td{overflow-wrap:anywhere;word-break:break-word}tr:nth-child(even) td{background:#fbfcfd}",
     ".qc-plot{display:block;width:100%;height:auto;max-height:none}.pca-plot,.distribution-plot{max-height:430px}.counts-grid .qc-plot{max-height:450px}.bar{fill:var(--accent)}.axis{stroke:#44546a;stroke-width:1.1}.axis-light{stroke:#c8d0dc;stroke-width:1.1}.axis-label,.value-label,.tick{font-size:18px;fill:#253246}.value-label{font-weight:700}.plot-title{font-size:20px;font-weight:760;fill:#111827}",
     ".density-area{fill:#67a9cf;opacity:.2}.density-line,.line-strong{fill:none;stroke:var(--accent);stroke-width:2.6}.stem{stroke:var(--accent);stroke-width:2.1}.point{fill:var(--accent);stroke:white;stroke-width:1.2;opacity:.84}.point-accent{fill:var(--paper-red);stroke:white;stroke-width:1.2;opacity:.88}.point-label{font-size:14px;fill:#253246}.heat-label{font-size:12px;fill:#111827}.pca-grid,.violin-grid{stroke:#e5e9ef;stroke-width:1}.pca-point{stroke:#fff;stroke-width:1.5;opacity:.92}.pca-tick{font-size:11px;fill:#526071}.axis-title{font-size:13px;font-weight:700;fill:#111827}.condition-legend{display:flex;flex-wrap:wrap;gap:4px 9px;margin:5px 2px 1px}.condition-tag{font-size:10px;color:#435066;display:inline-flex;align-items:center;gap:4px}.condition-tag i{width:8px;height:8px;border-radius:50%;display:inline-block}.violin-shape{opacity:.82;stroke:#374151;stroke-width:.35}.violin-median{stroke:#111827;stroke-width:1.2}.violin-label{font-size:11px;fill:#253246}.qc-plot-matrix-heatmap .axis-label,.qc-plot-matrix-heatmap .tick{font-size:12px}.qc-plot-matrix-heatmap .plot-title{font-size:16px}.qc-plot-matrix-heatmap .heat-label{font-size:10px}.flow-band{fill:#67a9cf;opacity:.18}.flow-node{stroke:white;stroke-width:1}",
-    ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
+    ".empty{color:#69788c;font-style:italic}.status-pass{color:#1d6b46;font-weight:800}.status-warn{color:var(--warn);font-weight:800}.status-skip{color:var(--skip);font-weight:800}.status-badge{display:inline-block;min-width:66px;padding:2px 7px;border:1px solid currentColor;border-radius:999px;text-align:center;font-size:10px;line-height:1.4;letter-spacing:.03em}.status-table td:nth-child(2){width:88px;white-space:nowrap}.links{columns:2;line-height:1.8}a{color:#244f82;text-decoration:none}a:hover{text-decoration:underline}",
     ".qc-nav{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;margin:-16px -18px 14px;padding:9px 18px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--line)}.qc-nav a{padding:4px 8px;border-radius:3px;background:#f0f4f8;font-size:12px;font-weight:750}.report-link a{display:inline-block;padding:8px 11px;border:1px solid #9fb4cc;border-radius:4px;background:#eef4fa;font-weight:750}.correlation-controls{display:flex;gap:14px;flex-wrap:wrap;padding:10px 12px;background:var(--soft);border:1px solid var(--line);border-radius:3px}.correlation-controls label{font-weight:750}.correlation-controls select{margin-left:5px;padding:5px;border:1px solid #b8c4d2;border-radius:3px;background:#fff}.correlation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.correlation-card{margin:0;border:1px solid #d9dee6;border-radius:4px;padding:8px;background:#fff}.corr-title{font-size:15px;font-weight:800;fill:#111827}.corr-gridline{stroke:#ebedf0;stroke-width:1}.corr-axis{stroke:#111827;stroke-width:1.7}.corr-tick{font-size:10px;fill:#111827}.corr-axis-title{font-size:12px;font-weight:800;fill:#111827}details{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}summary{cursor:pointer;font-weight:750;color:#253246;margin-bottom:8px}section{scroll-margin-top:14px}",
-    "@media(min-width:1600px){.cards{grid-template-columns:repeat(8,minmax(0,1fr))}.correlation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}section{padding:14px 16px 16px}}@media(max-width:900px){.plot-grid-three,.counts-grid{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{width:100%;padding:14px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
+    "@media(min-width:1600px){.cards{grid-template-columns:repeat(8,minmax(0,1fr))}.correlation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}section{padding:14px 16px 16px}}@media(max-width:1100px){.condition-activity-grid{grid-template-columns:1fr}}@media(max-width:900px){.plot-grid-three,.counts-grid{grid-template-columns:1fr}.run-setup{grid-template-columns:1fr}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.wrap{width:100%;padding:14px}.plot-grid,.correlation-grid{grid-template-columns:1fr}.cards{grid-template-columns:1fr}h1{font-size:25px}.links{columns:1}}",
     sep = "\n"
   )
   body <- paste(sections, collapse = "\n")
@@ -977,10 +1069,11 @@
 .qc_condition_qc_html <- function(condition_qc, top_n = 30L) {
   if (!is.list(condition_qc) || !is.data.frame(condition_qc$condition_summary) || !nrow(condition_qc$condition_summary)) {
     return(paste0(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>",
       .qc_callout_html("Condition QC Coverage", c(
-        "Total bound footprints per condition replaces the bound-FP panel from 03_fp_norm_bound_summary.pdf.",
-        "Total expressed genes per condition replaces 05_gene_expr_flag_summary.pdf."
-      )),
+        "Bound-footprint and expressed-gene counts summarize the condition inputs available to downstream link activity checks.",
+        "These values replace the legacy standalone bound-footprint and expressed-gene summary PDFs."
+      )), "</details>",
       "<p class=\"empty\">No condition QC data available.</p>"
     ))
   }
@@ -990,20 +1083,21 @@
   heat_cols <- intersect(c("n_bound_fp", "n_open_atac", "n_expressed_gene"), names(cs))
   heat_cols <- heat_cols[vapply(cs[heat_cols], function(v) any(is.finite(suppressWarnings(as.numeric(v)))), logical(1L))]
   paste0(
+    "<details class=\"qc-guide\"><summary>How to read this section</summary>",
     .qc_callout_html("Condition QC Coverage", c(
-      "This section carries the same information as the old bound-footprint and expressed-gene summary PDFs, but is computed directly from the CraftGRN multiomic object.",
-      "Total bound footprints per condition replaces the bound-FP panel from 03_fp_norm_bound_summary.pdf.",
-      "Total expressed genes per condition replaces 05_gene_expr_flag_summary.pdf.",
+      "Bound-footprint and expressed-gene counts summarize the condition inputs available to downstream link activity checks.",
+      "Large condition-specific differences can indicate a biological shift, uneven assay coverage, or a preprocessing imbalance that should be reviewed.",
       condition_qc$note
-    )),
+    )), "</details>",
     .qc_cards_html(condition_qc$cards),
     .qc_plot_grid(
       .qc_lollipop_svg(cs_bound, "condition", "n_bound_fp", title = "Total bound footprints per condition", max_rows = top_n),
       .qc_lollipop_svg(cs_gene, "condition", "n_expressed_gene", title = "Total expressed genes per condition", max_rows = top_n),
       .qc_metric_heatmap_svg(cs, "condition", heat_cols, title = "Condition input signal matrix", max_rows = top_n)
     ),
+    "<details><summary>Condition design and per-condition values</summary>",
     .qc_table_html(condition_qc$design_summary, max_rows = 30L),
-    .qc_table_html(cs, max_rows = top_n)
+    .qc_table_html(cs, max_rows = top_n), "</details>"
   )
 }
 
@@ -3507,10 +3601,10 @@ build_module1_qc_report <- function(module1,
 
 #' Build a Module 2 QC HTML report
 #'
-#' Builds a comprehensive HTML report for Module 2 run parameters, CraftGRN multiomic input
-#' handoff, TF-target and FP-target correlation filters, candidate source and
-#' distance-to-TSS evidence, final TF-FP-target links, condition activity,
-#' CraftGRN multiomic condition context, warning checks, integrity checks, and
+#' Builds a compact, review-oriented HTML report for Module 2 run parameters,
+#' CraftGRN multiomic input handoff, TF-target and FP-target correlation
+#' filters, candidate source and distance-to-TSS evidence, final
+#' TF-FP-target links, condition activity, warning and integrity checks, and
 #' related browser reports.
 #'
 #' @param module2 Module 2 result list, loaded Module 2 list, or output
@@ -3596,14 +3690,28 @@ build_module2_qc_report <- function(module2,
   parameter_table <- .module2_qc_parameters(module2, scan_large_tables = scan_large_tables, validate_integrity = validate_integrity)
   input_cards <- .module2_qc_input_handoff(module2, multiomic_data = multiomic_data, qc_summary = qc_summary)
   condition_qc <- .qc_multiomic_condition_qc(multiomic_data)
+  n_conditions <- if (is.data.frame(condition_qc$condition_summary) && nrow(condition_qc$condition_summary)) {
+    nrow(condition_qc$condition_summary)
+  } else {
+    .qc_metric_value(qc_summary, "n_conditions")
+  }
+  tf_pass <- .qc_metric_value(qc_summary, "n_tf_target_pairs_pass")
+  tf_tested <- .qc_metric_value(qc_summary, "n_tf_target_pairs_tested")
+  fp_pass <- .qc_metric_value(qc_summary, "n_fp_target_pairs_pass")
+  fp_tested <- .qc_metric_value(qc_summary, "n_fp_target_pairs_tested")
+  pass_card_value <- function(pass, tested) {
+    pct <- .qc_percent(pass, tested)
+    paste0(.qc_format_number(pass), if (identical(pct, "NA")) "" else paste0(" (", pct, ")"))
+  }
   cards <- tibble::tibble(
-    label = c("Predicted TFBS", "TFs", "Target genes", "TF-target pass", "FP-target pass", "Final links"),
+    label = c("Conditions", "Predicted TFBS", "TFs", "Target genes", "TF-target pass", "FP-target pass", "Final links"),
     value = c(
+      .qc_format_number(n_conditions),
       .qc_format_number(.qc_metric_value(qc_summary, "n_predicted_tfbs")),
       .qc_format_number(.qc_metric_value(qc_summary, "n_tfs")),
       .qc_format_number(.qc_metric_value(qc_summary, "n_target_genes")),
-      paste0(.qc_format_number(.qc_metric_value(qc_summary, "n_tf_target_pairs_pass")), " / ", .qc_format_number(.qc_metric_value(qc_summary, "n_tf_target_pairs_tested"))),
-      paste0(.qc_format_number(.qc_metric_value(qc_summary, "n_fp_target_pairs_pass")), " / ", .qc_format_number(.qc_metric_value(qc_summary, "n_fp_target_pairs_tested"))),
+      pass_card_value(tf_pass, tf_tested),
+      pass_card_value(fp_pass, fp_tested),
       .qc_format_number(.qc_metric_value(qc_summary, "n_module2_links"))
     )
   )
@@ -3625,6 +3733,10 @@ build_module2_qc_report <- function(module2,
     integrity_status <- if (is.finite(bad_tf) && is.finite(bad_fp) && bad_tf == 0 && bad_fp == 0) "PASS" else "CHECK"
   }
   integrity_class <- if (identical(integrity_status, "PASS")) "status-pass" else "status-warn"
+  cards <- dplyr::bind_rows(
+    cards,
+    tibble::tibble(label = "Integrity", value = integrity_status)
+  )
   warning_checks <- .module2_qc_warning_checks(
     qc_summary = qc_summary,
     manifest_checks = manifest_checks,
@@ -3675,15 +3787,33 @@ build_module2_qc_report <- function(module2,
       title = "Top FP-target target-gene metrics"
     )
   )
-  candidate_plots <- .qc_plot_grid(
-    .qc_density_svg(candidate_scan$distance_values, title = "Candidate signed distance density"),
-    .qc_cumulative_svg(abs(candidate_scan$distance_values), title = "Cumulative absolute distance to TSS"),
-    .qc_metric_heatmap_svg(
-      candidate_scan$source_summary,
+  candidate_evidence_plot <- candidate_scan$source_summary
+  candidate_plot_names <- c(
+    n_candidates = "Candidates",
+    n_fp = "Footprints",
+    n_target_genes = "Target genes",
+    n_prior_supported = "Prior supported",
+    median_abs_distance_to_tss = "Median |distance|",
+    p95_abs_distance_to_tss = "P95 |distance|"
+  )
+  for (source_name in names(candidate_plot_names)) {
+    if (source_name %in% names(candidate_evidence_plot)) {
+      names(candidate_evidence_plot)[names(candidate_evidence_plot) == source_name] <- candidate_plot_names[[source_name]]
+    }
+  }
+  candidate_plots <- paste0(
+    .qc_plot_grid(
+      .qc_density_svg(candidate_scan$distance_values, title = "Candidate signed distance density"),
+      .qc_cumulative_svg(abs(candidate_scan$distance_values), title = "Cumulative absolute distance to TSS")
+    ),
+    .qc_plot_card_html(.qc_metric_heatmap_svg(
+      candidate_evidence_plot,
       row_col = "candidate_source",
-      value_cols = c("n_candidates", "n_fp", "n_target_genes", "n_prior_supported", "median_abs_distance_to_tss", "p95_abs_distance_to_tss"),
-      title = "Candidate source evidence matrix"
-    )
+      value_cols = unname(candidate_plot_names),
+      title = "Candidate source evidence matrix",
+      width = 1500L,
+      cell_h = 30L
+    ), wide = TRUE)
   )
   final_link_plots <- .qc_plot_grid(
     .qc_scatter_svg(
@@ -3702,79 +3832,192 @@ build_module2_qc_report <- function(module2,
     ),
     .qc_lollipop_svg(link_scan$top_tf, "tf", "n_links", title = "Top TFs by final links")
   )
+  condition_names <- if (is.data.frame(condition_qc$condition_summary) && "condition" %in% names(condition_qc$condition_summary)) {
+    as.character(condition_qc$condition_summary$condition)
+  } else {
+    character()
+  }
+  input_detail_cards <- input_cards[
+    !tolower(as.character(input_cards$label)) %in% tolower(c(
+      "Predicted TFBS rows", "TFs", "Target genes", "Final links", "Conditions"
+    )),
+    ,
+    drop = FALSE
+  ]
+  if (!nrow(input_detail_cards)) input_detail_cards <- input_cards
+  setup_html <- paste0(
+    "<details><summary>Run Parameters and condition roster</summary>",
+    "<div class=\"run-setup\"><div><h3>Run Parameters</h3>",
+    "<p class=\"subtitle\">Effective Module 2 parameters and report scan settings.</p>",
+    .qc_table_html(parameter_table, max_rows = 100L),
+    "</div><aside class=\"condition-summary\"><div class=\"card-label\">Condition roster</div>",
+    "<div class=\"condition-count\">", .qc_format_number(n_conditions), "</div>",
+    "<div class=\"condition-list\">",
+    if (length(condition_names)) .qc_html_escape(paste(condition_names, collapse = " | ")) else "Condition names were not available.",
+    "</div></aside></div></details>"
+  )
+  condition_activity_html <- paste0(
+    "<h3>Condition Activity QC</h3>",
+    "<details class=\"qc-guide\"><summary>How to read this section</summary>",
+    .qc_callout_html("Link Activity Summary", c(
+      "An active condition-link event requires a passing final link, expressed TF and target gene, and a bound footprint with positive footprint score in that condition.",
+      "Total active links per condition reveals condition imbalance; the TF-by-condition matrix reveals regulators that dominate one or many conditions.",
+      "Active link counts per TF per condition are computed only when condition-level multiomic inputs are available."
+    )), "</details>",
+    "<div class=\"condition-activity-grid\">",
+    .qc_plot_card_html(
+      .qc_lollipop_svg(condition_scan$summary, "condition", "n_active", title = "Total active links per condition")
+    ),
+    .qc_plot_card_html(.qc_matrix_heatmap_svg(
+        condition_scan$tf_matrix,
+        "tf",
+        setdiff(names(condition_scan$tf_matrix), "tf"),
+        title = "Active link counts per TF per condition"
+      ),
+      wide = TRUE
+    ), "</div>",
+    "<details><summary>Condition Activity QC values</summary>",
+    .qc_table_html(condition_scan$summary, max_rows = max(30L, top_n)),
+    .qc_table_html(condition_scan$tf_summary, max_rows = top_n),
+    .qc_table_html(condition_scan$signal_summary, max_rows = 20L), "</details>"
+  )
+  tf_corr_html <- paste0(
+    "<h3>TF-Target Correlation QC</h3>",
+    .qc_table_html(tf_corr_scan$summary, max_rows = 10L),
+    tf_corr_plots,
+    "<details><summary>Top TF-target correlation values</summary>",
+    .qc_table_html(tf_corr_scan$top, max_rows = top_n), "</details>"
+  )
+  fp_corr_html <- paste0(
+    "<h3>FP-Target Correlation QC</h3>",
+    .qc_table_html(fp_corr_scan$summary, max_rows = 10L),
+    fp_corr_plots,
+    "<details><summary>Top FP-target correlation values</summary>",
+    .qc_table_html(fp_corr_scan$top, max_rows = top_n), "</details>"
+  )
+  final_tf_html <- paste0(
+    "<h3>Top TFs In Final Links</h3>",
+    final_link_plots,
+    "<details><summary>Top-TF final-link values</summary>",
+    .qc_table_html(link_scan$top_tf, max_rows = top_n), "</details>"
+  )
+  final_target_html <- paste0(
+    "<h3>Top Target Genes In Final Links</h3>",
+    .qc_plot_grid(
+      .qc_lollipop_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links"),
+      .qc_metric_heatmap_svg(
+        link_scan$top_target,
+        row_col = "target_gene",
+        value_cols = c("n_links", "n_tf", "n_fp"),
+        title = "Top final-link target metrics"
+      )
+    ),
+    "<details><summary>Top target-gene final-link values</summary>",
+    .qc_table_html(link_scan$top_target, max_rows = top_n), "</details>"
+  )
   sections <- list(
-    .qc_section("Run Parameters", .qc_table_html(parameter_table, max_rows = 30L)),
-    .qc_section("Summary", .qc_cards_html(cards)),
-    .qc_section("Key Findings", content$key),
-    .qc_section("Input Handoff", .qc_cards_html(input_cards)),
-    .qc_section("Condition Context", .qc_condition_qc_html(condition_qc, top_n = max(30L, as.integer(top_n[[1L]])))),
-    .qc_section("Workflow Funnel", paste0(
-      content$interpretation,
-      .qc_flow_svg(funnel, "step", "n", title = "Module 2 relational flow")
+    .qc_section("1. Run Summary", paste0(
+      "<nav class=\"qc-nav\"><a href=\"#run-summary\">Summary</a>",
+      "<a href=\"#per-condition-qc\">Per-condition QC</a>",
+      "<a href=\"#correlation-evidence\">Correlations</a>",
+      "<a href=\"#candidate-evidence\">Candidates</a>",
+      "<a href=\"#final-regulatory-links\">Final links</a></nav>",
+      "<div class=\"report-row\">", .qc_cards_html(cards),
+      "<p class=\"metric-note\">Pass cards show retained rows and the percentage of tested rows. Final links require predicted TFBS, passing TF-target support, and passing FP-target support.</p></div>",
+      "<div class=\"report-row\"><h3>Input Handoff</h3>",
+      .qc_cards_html(input_detail_cards),
+      "<p class=\"metric-note\">Input row counts come from the condition-level multiomic matrices handed into Module 2.</p></div>",
+      "<div class=\"report-row\">", setup_html, "</div>"
     )),
-    .qc_section("TF-Target Correlation QC", paste0(
-      .qc_table_html(tf_corr_scan$summary, max_rows = 10L),
-      tf_corr_plots,
-      .qc_table_html(tf_corr_scan$top, max_rows = top_n)
+    .qc_section("2. Per-Condition QC", .qc_tabset_html(
+      "module2-condition",
+      panels = list(
+        "Input context" = paste0(
+          "<h3>Condition Context</h3>",
+          .qc_condition_qc_html(condition_qc, top_n = max(30L, as.integer(top_n[[1L]])))
+        ),
+        "Link activity" = condition_activity_html
+      ),
+      aria_label = "Per-condition Module 2 review mode",
+      intro = "Choose input context or final-link activity to keep condition-level diagnostics readable."
     )),
-    .qc_section("Candidate Source QC", paste0(
+    .qc_section("3. Correlation Evidence", paste0(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>",
+      .qc_callout_html("Sequential correlation evidence", c(
+        "TF-target expression correlation is the first prefilter.",
+        "FP-target correlation is then evaluated for candidate footprint-gene pairs.",
+        "Review both pass rates and breadth plots; a high count alone does not establish a specific regulator-target relationship."
+      )), "</details>",
+      .qc_tabset_html(
+        "module2-correlation",
+        panels = list(
+          "TF-target" = tf_corr_html,
+          "FP-target" = fp_corr_html
+        ),
+        aria_label = "Module 2 correlation evidence"
+      )
+    )),
+    .qc_section("4. Candidate Evidence", paste0(
+      "<h3>Candidate Source QC and Candidate Distance To TSS</h3>",
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>",
+      .qc_callout_html("Candidate construction", c(
+        "Candidate source separates TSS-window candidates, regulatory-prior candidates, and candidates supported by both.",
+        "Signed and absolute distance plots show whether the candidate set matches the configured regulatory search window.",
+        "Candidate evidence defines which FP-target pairs are tested; it does not by itself make a final link."
+      )), "</details>",
       candidate_plots,
+      "<details><summary>Candidate Source QC values and integrity</summary>",
       .qc_table_html(candidate_scan$source_summary, max_rows = 20L),
-      .qc_table_html(candidate_scan$integrity, max_rows = 10L)
+      .qc_table_html(candidate_scan$integrity, max_rows = 10L), "</details>"
     )),
-    .qc_section("FP-Target Correlation QC", paste0(
-      .qc_table_html(fp_corr_scan$summary, max_rows = 10L),
-      fp_corr_plots,
-      .qc_table_html(fp_corr_scan$top, max_rows = top_n)
+    .qc_section("5. Final Regulatory Links", paste0(
+      "<details class=\"qc-guide\"><summary>How to read this section</summary>",
+      .qc_callout_html("Final-link review", c(
+        "Final links join predicted TF-footprint binding with passing TF-target and FP-target correlation evidence.",
+        "TF breadth compares the number of links, footprints, and unique target genes per regulator.",
+        "Target-gene ranks identify genes with broad predicted regulatory support and should be interpreted with TF breadth and integrity checks."
+      )), "</details>",
+      .qc_tabset_html(
+        "module2-final-links",
+        panels = list(
+          "TF overview" = final_tf_html,
+          "Target genes" = final_target_html
+        ),
+        aria_label = "Final Module 2 link review"
+      )
     )),
-    .qc_section("Integrity Checks", paste0(
-      "<p>Final-link relational integrity: <span class=\"", integrity_class, "\">", integrity_status, "</span></p>",
-      .qc_table_html(link_scan$validation, max_rows = 20L),
-      .qc_table_html(manifest_checks, max_rows = 20L)
-    )),
-    .qc_section("Candidate Distance To TSS", paste0(
-      .qc_plot_grid(
-        .qc_density_svg(candidate_scan$distance_values, title = "Signed FP to target TSS distance"),
-        .qc_cumulative_svg(abs(candidate_scan$distance_values), title = "Absolute distance cumulative curve")
-      ),
-      .qc_table_html(candidate_scan$source_summary, max_rows = 20L)
-    )),
-    .qc_section("Top TFs In Final Links", paste0(
-      final_link_plots,
-      .qc_table_html(link_scan$top_tf, max_rows = top_n)
-    )),
-    .qc_section("Top Target Genes In Final Links", paste0(
-      .qc_plot_grid(
-        .qc_lollipop_svg(link_scan$top_target, "target_gene", "n_links", title = "Top target genes by final links")
-      ),
-      .qc_table_html(link_scan$top_target, max_rows = top_n)
-    )),
-    .qc_section("Recommended Review", content$review),
-    .qc_section("Condition Activity QC", paste0(
-      .qc_callout_html("Link Activity Summary", c(
-        "This section replaces the old link_activity_summary.pdf with native HTML plots.",
-        "An active condition-link event requires the final Module 2 link to pass, the TF and target gene to be expressed in that condition, and the FP to be bound with positive FP score.",
-        "Active link counts per TF per condition are reported when condition activity can be computed from the CraftGRN multiomic object."
+    .qc_section("Technical Appendix", paste0(
+      "<h3>Recommended Review</h3>",
+      content$review,
+      "<details><summary>Key Findings and Module 2 Interpretation</summary>",
+      content$key, content$interpretation,
+      .qc_callout_html("Relational row universes", c(
+        "Workflow nodes summarize distinct row universes rather than successive retention from one common denominator.",
+        "The connecting bands group the evidence stages visually; they do not represent rows flowing one-to-one between every node."
       )),
-      .qc_plot_grid(
-        .qc_lollipop_svg(condition_scan$summary, "condition", "n_active", title = "Total active links per condition")
-      ),
       .qc_plot_card_html(
-        .qc_matrix_heatmap_svg(
-          condition_scan$tf_matrix,
-          "tf",
-          setdiff(names(condition_scan$tf_matrix), "tf"),
-          title = "Active link counts per TF per condition"
+        .qc_flow_svg(
+          funnel,
+          "step",
+          "n",
+          title = "Module 2 relational row universes",
+          width = 1400L,
+          height = 300L
         ),
         wide = TRUE
       ),
-      .qc_table_html(condition_scan$summary, max_rows = top_n),
-      .qc_table_html(condition_scan$tf_summary, max_rows = top_n),
-      .qc_table_html(condition_scan$signal_summary, max_rows = 20L)
-    )),
-    .qc_section("Warning Checks", .qc_table_html(.qc_status_table(warning_checks), max_rows = 30L)),
-    .qc_section("QC Summary Table", .qc_table_html(qc_summary, max_rows = 50L)),
-    .qc_section("Related HTML Reports", .qc_links_html(related, from_dir = output_dir))
+      "</details>",
+      "<details><summary>Integrity Checks and Warning Checks</summary>",
+      "<p>Final-link relational integrity: <span class=\"", integrity_class, "\">", integrity_status, "</span></p>",
+      .qc_table_html(link_scan$validation, max_rows = 20L),
+      .qc_status_table_html(warning_checks), "</details>",
+      "<details><summary>QC Summary Table and output manifest</summary>",
+      .qc_table_html(qc_summary, max_rows = 50L),
+      .qc_table_html(manifest_checks, max_rows = 50L), "</details>",
+      "<details><summary>Related HTML Reports</summary>",
+      .qc_links_html(related, from_dir = output_dir), "</details>",
+      .qc_tabs_script_html()
+    ))
   )
   out <- file.path(output_dir, report_name)
   path <- .qc_write_html(out, "Module 2 QC Report", sections)

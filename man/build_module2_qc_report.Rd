@@ -41,9 +41,9 @@ passing TF-target and FP-target keys while scanning link chunks.}
 Normalized path to the HTML report.
 }
 \description{
-Builds a comprehensive HTML report for Module 2 run parameters, CraftGRN multiomic input
-handoff, TF-target and FP-target correlation filters, candidate source and
-distance-to-TSS evidence, final TF-FP-target links, condition activity,
-CraftGRN multiomic condition context, warning checks, integrity checks, and
+Builds a compact, review-oriented HTML report for Module 2 run parameters,
+CraftGRN multiomic input handoff, TF-target and FP-target correlation
+filters, candidate source and distance-to-TSS evidence, final
+TF-FP-target links, condition activity, warning and integrity checks, and
 related browser reports.
 }
