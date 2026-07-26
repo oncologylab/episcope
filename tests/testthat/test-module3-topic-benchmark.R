@@ -1601,17 +1601,24 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "mdsSegmentsCross", fixed = TRUE)
   expect_match(html, "mdsLeaderConflictPenalty", fixed = TRUE)
   expect_match(html, "mdsPruneLeaderLines", fixed = TRUE)
-  expect_match(html, "plotLeft=crowded?90:pad", fixed = TRUE)
-  expect_match(html, "plotRight=crowded?670:W-pad", fixed = TRUE)
-  expect_match(html, "plotTop=crowded?90:pad", fixed = TRUE)
-  expect_match(html, "plotBottom=crowded?670:H-pad", fixed = TRUE)
-  expect_match(html, "dataInset=crowded?42:pointInset", fixed = TRUE)
+  expect_match(html, "plotLeft=crowded?54:pad", fixed = TRUE)
+  expect_match(html, "plotRight=crowded?706:W-pad", fixed = TRUE)
+  expect_match(html, "plotTop=crowded?54:pad", fixed = TRUE)
+  expect_match(html, "plotBottom=crowded?706:H-pad", fixed = TRUE)
+  expect_match(html, "dataInset=crowded?50:pointInset", fixed = TRUE)
+  expect_match(html, "plotBottom+28", fixed = TRUE)
+  expect_match(html, "yTitle=el('text',{x:16", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'x'", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'y'", fixed = TRUE)
-  expect_match(html, "compact?{x:90,y:90,w:W-180,h:H-180}", fixed = TRUE)
+  expect_match(html, "compact?{x:54,y:54,w:W-108,h:H-108}", fixed = TRUE)
   expect_match(
     html,
     "source.filter(d=>mdsRectOverlap(d,own)===0)",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "points.every(p=>mdsRectOverlap(d,{x:p.x-24,y:p.y-24,w:48,h:48})===0)",
     fixed = TRUE
   )
   expect_match(html, "q.maxLeader=compact?100:Infinity", fixed = TRUE)
