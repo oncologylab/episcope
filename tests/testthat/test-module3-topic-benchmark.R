@@ -1601,13 +1601,21 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "mdsSegmentsCross", fixed = TRUE)
   expect_match(html, "mdsLeaderConflictPenalty", fixed = TRUE)
   expect_match(html, "mdsPruneLeaderLines", fixed = TRUE)
-  expect_match(html, "plotLeft=crowded?160:pad", fixed = TRUE)
-  expect_match(html, "plotRight=crowded?600:W-pad", fixed = TRUE)
-  expect_match(html, "plotTop=crowded?160:pad", fixed = TRUE)
-  expect_match(html, "plotBottom=crowded?600:H-pad", fixed = TRUE)
+  expect_match(html, "plotLeft=crowded?90:pad", fixed = TRUE)
+  expect_match(html, "plotRight=crowded?670:W-pad", fixed = TRUE)
+  expect_match(html, "plotTop=crowded?90:pad", fixed = TRUE)
+  expect_match(html, "plotBottom=crowded?670:H-pad", fixed = TRUE)
+  expect_match(html, "dataInset=crowded?42:pointInset", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'x'", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'y'", fixed = TRUE)
+  expect_match(html, "compact?{x:90,y:90,w:W-180,h:H-180}", fixed = TRUE)
+  expect_match(
+    html,
+    "source.filter(d=>mdsRectOverlap(d,own)===0)",
+    fixed = TRUE
+  )
   expect_match(html, "q.maxLeader=compact?100:Infinity", fixed = TRUE)
+  expect_match(html, "'data-condition-id':q.id", fixed = TRUE)
   expect_match(
     html,
     "mdsLayoutLabels(labels,W,H,crowded?54:pad,crowded)",
