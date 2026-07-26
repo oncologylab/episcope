@@ -55,8 +55,7 @@
     path = as.character(path),
     format = as.character(format)
   )]
-  relative <- !grepl("^/", manifest$path)
-  manifest[relative, path := file.path(dirname(manifest_path), path)]
+  manifest[, path := .module3_resolve_condition_manifest_paths(path, manifest_path)]
   if (!is.null(conditions)) manifest <- manifest[condition_id %in% conditions]
   if (!nrow(manifest)) .log_abort("No condition-link files remain for condition-topic scoring.")
   missing <- manifest[!file.exists(path), path]

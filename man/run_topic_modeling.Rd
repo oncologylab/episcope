@@ -21,6 +21,7 @@ run_topic_modeling(
   count_method = NULL,
   count_scale = NULL,
   count_input = NULL,
+  de_gene_union_scope = NULL,
   condition_gene_weighting = NULL,
   condition_peak_weighting = NULL,
   condition_gene_expression_file = NULL,
@@ -116,6 +117,13 @@ from project config or use `50`.}
 
 \item{count_input}{Topic count column for model fitting. If `NULL`, inferred
 from `count_method`.}
+
+\item{de_gene_union_scope}{Differential-gene union used by filtered
+condition links. `"condition"` uses genes passing a configured comparison
+involving each condition; `"global"` applies the union from every
+configured comparison to every condition before the expression filter.
+If `NULL`, read `topic_de_gene_union_scope` from project config or use
+`"condition"`.}
 
 \item{condition_gene_weighting}{Condition-mode target-gene weighting. Use
 `"specificity"` to emphasize relative expression across conditions while

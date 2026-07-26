@@ -50,6 +50,17 @@
   hit[[1L]]
 }
 
+.module3_resolve_condition_manifest_paths <- function(paths, manifest_path) {
+  paths <- path.expand(as.character(paths))
+  invalid <- is.na(paths) | !nzchar(paths)
+  if (any(invalid)) {
+    .log_abort("Condition-link manifest contains an empty path.")
+  }
+  relative <- !.path_is_absolute(paths)
+  paths[relative] <- file.path(dirname(manifest_path), paths[relative])
+  paths
+}
+
 .module3_read_condition_links <- function(input_dir, conditions = NULL) {
   manifest_path <- .module3_condition_link_manifest_path(input_dir)
   manifest <- data.table::fread(manifest_path, showProgress = FALSE)
@@ -64,6 +75,7 @@
   }
   if (!nrow(manifest)) .log_abort("No condition-link manifest rows remain after condition filtering.")
 
+  manifest[, path := .module3_resolve_condition_manifest_paths(path, manifest_path)]
   unique_files <- unique(manifest[, .(path = as.character(path), format = as.character(format))])
   out <- data.table::rbindlist(lapply(seq_len(nrow(unique_files)), function(i) {
     .module3_read_table(
@@ -173,6 +185,14 @@
   if (nrow(source_manifest) != 2L || anyNA(source_manifest$condition_id)) {
     .log_abort("The source condition-link manifest does not contain both requested conditions.")
   }
+  source_paths <- .module3_resolve_condition_manifest_paths(
+    source_manifest$path,
+    source_manifest_path
+  )
+  missing_sources <- source_paths[!file.exists(source_paths)]
+  if (length(missing_sources)) {
+    .log_abort("Condition-link file does not exist: {missing_sources[[1L]]}")
+  }
 
   condition_map <- .module3_condition_matrix_map(multiomic_data, conditions)
   matrix_conditions <- condition_map$matrix_condition_id[
@@ -203,7 +223,7 @@
   for (i in seq_len(nrow(source_manifest))) {
     condition <- as.character(source_manifest$condition_id[[i]])
     format <- tolower(as.character(source_manifest$format[[i]]))
-    source <- as.character(source_manifest$path[[i]])
+    source <- source_paths[[i]]
     links <- .module3_read_table(source, format, allow_missing_columns = TRUE)
     links <- data.table::as.data.table(links)
     .topic_assert_has_cols(links, c("condition_id", "gene_key"), context = "condition links")
@@ -295,8 +315,52 @@
   out[]
 }
 
-# Build each condition's gene union from comparisons involving that condition,
-# then retain union genes expressed in that condition. Link files are read and
+.module3_condition_link_union_scope <- function(input_dir) {
+  manifest_path <- .module3_condition_link_manifest_path(input_dir)
+  manifest <- data.table::fread(manifest_path, showProgress = FALSE)
+  if (!"filter_scope" %in% names(manifest)) return(NA_character_)
+  filtered <- grepl(
+    "comparison_union",
+    as.character(manifest$filter_scope),
+    fixed = TRUE
+  )
+  if (!any(filtered)) return(NA_character_)
+  scope <- if ("gene_union_scope" %in% names(manifest)) {
+    unique(as.character(manifest$gene_union_scope[filtered]))
+  } else {
+    values <- unique(as.character(manifest$filter_scope[filtered]))
+    ifelse(
+      grepl("^global_", values),
+      "global",
+      ifelse(grepl("^condition_", values), "condition", NA_character_)
+    )
+  }
+  scope <- unique(scope[!is.na(scope) & nzchar(scope)])
+  if (length(scope) != 1L || !scope %in% c("condition", "global")) {
+    .log_abort(
+      "Condition-link manifest has ambiguous DE-gene union scope: {manifest_path}"
+    )
+  }
+  scope
+}
+
+.module3_assert_condition_link_union_scope <- function(input_dir,
+                                                        requested_scope) {
+  requested_scope <- match.arg(requested_scope, c("condition", "global"))
+  observed_scope <- .module3_condition_link_union_scope(input_dir)
+  if (!is.na(observed_scope) && !identical(observed_scope, requested_scope)) {
+    .log_abort(paste0(
+      "Condition links use `", observed_scope, "` DE-gene unions but the ",
+      "topic run requests `", requested_scope, "`. Rebuild condition links ",
+      "with the requested `topic_de_gene_union_scope` or correct the project ",
+      "configuration."
+    ))
+  }
+  invisible(observed_scope)
+}
+
+# Build global and condition-specific comparison-gene unions, apply the selected
+# scope, then retain genes expressed in each condition. Link files are read and
 # written one condition at a time to keep peak memory bounded.
 #
 # @noRd
@@ -305,12 +369,15 @@
                                                                  gene_expression,
                                                                  comparisons,
                                                                  conditions = NULL,
+                                                                 gene_union_scope = c("condition", "global"),
                                                                  abs_log2fc_min = 1,
                                                                  expression_min = 0,
                                                                  pseudocount = 1,
                                                                  overwrite = FALSE,
                                                                  verbose = TRUE) {
   .assert_pkg("data.table")
+  .assert_pkg("digest")
+  gene_union_scope <- match.arg(gene_union_scope)
   gene_expression <- as.matrix(gene_expression)
   if (is.null(rownames(gene_expression)) || is.null(colnames(gene_expression))) {
     .log_abort("gene_expression must have gene row names and condition column names.")
@@ -369,6 +436,56 @@
     algo = "xxhash64",
     serialize = FALSE
   )
+  expression_signature <- digest::digest(
+    list(
+      genes = rownames(gene_expression),
+      conditions = involved,
+      values = unname(gene_expression[, involved, drop = FALSE])
+    ),
+    algo = "xxhash64"
+  )
+  source_manifest_path <- .module3_condition_link_manifest_path(input_dir)
+  source_manifest <- data.table::fread(source_manifest_path, showProgress = FALSE)
+  .topic_assert_has_cols(
+    source_manifest,
+    c("condition_id", "path", "format"),
+    context = "condition-link manifest"
+  )
+  source_manifest <- source_manifest[condition_id %in% involved]
+  source_manifest <- source_manifest[match(involved, condition_id)]
+  if (nrow(source_manifest) != length(involved) || anyNA(source_manifest$condition_id)) {
+    .log_abort("The source condition-link manifest does not contain every compared condition.")
+  }
+  source_paths <- .module3_resolve_condition_manifest_paths(
+    source_manifest$path,
+    source_manifest_path
+  )
+  source_info <- file.info(source_paths)
+  if (anyNA(source_info$size)) {
+    .log_abort("One or more source condition-link files are missing.")
+  }
+  source_signature <- digest::digest(
+    paste(
+      source_manifest$condition_id,
+      normalizePath(source_paths, winslash = "/", mustWork = TRUE),
+      source_info$size,
+      as.numeric(source_info$mtime),
+      sep = "\t",
+      collapse = "\n"
+    ),
+    algo = "xxhash64",
+    serialize = FALSE
+  )
+  filter_scope <- if (identical(gene_union_scope, "global")) {
+    "global_comparison_union_then_condition_expression"
+  } else {
+    "condition_comparison_union_then_condition_expression"
+  }
+  filter_label <- if (identical(gene_union_scope, "global")) {
+    "target_gene_global_comparison_union_abs_log2fc_and_expression"
+  } else {
+    "target_gene_condition_comparison_union_abs_log2fc_and_expression"
+  }
 
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   manifest_path <- file.path(output_dir, "condition_links_manifest.csv")
@@ -385,17 +502,21 @@
   if (!isTRUE(overwrite) && all(file.exists(required_outputs))) {
     existing_manifest <- data.table::fread(manifest_path, showProgress = FALSE)
     reusable <- all(c(
-      "filter_scope", "comparison_signature", "abs_log2fc_min",
+      "filter_scope", "gene_union_scope", "comparison_signature",
+      "expression_signature", "source_signature", "abs_log2fc_min",
       "expression_min", "pseudocount"
     ) %in% names(existing_manifest)) &&
-      all(existing_manifest$filter_scope == "condition_comparison_union_then_condition_expression") &&
+      all(existing_manifest$filter_scope == filter_scope) &&
+      all(existing_manifest$gene_union_scope == gene_union_scope) &&
       all(existing_manifest$comparison_signature == comparison_signature) &&
+      all(existing_manifest$expression_signature == expression_signature) &&
+      all(existing_manifest$source_signature == source_signature) &&
       all(as.numeric(existing_manifest$abs_log2fc_min) == abs_log2fc_min) &&
       all(as.numeric(existing_manifest$expression_min) == expression_min) &&
       all(as.numeric(existing_manifest$pseudocount) == pseudocount)
     if (isTRUE(reusable)) {
       if (isTRUE(verbose)) {
-        .log_inform("Reusing condition-comparison-union-filtered links in {output_dir}.")
+        .log_inform("Reusing {gene_union_scope}-union-filtered condition links in {output_dir}.")
       }
       return(invisible(list(
         manifest = existing_manifest,
@@ -410,7 +531,7 @@
       )))
     }
     if (isTRUE(verbose)) {
-      .log_warn("Existing condition links use an obsolete filter scope or expression threshold; rebuilding them.")
+      .log_warn("Existing condition links do not match the requested union scope or input signatures; rebuilding them.")
     }
   }
 
@@ -492,8 +613,17 @@
   data.table::setorder(condition_union, condition_id, -max_abs_log2fc, gene_key)
   data.table::fwrite(condition_union, condition_union_path)
 
+  selected_union <- if (identical(gene_union_scope, "global")) {
+    data.table::CJ(
+      condition_id = involved,
+      gene_key = global_union$gene_key,
+      unique = TRUE
+    )
+  } else {
+    unique(condition_union[, .(condition_id, gene_key)])
+  }
   expression_rows <- lapply(involved, function(condition) {
-    condition_genes <- condition_union[condition_id == condition, gene_key]
+    condition_genes <- selected_union[condition_id == condition, gene_key]
     data.table::data.table(
       condition_id = condition,
       gene_key = condition_genes,
@@ -517,25 +647,12 @@
   )]
   data.table::fwrite(comparison_summary, comparison_summary_path)
 
-  source_manifest_path <- .module3_condition_link_manifest_path(input_dir)
-  source_manifest <- data.table::fread(source_manifest_path, showProgress = FALSE)
-  .topic_assert_has_cols(
-    source_manifest,
-    c("condition_id", "path", "format"),
-    context = "condition-link manifest"
-  )
-  source_manifest <- source_manifest[condition_id %in% involved]
-  source_manifest <- source_manifest[match(involved, condition_id)]
-  if (nrow(source_manifest) != length(involved) || anyNA(source_manifest$condition_id)) {
-    .log_abort("The source condition-link manifest does not contain every compared condition.")
-  }
-
   manifest_rows <- vector("list", nrow(source_manifest))
   summary_rows <- vector("list", nrow(source_manifest))
   for (i in seq_len(nrow(source_manifest))) {
     condition <- as.character(source_manifest$condition_id[[i]])
     format <- tolower(as.character(source_manifest$format[[i]]))
-    source <- as.character(source_manifest$path[[i]])
+    source <- source_paths[[i]]
     genes <- condition_expression[
       condition_id == condition & expressed %in% TRUE,
       gene_key
@@ -565,15 +682,21 @@
       format = format,
       n_rows_scanned = as.double(n_source),
       n_links = as.double(nrow(links)),
-      filter = "target_gene_condition_comparison_union_abs_log2fc_and_expression",
-      filter_scope = "condition_comparison_union_then_condition_expression",
+      filter = filter_label,
+      filter_scope = filter_scope,
+      gene_union_scope = gene_union_scope,
       comparison_signature = comparison_signature,
+      expression_signature = expression_signature,
+      source_signature = source_signature,
       abs_log2fc_min = abs_log2fc_min,
       expression_min = expression_min,
       pseudocount = pseudocount,
       n_global_differential_genes = as.double(nrow(global_union)),
       n_condition_differential_genes = as.double(
         condition_union[condition_id == condition, .N]
+      ),
+      n_selected_differential_genes = as.double(
+        selected_union[condition_id == condition, .N]
       ),
       n_expressed_condition_genes = as.double(length(genes))
     )
@@ -593,7 +716,11 @@
       n_condition_differential_genes = as.double(
         condition_union[condition_id == condition, .N]
       ),
+      n_selected_differential_genes = as.double(
+        selected_union[condition_id == condition, .N]
+      ),
       n_expressed_condition_genes = as.double(length(genes)),
+      gene_union_scope = gene_union_scope,
       abs_log2fc_min = abs_log2fc_min,
       expression_min = expression_min,
       pseudocount = pseudocount
@@ -607,7 +734,7 @@
   data.table::fwrite(summary, summary_path)
   if (isTRUE(verbose)) {
     .log_inform(
-      "Filtered {nrow(manifest)} condition-link files using condition-specific comparison-gene unions followed by condition expression in {output_dir}."
+      "Filtered {nrow(manifest)} condition-link files using the {gene_union_scope} comparison-gene union followed by condition expression in {output_dir}."
     )
   }
   invisible(list(
@@ -615,7 +742,8 @@
     summary = summary,
     comparison_genes = comparison_genes,
     global_gene_union = global_union,
-    condition_gene_candidates = condition_union,
+    condition_gene_candidates = selected_union,
+    comparison_condition_gene_candidates = condition_union,
     condition_gene_expression = condition_expression,
     condition_gene_union = condition_expression[expressed %in% TRUE, .(
       condition_id, gene_key

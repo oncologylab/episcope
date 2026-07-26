@@ -455,8 +455,10 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
       .log_abort("Condition-link manifest must include condition_id and path for cache validation.")
     }
     if (length(sample_subset)) manifest <- manifest[condition_id %in% sample_subset]
-    paths <- as.character(manifest$path)
-    paths[!grepl("^/", paths)] <- file.path(dirname(manifest_path), paths[!grepl("^/", paths)])
+    paths <- .module3_resolve_condition_manifest_paths(
+      manifest$path,
+      manifest_path
+    )
     c(manifest_path, paths)
   } else {
     manifest_path <- file.path(input_dir, "filtered_links_manifest.csv")

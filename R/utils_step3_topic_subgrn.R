@@ -862,8 +862,7 @@
   if (file.exists(manifest_path)) {
     manifest <- data.table::fread(manifest_path, showProgress = FALSE)
     if (!all(c("condition_id", "path") %in% names(manifest))) return(empty)
-    manifest[, path := as.character(path)]
-    manifest[!grepl("^/", path), path := file.path(condition_links_dir, path)]
+    manifest[, path := .module3_resolve_condition_manifest_paths(path, manifest_path)]
   } else {
     manifest <- data.table::data.table(
       condition_id = sub("_condition_links[.]parquet$", "", basename(list.files(condition_links_dir, "_condition_links[.]parquet$", full.names = TRUE))),

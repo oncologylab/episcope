@@ -1471,6 +1471,11 @@ test_that("Module 3 review HTML keeps condition reports in method subfolders", {
   expect_match(condition_index, "assets/p/", fixed = TRUE)
   expect_match(condition_index, "Method <select", fixed = TRUE)
   expect_match(condition_index, "K <select", fixed = TRUE)
+  expect_match(
+    condition_index,
+    "#kSelect{max-width:142px}",
+    fixed = TRUE
+  )
 })
 
 test_that("Module 3 review validation rejects outdated HTML", {
@@ -1596,6 +1601,11 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "mdsSegmentsCross", fixed = TRUE)
   expect_match(html, "mdsLeaderConflictPenalty", fixed = TRUE)
   expect_match(html, "mdsPruneLeaderLines", fixed = TRUE)
+  expect_match(
+    html,
+    "querySelectorAll('line[data-condition-id]')",
+    fixed = TRUE
+  )
   expect_match(html, "fill-opacity", fixed = TRUE)
   expect_match(
     html,
@@ -1627,7 +1637,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "function indexConditionPart", fixed = TRUE)
   expect_match(
     html,
-    "withCondition=rows=>(rows||[]).map(d=>Object.assign(d,{condition_id:condition}))",
+    "hydrateConditionRows(x.tf_gene,'edge',condition)",
+    fixed = TRUE
+  )
+  expect_match(html, "function indexPayloadDictionaries", fixed = TRUE)
+  expect_match(html, "function payloadGeneList", fixed = TRUE)
+  expect_match(html, "FULL_EXPRESSION_KEYS", fixed = TRUE)
+  expect_match(html, "!FULL_EXPRESSION_KEYS.has(tfIndex)", fixed = TRUE)
+  expect_match(
+    html,
+    "hydrateConditionRows(x.tf_peak_gene,'peak',condition,x.peak_dictionary)",
     fixed = TRUE
   )
   expect_match(html, "EDGE_BY_COND.set(condition", fixed = TRUE)
@@ -1691,7 +1710,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "conditionColor(2)", fixed = TRUE)
   expect_match(html, "fill:conditionColor(1)", fixed = TRUE)
   expect_match(html, "fill:conditionColor(2)", fixed = TRUE)
-  expect_match(html, "t.getComputedTextLength()<=maxWidth", fixed = TRUE)
+  expect_match(html, "fitSvgText(t,maxWidth,13)", fixed = TRUE)
   expect_false(grepl("syncConditionPlotColors", html, fixed = TRUE))
   expect_match(html, "q.textContent=v.toFixed(1)", fixed = TRUE)
   expect_match(html, "x1:cx-gap-xw,y1:axisY", fixed = TRUE)
@@ -1757,6 +1776,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_false(grepl("rows[i-1].scoreA>=rows[i-1].scoreB", html, fixed = TRUE))
   expect_match(html, "class:'pathAxisTickLabel'", fixed = TRUE)
   expect_match(html, "Math.pow(2,value)-1", fixed = TRUE)
+  expect_match(
+    html,
+    "#activityLayer text{font-size:16px;font-weight:700}",
+    fixed = TRUE
+  )
+  expect_false(grepl(
+    "#mdsLayer text,#activityLayer text{font-size:24px",
+    html,
+    fixed = TRUE
+  ))
   expect_match(html, "xTitle.textContent='MDS1'", fixed = TRUE)
   expect_match(html, "yTitle.textContent='MDS2'", fixed = TRUE)
   expect_false(grepl("chartScroll", html, fixed = TRUE))
@@ -1784,8 +1813,12 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, 'id="networkPrimaryOnly"', fixed = TRUE)
   expect_match(html, 'id="networkSpacing"', fixed = TRUE)
   expect_match(html, '>Reset layout</button>', fixed = TRUE)
-  expect_match(html, '>Condition contrast (Default)<', fixed = TRUE)
-  expect_match(html, '<option value="rdbu">Red-blue</option>', fixed = TRUE)
+  expect_match(html, '>Condition contrast<', fixed = TRUE)
+  expect_match(
+    html,
+    '<option value="rdbu" selected>Red-blue (Default)</option>',
+    fixed = TRUE
+  )
   expect_match(html, '<option value="single">Single color</option>', fixed = TRUE)
   expect_match(html, 'id="networkTfSingleColor"', fixed = TRUE)
   expect_match(html, 'id="networkGeneSingleColor"', fixed = TRUE)
@@ -1816,8 +1849,8 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "robustColorLimit(vals,.9,1e-6)", fixed = TRUE)
   expect_match(html, "if(/^#[0-9a-f]{6}$/i.test(s))", fixed = TRUE)
   expect_match(html, "s.match(/[\\d.]+/g)", fixed = TRUE)
-  expect_match(html, "shape.setAttribute('opacity',!highlight||n.pathwayHit||n.id===selectedTfId?1:.34)", fixed = TRUE)
-  expect_match(html, "line.setAttribute('opacity','.15')", fixed = TRUE)
+  expect_match(html, "shape.setAttribute('opacity',!highlight||n.pathwayHit||n.id===selectedTfId?1:.65)", fixed = TRUE)
+  expect_match(html, "line.setAttribute('opacity','.36')", fixed = TRUE)
   expect_match(html, "stroke:n.type==='Peak'?'#A85B00':'#0B6E75'", fixed = TRUE)
   expect_match(html, "tfv=networkTfRnaValue(r.tfu)", fixed = TRUE)
   expect_match(html, "gv=networkGeneRnaValue(r.gene)", fixed = TRUE)
@@ -2083,6 +2116,75 @@ test_that("Module 3 condition payload files are compact and content addressed", 
     collapse = "\n"
   )
   expect_match(payload_text, first, fixed = TRUE)
+})
+
+test_that("Module 3 condition report data pruning keeps only current pages", {
+  review_dir <- tempfile("condition-report-prune-")
+  report_data_dir <- file.path(review_dir, "assets", "cr")
+  dir.create(report_data_dir, recursive = TRUE)
+  report_paths <- file.path(
+    review_dir,
+    "assets",
+    "p",
+    c("current_a.html", "current_b.html")
+  )
+  expected <- vapply(
+    report_paths,
+    craftgrn:::.m3cr_report_data_file,
+    character(1L)
+  )
+  writeLines("current", file.path(report_data_dir, expected[[1L]]))
+  writeLines("current", file.path(report_data_dir, expected[[2L]]))
+  stale_path <- file.path(report_data_dir, "cr_stale_d.js")
+  writeLines("stale", stale_path)
+
+  removed <- craftgrn:::.m3cr_prune_report_data_files(
+    review_dir,
+    report_paths
+  )
+
+  expect_false(file.exists(stale_path))
+  expect_setequal(
+    basename(list.files(report_data_dir, full.names = TRUE)),
+    expected
+  )
+  expect_identical(basename(removed), "cr_stale_d.js")
+})
+
+test_that("Module 3 condition payload pruning preserves current hashes", {
+  payload_dir <- tempfile("condition-payload-prune-")
+  dir.create(payload_dir, recursive = TRUE)
+  expected <- c("d_a_edges.js", "d_b_peaks.js")
+  invisible(lapply(
+    c(expected, "d_stale_targets.js"),
+    function(name) writeLines(name, file.path(payload_dir, name))
+  ))
+
+  removed <- craftgrn:::.m3cr_prune_condition_payload_files(
+    payload_dir,
+    expected
+  )
+
+  expect_setequal(basename(list.files(payload_dir, full.names = TRUE)), expected)
+  expect_identical(basename(removed), "d_stale_targets.js")
+})
+
+test_that("Module 3 condition payload dictionaries are deterministic", {
+  dictionary <- craftgrn:::.m3cr_payload_dictionary(
+    c("GeneB", "GeneA", "GeneB", NA_character_, "")
+  )
+  expect_equal(dictionary$value, c("GeneA", "GeneB"))
+  expect_equal(
+    craftgrn:::.m3cr_payload_ids(c("GeneB", "GeneA"), dictionary),
+    c(2L, 1L)
+  )
+  expect_equal(
+    craftgrn:::.m3cr_payload_id_lists(
+      c("GeneB;GeneA;GeneB", "GeneA"),
+      dictionary
+    ),
+    c("1;2", "1")
+  )
 })
 
 test_that("Module 3 stage methods preserve the full method layout", {
@@ -2732,6 +2834,7 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("warplda_iterations" %in% names(formals(run_topic_modeling)))
   expect_true("topic_score_method" %in% names(formals(run_topic_modeling)))
   expect_true("topic_term_assignment_method" %in% names(formals(run_topic_modeling)))
+  expect_true("de_gene_union_scope" %in% names(formals(run_topic_modeling)))
   expect_true("condition_gene_weighting" %in% names(formals(run_topic_modeling)))
   expect_true("condition_gene_weighting" %in% names(formals(train_topic_models)))
   expect_true("condition_peak_weighting" %in% names(formals(run_topic_modeling)))
@@ -2762,6 +2865,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_term_assignment_method = "gammafit",
     topic_count_method = "bin",
     topic_count_input = "pseudo_count_bin",
+    topic_de_gene_union_scope = "global",
     topic_condition_gene_weighting = "specificity",
     topic_condition_peak_weighting = "tf_expression",
     topic_condition_gene_expression_file = "condition_expression.csv",
@@ -2790,6 +2894,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$extraction_args$topic_term_assignment_method, "gammafit")
   expect_equal(resolved$count_method, "bin")
   expect_equal(resolved$count_input, "pseudo_count_bin")
+  expect_equal(resolved$de_gene_union_scope, "global")
   expect_equal(resolved$condition_gene_weighting, "specificity")
   expect_equal(resolved$condition_peak_weighting, "tf_expression")
   expect_equal(resolved$condition_gene_expression_file, "condition_expression.csv")
@@ -2817,6 +2922,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_term_assignment_method = "max_phi",
     count_method = "log",
     count_input = "pseudo_count_log",
+    de_gene_union_scope = "condition",
     vae_device = "cpu",
     vae_batch_size = 128L
   )
@@ -2828,6 +2934,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(overridden$extraction_args$topic_term_assignment_method, "max_phi")
   expect_equal(overridden$count_method, "log")
   expect_equal(overridden$count_input, "pseudo_count_log")
+  expect_equal(overridden$de_gene_union_scope, "condition")
   expect_equal(overridden$vae_device, "cpu")
   expect_equal(overridden$vae_batch_size, 128L)
 })
@@ -2835,6 +2942,7 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
 test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
   resolved_default <- .module3_resolve_topic_run_config(project_config = list())
   expect_equal(resolved_default$extraction_args$link_topic_method, "gammafit")
+  expect_equal(resolved_default$de_gene_union_scope, "condition")
   expect_equal(resolved_default$extraction_args$topic_score_method, "normtop_specificity")
   expect_equal(resolved_default$extraction_args$topic_term_assignment_method, "gammafit_maxprob")
   expect_equal(resolved_default$extraction_args$thrP, 0.5)

@@ -3037,6 +3037,76 @@ test_that("pairwise condition gene log2FC uses the requested condition order", {
   expect_equal(observed$log2fc_condition_1_vs_2, c(log2(10 / 4), 0, log2(1 / 8)))
 })
 
+test_that("pairwise condition filtering resolves manifest-relative paths", {
+  root <- withr::local_tempdir()
+  input_dir <- file.path(root, "condition_links")
+  output_dir <- file.path(root, "filtered_links")
+  dir.create(input_dir, recursive = TRUE)
+  conditions <- c("ConditionA", "ConditionB")
+  genes <- c("GeneA", "GeneB", "GeneSame")
+  source_rows <- lapply(conditions, function(condition) {
+    links <- data.table::data.table(
+      condition_id = condition,
+      tf = "TF1",
+      gene_key = genes,
+      peak_id = paste0("Peak", seq_along(genes))
+    )
+    source_path <- file.path(input_dir, paste0(condition, "_condition_links.csv"))
+    data.table::fwrite(links, source_path)
+    data.table::data.table(
+      condition_id = condition,
+      path = basename(source_path),
+      format = "csv"
+    )
+  })
+  data.table::fwrite(
+    data.table::rbindlist(source_rows),
+    file.path(input_dir, "condition_links_manifest.csv")
+  )
+  gene_expression <- matrix(
+    c(8, 1, 4, 1, 8, 4),
+    nrow = length(genes),
+    dimnames = list(genes, conditions)
+  )
+  fp_score <- matrix(
+    1,
+    nrow = 1L,
+    ncol = length(conditions),
+    dimnames = list("Peak1", conditions)
+  )
+  multiomic <- list(
+    schema = "craftgrn_multiomic_v1",
+    project = list(project_id = ""),
+    features = list(
+      fp = data.frame(fp_id = "Peak1"),
+      gene = data.frame(gene_id = genes)
+    ),
+    matrices = list(
+      fp_score = fp_score,
+      gene_expr = gene_expression
+    )
+  )
+
+  observed <- .module3_filter_condition_links_by_gene_log2fc(
+    input_dir = input_dir,
+    output_dir = output_dir,
+    multiomic_data = multiomic,
+    conditions = conditions,
+    abs_log2fc_min = 1,
+    pseudocount = 1,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+
+  expect_equal(observed$summary$n_links, c(2, 2))
+  retained <- data.table::rbindlist(lapply(
+    observed$manifest$path,
+    data.table::fread,
+    showProgress = FALSE
+  ))
+  expect_setequal(retained$gene_key, c("GeneA", "GeneB"))
+})
+
 test_that("condition comparison-union filtering uses relevant comparisons", {
   expression <- matrix(
     c(
@@ -3069,7 +3139,7 @@ test_that("condition comparison-union filtering uses relevant comparisons", {
     data.table::fwrite(links, path)
     data.table::data.table(
       condition_id = condition,
-      path = normalizePath(path, winslash = "/", mustWork = TRUE),
+      path = basename(path),
       format = "csv"
     )
   })
@@ -3114,6 +3184,11 @@ test_that("condition comparison-union filtering uses relevant comparisons", {
   expect_true(file.exists(file.path(output_dir, "condition_differential_gene_union.csv")))
   expect_true(file.exists(file.path(output_dir, "condition_gene_expression.csv")))
   expect_true(file.exists(file.path(output_dir, "condition_comparison_gene_filter_summary.csv")))
+  expect_true(all(observed$manifest$gene_union_scope == "condition"))
+  expect_identical(
+    .module3_condition_link_union_scope(output_dir),
+    "condition"
+  )
 
   rebuilt <- .module3_filter_condition_links_by_comparison_union(
     input_dir = input_dir,
@@ -3128,6 +3203,47 @@ test_that("condition comparison-union filtering uses relevant comparisons", {
     verbose = FALSE
   )
   expect_true(all(rebuilt$manifest$abs_log2fc_min == 0.5))
+
+  global_dir <- file.path(
+    tempdir(),
+    paste0("condition_global_union_output_", sample.int(1e7, 1L))
+  )
+  global <- .module3_filter_condition_links_by_comparison_union(
+    input_dir = input_dir,
+    output_dir = global_dir,
+    gene_expression = expression,
+    comparisons = comparisons,
+    conditions = colnames(expression),
+    gene_union_scope = "global",
+    abs_log2fc_min = 1,
+    expression_min = 2,
+    pseudocount = 1,
+    overwrite = TRUE,
+    verbose = FALSE
+  )
+  expect_setequal(
+    global$condition_gene_union[condition_id == "ConditionA", gene_key],
+    c("GeneAB", "GeneAC")
+  )
+  expect_setequal(
+    global$condition_gene_union[condition_id == "ConditionB", gene_key],
+    c("GeneAC", "GeneB")
+  )
+  expect_setequal(
+    global$condition_gene_union[condition_id == "ConditionC", gene_key],
+    "GeneAB"
+  )
+  expect_true(all(global$manifest$gene_union_scope == "global"))
+  expect_true(all(
+    global$manifest$filter_scope ==
+      "global_comparison_union_then_condition_expression"
+  ))
+  expect_identical(.module3_condition_link_union_scope(global_dir), "global")
+  expect_error(
+    .module3_assert_condition_link_union_scope(global_dir, "condition"),
+    "use `global` DE-gene unions",
+    fixed = TRUE
+  )
 })
 
 test_that("condition document-term QC separates gene and peak terms", {

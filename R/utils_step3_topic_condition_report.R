@@ -89,6 +89,31 @@
   paste0("cp_", substr(key, 1L, 12L))
 }
 
+.m3cr_payload_dictionary <- function(values) {
+  values <- sort(unique(as.character(values)))
+  values <- values[!is.na(values) & nzchar(values)]
+  data.table::data.table(
+    id = seq_along(values),
+    value = values
+  )
+}
+
+.m3cr_payload_ids <- function(values, dictionary) {
+  match(as.character(values), dictionary$value)
+}
+
+.m3cr_payload_id_lists <- function(values, dictionary) {
+  unname(vapply(values, function(value) {
+    genes <- unlist(
+      .m3tb_subgrn_split_genes(value),
+      use.names = FALSE
+    )
+    ids <- .m3cr_payload_ids(genes, dictionary)
+    ids <- sort(unique(ids[!is.na(ids)]))
+    paste(ids, collapse = ";")
+  }, character(1L)))
+}
+
 .m3cr_report_data_file <- function(out_html) {
   key <- digest::digest(
     basename(as.character(out_html)[[1L]]),
@@ -98,18 +123,61 @@
   paste0("cr_", substr(key, 1L, 12L), "_d.js")
 }
 
+.m3cr_prune_report_data_files <- function(review_dir, report_paths) {
+  report_data_dir <- file.path(review_dir, "assets", "cr")
+  if (!dir.exists(report_data_dir)) return(invisible(character()))
+  current <- list.files(
+    report_data_dir,
+    pattern = "[.]js$",
+    full.names = TRUE
+  )
+  expected <- file.path(
+    report_data_dir,
+    vapply(report_paths, .m3cr_report_data_file, character(1L))
+  )
+  stale <- setdiff(
+    normalizePath(current, winslash = "/", mustWork = FALSE),
+    normalizePath(expected, winslash = "/", mustWork = FALSE)
+  )
+  stale <- stale[file.exists(stale)]
+  if (length(stale)) unlink(stale, force = TRUE)
+  invisible(stale)
+}
+
+.m3cr_prune_condition_payload_files <- function(payload_dir, expected_files) {
+  if (!dir.exists(payload_dir)) return(invisible(character()))
+  current <- list.files(
+    payload_dir,
+    pattern = "[.]js$",
+    full.names = TRUE
+  )
+  expected <- file.path(
+    payload_dir,
+    basename(as.character(expected_files))
+  )
+  stale <- setdiff(
+    normalizePath(current, winslash = "/", mustWork = FALSE),
+    normalizePath(expected, winslash = "/", mustWork = FALSE)
+  )
+  stale <- stale[file.exists(stale)]
+  if (length(stale)) unlink(stale, force = TRUE)
+  invisible(stale)
+}
+
 .m3cr_condition_link_manifest <- function(condition_links_dir) {
   if (is.na(condition_links_dir) || !dir.exists(condition_links_dir)) {
     return(data.table::data.table())
   }
-  path <- file.path(condition_links_dir, "condition_links_manifest.csv")
-  if (file.exists(path)) {
-    out <- data.table::fread(path, showProgress = FALSE)
+  manifest_path <- file.path(condition_links_dir, "condition_links_manifest.csv")
+  if (file.exists(manifest_path)) {
+    out <- data.table::fread(manifest_path, showProgress = FALSE)
     if (!all(c("condition_id", "path") %in% names(out))) {
       return(data.table::data.table())
     }
-    out[, path := as.character(path)]
-    out[!grepl("^/", path), path := file.path(condition_links_dir, path)]
+    out$path <- .module3_resolve_condition_manifest_paths(
+      out$path,
+      manifest_path
+    )
     return(unique(out[file.exists(path), .(
       condition_id = as.character(condition_id),
       path
@@ -918,13 +986,44 @@
       condition_id, gene_key
     )
   }
+  tf_dictionary <- .m3cr_payload_dictionary(unlist(
+    lapply(parts, function(part) {
+      c(
+        part$tf_activity$tf,
+        part$tf_gene$tf,
+        part$tf_peak_gene$tf
+      )
+    }),
+    use.names = FALSE
+  ))
+  pathway_gene_values <- if (nrow(condition_pathways)) {
+    unlist(
+      .m3tb_subgrn_split_genes(condition_pathways$genes),
+      use.names = FALSE
+    )
+  } else {
+    character()
+  }
+  gene_dictionary <- .m3cr_payload_dictionary(c(
+    gene_topics$gene_key,
+    gene_expr$gene_key,
+    pathway_gene_values,
+    unlist(
+      lapply(parts, function(part) {
+        c(part$tf_gene$gene_key, part$tf_peak_gene$gene_key)
+      }),
+      use.names = FALSE
+    )
+  ))
   payload_file <- .m3cr_write_compressed_payload_file(
     list(
       tf_activity = activity,
       gene_topics = gene_topics,
       condition_topic_expression = condition_topic_expression,
       pathway_activity = pathway_scores$activity,
-      pathway_gene_expression = pathway_scores$gene_expression
+      pathway_gene_expression = pathway_scores$gene_expression,
+      tf_dictionary = tf_dictionary,
+      gene_dictionary = gene_dictionary
     ),
     payload_dir,
     payload_kind = "overview"
@@ -939,34 +1038,68 @@
     peak_rows <- parts[[i]]$tf_peak_gene[, .(
       tf, gene_key, peak_id, fp_score
     )]
-    data.table::setorder(edge_rows, tf, gene_key)
-    data.table::setorder(peak_rows, tf, gene_key, peak_id)
+    edge_rows[, `:=`(
+      tf_id = .m3cr_payload_ids(tf, tf_dictionary),
+      gene_id = .m3cr_payload_ids(gene_key, gene_dictionary)
+    )]
+    edge_rows[, c("tf", "gene_key") := NULL]
+    peak_rows[, `:=`(
+      tf_id = .m3cr_payload_ids(tf, tf_dictionary),
+      gene_id = .m3cr_payload_ids(gene_key, gene_dictionary)
+    )]
+    peak_rows[, c("tf", "gene_key") := NULL]
+    peak_dictionary <- .m3cr_payload_dictionary(peak_rows$peak_id)
+    peak_rows[, peak_index := .m3cr_payload_ids(
+      peak_id,
+      peak_dictionary
+    )]
+    peak_rows[, peak_id := NULL]
+    data.table::setorder(edge_rows, tf_id, gene_id)
+    data.table::setorder(peak_rows, tf_id, gene_id, peak_index)
     edge_file <- .m3cr_write_compressed_payload_file(
       list(tf_gene = edge_rows),
       payload_dir,
       payload_kind = "edges"
     )
     peak_file <- .m3cr_write_compressed_payload_file(
-      list(tf_peak_gene = peak_rows),
+      list(
+        tf_peak_gene = peak_rows,
+        peak_dictionary = peak_dictionary
+      ),
       payload_dir,
       payload_kind = "peaks"
     )
     tf_targets <- parts[[i]]$tf_gene[, .(
-      genes = paste(sort(unique(gene_key)), collapse = ";")
+      gene_ids = paste(
+        sort(unique(.m3cr_payload_ids(gene_key, gene_dictionary))),
+        collapse = ";"
+      )
     ), by = .(tf)]
-    data.table::setorder(tf_targets, tf)
+    tf_targets[, tf_id := .m3cr_payload_ids(tf, tf_dictionary)]
+    tf_targets[, tf := NULL]
+    data.table::setorder(tf_targets, tf_id)
     condition_pathway_rows <- condition_pathways[
       condition_id == condition_key,
       setdiff(names(condition_pathways), "condition_id"),
       with = FALSE
     ]
+    condition_pathway_rows[, gene_ids := .m3cr_payload_id_lists(
+      genes,
+      gene_dictionary
+    )]
+    condition_pathway_rows[, genes := NULL]
     data.table::setorder(condition_pathway_rows, topic_num, pathway_key)
     condition_expression_rows <- condition_expression[
       condition_id == condition_key,
       setdiff(names(condition_expression), "condition_id"),
       with = FALSE
     ]
-    data.table::setorder(condition_expression_rows, gene_key)
+    condition_expression_rows[, gene_id := .m3cr_payload_ids(
+      gene_key,
+      gene_dictionary
+    )]
+    condition_expression_rows[, gene_key := NULL]
+    data.table::setorder(condition_expression_rows, gene_id)
     target_file <- .m3cr_write_compressed_payload_file(
       list(tf_targets = tf_targets),
       payload_dir,
@@ -1012,7 +1145,10 @@
       "condition_gene_expression.csv"
     } else {
       "condition_link_fallback"
-    }
+    },
+    payload_schema_version = 2L,
+    n_tf_dictionary = nrow(tf_dictionary),
+    n_gene_dictionary = nrow(gene_dictionary)
   )
 }
 
@@ -1032,18 +1168,18 @@
     ".pane{background:#fff;border:1px solid #cfd2cc;display:flex;flex-direction:column;min-height:0;overflow:hidden}.paneHead{min-height:42px;padding:8px 11px;border-bottom:1px solid #dfe2dc;display:flex;justify-content:space-between;gap:10px;align-items:center}",
     ".pane h2,.mini h2{font-size:14px;line-height:1.1;margin:0;white-space:nowrap}.body{position:relative;flex:1;min-height:0;overflow:hidden}.meta{font-size:11px;color:#52605a}.bottomPair .meta{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.bottomPair .paneHead{padding:6px 8px;gap:4px}.contextWrap,.headTools{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0}.conditionTopicMetricControl{width:142px;min-width:0;font-size:10px;padding:4px 5px}body.embed .conditionTopicMetricControl,body.embed .conditionTopicMetricControl+.help{display:none}.iconButton{width:25px;height:25px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:15px!important;line-height:1}.zoomButton{height:25px;padding:3px 8px!important;font-size:11px!important;line-height:1;white-space:nowrap}.pathScoreControl{font-size:11px;gap:4px!important}.pathScoreControl select{font-size:11px;padding:4px 6px}",
     ".help{display:inline-flex;width:19px;height:19px;border:1px solid #9ca3a0;border-radius:50%;align-items:center;justify-content:center;font-size:12px;color:#38413d;background:#fff;cursor:help}.tooltip{position:absolute;display:none;background:rgba(17,17,17,.96);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:8px 9px;border-radius:4px;pointer-events:none;max-width:460px;line-height:1.35;z-index:30}",
-    "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text,#activityLayer text{font-size:24px;font-weight:700}#butterflyLayer text,#tfButterflyLayer text{font-size:21px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 14px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 12px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
+    "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text{font-size:24px;font-weight:700}#activityLayer text{font-size:16px;font-weight:700}#butterflyLayer text{font-size:21px;font-weight:700}#tfButterflyLayer text{font-size:18px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 18px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 12px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
     ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:92px;padding:0}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:10px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round;opacity:.58}",
     "body.network-open{overflow:hidden}body.embed .top{display:none}body.embed .grid{flex:1}",
     ".pathLabelTopicSpecific,.pathLabelConditionSpecific,.pathLabelBothSpecific{fill:#171717}.reportModeToggle{display:inline-flex;gap:2px}.reportModeToggle button{padding:4px 8px;background:#fff;color:#171717;border-color:#9ca3a0}.reportModeToggle button.active{background:#202322;color:#fff}.loadingOverlay{position:fixed;inset:0;z-index:1000;background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px}.loadingOverlay[hidden]{display:none}.loadingSpinner{width:26px;height:26px;border:4px solid #cfd5d0;border-top-color:#202322;border-radius:50%;animation:m3cr-spin .75s linear infinite}@keyframes m3cr-spin{to{transform:rotate(360deg)}}.networkControls{padding:5px 7px;gap:5px 8px}.networkHeading{min-height:46px;padding:5px 8px}.networkHeading button{padding:4px 7px}.singleColorInput{width:30px;height:27px;padding:2px}.singleColorInput[hidden]{display:none}",
     ".mdsConditionFilter{position:relative;z-index:45}.mdsConditionFilter summary{list-style:none;cursor:pointer;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:4px 7px;font:700 10px Arial,Helvetica,sans-serif;white-space:nowrap}.mdsConditionFilter summary::-webkit-details-marker{display:none}.mdsConditionFilter[open] summary{background:#202322;color:#fff}.mdsConditionFilterPanel{position:absolute;right:0;top:calc(100% + 5px);width:min(430px,calc(100vw - 24px));max-height:330px;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:7px;z-index:50}.mdsConditionFilterActions{display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #dfe2dc}.mdsConditionFilterActions button{padding:4px 8px;font-size:10px}.mdsConditionFilterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:270px;overflow:auto;padding-top:6px}.mdsConditionFilterOption{display:flex;align-items:center;gap:5px;min-width:0;font-size:10px;line-height:1.2;cursor:pointer}.mdsConditionFilterOption input{margin:0;padding:0;flex:0 0 auto}.mdsConditionFilterOption span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mdsStats{display:none}",
     "@media(max-width:1450px){.top{gap:7px}.top label+label{padding-left:7px}.bottomPair .help{display:none}.bottomPair .paneHead h2{font-size:13px}.paneHead:has(#shortConditionNames) .help,#mdsStats{display:none}.paneHead label:has(#shortConditionNames){font-size:10px!important}}",
-    "@media(max-width:1240px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.pathLabel{font-size:13px}}"
+    "@media(max-width:1240px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.pathLabel{font-size:16px}}"
   )
 }
 
 .m3cr_network_panel_html <- function() {
-  palette_options <- "<option value=\"condition\" selected>Condition contrast (Default)</option><option value=\"rdbu\">Red-blue</option><option value=\"prgn\">Purple-green</option><option value=\"brbg\">Brown-teal</option><option value=\"default\">Default</option><option value=\"npg\">NPG inspired</option><option value=\"aaas\">AAAS inspired</option><option value=\"nejm\">NEJM inspired</option><option value=\"lancet\">Lancet inspired</option><option value=\"jama\">JAMA inspired</option><option value=\"bmj\">BMJ inspired</option><option value=\"jco\">JCO inspired</option><option value=\"ucscgb\">UCSCGB inspired</option><option value=\"d3\">D3 inspired</option><option value=\"gephi\">Gephi inspired</option><option value=\"observable\">Observable inspired</option><option value=\"primer\">Primer inspired</option><option value=\"atlassian\">Atlassian inspired</option><option value=\"iterm\">iTerm inspired</option><option value=\"locuszoom\">LocusZoom inspired</option><option value=\"igv\">IGV inspired</option><option value=\"cosmic\">COSMIC inspired</option><option value=\"uchicago\">UChicago inspired</option><option value=\"startrek\">Star Trek inspired</option><option value=\"tron\">Tron inspired</option><option value=\"futurama\">Futurama inspired</option><option value=\"rickandmorty\">Rick and Morty inspired</option><option value=\"simpsons\">Simpsons inspired</option><option value=\"flatui\">Flat UI inspired</option><option value=\"frontiers\">Frontiers inspired</option><option value=\"gsea\">GSEA inspired</option><option value=\"bootstrap5\">Bootstrap 5 inspired</option><option value=\"material\">Material Design inspired</option><option value=\"tailwind\">Tailwind CSS inspired</option>"
+  palette_options <- "<option value=\"condition\">Condition contrast</option><option value=\"rdbu\" selected>Red-blue (Default)</option><option value=\"prgn\">Purple-green</option><option value=\"brbg\">Brown-teal</option><option value=\"default\">Default</option><option value=\"npg\">NPG inspired</option><option value=\"aaas\">AAAS inspired</option><option value=\"nejm\">NEJM inspired</option><option value=\"lancet\">Lancet inspired</option><option value=\"jama\">JAMA inspired</option><option value=\"bmj\">BMJ inspired</option><option value=\"jco\">JCO inspired</option><option value=\"ucscgb\">UCSCGB inspired</option><option value=\"d3\">D3 inspired</option><option value=\"gephi\">Gephi inspired</option><option value=\"observable\">Observable inspired</option><option value=\"primer\">Primer inspired</option><option value=\"atlassian\">Atlassian inspired</option><option value=\"iterm\">iTerm inspired</option><option value=\"locuszoom\">LocusZoom inspired</option><option value=\"igv\">IGV inspired</option><option value=\"cosmic\">COSMIC inspired</option><option value=\"uchicago\">UChicago inspired</option><option value=\"startrek\">Star Trek inspired</option><option value=\"tron\">Tron inspired</option><option value=\"futurama\">Futurama inspired</option><option value=\"rickandmorty\">Rick and Morty inspired</option><option value=\"simpsons\">Simpsons inspired</option><option value=\"flatui\">Flat UI inspired</option><option value=\"frontiers\">Frontiers inspired</option><option value=\"gsea\">GSEA inspired</option><option value=\"bootstrap5\">Bootstrap 5 inspired</option><option value=\"material\">Material Design inspired</option><option value=\"tailwind\">Tailwind CSS inspired</option>"
   palette_options <- sub(
     "<option value=\"default\">Default</option>",
     "",
@@ -1088,8 +1224,8 @@ const NS='http://www.w3.org/2000/svg',PAL=['#4E79A7','#E15759','#59A14F','#F28E2
 const NETWORK_COLOR_PRESETS={default:['#2563eb','#dc2626','#9ca3af','#f59e0b'],npg:['#E64B35','#4DBBD5','#7E6148','#3C5488'],aaas:['#EE0000','#3B4992','#008B45','#631879'],nejm:['#BC3C29','#0072B5','#E18727','#20854E'],lancet:['#ED0000','#00468B','#42B540','#0099B4'],jama:['#374E55','#DF8F44','#B24745','#6A6599'],bmj:['#2B8CBE','#E34A33','#969696','#636363'],jco:['#CD534C','#0073C2','#868686','#EFC000'],ucscgb:['#FF0000','#0000FF','#999999','#666666'],d3:['#FF7F0E','#1F77B4','#7F7F7F','#2CA02C'],gephi:['#FF7F00','#377EB8','#999999','#4DAF4A'],observable:['#4269D0','#EF553B','#AAAAAA','#6CC5B0'],primer:['#CF222E','#0969DA','#8C959F','#57606A'],atlassian:['#FF5630','#0052CC','#97A0AF','#42526E'],iterm:['#CC241D','#458588','#A89984','#665C54'],locuszoom:['#D7191C','#2C7BB6','#ABD9E9','#7570B3'],igv:['#E41A1C','#377EB8','#999999','#4DAF4A'],cosmic:['#D73027','#4575B4','#969696','#542788'],uchicago:['#800000','#155F83','#8A9045','#767676'],startrek:['#CC0C00','#5C88DA','#9C9C9C','#FFCC00'],tron:['#FF410D','#0085CA','#6EE2FF','#F7C530'],futurama:['#FF6F00','#1B9E77','#A6A6A6','#7570B3'],rickandmorty:['#FAFD7C','#00B0C8','#B2DF8A','#808080'],simpsons:['#FED439','#709AE1','#8A9197','#D2AF81'],flatui:['#E74C3C','#3498DB','#95A5A6','#2C3E50'],frontiers:['#E64B35','#4DBBD5','#B09C85','#3C5488'],gsea:['#E31A1C','#1F78B4','#BDBDBD','#33A02C'],bootstrap5:['#DC3545','#0D6EFD','#6C757D','#198754'],material:['#F44336','#2196F3','#9E9E9E','#4CAF50'],tailwind:['#EF4444','#3B82F6','#9CA3AF','#10B981']};
 const byId=id=>document.getElementById(id),cond1Select=byId('cond1Select'),cond2Select=byId('cond2Select'),cond1Color=byId('cond1Color'),cond2Color=byId('cond2Color'),topicSelect=byId('topicSelect'),tfSelect=byId('tfSelect'),pathwaySelect=byId('pathwaySelect'),conditionTopicMetric=byId('conditionTopicMetric'),pathwayScoreMethod=byId('pathwayScoreMethod'),pathwayDeOnly=byId('pathwayDeOnly');
 const PAGE_SIZE={topic:20,tf:20,path:28};
-let PAYLOAD={tf_activity:[],tf_gene:[],tf_peak_gene:[],gene_topics:[],condition_topic_expression:[],gene_expr:[],pathway_activity:[],pathway_gene_expression:[]},PAYLOAD_PROMISES=new Map(),LOADED_EDGE_CONDITIONS=new Set(),LOADED_PEAK_CONDITIONS=new Set(),LOADED_TARGET_CONDITIONS=new Set(),CONDITION_COLORS=Object.assign({},REPORT_STATE.condition_colors||{}),EDGE_BY_COND=new Map(),EDGE_BY_COND_TF=new Map(),TF_TARGETS_BY_COND=new Map(),EDGE_PAIR_CACHE={key:'',rows:[],byGene:new Map(),byTf:new Map()},PEAK_BY_COND_PAIR=new Map(),GENE_EXPR_INDEX=new Map(),GENE_ACTIVITY_INDEX=new Map(),EXPR_TOPIC_INDEX=new Map(),PATH_ACTIVITY_INDEX=new Map(),TF_TOPIC_INDEX=new Map(),TF_BY_CONDITION=new Map(),TF_LABELS=new Map(),PATH_ROWS=[],PAGE_INDEX={topic:0,tf:0,path:0},DATA_VERSION=0,RNA_TOPIC_CACHE={key:'',left:new Map(),right:new Map(),genes:0},MDS_VISIBLE_CONDITIONS=new Set(),MDS_RENDER_KEY='',ACTIVITY_RENDER_KEY='',ACTIVE_CONDITION_SIDE=1,ACTIVITY_VIEW={k:1,ox:0,oy:0},networkOpen=false,lastNetworkTrigger=null,networkState={nodes:[],edges:[],view:{x:0,y:0,k:1},drag:null,pan:null,selected:''};
-let LOADED_PATHWAY_CONDITIONS=new Set(),LOADED_EXPRESSION_CONDITIONS=new Set(),CONDITION_PATHWAYS_BY_COND=new Map(),TF_EXPR_INDEX=new Map(),LOADING_COUNT=1;
+let PAYLOAD={tf_activity:[],tf_gene:[],tf_peak_gene:[],gene_topics:[],condition_topic_expression:[],gene_expr:[],pathway_activity:[],pathway_gene_expression:[],tf_dictionary:[],gene_dictionary:[]},PAYLOAD_PROMISES=new Map(),LOADED_EDGE_CONDITIONS=new Set(),LOADED_PEAK_CONDITIONS=new Set(),LOADED_TARGET_CONDITIONS=new Set(),CONDITION_COLORS=Object.assign({},REPORT_STATE.condition_colors||{}),EDGE_BY_COND=new Map(),EDGE_BY_COND_TF=new Map(),TF_TARGETS_BY_COND=new Map(),EDGE_PAIR_CACHE={key:'',rows:[],byGene:new Map(),byTf:new Map()},PEAK_BY_COND_PAIR=new Map(),GENE_EXPR_INDEX=new Map(),GENE_ACTIVITY_INDEX=new Map(),EXPR_TOPIC_INDEX=new Map(),PATH_ACTIVITY_INDEX=new Map(),TF_TOPIC_INDEX=new Map(),TF_BY_CONDITION=new Map(),TF_LABELS=new Map(),TF_DICTIONARY=[],GENE_DICTIONARY=[],PATH_ROWS=[],PAGE_INDEX={topic:0,tf:0,path:0},DATA_VERSION=0,RNA_TOPIC_CACHE={key:'',left:new Map(),right:new Map(),genes:0},MDS_VISIBLE_CONDITIONS=new Set(),MDS_RENDER_KEY='',ACTIVITY_RENDER_KEY='',ACTIVE_CONDITION_SIDE=1,ACTIVITY_VIEW={k:1,ox:0,oy:0},networkOpen=false,lastNetworkTrigger=null,networkState={nodes:[],edges:[],view:{x:0,y:0,k:1},drag:null,pan:null,selected:''};
+let LOADED_PATHWAY_CONDITIONS=new Set(),LOADED_EXPRESSION_CONDITIONS=new Set(),CONDITION_PATHWAYS_BY_COND=new Map(),TF_EXPR_INDEX=new Map(),FULL_EXPRESSION_KEYS=new Set(),LOADING_COUNT=1;
 function el(n,a){const x=document.createElementNS(NS,n);Object.entries(a||{}).forEach(([k,v])=>x.setAttribute(k,v));return x}function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}function num(x,d=0){if(x===null||x===undefined||x==='')return d;const v=Number(x);return Number.isFinite(v)?v:d}function clamp(x,a,b){return Math.max(a,Math.min(b,x))}function topicNum(x){return Number(String(x||'').replace(/^Topic/,''))}function tfKey(x){return String(x||'').trim().toUpperCase()}function geneKey(x){return String(x||'').trim().toUpperCase()}function pathKey(x){return String(x||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'')}function splitGenes(x){return String(x||'').split(/[;,]/).map(s=>s.trim()).filter(Boolean)}
 function fitSvgText(node,maxWidth,minSize=10){if(!node||!Number.isFinite(maxWidth)||maxWidth<=0)return node;const width=node.getComputedTextLength(),size=num(getComputedStyle(node).fontSize,num(node.getAttribute('font-size'),16));if(width<=maxWidth||width<=0)return node;const fitted=Math.max(minSize,size*maxWidth/width);node.style.fontSize=fitted.toFixed(2)+'px';if(node.getComputedTextLength()>maxWidth){node.setAttribute('textLength',maxWidth.toFixed(1));node.setAttribute('lengthAdjust','spacingAndGlyphs')}return node}
 function setLoading(active,message='Loading...'){const overlay=byId('loadingOverlay');if(!overlay)return;if(active)LOADING_COUNT++;else LOADING_COUNT=Math.max(0,LOADING_COUNT-1);if(active)byId('loadingMessage').textContent=message;const busy=LOADING_COUNT>0;overlay.hidden=!busy;document.body.setAttribute('aria-busy',busy?'true':'false')}
@@ -1111,9 +1247,10 @@ function mdsLeaderConflictPenalty(candidate,q,placed,points){const leader=mdsCan
 function mdsLabelPenalty(candidate,q,placed,points,bounds){const area=candidate.w*candidate.h,insideW=Math.max(0,Math.min(candidate.x+candidate.w,bounds.x+bounds.w)-Math.max(candidate.x,bounds.x)),insideH=Math.max(0,Math.min(candidate.y+candidate.h,bounds.y+bounds.h)-Math.max(candidate.y,bounds.y)),outside=area-insideW*insideH,overlap=placed.reduce((s,d)=>s+mdsRectOverlap(candidate,d),0),pointOverlap=points.reduce((s,p)=>s+mdsRectOverlap(candidate,{x:p.x-p.r-3,y:p.y-p.r-3,w:2*p.r+6,h:2*p.r+6})*(p.id===q.id?0:1),0),cx=clamp(q.pointX,candidate.x,candidate.x+candidate.w),cy=clamp(q.pointY,candidate.y,candidate.y+candidate.h),leader=Math.hypot(cx-q.pointX,cy-q.pointY);return outside*150+overlap*90+pointOverlap*14+leader*.16+candidate.rank*.12}
 function mdsFinalLabelPenalty(candidate,q,placed,points,bounds){const area=candidate.w*candidate.h,insideW=Math.max(0,Math.min(candidate.x+candidate.w,bounds.x+bounds.w)-Math.max(candidate.x,bounds.x)),insideH=Math.max(0,Math.min(candidate.y+candidate.h,bounds.y+bounds.h)-Math.max(candidate.y,bounds.y)),outside=area-insideW*insideH,overlap=placed.reduce((s,d)=>s+mdsRectOverlap(candidate,d),0);return overlap*1e7+outside*1e5+mdsLeaderConflictPenalty(candidate,q,placed,points)+mdsLabelPenalty(candidate,q,placed,points,bounds)}
 function mdsLayoutLabels(items,W,H,pad){const bounds={x:pad+6,y:pad+5,w:W-2*pad-12,h:H-2*pad-10},points=items.map(q=>({x:q.x,y:q.y,r:24,id:q.id}));items.forEach(q=>{q.w=Math.min(bounds.w,mdsTextWidth(q.text));q.h=36;q.nearest=Math.min(...points.filter(p=>p.id!==q.id).map(p=>Math.hypot(q.x-p.x,q.y-p.y)),Infinity)});const ordered=items.slice().sort((a,b)=>a.nearest-b.nearest||a.id.localeCompare(b.id)),placed=[];ordered.forEach(q=>{const candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsLabelPenalty(d,q,placed,points,bounds)<mdsLabelPenalty(winner,q,placed,points,bounds)?d:winner,candidates[0]);Object.assign(q,best);placed.push(q)});for(let pass=0;pass<10;pass++)ordered.forEach(q=>{const others=ordered.filter(d=>d!==q),candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsLabelPenalty(d,q,others,points,bounds)<mdsLabelPenalty(winner,q,others,points,bounds)?d:winner,candidates[0]);Object.assign(q,best)});const final=[];ordered.forEach(q=>{const candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsFinalLabelPenalty(d,q,final,points,bounds)<mdsFinalLabelPenalty(winner,q,final,points,bounds)?d:winner,candidates[0]);Object.assign(q,best);final.push(q)});for(let pass=0;pass<4;pass++)ordered.forEach(q=>{const others=ordered.filter(d=>d!==q),candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsFinalLabelPenalty(d,q,others,points,bounds)<mdsFinalLabelPenalty(winner,q,others,points,bounds)?d:winner,candidates[0]);Object.assign(q,best)});return items}
+function mdsSideLayoutLabels(items,W,H,plotLeft,plotRight){const sorted=items.slice().sort((a,b)=>a.pointX-b.pointX||a.pointY-b.pointY||a.id.localeCompare(b.id)),leftIds=new Set(sorted.slice(0,Math.ceil(sorted.length/2)).map(d=>d.id)),place=(rows,side)=>{rows.sort((a,b)=>a.pointY-b.pointY||a.id.localeCompare(b.id));const top=74,bottom=H-74,step=rows.length>1?(bottom-top)/(rows.length-1):0,anchor=side==='left'?plotLeft-18:plotRight+18,maxWidth=Math.max(110,side==='left'?anchor-14:W-anchor-14);rows.forEach((q,i)=>{q.w=Math.min(maxWidth,mdsTextWidth(q.text));q.h=26;q.x=side==='left'?anchor-q.w:anchor;q.y=clamp(top+i*step-q.h/2,54,H-54-q.h);q.textX=anchor;q.textAnchor=side==='left'?'end':'start';q.sideLayout=true})};place(items.filter(q=>leftIds.has(q.id)),'left');place(items.filter(q=>!leftIds.has(q.id)),'right');return items}
 function mdsLeaderEndpoints(q){return mdsCandidateLeader(q,q)}
 function mdsSegmentDistance(a,b){if(mdsSegmentsCross(a,b))return 0;return Math.min(mdsPointSegmentDistance({x:a.x1,y:a.y1},b),mdsPointSegmentDistance({x:a.x2,y:a.y2},b),mdsPointSegmentDistance({x:b.x1,y:b.y1},a),mdsPointSegmentDistance({x:b.x2,y:b.y2},a))}
-function mdsVisibleLeaders(candidates){const chosen=[];candidates.filter(d=>d.length>=12).sort((a,b)=>a.length-b.length||a.id.localeCompare(b.id)).forEach(d=>{if(!chosen.some(x=>mdsSegmentDistance(d.segment,x.segment)<5))chosen.push(d)});return chosen}
+function mdsVisibleLeaders(candidates){const chosen=[];candidates.filter(d=>d.length>=28).sort((a,b)=>a.length-b.length||a.id.localeCompare(b.id)).forEach(d=>{if(!chosen.some(x=>mdsSegmentDistance(d.segment,x.segment)<8))chosen.push(d)});return chosen}
 function styleMdsPlot(){byId('mdsLayer').querySelectorAll('circle[data-condition-id]').forEach(p=>{p.setAttribute('r',24);p.setAttribute('fill-opacity','.56');p.setAttribute('stroke','#fff');p.setAttribute('stroke-width',2.5)})}
 function columnarRows(x){const cols=x&&x.columns?x.columns:[],data=x&&x.data?x.data:[],n=data.length?data[0].length:0,out=new Array(n);for(let i=0;i<n;i++){const r={};for(let j=0;j<cols.length;j++)r[cols[j]]=data[j][i];out[i]=r}return out}
 async function decodePayload(x){if(!x||!x.compressed_columnar)return x||{};if(!('DecompressionStream' in window))throw new Error('A current browser with deflate support is required.');const bin=atob(x.compressed_columnar),bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate')),packed=JSON.parse(await new Response(stream).text()),out={};Object.keys(packed).forEach(k=>out[k]=k==='tf_topic'?packed[k]:columnarRows(packed[k]));return out}
@@ -1124,11 +1261,16 @@ function loadOverviewPayload(){return loadPayloadFile(CONDITION_PAYLOAD.payload_
 function loadNetworkPayload(){const file=CONDITION_PAYLOAD.network_payload_file;if(!file)return Promise.resolve(PAYLOAD);return loadPayloadFile(file).then(mergePayload)}
 function conditionPayloadFiles(cond){return(CONDITION_PAYLOAD.condition_payload_files||{})[String(cond)]||{}}
 function overallMode(){return!cond1Select.value}function selectedConditions(){return[cond1Select.value,cond2Select.value].filter(Boolean)}
+function indexPayloadDictionaries(){TF_DICTIONARY=[];GENE_DICTIONARY=[];(PAYLOAD.tf_dictionary||[]).forEach(d=>{const id=Number(d.id);if(Number.isFinite(id))TF_DICTIONARY[id]=String(d.value||'')});(PAYLOAD.gene_dictionary||[]).forEach(d=>{const id=Number(d.id);if(Number.isFinite(id))GENE_DICTIONARY[id]=String(d.value||'')})}
+function payloadTf(d){return String(d.tf||TF_DICTIONARY[Number(d.tf_id)]||'')}
+function payloadGene(d){return String(d.gene_key||GENE_DICTIONARY[Number(d.gene_id)]||'')}
+function payloadGeneList(d){if(d.genes!==undefined&&d.genes!==null)return String(d.genes);return String(d.gene_ids||'').split(';').map(id=>GENE_DICTIONARY[Number(id)]||'').filter(Boolean).join(';')}
+function hydrateConditionRows(rows,kind,condition,localDictionary=[]){const local=[];(localDictionary||[]).forEach(d=>{const id=Number(d.id);if(Number.isFinite(id))local[id]=String(d.value||'')});return(rows||[]).map(source=>{const d=Object.assign({},source,{condition_id:String(condition)});if(kind==='edge'||kind==='peak'){d.tf=payloadTf(d);d.gene_key=payloadGene(d);if(kind==='peak'&&!d.peak_id)d.peak_id=local[Number(d.peak_index)]||''}else if(kind==='target'){d.tf=payloadTf(d);d.genes=payloadGeneList(d)}else if(kind==='pathway'){d.genes=payloadGeneList(d)}else if(kind==='expression'){d.gene_key=payloadGene(d)}return d})}
 function setExpressionIndexValue(index,key,value){if(value===null||value===undefined||value==='')return;const v=Number(value),old=index.get(key);if(Number.isFinite(v)&&(!Number.isFinite(old)||v>old))index.set(key,v)}
-function indexEdgeExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),tf=tfKey(d.tf_upper||d.tf),gene=geneKey(d.gene_key);if(c&&tf)setExpressionIndexValue(TF_EXPR_INDEX,c+'\t'+tf,d.tf_expr);if(c&&gene)setExpressionIndexValue(GENE_EXPR_INDEX,c+'\t'+gene,d.gene_expr)})}
-function indexFullExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),gene=geneKey(d.gene_key),v=Number(d.gene_expr);if(!c||!gene||!Number.isFinite(v))return;GENE_EXPR_INDEX.set(c+'\t'+gene,v);TF_EXPR_INDEX.set(c+'\t'+tfKey(gene),v)})}
+function indexEdgeExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),tf=tfKey(d.tf_upper||d.tf),gene=geneKey(d.gene_key),tfIndex=c+'\t'+tf,geneIndex=c+'\t'+gene;if(c&&tf&&!FULL_EXPRESSION_KEYS.has(tfIndex))setExpressionIndexValue(TF_EXPR_INDEX,tfIndex,d.tf_expr);if(c&&gene&&!FULL_EXPRESSION_KEYS.has(geneIndex))setExpressionIndexValue(GENE_EXPR_INDEX,geneIndex,d.gene_expr)})}
+function indexFullExpressionRows(rows){(rows||[]).forEach(d=>{const c=String(d.condition_id||''),gene=geneKey(d.gene_key),v=Number(d.gene_expr);if(!c||!gene||!Number.isFinite(v))return;const key=c+'\t'+gene;GENE_EXPR_INDEX.set(key,v);TF_EXPR_INDEX.set(key,v);FULL_EXPRESSION_KEYS.add(key)})}
 function indexEdgesForCondition(condition,rows){const byTf=new Map();rows.forEach(d=>{const key=tfKey(d.tf),bucket=byTf.get(key)||[];bucket.push(d);byTf.set(key,bucket)});EDGE_BY_COND.set(condition,rows);EDGE_BY_COND_TF.set(condition,byTf);indexEdgeExpressionRows(rows)}
-function indexConditionPart(cond,kind,x){const condition=String(cond),withCondition=rows=>(rows||[]).map(d=>Object.assign(d,{condition_id:condition}));if(kind==='peak'){const cm=new Map();withCondition(x.tf_peak_gene).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='target'){const byTf=new Map();withCondition(x.tf_targets).forEach(d=>byTf.set(tfKey(d.tf_upper||d.tf),new Set(splitGenes(d.genes).map(geneKey))));TF_TARGETS_BY_COND.set(condition,byTf)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,withCondition(x.condition_pathways))}else if(kind==='expression'){indexFullExpressionRows(withCondition(x.condition_expression))}else{indexEdgesForCondition(condition,withCondition(x.tf_gene))}DATA_VERSION++}
+function indexConditionPart(cond,kind,x){const condition=String(cond);if(kind==='peak'){const cm=new Map();hydrateConditionRows(x.tf_peak_gene,'peak',condition,x.peak_dictionary).forEach(d=>{const k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a)});PEAK_BY_COND_PAIR.set(condition,cm)}else if(kind==='target'){const byTf=new Map();hydrateConditionRows(x.tf_targets,'target',condition).forEach(d=>byTf.set(tfKey(d.tf_upper||d.tf),new Set(splitGenes(d.genes).map(geneKey))));TF_TARGETS_BY_COND.set(condition,byTf)}else if(kind==='pathway'){CONDITION_PATHWAYS_BY_COND.set(condition,hydrateConditionRows(x.condition_pathways,'pathway',condition))}else if(kind==='expression'){indexFullExpressionRows(hydrateConditionRows(x.condition_expression,'expression',condition))}else{indexEdgesForCondition(condition,hydrateConditionRows(x.tf_gene,'edge',condition))}DATA_VERSION++}
 function loadConditionPart(cond,kind){const files=conditionPayloadFiles(cond),file=kind==='peak'?files.peak_file:kind==='target'?files.target_file:kind==='pathway'?files.pathway_file:kind==='expression'?files.expression_file:files.edge_file,loaded=kind==='peak'?LOADED_PEAK_CONDITIONS:kind==='target'?LOADED_TARGET_CONDITIONS:kind==='pathway'?LOADED_PATHWAY_CONDITIONS:kind==='expression'?LOADED_EXPRESSION_CONDITIONS:LOADED_EDGE_CONDITIONS;if(!file||loaded.has(String(cond)))return Promise.resolve(PAYLOAD);setLoading(true,kind==='pathway'?'Loading condition pathways...':kind==='peak'?'Loading peak support...':kind==='expression'?'Loading normalized RNA...':kind==='target'?'Loading TF target index...':'Loading direct targets...');return loadPayloadFile(file).then(x=>{indexConditionPart(cond,kind,x);loaded.add(String(cond));PAYLOAD_PROMISES.delete(file);return PAYLOAD}).finally(()=>setLoading(false))}
 function loadSelectedConditionParts(kind){const conditions=selectedConditions();if(location.protocol!=='file:')return Promise.all(conditions.map(c=>loadConditionPart(c,kind)));return conditions.reduce((promise,condition)=>promise.then(()=>loadConditionPart(condition,kind)),Promise.resolve())}
 function ensureSelectedConditionEdges(){return loadSelectedConditionParts('edge')}
@@ -1136,7 +1278,7 @@ function ensureSelectedConditionPeaks(){return loadSelectedConditionParts('peak'
 function ensureSelectedConditionTargets(){return loadSelectedConditionParts('target')}
 function ensureSelectedConditionPathways(){return cond1Select.value&&!cond2Select.value?loadConditionPart(cond1Select.value,'pathway'):Promise.resolve(PAYLOAD)}
 function ensureSelectedConditionExpressions(){return loadSelectedConditionParts('expression')}
-function indexPayload(){EDGE_BY_COND=new Map();EDGE_BY_COND_TF=new Map();TF_TARGETS_BY_COND=new Map();EDGE_PAIR_CACHE={key:'',rows:[],byGene:new Map(),byTf:new Map()};PEAK_BY_COND_PAIR=new Map();GENE_EXPR_INDEX=new Map();GENE_ACTIVITY_INDEX=new Map();EXPR_TOPIC_INDEX=new Map();PATH_ACTIVITY_INDEX=new Map();TF_EXPR_INDEX=new Map();const edgeGroups=new Map();PAYLOAD.tf_gene.forEach(d=>{const c=String(d.condition_id),a=edgeGroups.get(c)||[];a.push(d);edgeGroups.set(c,a)});edgeGroups.forEach((rows,condition)=>indexEdgesForCondition(condition,rows));PAYLOAD.tf_peak_gene.forEach(d=>{const c=String(d.condition_id),cm=PEAK_BY_COND_PAIR.get(c)||new Map(),k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a);PEAK_BY_COND_PAIR.set(c,cm)});(PAYLOAD.tf_activity||[]).forEach(d=>setExpressionIndexValue(TF_EXPR_INDEX,String(d.condition_id)+'\t'+tfKey(d.tf_upper||d.tf),d.tf_expr));(PAYLOAD.condition_topic_expression||[]).forEach(d=>EXPR_TOPIC_INDEX.set(String(d.condition_id)+'\t'+Number(d.topic_num),num(d.expression_topic_share,0)));(PAYLOAD.pathway_gene_expression||[]).forEach(d=>{const key=String(d.condition_id)+'\t'+geneKey(d.gene_key);setExpressionIndexValue(GENE_EXPR_INDEX,key,d.gene_expr);GENE_ACTIVITY_INDEX.set(key,d)});(PAYLOAD.pathway_activity||[]).forEach(d=>PATH_ACTIVITY_INDEX.set(Number(d.topic_num)+'\t'+pathKey(d.pathway_key)+'\t'+String(d.condition_id),d))}
+function indexPayload(){indexPayloadDictionaries();EDGE_BY_COND=new Map();EDGE_BY_COND_TF=new Map();TF_TARGETS_BY_COND=new Map();EDGE_PAIR_CACHE={key:'',rows:[],byGene:new Map(),byTf:new Map()};PEAK_BY_COND_PAIR=new Map();GENE_EXPR_INDEX=new Map();GENE_ACTIVITY_INDEX=new Map();EXPR_TOPIC_INDEX=new Map();PATH_ACTIVITY_INDEX=new Map();TF_EXPR_INDEX=new Map();FULL_EXPRESSION_KEYS=new Set();const edgeGroups=new Map();PAYLOAD.tf_gene.forEach(d=>{const c=String(d.condition_id),a=edgeGroups.get(c)||[];a.push(d);edgeGroups.set(c,a)});edgeGroups.forEach((rows,condition)=>indexEdgesForCondition(condition,rows));PAYLOAD.tf_peak_gene.forEach(d=>{const c=String(d.condition_id),cm=PEAK_BY_COND_PAIR.get(c)||new Map(),k=tfKey(d.tf)+'\t'+d.gene_key,a=cm.get(k)||[];a.push(d);cm.set(k,a);PEAK_BY_COND_PAIR.set(c,cm)});(PAYLOAD.tf_activity||[]).forEach(d=>setExpressionIndexValue(TF_EXPR_INDEX,String(d.condition_id)+'\t'+tfKey(d.tf_upper||d.tf),d.tf_expr));(PAYLOAD.condition_topic_expression||[]).forEach(d=>EXPR_TOPIC_INDEX.set(String(d.condition_id)+'\t'+Number(d.topic_num),num(d.expression_topic_share,0)));(PAYLOAD.pathway_gene_expression||[]).forEach(d=>{const key=String(d.condition_id)+'\t'+geneKey(d.gene_key);setExpressionIndexValue(GENE_EXPR_INDEX,key,d.gene_expr);GENE_ACTIVITY_INDEX.set(key,d)});(PAYLOAD.pathway_activity||[]).forEach(d=>PATH_ACTIVITY_INDEX.set(Number(d.topic_num)+'\t'+pathKey(d.pathway_key)+'\t'+String(d.condition_id),d))}
 function indexTfTopics(){TF_TOPIC_INDEX=new Map();TF_BY_CONDITION=new Map();TF_LABELS=new Map();const cols=TF_TOPIC&&TF_TOPIC.columns||[],data=TF_TOPIC&&TF_TOPIC.data||[],at=name=>data[cols.indexOf(name)]||[],condition=at('comparison_label').length?at('comparison_label'):at('group_label'),tf=at('tf_upper').length?at('tf_upper'):at('tf'),display=at('tf_display').length?at('tf_display'):at('tf'),topic=at('topic_num').length?at('topic_num'):at('topic'),theta=at('theta'),n=theta.length;for(let i=0;i<n;i++){const c=String(condition[i]||''),key=tfKey(tf[i]),t=topicNum(topic[i]),v=num(theta[i],NaN);if(!c||!key||!Number.isFinite(t)||!Number.isFinite(v))continue;const idx=c+'\t'+key+'\t'+t,old=TF_TOPIC_INDEX.get(idx);if(old===undefined||v>old)TF_TOPIC_INDEX.set(idx,v);if(!TF_BY_CONDITION.has(c))TF_BY_CONDITION.set(c,new Set());TF_BY_CONDITION.get(c).add(key);if(!TF_LABELS.has(key))TF_LABELS.set(key,String(display[i]||tf[i]||key))}}
 function setActiveConditionSide(side){ACTIVE_CONDITION_SIDE=Number(side)===2?2:1;cond1Select.classList.toggle('conditionTarget',ACTIVE_CONDITION_SIDE===1);cond2Select.classList.toggle('conditionTarget',ACTIVE_CONDITION_SIDE===2)}
 function state(){return{cond1:cond1Select.value,cond2:cond2Select.value,activeConditionSide:ACTIVE_CONDITION_SIDE,color1:conditionColorForId(cond1Select.value),color2:conditionColorForId(cond2Select.value),colors:CONDITION_COLORS,topic:topicNum(topicSelect.value),tf:tfSelect.value,pathway:pathwaySelect.value,metric:conditionTopicMetric.value}}function sendState(ready=false){window.parent.postMessage({type:ready?'m3cr-ready':'m3cr-state',state:state(),options:controlOptions()},'*')}function controlOptions(){return{conditions:Array.from(cond1Select.options).map(o=>({value:o.value,label:conditionLabel(o.value)})).filter(x=>x.value),topics:Array.from(topicSelect.options).map(o=>({value:o.value,label:o.textContent})),tfs:Array.from(tfSelect.options).map(o=>({value:o.value,label:o.textContent})),pathways:Array.from(pathwaySelect.options).map(o=>({value:o.value,label:o.textContent}))}}
@@ -1172,20 +1314,22 @@ function selectMdsCondition(id){const target=ACTIVE_CONDITION_SIDE===2?cond2Sele
 function drawMds(){
   const g=byId('mdsLayer');
   g.replaceChildren();
-  const W=760,H=760,pad=72,pointInset=38,rows=mdsVisibleRows();
+  const W=760,H=760,pad=72,pointInset=38,rows=mdsVisibleRows(),
+    crowded=rows.length>12,plotLeft=crowded?232:pad,
+    plotRight=crowded?528:W-pad,dataInset=crowded?30:pointInset;
   syncMdsConditionFilter();
   if(!rows.length){
     panelMessage(g,'Select conditions to display.');
     return;
   }
-  const sx=scale(rows.map(d=>num(d.MDS1)),pad+pointInset,W-pad-pointInset),
+  const sx=scale(rows.map(d=>num(d.MDS1)),plotLeft+dataInset,plotRight-dataInset),
     sy=scale(rows.map(d=>num(d.MDS2)),H-pad-pointInset,pad+pointInset),
     selected=new Set([cond1Select.value,cond2Select.value].filter(Boolean)),
     shorten=byId('shortConditionNames')&&byId('shortConditionNames').checked,
     labelMap=shorten?mdsShortLabelMap():mdsFullLabelMap(),
     labels=[];
-  g.appendChild(el('line',{x1:pad,y1:H-pad,x2:W-pad,y2:H-pad,stroke:'#111','stroke-width':1.5}));
-  g.appendChild(el('line',{x1:pad,y1:pad,x2:pad,y2:H-pad,stroke:'#111','stroke-width':1.5}));
+  g.appendChild(el('line',{x1:plotLeft,y1:H-pad,x2:plotRight,y2:H-pad,stroke:'#111','stroke-width':1.5}));
+  g.appendChild(el('line',{x1:plotLeft,y1:pad,x2:plotLeft,y2:H-pad,stroke:'#111','stroke-width':1.5}));
   const xTitle=el('text',{x:W/2,y:H-18,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834'});
   xTitle.textContent='MDS1';
   g.appendChild(xTitle);
@@ -1204,15 +1348,16 @@ function drawMds(){
     if(sel)g.appendChild(el('circle',{cx:x,cy:y,r:7,fill:'#111',stroke:'none','pointer-events':'none','data-selection-marker':'true'}));
     labels.push({d,id,pointX:x,pointY:y,x,y,c,p,text});
   });
-  mdsLayoutLabels(labels,W,H,pad).forEach(q=>{
+  (crowded?mdsSideLayoutLabels(labels,W,H,plotLeft,plotRight):mdsLayoutLabels(labels,W,H,pad)).forEach(q=>{
     const e=mdsLeaderEndpoints(q);
-    g.appendChild(el('line',{x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,stroke:'#59635e','stroke-width':1.25,opacity:.66,'data-condition-id':q.id}));
-    const t=el('text',{x:q.x+5,y:q.y+25,'text-anchor':'start','font-size':18,'font-weight':700,fill:q.c,style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});
+    g.appendChild(el('line',{x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,stroke:q.sideLayout?'#7b8480':'#59635e','stroke-width':q.sideLayout?1:1.25,opacity:q.sideLayout?.42:.66,'data-condition-id':q.id}));
+    const t=el('text',{x:q.textX||q.x+5,y:q.sideLayout?q.y+19:q.y+25,'text-anchor':q.textAnchor||'start','font-size':18,'font-weight':700,fill:q.c,style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});
     t.textContent=q.text;
     t.addEventListener('click',()=>q.p.dispatchEvent(new MouseEvent('click')));
     t.addEventListener('mousemove',ev=>tooltip('mdsTooltip',ev,(q.d.display_label||q.id)+'\ndocuments: '+num(q.d.n_docs)));
     t.addEventListener('mouseout',()=>hideTip('mdsTooltip'));
     g.appendChild(t);
+    if(q.sideLayout)fitSvgText(t,q.w,12);
   });
   styleMdsPlot();
 }
@@ -1225,7 +1370,7 @@ function changeActivityZoom(factor){ACTIVITY_VIEW.k=clamp(ACTIVITY_VIEW.k*factor
 function panelMessage(g,message){const t=el('text',{x:380,y:380,'text-anchor':'middle','font-size':18,'font-weight':700,fill:'#59635e'});t.textContent=message;g.appendChild(t)}
 function drawActivity(){const g=byId('activityLayer');g.replaceChildren();const c1=cond1Select.value,c2=cond2Select.value;if(!c1){panelMessage(g,'Select a condition to view TF activity.');byId('activityStats').textContent='Overall pathway mode';return}const W=760,H=760,L=82,R=132,T=58,B=76,pointInset=22,rows=activityRows(),absDelta=rows.map(d=>Math.abs(d.deltaShare)).filter(v=>v>0&&Number.isFinite(v)).sort((a,b)=>a-b),soft=Math.max(1e-8,absDelta.length?absDelta[Math.floor((absDelta.length-1)*.5)]:1e-4),displayX=d=>c2?-Math.asinh(d.deltaShare/soft):d.shareA,xvals=rows.map(displayX),xlim=c2?Math.max(...xvals.map(Math.abs),1):Math.max(...xvals,1e-6),fullX=c2?[-xlim,xlim]:[0,xlim],yvals=rows.map(d=>Math.log2(d.y+1)).filter(Number.isFinite),yLoRaw=yvals.length?Math.min(...yvals):0,yHiRaw=yvals.length?Math.max(...yvals):1,ySpan=Math.max(yHiRaw-yLoRaw,.5),yPad=Math.min(.4,.07*ySpan),fullY=[Math.max(0,yLoRaw-yPad),Math.max(Math.max(0,yLoRaw-yPad)+.1,yHiRaw+yPad)],xd=activityViewDomain(fullX[0],fullX[1],ACTIVITY_VIEW.ox),yd=activityViewDomain(fullY[0],fullY[1],ACTIVITY_VIEW.oy),sx=scale(xd,L+pointInset,W-R-pointInset),sy=scale(yd,H-B-pointInset,T+pointInset),lim=Math.max(...rows.map(d=>Math.abs(d.logfc)).filter(Number.isFinite),1),exprMax=Math.max(...rows.map(d=>Math.log2(d.expr+1)),1);differentialConditionLabels(g,c1,c2,L+(W-L-R)/4,L+3*(W-L-R)/4);g.appendChild(el('line',{x1:L,y1:H-B,x2:W-R,y2:H-B,stroke:'#111','stroke-width':1.5}));g.appendChild(el('line',{x1:L,y1:T,x2:L,y2:H-B,stroke:'#111','stroke-width':1.5}));[0,.25,.5,.75,1].forEach(frac=>{const value=yd[0]+frac*(yd[1]-yd[0]),yy=sy(value),count=Math.max(0,Math.round(Math.pow(2,value)-1));g.appendChild(el('line',{x1:L,y1:yy,x2:W-R,y2:yy,stroke:'#8a9690','stroke-width':.8,opacity:frac===0?.45:.2}));const tick=el('text',{x:L-10,y:yy+4,'text-anchor':'end','font-size':12,'font-weight':700,fill:'#46524d'});tick.textContent=String(count);g.appendChild(tick)});[0,.25,.5,.75,1].forEach(frac=>{const tv=xd[0]+frac*(xd[1]-xd[0]),xx=sx(tv),raw=c2?-100*soft*Math.sinh(tv):100*tv;g.appendChild(el('line',{x1:xx,y1:T,x2:xx,y2:H-B,stroke:Math.abs(tv)<1e-10?'#555':'#8a9690','stroke-width':Math.abs(tv)<1e-10?1.2:.8,'stroke-dasharray':Math.abs(tv)<1e-10?'4 4':'2 5',opacity:Math.abs(tv)<1e-10?1:.3}));const tick=el('text',{x:xx,y:H-B+22,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d'});tick.textContent=(raw>0?'+':'')+raw.toFixed(Math.abs(raw)<.1?2:1);g.appendChild(tick)});rows.slice().sort((a,b)=>Number(tfKey(tfSelect.value)===a.tfu)-Number(tfKey(tfSelect.value)===b.tfu)).forEach(d=>{const dx=displayX(d),dy=Math.log2(d.y+1);if(dx<xd[0]||dx>xd[1]||dy<yd[0]||dy>yd[1])return;const px=sx(dx),py=sy(dy),r=2.2+3.3*Math.sqrt(Math.log2(d.expr+1)/exprMax),selected=tfKey(tfSelect.value)===d.tfu,base=c2?(d.deltaShare<0?conditionColor(2):conditionColor(1)):conditionColor(1),strength=.78+.18*clamp(Math.abs(d.logfc)/lim,0,1),p=el('circle',{cx:px,cy:py,r:selected?r+5:r,fill:selected?'#111':base,opacity:selected?1:strength,stroke:'#fff','stroke-width':selected?3:.8,style:'cursor:pointer'}),msg=d.tf+'\n'+conditionLabel(c1)+' normalized FP: '+(100*d.shareA).toFixed(3)+'%'+(c2?'\n'+conditionLabel(c2)+' normalized FP: '+(100*d.shareB).toFixed(3)+'%\n'+conditionLabel(c1)+' - '+conditionLabel(c2)+': '+(100*d.deltaShare).toFixed(3)+' percentage points\nlog2 relative activity: '+d.relativeLog2.toFixed(3):'')+'\ntarget genes: '+d.y+'\nTF expression: '+d.expr.toFixed(3)+(c2?'\nRNA log2FC: '+d.logfc.toFixed(3):'\nselected-topic theta: '+d.logfc.toFixed(3));p.addEventListener('click',()=>selectTf(d.tfu));p.addEventListener('mousemove',ev=>tooltip('activityTooltip',ev,msg));p.addEventListener('mouseout',()=>hideTip('activityTooltip'));g.appendChild(p);if(selected){const right=px<W-R-95,t=el('text',{x:px+(right?r+12:-r-12),y:py-9,'text-anchor':right?'start':'end','font-size':18,'font-weight':700,fill:'#111',style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});t.textContent=d.tf;t.addEventListener('click',()=>selectTf(d.tfu));g.appendChild(t)}});const xt=el('text',{x:(L+W-R)/2,y:H-14,'text-anchor':'middle','font-size':13,'font-weight':700});xt.textContent=c2?'Normalized FP difference (pp): '+conditionLabel(c1)+' - '+conditionLabel(c2):'Normalized FP: '+conditionLabel(c1);g.appendChild(xt);fitSvgText(xt,W-L-R-12,9);const yt=el('text',{x:24,y:(T+H-B)/2,'text-anchor':'middle','font-size':18,'font-weight':700,transform:'rotate(-90 24 '+((T+H-B)/2)+')'});yt.textContent=c2?'unique targets with abs(delta FP) >= 1':'unique target genes';g.appendChild(yt);byId('activityStats').textContent=rows.length+' TFs | '+ACTIVITY_VIEW.k.toFixed(1)+'x'}
 function renderColorKey(){return Object.keys(CONDITION_COLORS).sort().map(k=>k+':'+CONDITION_COLORS[k]).join('|')}
-function mdsPruneLeaderLines(){const nodes=Array.from(byId('mdsLayer').querySelectorAll('line')).filter(x=>x.getAttribute('stroke')==='#59635e'),candidates=nodes.map((node,i)=>{const segment={x1:num(node.getAttribute('x1')),y1:num(node.getAttribute('y1')),x2:num(node.getAttribute('x2')),y2:num(node.getAttribute('y2'))},id=String(node.getAttribute('data-condition-id')||i);return{node,segment,id,length:Math.hypot(segment.x2-segment.x1,segment.y2-segment.y1)}}),visible=new Set(mdsVisibleLeaders(candidates).map(d=>d.node));candidates.forEach(d=>{if(!visible.has(d.node))d.node.remove()})}
+function mdsPruneLeaderLines(){const nodes=Array.from(byId('mdsLayer').querySelectorAll('line[data-condition-id]')),candidates=nodes.map((node,i)=>{const segment={x1:num(node.getAttribute('x1')),y1:num(node.getAttribute('y1')),x2:num(node.getAttribute('x2')),y2:num(node.getAttribute('y2'))},id=String(node.getAttribute('data-condition-id')||i);return{node,segment,id,length:Math.hypot(segment.x2-segment.x1,segment.y2-segment.y1)}}),visible=new Set(mdsVisibleLeaders(candidates).map(d=>d.node));candidates.forEach(d=>{if(!visible.has(d.node))d.node.remove()})}
 const drawMdsWithPrunedLeaders=drawMds;drawMds=()=>{drawMdsWithPrunedLeaders();mdsPruneLeaderLines()}
 const drawMdsUncached=drawMds;drawMds=()=>{const key=[cond1Select.value,cond2Select.value,byId('shortConditionNames')&&byId('shortConditionNames').checked,Array.from(MDS_VISIBLE_CONDITIONS).sort().join('|'),renderColorKey()].join('\t');if(key===MDS_RENDER_KEY)return;MDS_RENDER_KEY=key;drawMdsUncached()};
 const drawActivityUncached=drawActivity;drawActivity=()=>{const key=[cond1Select.value,cond2Select.value,tfSelect.value,DATA_VERSION,conditionColor(1),conditionColor(2),ACTIVITY_VIEW.k,ACTIVITY_VIEW.ox,ACTIVITY_VIEW.oy].join('\t');if(key===ACTIVITY_RENDER_KEY)return;ACTIVITY_RENDER_KEY=key;drawActivityUncached()};
@@ -1254,14 +1399,14 @@ const expressionPathwayRows=pathwayRows;
 pathwayRows=function(){const c1=cond1Select.value,c2=cond2Select.value;if(!c1||c2)return expressionPathwayRows();const topic=Number(topicSelect.value),source=CONDITION_PATHWAYS_BY_COND.get(String(c1))||[],tf=tfSelect.value,targets=tf?selectedTfTargets(c1,tf):new Set();let rows=source.filter(d=>topicNum(d.topic_num||d.topic)===topic&&num(d.padj,1)<=.05).map(d=>{const genes=splitGenes(d.genes||d.overlap_genes),overlap=Math.max(num(d.gene_in,0),genes.length),score=Number.isFinite(Number(d.combined_score))?Math.max(0,Number(d.combined_score)):-Math.log10(Math.max(num(d.padj,1),1e-300)),tfA=tf?genes.filter(g=>targets.has(g)):[];return{key:pathKey(d.pathway_key||d.pathway_norm_key||d.pathway),pathway:String(d.pathway),scoreA:score,scoreB:NaN,delta:score,padj:num(d.padj,1),overlap,deOverlap:0,deGenes:[],genesA:genes,genesB:[],genes,tfA,tfB:[],tfUnion:tfA,tfCountA:tfA.length,tfCountB:0,tfCountUnion:tfA.length,conditionEnrichment:true}});if(tf)rows=rows.filter(r=>r.tfCountA>0).sort((a,b)=>b.tfCountA-a.tfCountA||b.scoreA-a.scoreA||a.padj-b.padj||a.pathway.localeCompare(b.pathway));else rows.sort((a,b)=>b.scoreA-a.scoreA||a.padj-b.padj||b.overlap-a.overlap||a.pathway.localeCompare(b.pathway));return rows}
 function updatePathwaySelect(rows){const current=pathwaySelect.value,opts=[{value:'',label:'None'}].concat(rows.slice().sort((a,b)=>a.pathway.localeCompare(b.pathway,undefined,{sensitivity:'base'})).map(r=>({value:r.key,label:r.pathway})));fillSelect(pathwaySelect,opts,opts.some(x=>x.value===current)?current:'')}
 function pathwayLabelClass(pathway){const key=pathKey(pathway),topics=new Set(),conditions=new Set();PATHWAYS.forEach(d=>{if(pathKey(d.pathway_key||d.pathway_norm_key||d.pathway)!==key)return;topics.add(topicNum(d.topic_num||d.topic));const condition=String(d.comparison_label||d.condition_id||d.comparison_id||'');if(condition)conditions.add(condition)});const topicSpecific=topics.size===1,conditionSpecific=conditions.size===1;return topicSpecific&&conditionSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':conditionSpecific?'pathLabel pathLabelConditionSpecific':'pathLabel'}
-function wrapText(g,text,x,y,maxWidth,cls='pathLabel'){const value=String(text).trim(),t=el('text',{x,y,'text-anchor':'end',class:cls,style:'cursor:pointer'});t.textContent=value;g.appendChild(t);if(!value||t.getComputedTextLength()<=maxWidth)return{node:t,lines:1};const words=value.split(/\s+/),lines=[];let line='';words.forEach(word=>{const candidate=line?line+' '+word:word;t.textContent=candidate;if(line&&t.getComputedTextLength()>maxWidth){lines.push(line);line=word}else line=candidate});if(line)lines.push(line);t.replaceChildren();lines.forEach((s,i)=>{const q=el('tspan',{x,dy:i===0?0:'.84em'});q.textContent=s;t.appendChild(q)});return{node:t,lines:lines.length}}
+function wrapText(g,text,x,y,maxWidth,cls='pathLabel'){const value=String(text).trim(),t=el('text',{x,y,'text-anchor':'end',class:cls,style:'cursor:pointer'});t.textContent=value;g.appendChild(t);fitSvgText(t,maxWidth,13);return{node:t,lines:1}}
 function addPathLegend(g,sizeLabel){const size=el('text',{x:24,y:20,class:'pathLegend',fill:'#46524d'});size.textContent='Size: '+sizeLabel.replace(/^Dot size\s*=\s*/i,'');g.appendChild(size)}
 function drawPathways(){
   PATH_ROWS=pathwayRows();
   updatePathwaySelect(PATH_ROWS);
   const g=byId('pathLayer');
   g.replaceChildren();
-  const W=1120,H=900,LABEL_X=630,PLOT_L=680,R=54,PLOT_R=W-R,T=112,B=68,
+  const W=1120,H=900,LABEL_X=700,PLOT_L=750,R=54,PLOT_R=W-R,T=112,B=68,
     AXIS_Y=82,BOTTOM_AXIS_Y=H-B+8,overall=overallMode(),paired=!!cond2Select.value,
     rows=pageRows(PATH_ROWS,'path'),rowH=Math.min(27,(H-T-B)/Math.max(rows.length,1)),
     scoreLabel=!overall&&!paired&&rows.some(r=>r.conditionEnrichment)?'condition-topic enrichment combined score':pathwayScoreMethod.value==='rank_enrichment'?'ranked-expression enrichment z-score':'mean standardized-expression score',
@@ -1302,8 +1447,7 @@ function drawPathways(){
       orderedA=overall?[]:orderedPathGenes(r.genes,cond1Select.value),orderedB=paired?orderedPathGenes(r.genes,cond2Select.value):[],
       msg=overall?r.pathway+'\nOverall topic-pathway q: '+r.padj.toExponential(2)+' '+stars+'\nCombined score: '+r.delta.toFixed(3)+'\nTopic-overlap genes: '+r.overlap+'\nGenes: '+r.genes.join(', '):r.pathway+'\n'+(r.conditionEnrichment?'Condition-topic pathway q: ':'Overall topic-pathway q: ')+r.padj.toExponential(2)+' '+stars+'\n'+conditionLabel(cond1Select.value)+' '+scoreLabel+': '+r.scoreA.toFixed(3)+(paired?'\n'+conditionLabel(cond2Select.value)+' '+scoreLabel+': '+r.scoreB.toFixed(3)+'\n'+conditionLabel(cond2Select.value)+' - '+conditionLabel(cond1Select.value)+' difference: '+r.delta.toFixed(3):'')+'\nExpression-matched genes: '+r.overlap+'\n'+conditionLabel(cond1Select.value)+' genes by expression: '+orderedA.map(d=>d.gene+' ('+d.expr.toFixed(2)+')').join(', ')+(paired?'\n'+conditionLabel(cond2Select.value)+' genes by expression: '+orderedB.map(d=>d.gene+' ('+d.expr.toFixed(2)+')').join(', '):'')+(tfSelect.value?'\nUnique '+tfLabel()+' target genes: '+countText+'\n'+conditionLabel(cond1Select.value)+' targets: '+(r.tfA||[]).join(', ')+(paired?'\n'+conditionLabel(cond2Select.value)+' targets: '+(r.tfB||[]).join(', ')+'\nUnion targets: '+(r.tfUnion||[]).join(', '):''):'');
     star.textContent=stars;
-    const lineStep=12.4;
-    lab.node.setAttribute('y',yy-((lab.lines-1)*lineStep)/2+3.5);
+    lab.node.setAttribute('y',yy+5.5);
     [dot,lab.node,star].forEach(n=>{
       n.addEventListener('click',()=>{lastNetworkTrigger=n;pathwaySelect.value=r.key;sendState(false);if(!overall)openNetwork()});
       n.addEventListener('mousemove',ev=>tooltip('pathTooltip',ev,msg));
@@ -1337,7 +1481,7 @@ function fitNetworkView(){const nodes=networkState.nodes;if(!nodes.length){netwo
 function drawNetwork(){const g=buildNetwork();networkState.nodes=g.nodes;networkState.edges=g.edges;placeNetwork(g);const spacing=clamp(num(byId('networkSpacingValue').value,1),.5,2);g.nodes.forEach(n=>{n.x=800+(n.x-800)*spacing;n.y=450+(n.y-450)*spacing});const eg=byId('networkEdges'),ng=byId('networkNodes'),lg=byId('networkLabelsLayer'),sel=byId('networkNodeSelect');eg.replaceChildren();ng.replaceChildren();lg.replaceChildren();sel.replaceChildren();const by=new Map(g.nodes.map(n=>[n.id,n])),vals=g.edges.map(e=>Math.abs(e.value)),elim=robustColorLimit(vals,.9,1e-6),single=!cond2Select.value,tfLim=networkExpressionLimit(TF_EXPR_INDEX,networkTfRnaValue),geneLim=networkExpressionLimit(GENE_EXPR_INDEX,networkGeneRnaValue),tfp=byId('networkTfPalette').value,gp=byId('networkGenePalette').value,ep=byId('networkEdgePalette').value,tf0=num(byId('networkTfMin').value,14),tf1=num(byId('networkTfMax').value,20),edge0=num(byId('networkEdgeMin').value,1.2),edge1=num(byId('networkEdgeMax').value,6.7),tfCounts=g.nodes.filter(n=>n.type==='TF').map(n=>n.count),cmin=Math.min(...tfCounts,1),cmax=Math.max(...tfCounts,1),selectedTfId=tfSelect.value?'TF:'+tfKey(tfSelect.value):'',rnaLabel=single?'RNA log2(expression + 1)':'RNA log2FC ('+conditionLabel(cond1Select.value)+' / '+conditionLabel(cond2Select.value)+')';g.nodes.forEach(n=>{const selectedTf=n.id===selectedTfId;n.r=n.type==='TF'?(cmax===cmin?(tf0+tf1)/2:tf0+(n.count-cmin)/(cmax-cmin)*(tf1-tf0)):n.type==='Peak'?7:9;if(selectedTf)n.r+=4;n.boxW=n.type==='TF'?Math.max(n.r*3.2,Math.min(190,22+String(n.label).length*8)):0});if(!g.nodes.length){const empty=el('text',{x:800,y:450,'text-anchor':'middle','font-size':22,'font-weight':700,fill:'#4b5550'});empty.textContent='No network edges pass the current filters.';lg.appendChild(empty)}g.edges.forEach(e=>{const a=by.get(e.from),b=by.get(e.to),dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),endR=b.type==='TF'?Math.max(b.r+3,b.boxW/2+3):b.r+4,focus=!selectedTfId||e.from===selectedTfId,line=el('line',{class:'edge',x1:a.x,y1:a.y,x2:b.x-dx/d*endR,y2:b.y-dy/d*endR,stroke:colorScale(e.value,elim,ep,single,'Edge'),'stroke-width':edge0+(edge1-edge0)*Math.sqrt(Math.min(1,Math.abs(e.value)/elim)),opacity:focus?.86:.24,'data-title':e.title,'data-from':e.from,'data-to':e.to});if(byId('networkArrows').checked)line.setAttribute('marker-end','url(#networkArrow)');eg.appendChild(line)});g.nodes.forEach(n=>{const fill=n.type==='Peak'?'#E99B18':Number.isFinite(n.value)?colorScale(n.value,n.type==='TF'?tfLim:geneLim,n.type==='TF'?tfp:gp,single,n.type):'#9CA3A0',selectedTf=n.id===selectedTfId,shape=n.type==='TF'?el('rect',{class:'node'+(selectedTf?' selected':''),x:n.x-n.boxW/2,y:n.y-n.r*.8,width:n.boxW,height:n.r*1.6,rx:4,fill,stroke:selectedTf?'#111':'#fff','stroke-width':selectedTf?5:1.5}):el('circle',{class:'node',cx:n.x,cy:n.y,r:n.r,fill,stroke:n.type==='Peak'?'#A85B00':'#0B6E75','stroke-width':2.5});shape.dataset.id=n.id;shape.dataset.title=n.label+'\n'+n.type+(selectedTf?' (selected TF)':'')+'\n'+rnaLabel+': '+(Number.isFinite(n.value)?n.value.toFixed(3):'NA')+'\nedges: '+n.count;ng.appendChild(shape);if(byId('networkLabels').checked){const contrast=n.type==='TF'?labelContrast(fill):{fill:'#171717',stroke:'#fff'},t=el('text',{class:'nodeLabel','data-id':n.id,x:n.type==='TF'?n.x:n.x+n.r+7,y:n.y+5,'text-anchor':n.type==='TF'?'middle':'start',fill:contrast.fill,stroke:contrast.stroke});t.textContent=n.label;lg.appendChild(t)}});g.nodes.slice().sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id)).forEach(n=>{const o=document.createElement('option');o.value=n.id;o.textContent=n.label;sel.appendChild(o)});networkState.selected=selectedTfId&&by.has(selectedTfId)?selectedTfId:networkState.selected;if(networkState.selected)sel.value=networkState.selected;bindNetworkPointer();markSelected();fitNetworkView();byId('networkStats').textContent='Showing '+g.nodes.length+' nodes and '+g.edges.length+' edges. Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Condition 1 - Condition 2 delta FP')+'.'}
 const drawNetworkBase=drawNetwork;
 function syncSingleColorControls(){[['networkTfPalette','networkTfSingleColor'],['networkGenePalette','networkGeneSingleColor'],['networkEdgePalette','networkEdgeSingleColor']].forEach(([palette,color])=>{byId(color).hidden=byId(palette).value!=='single'})}
-drawNetwork=function(){let lo=clamp(num(byId('networkTfMin').value,14),6,40),hi=clamp(num(byId('networkTfMax').value,20),6,40),edgeLo=clamp(num(byId('networkEdgeMin').value,1.2),.2,12),edgeHi=clamp(num(byId('networkEdgeMax').value,6.7),.2,12);if(lo>hi)hi=lo;if(edgeLo>edgeHi)edgeHi=edgeLo;byId('networkTfMin').value=lo;byId('networkTfMax').value=hi;byId('networkEdgeMin').value=edgeLo;byId('networkEdgeMax').value=edgeHi;syncSingleColorControls();drawNetworkBase();const selectedTfId=tfSelect.value?'TF:'+tfKey(tfSelect.value):'',highlight=!!(currentPath()&&byId('networkPathwayFocus').value==='highlight'),nodeById=new Map(networkState.nodes.map(n=>[n.id,n]));networkState.nodes.forEach(n=>{if(n.type==='TF'){n.r=Math.min(40,n.r);n.boxW=Math.min(190,n.boxW)}const shape=byId('networkNodes').querySelector('[data-id="'+CSS.escape(n.id)+'"]');if(!shape)return;if(n.type==='TF'){shape.setAttribute('width',n.boxW);shape.setAttribute('height',n.r*1.6);shape.setAttribute('x',n.x-n.boxW/2);shape.setAttribute('y',n.y-n.r*.8)}const palette=n.type==='TF'?byId('networkTfPalette').value:n.type==='Gene'?byId('networkGenePalette').value:'';if(palette==='single')shape.setAttribute('fill',n.type==='TF'?byId('networkTfSingleColor').value:byId('networkGeneSingleColor').value);shape.setAttribute('opacity',!highlight||n.pathwayHit||n.id===selectedTfId?1:.34)});byId('networkLabelsLayer').querySelectorAll('[data-id]').forEach(label=>{const n=nodeById.get(label.dataset.id);if(n){const palette=n.type==='TF'?byId('networkTfPalette').value:n.type==='Gene'?byId('networkGenePalette').value:'';if(palette==='single'){const fill=n.type==='TF'?byId('networkTfSingleColor').value:byId('networkGeneSingleColor').value,contrast=labelContrast(fill);label.setAttribute('fill',contrast.fill);label.setAttribute('stroke',contrast.stroke)}}label.setAttribute('opacity',!highlight||!n||n.pathwayHit||n.id===selectedTfId?1:.34)});byId('networkEdges').querySelectorAll('[data-from]').forEach((line,i)=>{const edge=networkState.edges[i];if(byId('networkEdgePalette').value==='single')line.setAttribute('stroke',byId('networkEdgeSingleColor').value);if(highlight&&!edge.pathwayHit)line.setAttribute('opacity','.15')});redrawNetwork()}
+drawNetwork=function(){let lo=clamp(num(byId('networkTfMin').value,14),6,40),hi=clamp(num(byId('networkTfMax').value,20),6,40),edgeLo=clamp(num(byId('networkEdgeMin').value,1.2),.2,12),edgeHi=clamp(num(byId('networkEdgeMax').value,6.7),.2,12);if(lo>hi)hi=lo;if(edgeLo>edgeHi)edgeHi=edgeLo;byId('networkTfMin').value=lo;byId('networkTfMax').value=hi;byId('networkEdgeMin').value=edgeLo;byId('networkEdgeMax').value=edgeHi;syncSingleColorControls();drawNetworkBase();const selectedTfId=tfSelect.value?'TF:'+tfKey(tfSelect.value):'',highlight=!!(currentPath()&&byId('networkPathwayFocus').value==='highlight'),nodeById=new Map(networkState.nodes.map(n=>[n.id,n]));networkState.nodes.forEach(n=>{if(n.type==='TF'){n.r=Math.min(40,n.r);n.boxW=Math.min(190,n.boxW)}const shape=byId('networkNodes').querySelector('[data-id="'+CSS.escape(n.id)+'"]');if(!shape)return;if(n.type==='TF'){shape.setAttribute('width',n.boxW);shape.setAttribute('height',n.r*1.6);shape.setAttribute('x',n.x-n.boxW/2);shape.setAttribute('y',n.y-n.r*.8)}const palette=n.type==='TF'?byId('networkTfPalette').value:n.type==='Gene'?byId('networkGenePalette').value:'';if(palette==='single')shape.setAttribute('fill',n.type==='TF'?byId('networkTfSingleColor').value:byId('networkGeneSingleColor').value);shape.setAttribute('opacity',!highlight||n.pathwayHit||n.id===selectedTfId?1:.65)});byId('networkLabelsLayer').querySelectorAll('[data-id]').forEach(label=>{const n=nodeById.get(label.dataset.id);if(n){const palette=n.type==='TF'?byId('networkTfPalette').value:n.type==='Gene'?byId('networkGenePalette').value:'';if(palette==='single'){const fill=n.type==='TF'?byId('networkTfSingleColor').value:byId('networkGeneSingleColor').value,contrast=labelContrast(fill);label.setAttribute('fill',contrast.fill);label.setAttribute('stroke',contrast.stroke)}}label.setAttribute('opacity',!highlight||!n||n.pathwayHit||n.id===selectedTfId?1:.72)});byId('networkEdges').querySelectorAll('[data-from]').forEach((line,i)=>{const edge=networkState.edges[i];if(byId('networkEdgePalette').value==='single')line.setAttribute('stroke',byId('networkEdgeSingleColor').value);if(highlight&&!edge.pathwayHit)line.setAttribute('opacity','.36')});redrawNetwork()}
 function bindNetworkPointer(){const svg=byId('networkSvg'),ng=byId('networkNodes'),tip=byId('networkTooltip');ng.onmousedown=ev=>{if(!ev.target.classList.contains('node'))return;ev.stopPropagation();networkState.drag=networkState.nodes.find(n=>n.id===ev.target.dataset.id);networkState.selected=ev.target.dataset.id;byId('networkNodeSelect').value=networkState.selected;markSelected()};svg.onmousedown=ev=>{if(ev.target.classList&&ev.target.classList.contains('node'))return;const p=screenPoint(ev);networkState.pan={x:p.x,y:p.y,vx:networkState.view.x,vy:networkState.view.y}};svg.onmousemove=ev=>{if(networkState.drag){const p=worldPoint(ev);networkState.drag.x=clamp(p.x,30,1570);networkState.drag.y=clamp(p.y,30,870);redrawNetwork()}else if(networkState.pan){const p=screenPoint(ev);networkState.view.x=networkState.pan.vx+p.x-networkState.pan.x;networkState.view.y=networkState.pan.vy+p.y-networkState.pan.y;applyNetworkView()}tip.style.left=(ev.offsetX+12)+'px';tip.style.top=(ev.offsetY+12)+'px'};svg.onmouseup=()=>{networkState.drag=null;networkState.pan=null};svg.onmouseleave=()=>{networkState.drag=null;networkState.pan=null;tip.style.display='none'};svg.onmouseover=ev=>{const m=ev.target.dataset&&ev.target.dataset.title;if(m){tip.innerHTML=esc(m).replace(/\n/g,'<br/>');tip.style.display='block'}};svg.onmouseout=ev=>{if(ev.target.dataset&&ev.target.dataset.title)tip.style.display='none'};svg.onwheel=ev=>{ev.preventDefault();const p=screenPoint(ev),old=networkState.view.k,next=clamp(old*(ev.deltaY<0?1.15:1/1.15),.25,6);networkState.view.x=p.x-(p.x-networkState.view.x)*next/old;networkState.view.y=p.y-(p.y-networkState.view.y)*next/old;networkState.view.k=next;applyNetworkView()}}
 function screenPoint(ev){const p=byId('networkSvg').createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;return p.matrixTransform(byId('networkSvg').getScreenCTM().inverse())}function worldPoint(ev){const p=screenPoint(ev),v=networkState.view;return{x:(p.x-v.x)/v.k,y:(p.y-v.y)/v.k}}function applyNetworkView(){const v=networkState.view;byId('networkView').setAttribute('transform','translate('+v.x+' '+v.y+') scale('+v.k+')')}function markSelected(){byId('networkNodes').querySelectorAll('.node').forEach(x=>x.classList.toggle('selected',x.dataset.id===networkState.selected))}function redrawNetwork(){const by=new Map(networkState.nodes.map(n=>[n.id,n]));byId('networkNodes').querySelectorAll('.node').forEach(s=>{const n=by.get(s.dataset.id);if(!n)return;if(s.tagName==='rect'){s.setAttribute('x',n.x-n.boxW/2);s.setAttribute('y',n.y-n.r*.8)}else{s.setAttribute('cx',n.x);s.setAttribute('cy',n.y)}});byId('networkLabelsLayer').querySelectorAll('[data-id]').forEach(t=>{const n=by.get(t.dataset.id);if(n){t.setAttribute('x',n.type==='TF'?n.x:n.x+n.r+6);t.setAttribute('y',n.y+4)}});byId('networkEdges').querySelectorAll('[data-from]').forEach(line=>{const a=by.get(line.dataset.from),b=by.get(line.dataset.to);if(!a||!b)return;const dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),endR=b.type==='TF'?Math.max(b.r+3,b.boxW/2+3):b.r+3;line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);line.setAttribute('x2',b.x-dx/d*endR);line.setAttribute('y2',b.y-dy/d*endR)})}
 function syncReportMode(){byId('showPathwaysMode').classList.toggle('active',!networkOpen);byId('showGrnMode').classList.toggle('active',networkOpen);byId('showGrnMode').disabled=overallMode();byId('networkPathwayFocus').disabled=!currentPath()}
@@ -1488,7 +1632,8 @@ methodSelect.addEventListener('change',()=>{pendingPathway=null;const options=re
     "<!doctype html><html><head><meta charset=\"utf-8\"/>",
     "<link rel=\"icon\" href=\"data:,\"/>",
     "<title>Condition Topic Report</title>",
-    "<style>html,body{width:100%;height:100%;overflow:hidden}*{box-sizing:border-box}body{margin:0;background:#f3f4f2;color:#171717;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:52px;display:flex;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid #cfd2cc;background:#fff;white-space:nowrap;overflow:hidden}.controlGroup{display:flex;gap:8px;align-items:center;padding-right:10px;border-right:1px solid #dfe2dc;min-width:0}.controlGroup:last-of-type{border-right:0}.top label{display:flex;gap:5px;align-items:center;font-size:12px;min-width:0}.top select,.top button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:6px 8px}.top select.conditionTarget{outline:3px solid #202322;outline-offset:1px}.top input[type=color]{width:30px;height:28px;padding:2px;border:1px solid #9ca3a0;border-radius:4px;background:#fff;cursor:pointer}.top button{background:#202322;color:#fff;border-color:#202322;cursor:pointer}.top select{max-width:215px}.conditionPalette{position:fixed;z-index:50;top:50px;left:300px;right:300px;display:none;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 26px rgba(0,0,0,.18);padding:10px}.conditionPalette.open{display:block}.paletteHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.paletteHead strong{font-size:13px}.paletteHead button{font:700 11px Arial,Helvetica,sans-serif;padding:4px 7px}.conditionPaletteList{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px 12px}.conditionPaletteList label{display:flex;align-items:center;gap:7px;min-width:0;font-size:11px}.conditionPaletteList input{width:27px;height:23px;padding:1px;flex:0 0 auto}.conditionPaletteList span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}iframe{display:block;width:100vw;height:calc(100vh - 52px);border:0;background:#fff}@media(max-width:2000px){.top{gap:4px;padding-left:6px;padding-right:6px}.controlGroup{gap:4px;padding-right:4px}.top label{gap:2px;font-size:11px}.top select{padding:5px}.top button{padding:6px 5px;font-size:11px;flex:0 0 auto}#methodSelect{max-width:135px}#kSelect{max-width:125px}#cond1Select,#cond2Select{max-width:145px}#conditionTopicMetric{max-width:130px}#topicSelect{max-width:95px}#tfSelect{max-width:105px}#pathwaySelect{max-width:155px}}@media(max-width:1500px){.top{height:64px;gap:5px}.controlGroup{gap:4px;padding-right:5px}.top label{flex-direction:column;align-items:flex-start;gap:1px;font-size:10px}.top select{max-width:145px;padding:4px 5px}.top label:has(#pathwaySelect) select{max-width:165px}.top button{padding:6px;font-size:11px}.conditionPalette{top:62px;left:80px;right:80px}iframe{height:calc(100vh - 64px)}}</style></head><body>",
+    "<style>html,body{width:100%;height:100%;overflow:hidden}*{box-sizing:border-box}body{margin:0;background:#f3f4f2;color:#171717;font-family:Arial,Helvetica,sans-serif;font-weight:700}.top{height:52px;display:flex;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid #cfd2cc;background:#fff;white-space:nowrap;overflow:hidden}.controlGroup{display:flex;gap:8px;align-items:center;padding-right:10px;border-right:1px solid #dfe2dc;min-width:0}.controlGroup:last-of-type{border-right:0}.top label{display:flex;gap:5px;align-items:center;font-size:12px;min-width:0}.top select,.top button{font:700 12px Arial,Helvetica,sans-serif;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:6px 8px}.top select.conditionTarget{outline:3px solid #202322;outline-offset:1px}.top input[type=color]{width:30px;height:28px;padding:2px;border:1px solid #9ca3a0;border-radius:4px;background:#fff;cursor:pointer}.top button{background:#202322;color:#fff;border-color:#202322;cursor:pointer}.top select{max-width:215px}.conditionPalette{position:fixed;z-index:50;top:50px;left:300px;right:300px;display:none;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 26px rgba(0,0,0,.18);padding:10px}.conditionPalette.open{display:block}.paletteHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.paletteHead strong{font-size:13px}.paletteHead button{font:700 11px Arial,Helvetica,sans-serif;padding:4px 7px}.conditionPaletteList{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px 12px}.conditionPaletteList label{display:flex;align-items:center;gap:7px;min-width:0;font-size:11px}.conditionPaletteList input{width:27px;height:23px;padding:1px;flex:0 0 auto}.conditionPaletteList span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}iframe{display:block;width:100vw;height:calc(100vh - 52px);border:0;background:#fff}@media(max-width:2000px){.top{gap:4px;padding-left:6px;padding-right:6px}.controlGroup{gap:4px;padding-right:4px}.top label{gap:2px;font-size:11px}.top select{padding:5px}.top button{padding:6px 5px;font-size:11px;flex:0 0 auto}#methodSelect{max-width:165px}#kSelect{max-width:125px}#cond1Select,#cond2Select{max-width:145px}#conditionTopicMetric{max-width:130px}#topicSelect{max-width:95px}#tfSelect{max-width:105px}#pathwaySelect{max-width:155px}}@media(max-width:1500px){.top{height:64px;gap:5px}.controlGroup{gap:4px;padding-right:5px}.top label{flex-direction:column;align-items:flex-start;gap:1px;font-size:10px}.top select{max-width:145px;padding:4px 5px}.top label:has(#pathwaySelect) select{max-width:165px}.top button{padding:6px;font-size:11px}.conditionPalette{top:62px;left:80px;right:80px}iframe{height:calc(100vh - 64px)}}</style></head><body>",
+    "<style>@media(max-width:2000px){#kSelect{max-width:142px}}</style>",
     "<div class=\"top\"><div class=\"controlGroup\"><label>Method <select id=\"methodSelect\"></select></label><label>K <select id=\"kSelect\"></select></label></div><div class=\"controlGroup\"><label>Condition 1 <select id=\"cond1Select\"></select><input id=\"cond1Color\" type=\"color\" value=\"#D95F59\" title=\"Condition 1 color\" aria-label=\"Condition 1 color\"/></label><label>Condition 2 <select id=\"cond2Select\"></select><input id=\"cond2Color\" type=\"color\" value=\"#4E79A7\" title=\"Condition 2 color\" aria-label=\"Condition 2 color\"/></label><button id=\"paletteButton\" type=\"button\">Condition colors</button></div><div class=\"controlGroup\"><label>Topic view <select id=\"conditionTopicMetric\"><option value=\"theta\">Model theta</option><option value=\"rna_delta\">Differential RNA activity</option></select></label><label>Topic <select id=\"topicSelect\"></select></label><label>TF <select id=\"tfSelect\"></select></label><label>Pathway <select id=\"pathwaySelect\"></select></label></div><button id=\"exportButton\" type=\"button\">Export SVG</button></div><div id=\"conditionPalette\" class=\"conditionPalette\"><div class=\"paletteHead\"><strong>Condition colors</strong><button id=\"paletteReset\" type=\"button\">Reset colors</button></div><div id=\"conditionPaletteList\" class=\"conditionPaletteList\"></div></div><iframe id=\"frame\" title=\"Condition topic analysis\"></iframe>",
     "<script>", js, "</script></body></html>"
   )

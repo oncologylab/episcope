@@ -211,6 +211,7 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
       topic_k_grid = c(10L, 20L, 30L),
       topic_term_assignment_method = "gammafit_maxprob",
       topic_gammafit_thrP = list(lda = 0.8, multivi = 0.85),
+      topic_de_gene_union_scope = "global",
       topic_condition_gene_weighting = "specificity",
       topic_condition_peak_weighting = "tf_expression",
       topic_condition_specificity_temperature = 0.5,
@@ -248,6 +249,14 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
   bad_specificity <- cfg
   bad_specificity$module3$topic_condition_specificity_floor <- 1
   expect_error(validate(bad_specificity), "specificity floors", fixed = TRUE)
+
+  bad_union_scope <- cfg
+  bad_union_scope$module3$topic_de_gene_union_scope <- "all"
+  expect_error(
+    validate(bad_union_scope),
+    "module3_topic_de_gene_union_scope",
+    fixed = TRUE
+  )
 
   bad_peak_weighting <- cfg
   bad_peak_weighting$module3$topic_condition_peak_weighting <- "raw_expression"

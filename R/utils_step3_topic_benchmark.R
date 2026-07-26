@@ -3008,7 +3008,8 @@
       topic = data.table::data.table(),
       condition = data.table::data.table(),
       subgrn_manifest = data.table::data.table(),
-      condition_payload = data.table::data.table()
+      condition_payload = data.table::data.table(),
+      condition_assets = character()
     ))
   }
 
@@ -3159,7 +3160,16 @@
       n_tf_peak_gene = condition_payload$n_tf_peak_gene,
       n_expression_rows = condition_payload$n_expression_rows,
       expression_source = condition_payload$expression_source
-    )
+    ),
+    condition_assets = unique(c(
+      condition_payload$payload_file,
+      condition_payload$network_payload_file,
+      unlist(
+        condition_payload$condition_payload_files,
+        recursive = TRUE,
+        use.names = FALSE
+      )
+    ))
   )
 }
 
@@ -3349,11 +3359,6 @@
   dir.create(condition_page_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(subgrn_payload_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(condition_pair_payload_dir, recursive = TRUE, showWarnings = FALSE)
-  unlink(list.files(
-    condition_pair_payload_dir,
-    pattern = "[.]js$",
-    full.names = TRUE
-  ))
   unlink(list.files(html_dir, pattern = "^(topic_report|condition_topic_report)_K[0-9]+[.]html$", full.names = TRUE))
   unlink(list.files(condition_page_dir, pattern = "_K[0-9]+_condition_topic_report[.]html$", full.names = TRUE))
   obsolete <- c(
@@ -3452,6 +3457,17 @@
       normalizePath(report_paths, winslash = "/", mustWork = FALSE)
     )
     unlink(stale_pages[file.exists(stale_pages)], force = TRUE)
+    condition_assets <- unique(unlist(
+      lapply(page_rows, `[[`, "condition_assets"),
+      use.names = FALSE
+    ))
+    condition_assets <- condition_assets[
+      !is.na(condition_assets) & nzchar(condition_assets)
+    ]
+    .m3cr_prune_condition_payload_files(
+      condition_pair_payload_dir,
+      condition_assets
+    )
   }
   if (length(subgrn_manifests)) {
     subgrn_manifest <- data.table::rbindlist(subgrn_manifests, use.names = TRUE, fill = TRUE)
@@ -3476,6 +3492,7 @@
     condition_page_reports,
     report_state = attr(score_result, "report_state") %||% list()
   )
+  .m3cr_prune_report_data_files(review_dir, condition_page_reports$path)
   files
 }
 
@@ -5274,6 +5291,7 @@ run_regulatory_topics <- function(filtered_dir,
                                              count_method = NULL,
                                              count_scale = NULL,
                                              count_input = NULL,
+                                             de_gene_union_scope = NULL,
                                              condition_gene_weighting = NULL,
                                              condition_peak_weighting = NULL,
                                              condition_gene_expression_file = NULL,
@@ -5363,6 +5381,18 @@ run_regulatory_topics <- function(filtered_dir,
     count_input
   }
   count_input <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
+  de_gene_union_scope <- if (is.null(de_gene_union_scope)) {
+    as.character(.module3_cfg_value(
+      cfg,
+      c("topic_de_gene_union_scope", "module3_topic_de_gene_union_scope"),
+      "condition"
+    ))[[1L]]
+  } else {
+    as.character(de_gene_union_scope)[[1L]]
+  }
+  if (!de_gene_union_scope %in% c("condition", "global")) {
+    .log_abort("topic_de_gene_union_scope must be condition or global.")
+  }
   condition_gene_weighting <- if (is.null(condition_gene_weighting)) {
     as.character(.module3_cfg_value(
       cfg,
@@ -5713,6 +5743,7 @@ run_regulatory_topics <- function(filtered_dir,
     count_method = count_method,
     count_scale = count_scale,
     count_input = count_input,
+    de_gene_union_scope = de_gene_union_scope,
     condition_gene_weighting = condition_gene_weighting,
     condition_peak_weighting = condition_peak_weighting,
     condition_gene_expression_file = condition_gene_expression_file,
@@ -5809,6 +5840,12 @@ run_regulatory_topics <- function(filtered_dir,
 #'   from project config or use `50`.
 #' @param count_input Topic count column for model fitting. If `NULL`, inferred
 #'   from `count_method`.
+#' @param de_gene_union_scope Differential-gene union used by filtered
+#'   condition links. `"condition"` uses genes passing a configured comparison
+#'   involving each condition; `"global"` applies the union from every
+#'   configured comparison to every condition before the expression filter.
+#'   If `NULL`, read `topic_de_gene_union_scope` from project config or use
+#'   `"condition"`.
 #' @param condition_gene_weighting Condition-mode target-gene weighting. Use
 #'   `"specificity"` to emphasize relative expression across conditions while
 #'   retaining every document term and conserving document token totals.
@@ -5914,6 +5951,7 @@ run_topic_modeling <- function(filtered_dir,
                                count_method = NULL,
                                count_scale = NULL,
                                count_input = NULL,
+                               de_gene_union_scope = NULL,
                                condition_gene_weighting = NULL,
                                condition_peak_weighting = NULL,
                                condition_gene_expression_file = NULL,
@@ -5962,6 +6000,7 @@ run_topic_modeling <- function(filtered_dir,
     count_method = count_method,
     count_scale = count_scale,
     count_input = count_input,
+    de_gene_union_scope = de_gene_union_scope,
     condition_gene_weighting = condition_gene_weighting,
     condition_peak_weighting = condition_peak_weighting,
     condition_gene_expression_file = condition_gene_expression_file,
@@ -5997,6 +6036,12 @@ run_topic_modeling <- function(filtered_dir,
   for (control in names(direct_extraction_controls)) {
     value <- direct_extraction_controls[[control]]
     if (!is.null(value)) extraction_topic_report_args[[control]] <- value
+  }
+  if (identical(input_source, "condition_links")) {
+    .module3_assert_condition_link_union_scope(
+      filtered_dir,
+      resolved$de_gene_union_scope
+    )
   }
   run_regulatory_topics(
     filtered_dir = filtered_dir,

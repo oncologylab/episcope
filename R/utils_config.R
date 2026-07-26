@@ -127,6 +127,7 @@
     "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
     "topic_condition_specificity_expression_min",
     "topic_condition_gene_expression_min",
+    "topic_de_gene_union_scope",
     "topic_qc_upregulated_log2fc_min",
     "topic_qc_upregulated_pseudocount", "topic_qc_seed",
     "topic_raw_theta_document_heatmap", "run_raw_theta_document_heatmap",
@@ -154,6 +155,7 @@
       "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
       "topic_condition_specificity_expression_min",
       "topic_condition_gene_expression_min",
+      "topic_de_gene_union_scope",
       "topic_qc_upregulated_log2fc_min",
       "topic_qc_upregulated_pseudocount", "topic_qc_seed",
       "topic_raw_theta_document_heatmap",
@@ -698,6 +700,8 @@
     module3_topic_condition_gene_weighting = c("none", "specificity"),
     topic_condition_peak_weighting = c("none", "tf_expression"),
     module3_topic_condition_peak_weighting = c("none", "tf_expression"),
+    topic_de_gene_union_scope = c("condition", "global"),
+    module3_topic_de_gene_union_scope = c("condition", "global"),
     topic_vae_device = c("auto", "cpu", "cuda"),
     module3_topic_vae_device = c("auto", "cpu", "cuda")
   )
