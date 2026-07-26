@@ -1583,11 +1583,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     fixed = TRUE
   )
   expect_match(html, "EDGE_BY_COND_TF", fixed = TRUE)
+  expect_match(html, "EDGE_TABLE_BY_COND", fixed = TRUE)
+  expect_match(html, "PEAK_TABLE_BY_COND", fixed = TRUE)
   expect_match(html, "TF_TARGETS_BY_COND", fixed = TRUE)
   expect_match(html, "LOADED_TARGET_CONDITIONS", fixed = TRUE)
   expect_match(html, "EDGE_PAIR_CACHE", fixed = TRUE)
-  expect_match(html, "function edgePairIndex", fixed = TRUE)
-  expect_match(html, "pairIndex.byGene.get(gene)", fixed = TRUE)
+  expect_match(html, "function edgePairIndex(allowedGenes)", fixed = TRUE)
+  expect_match(html, "edgePairIndex(allowed)", fixed = TRUE)
+  expect_match(html, "compactRowsByGeneIds", fixed = TRUE)
+  expect_match(html, "compactEdgeRowsForGenes", fixed = TRUE)
+  expect_match(html, "compactPeakRowsForPairs", fixed = TRUE)
   expect_match(html, "ensureSelectedConditionTargets", fixed = TRUE)
   expect_match(html, "mdsShortLabelMap", fixed = TRUE)
   expect_match(html, "new Map(labels.map(x=>[x.d.id", fixed = TRUE)
@@ -1596,11 +1601,15 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "fitSvgText(t1", fixed = TRUE)
   expect_match(html, "mdsLabelCandidates", fixed = TRUE)
   expect_match(html, "mdsFinalLabelPenalty", fixed = TRUE)
+  expect_match(html, "radialGaps=q.compact?", fixed = TRUE)
+  expect_match(html, "trackOffsets=q.compact?", fixed = TRUE)
   expect_match(html, "mdsRectOverlap", fixed = TRUE)
   expect_match(html, "mdsClampLabelCandidate", fixed = TRUE)
   expect_match(html, "mdsSegmentsCross", fixed = TRUE)
   expect_match(html, "mdsLeaderConflictPenalty", fixed = TRUE)
   expect_match(html, "mdsPruneLeaderLines", fixed = TRUE)
+  expect_match(html, "MDS_LAYOUT_CACHE=new Map()", fixed = TRUE)
+  expect_match(html, "function mdsPositionLabels", fixed = TRUE)
   expect_match(html, "plotLeft=crowded?54:pad", fixed = TRUE)
   expect_match(html, "plotRight=crowded?706:W-pad", fixed = TRUE)
   expect_match(html, "plotTop=crowded?54:pad", fixed = TRUE)
@@ -1625,9 +1634,10 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "'data-condition-id':q.id", fixed = TRUE)
   expect_match(
     html,
-    "mdsLayoutLabels(labels,W,H,crowded?54:pad,crowded)",
+    "mdsPositionLabels(labels,W,H,crowded?54:pad,crowded)",
     fixed = TRUE
   )
+  expect_match(html, "W=760,H=760,pad=64,pointInset=38", fixed = TRUE)
   expect_false(grepl("mdsSideLayoutLabels", html, fixed = TRUE))
   expect_match(
     html,
@@ -1758,7 +1768,13 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "condition_payload_files", fixed = TRUE)
   expect_match(html, "loadReportData().then", fixed = TRUE)
   expect_match(html, "indexTfTopics()", fixed = TRUE)
-  expect_match(html, "k==='tf_topic'?packed[k]:columnarRows", fixed = TRUE)
+  expect_match(
+    html,
+    "k==='tf_topic'||k==='tf_gene'||k==='tf_peak_gene'?packed[k]:columnarRows",
+    fixed = TRUE
+  )
+  expect_match(html, "Uint8Array.fromBase64", fixed = TRUE)
+  expect_no_match(html, "detailed=LOADED_EDGE_CONDITIONS", fixed = TRUE)
   expect_match(html, "id=\"networkTfPalette\"", fixed = TRUE)
   expect_match(html, 'id="networkTopTf" type="number" min="1" value="100"', fixed = TRUE)
   expect_match(html, 'id="topicPageStatus"', fixed = TRUE)
@@ -1807,6 +1823,12 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(
     html,
     "#activityLayer text{font-size:16px;font-weight:700}",
+    fixed = TRUE
+  )
+  expect_match(html, "#mdsLayer text{font-weight:700}", fixed = TRUE)
+  expect_no_match(
+    html,
+    "#mdsLayer text{font-size:24px",
     fixed = TRUE
   )
   expect_false(grepl(
