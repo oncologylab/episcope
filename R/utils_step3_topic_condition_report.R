@@ -1247,7 +1247,7 @@ function mdsLeaderConflictPenalty(candidate,q,placed,points){const leader=mdsCan
 function mdsLabelPenalty(candidate,q,placed,points,bounds){const area=candidate.w*candidate.h,insideW=Math.max(0,Math.min(candidate.x+candidate.w,bounds.x+bounds.w)-Math.max(candidate.x,bounds.x)),insideH=Math.max(0,Math.min(candidate.y+candidate.h,bounds.y+bounds.h)-Math.max(candidate.y,bounds.y)),outside=area-insideW*insideH,overlap=placed.reduce((s,d)=>s+mdsRectOverlap(candidate,d),0),pointOverlap=points.reduce((s,p)=>s+mdsRectOverlap(candidate,{x:p.x-p.r-3,y:p.y-p.r-3,w:2*p.r+6,h:2*p.r+6})*(p.id===q.id?0:1),0),cx=clamp(q.pointX,candidate.x,candidate.x+candidate.w),cy=clamp(q.pointY,candidate.y,candidate.y+candidate.h),leader=Math.hypot(cx-q.pointX,cy-q.pointY);return outside*150+overlap*90+pointOverlap*14+leader*.16+candidate.rank*.12}
 function mdsFinalLabelPenalty(candidate,q,placed,points,bounds){const area=candidate.w*candidate.h,insideW=Math.max(0,Math.min(candidate.x+candidate.w,bounds.x+bounds.w)-Math.max(candidate.x,bounds.x)),insideH=Math.max(0,Math.min(candidate.y+candidate.h,bounds.y+bounds.h)-Math.max(candidate.y,bounds.y)),outside=area-insideW*insideH,overlap=placed.reduce((s,d)=>s+mdsRectOverlap(candidate,d),0);return overlap*1e7+outside*1e5+mdsLeaderConflictPenalty(candidate,q,placed,points)+mdsLabelPenalty(candidate,q,placed,points,bounds)}
 function mdsLayoutLabels(items,W,H,pad){const bounds={x:pad+6,y:pad+5,w:W-2*pad-12,h:H-2*pad-10},points=items.map(q=>({x:q.x,y:q.y,r:24,id:q.id}));items.forEach(q=>{q.w=Math.min(bounds.w,mdsTextWidth(q.text));q.h=36;q.nearest=Math.min(...points.filter(p=>p.id!==q.id).map(p=>Math.hypot(q.x-p.x,q.y-p.y)),Infinity)});const ordered=items.slice().sort((a,b)=>a.nearest-b.nearest||a.id.localeCompare(b.id)),placed=[];ordered.forEach(q=>{const candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsLabelPenalty(d,q,placed,points,bounds)<mdsLabelPenalty(winner,q,placed,points,bounds)?d:winner,candidates[0]);Object.assign(q,best);placed.push(q)});for(let pass=0;pass<10;pass++)ordered.forEach(q=>{const others=ordered.filter(d=>d!==q),candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsLabelPenalty(d,q,others,points,bounds)<mdsLabelPenalty(winner,q,others,points,bounds)?d:winner,candidates[0]);Object.assign(q,best)});const final=[];ordered.forEach(q=>{const candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsFinalLabelPenalty(d,q,final,points,bounds)<mdsFinalLabelPenalty(winner,q,final,points,bounds)?d:winner,candidates[0]);Object.assign(q,best);final.push(q)});for(let pass=0;pass<4;pass++)ordered.forEach(q=>{const others=ordered.filter(d=>d!==q),candidates=mdsLabelCandidates(q,bounds),best=candidates.reduce((winner,d)=>mdsFinalLabelPenalty(d,q,others,points,bounds)<mdsFinalLabelPenalty(winner,q,others,points,bounds)?d:winner,candidates[0]);Object.assign(q,best)});return items}
-function mdsSideLayoutLabels(items,W,H,plotLeft,plotRight){const sorted=items.slice().sort((a,b)=>a.pointX-b.pointX||a.pointY-b.pointY||a.id.localeCompare(b.id)),leftIds=new Set(sorted.slice(0,Math.ceil(sorted.length/2)).map(d=>d.id)),place=(rows,side)=>{rows.sort((a,b)=>a.pointY-b.pointY||a.id.localeCompare(b.id));const top=74,bottom=H-74,step=rows.length>1?(bottom-top)/(rows.length-1):0,anchor=side==='left'?plotLeft-18:plotRight+18,maxWidth=Math.max(110,side==='left'?anchor-14:W-anchor-14);rows.forEach((q,i)=>{q.w=Math.min(maxWidth,mdsTextWidth(q.text));q.h=26;q.x=side==='left'?anchor-q.w:anchor;q.y=clamp(top+i*step-q.h/2,54,H-54-q.h);q.textX=anchor;q.textAnchor=side==='left'?'end':'start';q.sideLayout=true})};place(items.filter(q=>leftIds.has(q.id)),'left');place(items.filter(q=>!leftIds.has(q.id)),'right');return items}
+function mdsSideLayoutLabels(items,W,H,plotLeft,plotRight,plotTop,plotBottom){const sorted=items.slice().sort((a,b)=>a.pointX-b.pointX||a.pointY-b.pointY||a.id.localeCompare(b.id)),leftIds=new Set(sorted.slice(0,Math.ceil(sorted.length/2)).map(d=>d.id)),place=(rows,side)=>{rows.sort((a,b)=>a.pointY-b.pointY||a.id.localeCompare(b.id));const top=Math.max(74,plotTop-56),bottom=Math.min(H-74,plotBottom+56),step=rows.length>1?(bottom-top)/(rows.length-1):0,anchor=side==='left'?plotLeft-18:plotRight+18,maxWidth=Math.max(110,side==='left'?anchor-14:W-anchor-14);rows.forEach((q,i)=>{q.w=Math.min(maxWidth,mdsTextWidth(q.text));q.h=26;q.x=side==='left'?anchor-q.w:anchor;q.y=clamp(top+i*step-q.h/2,54,H-54-q.h);q.textX=anchor;q.textAnchor=side==='left'?'end':'start';q.sideLayout=true})};place(items.filter(q=>leftIds.has(q.id)),'left');place(items.filter(q=>!leftIds.has(q.id)),'right');return items}
 function mdsLeaderEndpoints(q){return mdsCandidateLeader(q,q)}
 function mdsSegmentDistance(a,b){if(mdsSegmentsCross(a,b))return 0;return Math.min(mdsPointSegmentDistance({x:a.x1,y:a.y1},b),mdsPointSegmentDistance({x:a.x2,y:a.y2},b),mdsPointSegmentDistance({x:b.x1,y:b.y1},a),mdsPointSegmentDistance({x:b.x2,y:b.y2},a))}
 function mdsVisibleLeaders(candidates){const chosen=[];candidates.filter(d=>d.length>=28).sort((a,b)=>a.length-b.length||a.id.localeCompare(b.id)).forEach(d=>{if(!chosen.some(x=>mdsSegmentDistance(d.segment,x.segment)<8))chosen.push(d)});return chosen}
@@ -1315,25 +1315,26 @@ function drawMds(){
   const g=byId('mdsLayer');
   g.replaceChildren();
   const W=760,H=760,pad=72,pointInset=38,rows=mdsVisibleRows(),
-    crowded=rows.length>12,plotLeft=crowded?232:pad,
-    plotRight=crowded?528:W-pad,dataInset=crowded?30:pointInset;
+    crowded=rows.length>12,plotLeft=crowded?160:pad,
+    plotRight=crowded?600:W-pad,plotTop=crowded?160:pad,
+    plotBottom=crowded?600:H-pad,dataInset=crowded?34:pointInset;
   syncMdsConditionFilter();
   if(!rows.length){
     panelMessage(g,'Select conditions to display.');
     return;
   }
   const sx=scale(rows.map(d=>num(d.MDS1)),plotLeft+dataInset,plotRight-dataInset),
-    sy=scale(rows.map(d=>num(d.MDS2)),H-pad-pointInset,pad+pointInset),
+    sy=scale(rows.map(d=>num(d.MDS2)),plotBottom-dataInset,plotTop+dataInset),
     selected=new Set([cond1Select.value,cond2Select.value].filter(Boolean)),
     shorten=byId('shortConditionNames')&&byId('shortConditionNames').checked,
     labelMap=shorten?mdsShortLabelMap():mdsFullLabelMap(),
     labels=[];
-  g.appendChild(el('line',{x1:plotLeft,y1:H-pad,x2:plotRight,y2:H-pad,stroke:'#111','stroke-width':1.5}));
-  g.appendChild(el('line',{x1:plotLeft,y1:pad,x2:plotLeft,y2:H-pad,stroke:'#111','stroke-width':1.5}));
-  const xTitle=el('text',{x:W/2,y:H-18,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834'});
+  g.appendChild(el('line',{x1:plotLeft,y1:plotBottom,x2:plotRight,y2:plotBottom,stroke:'#111','stroke-width':1.5,'data-mds-axis':'x'}));
+  g.appendChild(el('line',{x1:plotLeft,y1:plotTop,x2:plotLeft,y2:plotBottom,stroke:'#111','stroke-width':1.5,'data-mds-axis':'y'}));
+  const xTitle=el('text',{x:(plotLeft+plotRight)/2,y:Math.min(H-18,plotBottom+42),'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834'});
   xTitle.textContent='MDS1';
   g.appendChild(xTitle);
-  const yTitle=el('text',{x:20,y:H/2,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834',transform:'rotate(-90 20 '+(H/2)+')'});
+  const yMiddle=(plotTop+plotBottom)/2,yTitle=el('text',{x:20,y:yMiddle,'text-anchor':'middle','font-size':15,'font-weight':700,fill:'#303834',transform:'rotate(-90 20 '+yMiddle+')'});
   yTitle.textContent='MDS2';
   g.appendChild(yTitle);
   rows.forEach(d=>{
@@ -1348,7 +1349,7 @@ function drawMds(){
     if(sel)g.appendChild(el('circle',{cx:x,cy:y,r:7,fill:'#111',stroke:'none','pointer-events':'none','data-selection-marker':'true'}));
     labels.push({d,id,pointX:x,pointY:y,x,y,c,p,text});
   });
-  (crowded?mdsSideLayoutLabels(labels,W,H,plotLeft,plotRight):mdsLayoutLabels(labels,W,H,pad)).forEach(q=>{
+  (crowded?mdsSideLayoutLabels(labels,W,H,plotLeft,plotRight,plotTop,plotBottom):mdsLayoutLabels(labels,W,H,pad)).forEach(q=>{
     const e=mdsLeaderEndpoints(q);
     g.appendChild(el('line',{x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,stroke:q.sideLayout?'#7b8480':'#59635e','stroke-width':q.sideLayout?1:1.25,opacity:q.sideLayout?.42:.66,'data-condition-id':q.id}));
     const t=el('text',{x:q.textX||q.x+5,y:q.sideLayout?q.y+19:q.y+25,'text-anchor':q.textAnchor||'start','font-size':18,'font-weight':700,fill:q.c,style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});
