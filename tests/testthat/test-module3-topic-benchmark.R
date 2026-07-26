@@ -1607,6 +1607,13 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "plotBottom=crowded?600:H-pad", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'x'", fixed = TRUE)
   expect_match(html, "'data-mds-axis':'y'", fixed = TRUE)
+  expect_match(html, "q.maxLeader=compact?100:Infinity", fixed = TRUE)
+  expect_match(
+    html,
+    "mdsLayoutLabels(labels,W,H,crowded?54:pad,crowded)",
+    fixed = TRUE
+  )
+  expect_false(grepl("mdsSideLayoutLabels", html, fixed = TRUE))
   expect_match(
     html,
     "querySelectorAll('line[data-condition-id]')",
