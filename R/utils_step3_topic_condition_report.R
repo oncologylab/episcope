@@ -1277,11 +1277,11 @@
     "<label>Topic theta &gt;= <select id=\"networkThetaPreset\"><option value=\"0.3\" selected>0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkThetaCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0.3\"/></label>",
     "<label>Topic Phi &gt;= <select id=\"networkPhiPreset\"><option value=\"0\" selected>0</option><option value=\"0.1\">0.1</option><option value=\"0.2\">0.2</option><option value=\"0.3\">0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkPhiCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0\"/></label>",
     "<label>Primary topic only <input id=\"networkPrimaryOnly\" type=\"checkbox\" checked/></label>",
-    "<label title=\"Add one-hop TF-to-TF context when at least one endpoint is outside the selected topic. Every added edge must touch an in-topic TF.\">Outside-topic TF-TF context <input id=\"networkOutsideTopicTfTf\" type=\"checkbox\"/></label>",
+    "<label title=\"Add one-hop TF-to-TF links when at least one endpoint is outside the selected topic. Every added edge must touch an in-topic TF.\">Outside-topic TF-TF link <input id=\"networkOutsideTopicTfTf\" type=\"checkbox\"/></label>",
     "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Pathway only shows the selected pathway subnetwork. Full topic keeps the topic GRN and dims non-pathway elements.\">Pathway focus <select id=\"networkPathwayFocus\"><option value=\"filter\" selected>Pathway only</option><option value=\"highlight\">Full topic + highlight</option></select></label>",
     "<label>Network <select id=\"networkMode\"><option value=\"tf_gene\" selected>TF-gene</option><option value=\"tf_peak_gene\">TF-peak-gene</option></select></label>",
-    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><output id=\"networkTopTfValue\">100 / 100</output></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><output id=\"networkTopLinksValue\">300 / 300</output></label>",
+    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><output id=\"networkTopTfValue\">100 / 100</output></label><label title=\"When Top links truncates the network, rank TF-to-TF links before TF-to-non-TF links without changing any biological filter.\">Prioritize TF-TF links <input id=\"networkPrioritizeTfTf\" type=\"checkbox\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><output id=\"networkTopLinksValue\">300 / 300</output></label>",
     "<label>Select node <select id=\"networkNodeSelect\" class=\"wideSelect\"></select></label></div>",
     "<div id=\"networkTabLayout\" class=\"networkControls networkTabPanel\" data-network-panel=\"layout\">",
     "<label>Layout <select id=\"networkLayout\"><option value=\"force\" selected>Force</option><option value=\"auto\">Auto</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
@@ -1613,13 +1613,50 @@ function screenPoint(ev){const p=byId('networkSvg').createSVGPoint();p.x=ev.clie
 function syncReportMode(){byId('showPathwaysMode').classList.toggle('active',!networkOpen);byId('showGrnMode').classList.toggle('active',networkOpen);byId('showGrnMode').disabled=overallMode();byId('networkPathwayFocus').disabled=!currentPath()}
 function updateNetworkHeading(){const path=currentPath(),title=path?path.pathway:'Topic '+topicSelect.value+' GRN',context=conditionLabel(cond1Select.value)+(cond2Select.value?' vs '+conditionLabel(cond2Select.value):'')+' | Topic '+topicSelect.value+(tfSelect.value?' | TF '+tfLabel():' | All TFs')+(path?' | Pathway highlighted':'');byId('networkTitle').textContent=title;byId('networkTitle').title=title;byId('networkContext').textContent=context;syncReportMode()}
 function openNetwork(){if(overallMode())return;networkOpen=true;document.body.classList.add('network-open');byId('networkPanel').style.display='flex';updateNetworkHeading();byId('networkStats').textContent='Loading compressed network data...';networkState.view={x:0,y:0,k:1};setLoading(true,'Loading topic GRN...');const loads=[ensureSelectedConditionExpressions(),ensureSelectedConditionEdges(),loadNetworkPayload()];if(byId('networkMode').value==='tf_peak_gene')loads.push(ensureSelectedConditionPeaks());Promise.all(loads).then(()=>{if(networkOpen){updateNetworkHeading();drawNetwork()}}).catch(e=>{byId('networkStats').textContent=e.message}).finally(()=>setLoading(false));byId('networkFit').focus()}function closeNetwork(){networkOpen=false;document.body.classList.remove('network-open');byId('networkPanel').style.display='none';syncReportMode();if(lastNetworkTrigger&&typeof lastNetworkTrigger.focus==='function')lastNetworkTrigger.focus()}
-function exportSvg(svg,name){const clone=svg.cloneNode(true);clone.setAttribute('xmlns',NS);clone.setAttribute('width',1600);clone.setAttribute('height',900);const blob=new Blob([new XMLSerializer().serializeToString(clone)],{type:'image/svg+xml'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();URL.revokeObjectURL(a.href)}
+const SVG_EXPORT_STYLE_PROPERTIES=['fill','fill-opacity','stroke','stroke-opacity','stroke-width','stroke-linecap','stroke-linejoin','stroke-dasharray','opacity','font-family','font-size','font-weight','font-style','paint-order','text-anchor','dominant-baseline','shape-rendering','display','visibility'];
+function cloneSvgForExport(svg){
+  const clone=svg.cloneNode(true),sourceNodes=[svg,...svg.querySelectorAll('*')],
+    cloneNodes=[clone,...clone.querySelectorAll('*')];
+  sourceNodes.forEach((sourceNode,index)=>{
+    const cloneNode=cloneNodes[index],style=getComputedStyle(sourceNode);
+    SVG_EXPORT_STYLE_PROPERTIES.forEach(property=>{
+      const value=style.getPropertyValue(property);
+      if(value)cloneNode.style.setProperty(property,value)
+    })
+  });
+  const box=svg.getBoundingClientRect(),width=Math.max(1,box.width),height=Math.max(1,box.height),
+    viewBox=svg.viewBox&&svg.viewBox.baseVal,background=document.createElementNS(NS,'rect');
+  clone.setAttribute('xmlns',NS);
+  clone.setAttribute('width',String(width));
+  clone.setAttribute('height',String(height));
+  background.setAttribute('data-svg-export-background','true');
+  background.setAttribute('x',String(viewBox?viewBox.x:0));
+  background.setAttribute('y',String(viewBox?viewBox.y:0));
+  background.setAttribute('width',String(viewBox&&viewBox.width?viewBox.width:width));
+  background.setAttribute('height',String(viewBox&&viewBox.height?viewBox.height:height));
+  background.setAttribute('fill','#fff');
+  const definitions=clone.querySelector(':scope > defs');
+  clone.insertBefore(background,definitions?definitions.nextSibling:clone.firstChild);
+  return clone
+}
+function exportSvg(svg,name){
+  const clone=cloneSvgForExport(svg),
+    blob=new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n'+new XMLSerializer().serializeToString(clone)],{type:'image/svg+xml;charset=utf-8'}),
+    url=URL.createObjectURL(blob),anchor=document.createElement('a');
+  anchor.href=url;
+  anchor.download=name;
+  anchor.hidden=true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000)
+}
 function updateProbabilityPanelTitles(){const label=tfSelect.value?' - '+tfLabel():'',rna=conditionTopicMetric&&conditionTopicMetric.value==='rna_delta',matched=byId('thetaAggregation').value==='matched'&&cond2Select.value,n=matched?matchedTfKeys().length:0;byId('conditionProbabilityTitle').textContent=rna?'Differential RNA Activity':'Topic Activity';byId('conditionProbabilityTitle').title=rna?'The same expressed assigned genes are compared in both conditions; positive log2 expression differences are summed and normalized by topic.':matched?'Equal-weight mean theta over the same '+n+' TF documents in both selected conditions.':'Equal-weight mean theta over every available condition::TF document in each condition.';byId('tfConditionProbabilityTitle').textContent='TF Probability'+label;byId('tfConditionProbabilityTitle').title=tfSelect.value?'Condition::TF topic probabilities for '+tfLabel():'TF probabilities for the selected topic'}
 function refresh(){['mdsTooltip','activityTooltip','butterflyTooltip','tfButterflyTooltip','pathTooltip','networkTooltip'].forEach(hideTip);ensureConditionColors();const overall=overallMode();if(overall){cond2Select.value='';tfSelect.value='';pathwayDeOnly.checked=false;if(networkOpen)closeNetwork()}else if(cond2Select.value===cond1Select.value)cond2Select.value='';const paired=!!cond2Select.value;cond2Select.disabled=overall;cond1Color.disabled=overall;cond2Color.disabled=overall||!paired;byId('thetaAggregation').disabled=overall;conditionTopicMetric.disabled=overall;tfSelect.disabled=overall;pathwayScoreMethod.disabled=overall;pathwayDeOnly.disabled=!paired;byId('networkCorrectDirectionOnly').disabled=!paired;if(!pathwayDeOnly.dataset.bound){pathwayDeOnly.dataset.bound='1';pathwayDeOnly.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}})}const directionOnly=byId('networkCorrectDirectionOnly');if(!directionOnly.dataset.bound){directionOnly.dataset.bound='1';directionOnly.addEventListener('change',()=>{if(networkOpen)drawNetwork()})}ensureMdsConditionVisible(cond1Select.value);ensureMdsConditionVisible(cond2Select.value);updateProbabilityPanelTitles();drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();syncReportMode();if(networkOpen){updateNetworkHeading();drawNetwork()}sendState(false)}
 function refreshConditionData(){if(overallMode())return Promise.resolve(PAYLOAD);const tasks=[];if(!cond2Select.value)tasks.push(ensureSelectedConditionPathways());if(tfSelect.value||networkOpen)tasks.push(ensureSelectedConditionExpressions());if(tfSelect.value)tasks.push(ensureSelectedConditionTargets());if(networkOpen){const edgeConditions=[cond1Select.value,cond2Select.value].filter(Boolean),needsEdges=edgeConditions.some(x=>!LOADED_EDGE_CONDITIONS.has(String(x)));if(needsEdges)byId('activityStats').textContent='Loading direct target data...';tasks.push(ensureSelectedConditionEdges())}if(!tasks.length)return Promise.resolve(PAYLOAD);return Promise.all(tasks).then(()=>refresh()).catch(e=>{byId('activityStats').textContent=e.message})}
 function bindActivityZoom(){const svg=byId('activitySvg');let drag=null;svg.addEventListener('wheel',ev=>{ev.preventDefault();changeActivityZoom(ev.deltaY<0?1.25:.8)},{passive:false});svg.addEventListener('mousedown',ev=>{if(ACTIVITY_VIEW.k<=1)return;drag={x:ev.clientX,y:ev.clientY,ox:ACTIVITY_VIEW.ox,oy:ACTIVITY_VIEW.oy};svg.style.cursor='grabbing'});window.addEventListener('mousemove',ev=>{if(!drag)return;ACTIVITY_VIEW.ox=clamp(drag.ox-(ev.clientX-drag.x)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_VIEW.oy=clamp(drag.oy+(ev.clientY-drag.y)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_RENDER_KEY='';drawActivity()});window.addEventListener('mouseup',()=>{drag=null;svg.style.cursor=''});svg.addEventListener('dblclick',()=>{resetActivityZoom();drawActivity()});byId('activityZoomIn').onclick=()=>changeActivityZoom(1.5);byId('activityZoomOut').onclick=()=>changeActivityZoom(1/1.5)}
 function applyExternalState(s,changed){if(!s)return;if(changed==='cond1')setActiveConditionSide(1);if(changed==='cond2')setActiveConditionSide(2);if(s.activeConditionSide)setActiveConditionSide(s.activeConditionSide);if(s.cond1!==undefined&&Array.from(cond1Select.options).some(o=>o.value===String(s.cond1)))cond1Select.value=String(s.cond1);if(s.cond2!==undefined&&Array.from(cond2Select.options).some(o=>o.value===String(s.cond2)))cond2Select.value=String(s.cond2);if(s.topic&&Array.from(topicSelect.options).some(o=>o.value===String(s.topic)))topicSelect.value=String(s.topic);if(s.tf!==undefined&&Array.from(tfSelect.options).some(o=>o.value===String(s.tf)))tfSelect.value=String(s.tf);if(s.metric&&Array.from(conditionTopicMetric.options).some(o=>o.value===String(s.metric)))conditionTopicMetric.value=String(s.metric);if(['method','k','condition','cond1','cond2','topic','tf','metric'].includes(changed))pathwaySelect.value='';if(changed==='condition'||changed==='cond1'||changed==='cond2'){resetPages();resetActivityZoom()}if(changed==='metric'){PAGE_INDEX.topic=0;PAGE_INDEX.path=0}if(changed==='tf'&&tfSelect.value)selectTopTfTopic(tfSelect.value);if(changed==='topic'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}if(changed==='tf'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh();if(['cond1','cond2','condition','tf'].includes(changed))refreshConditionData();if(s.pathway!==undefined&&Array.from(pathwaySelect.options).some(o=>o.value===String(s.pathway))){pathwaySelect.value=String(s.pathway);showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();}if(changed==='pathway'&&pathwaySelect.value)openNetwork();else if(networkOpen){updateNetworkHeading();refreshConditionData()}}
-function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[cond1Select,1],[cond2Select,2]].forEach(([x,side])=>{x.addEventListener('focus',()=>setActiveConditionSide(side));x.addEventListener('change',()=>{setActiveConditionSide(side);pathwaySelect.value='';resetPages();resetActivityZoom();refresh()})});topicSelect.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));refresh()});tfSelect.addEventListener('change',()=>{if(tfSelect.value)selectTopTfTopic(tfSelect.value);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh()});pathwayScoreMethod.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}});pathwaySelect.addEventListener('change',()=>{showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();sendState(false);if(pathwaySelect.value){lastNetworkTrigger=pathwaySelect;openNetwork()}else if(networkOpen){updateNetworkHeading();drawNetwork()}});byId('topicPrev').onclick=()=>movePage('topic',-1,drawButterfly);byId('topicNext').onclick=()=>movePage('topic',1,drawButterfly);byId('tfPrev').onclick=()=>movePage('tf',-1,drawTfButterfly);byId('tfNext').onclick=()=>movePage('tf',1,drawTfButterfly);byId('pathPrev').onclick=()=>movePage('path',-1,drawPathways);byId('pathNext').onclick=()=>movePage('path',1,drawPathways);['networkTfScope','networkThetaCutoff','networkPhiCutoff','networkPrimaryOnly','networkOutsideTopicTfTf','networkMode','networkTopTf','networkTopLinks','networkLayout','networkTfPalette','networkGenePalette','networkEdgePalette','networkTfSingleColor','networkGeneSingleColor','networkEdgeSingleColor','networkTfMin','networkTfMax','networkEdgeMin','networkEdgeMax','networkLabels','networkArrows','networkPathwayFocus'].forEach(id=>{const x=byId(id);x.addEventListener('change',drawNetwork);x.addEventListener('input',drawNetwork)});[['networkThetaPreset','networkThetaCutoff'],['networkPhiPreset','networkPhiCutoff']].forEach(([presetId,inputId])=>{const preset=byId(presetId),input=byId(inputId);preset.addEventListener('change',()=>{if(preset.value!=='custom')input.value=preset.value;drawNetwork()});input.addEventListener('input',()=>{const match=Array.from(preset.options).find(o=>o.value!=='custom'&&Number(o.value)===Number(input.value));preset.value=match?match.value:'custom'})});const spacing=byId('networkSpacing'),spacingValue=byId('networkSpacingValue');spacing.addEventListener('input',()=>{spacingValue.value=spacing.value;drawNetwork()});spacingValue.addEventListener('input',()=>{spacing.value=clamp(num(spacingValue.value,1),.5,2);drawNetwork()});document.querySelectorAll('[data-network-tab]').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('[data-network-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('[data-network-panel]').forEach(x=>x.classList.toggle('active',x.dataset.networkPanel===tab.dataset.networkTab))}));byId('showPathwaysMode').onclick=closeNetwork;byId('showGrnMode').onclick=()=>{lastNetworkTrigger=byId('showGrnMode');openNetwork()};byId('networkFit').onclick=fitNetworkView;byId('networkReset').onclick=()=>{networkState.view={x:0,y:0,k:1};drawNetwork()};byId('networkExport').onclick=()=>exportSvg(byId('networkSvg'),'condition_topic_grn.svg');byId('exportSvgButton').onclick=()=>exportSvg(networkOpen?byId('networkSvg'):byId('pathSvg'),'condition_topic_report.svg');byId('networkNodeSelect').onchange=()=>{networkState.selected=byId('networkNodeSelect').value;markSelected()};document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&networkOpen)closeNetwork()});let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();if(networkOpen)fitNetworkView()},100)});window.addEventListener('message',ev=>{if(ev.data&&ev.data.type==='m3cr-set-state')applyExternalState(ev.data.state,ev.data.changed);if(ev.data&&ev.data.type==='m3cr-active-condition')setActiveConditionSide(ev.data.side);if(ev.data&&ev.data.type==='m3cr-action'&&ev.data.action==='export')byId('exportSvgButton').click()});refresh();sendState(true);refreshConditionData()}
+function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[cond1Select,1],[cond2Select,2]].forEach(([x,side])=>{x.addEventListener('focus',()=>setActiveConditionSide(side));x.addEventListener('change',()=>{setActiveConditionSide(side);pathwaySelect.value='';resetPages();resetActivityZoom();refresh()})});topicSelect.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));refresh()});tfSelect.addEventListener('change',()=>{if(tfSelect.value)selectTopTfTopic(tfSelect.value);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh()});pathwayScoreMethod.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}});pathwaySelect.addEventListener('change',()=>{showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();sendState(false);if(pathwaySelect.value){lastNetworkTrigger=pathwaySelect;openNetwork()}else if(networkOpen){updateNetworkHeading();drawNetwork()}});byId('topicPrev').onclick=()=>movePage('topic',-1,drawButterfly);byId('topicNext').onclick=()=>movePage('topic',1,drawButterfly);byId('tfPrev').onclick=()=>movePage('tf',-1,drawTfButterfly);byId('tfNext').onclick=()=>movePage('tf',1,drawTfButterfly);byId('pathPrev').onclick=()=>movePage('path',-1,drawPathways);byId('pathNext').onclick=()=>movePage('path',1,drawPathways);['networkTfScope','networkThetaCutoff','networkPhiCutoff','networkPrimaryOnly','networkOutsideTopicTfTf','networkPrioritizeTfTf','networkMode','networkTopTf','networkTopLinks','networkLayout','networkTfPalette','networkGenePalette','networkEdgePalette','networkTfSingleColor','networkGeneSingleColor','networkEdgeSingleColor','networkTfMin','networkTfMax','networkEdgeMin','networkEdgeMax','networkLabels','networkArrows','networkPathwayFocus'].forEach(id=>{const x=byId(id);x.addEventListener('change',drawNetwork);x.addEventListener('input',drawNetwork)});[['networkThetaPreset','networkThetaCutoff'],['networkPhiPreset','networkPhiCutoff']].forEach(([presetId,inputId])=>{const preset=byId(presetId),input=byId(inputId);preset.addEventListener('change',()=>{if(preset.value!=='custom')input.value=preset.value;drawNetwork()});input.addEventListener('input',()=>{const match=Array.from(preset.options).find(o=>o.value!=='custom'&&Number(o.value)===Number(input.value));preset.value=match?match.value:'custom'})});const spacing=byId('networkSpacing'),spacingValue=byId('networkSpacingValue');spacing.addEventListener('input',()=>{spacingValue.value=spacing.value;drawNetwork()});spacingValue.addEventListener('input',()=>{spacing.value=clamp(num(spacingValue.value,1),.5,2);drawNetwork()});document.querySelectorAll('[data-network-tab]').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('[data-network-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('[data-network-panel]').forEach(x=>x.classList.toggle('active',x.dataset.networkPanel===tab.dataset.networkTab))}));byId('showPathwaysMode').onclick=closeNetwork;byId('showGrnMode').onclick=()=>{lastNetworkTrigger=byId('showGrnMode');openNetwork()};byId('networkFit').onclick=fitNetworkView;byId('networkReset').onclick=()=>{networkState.view={x:0,y:0,k:1};drawNetwork()};byId('networkExport').onclick=()=>exportSvg(byId('networkSvg'),'condition_topic_grn.svg');byId('exportSvgButton').onclick=()=>exportSvg(networkOpen?byId('networkSvg'):byId('pathSvg'),'condition_topic_report.svg');byId('networkNodeSelect').onchange=()=>{networkState.selected=byId('networkNodeSelect').value;markSelected()};document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&networkOpen)closeNetwork()});let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();if(networkOpen)fitNetworkView()},100)});window.addEventListener('message',ev=>{if(ev.data&&ev.data.type==='m3cr-set-state')applyExternalState(ev.data.state,ev.data.changed);if(ev.data&&ev.data.type==='m3cr-active-condition')setActiveConditionSide(ev.data.side);if(ev.data&&ev.data.type==='m3cr-action'&&ev.data.action==='export')byId('exportSvgButton').click()});refresh();sendState(true);refreshConditionData()}
 [cond1Select,cond2Select,tfSelect].forEach(x=>x.addEventListener('change',refreshConditionData));
 conditionTopicMetric.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('thetaAggregation').addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
@@ -1720,16 +1757,18 @@ drawActivity=function(){
   differentialConditionLabels(g,c1,c2,L+(W-L-R)/4,L+3*(W-L-R)/4);
   g.appendChild(el('line',{x1:L,y1:H-B,x2:W-R,y2:H-B,stroke:'#111','stroke-width':1.5}));
   g.appendChild(el('line',{x1:L,y1:T,x2:L,y2:H-B,stroke:'#111','stroke-width':1.5}));
+  if(c2&&xd[0]<0&&xd[1]>0)g.appendChild(el('line',{'data-activity-zero-axis':'x',x1:sx(0),y1:T,x2:sx(0),y2:H-B,stroke:'#555','stroke-width':1.2,'stroke-dasharray':'4 4'}));
+  if(c2&&yd[0]<0&&yd[1]>0)g.appendChild(el('line',{'data-activity-zero-axis':'y',x1:L,y1:sy(0),x2:W-R,y2:sy(0),stroke:'#555','stroke-width':1.2,'stroke-dasharray':'4 4'}));
   [0,.25,.5,.75,1].forEach(frac=>{
-    const value=yd[0]+frac*(yd[1]-yd[0]),yy=sy(value);
-    g.appendChild(el('line',{x1:L,y1:yy,x2:W-R,y2:yy,stroke:Math.abs(value)<1e-10?'#555':'#8a9690','stroke-width':Math.abs(value)<1e-10?1.2:.8,opacity:frac===0?.45:.25}));
+    const value=yd[0]+frac*(yd[1]-yd[0]),yy=sy(value),zero=Math.abs(value)<1e-10;
+    if(!zero)g.appendChild(el('line',{x1:L,y1:yy,x2:W-R,y2:yy,stroke:'#8a9690','stroke-width':.8,opacity:frac===0?.45:.25}));
     const tick=el('text',{x:L-10,y:yy+4,'text-anchor':'end','font-size':12,'font-weight':700,fill:'#46524d'});
     tick.textContent=value.toFixed(Math.abs(value)<1?2:1);
     g.appendChild(tick)
   });
   [0,.25,.5,.75,1].forEach(frac=>{
-    const value=xd[0]+frac*(xd[1]-xd[0]),xx=sx(value),raw=c2?-100*soft*Math.sinh(value):100*value;
-    g.appendChild(el('line',{x1:xx,y1:T,x2:xx,y2:H-B,stroke:Math.abs(value)<1e-10?'#555':'#8a9690','stroke-width':Math.abs(value)<1e-10?1.2:.8,'stroke-dasharray':Math.abs(value)<1e-10?'4 4':'2 5',opacity:Math.abs(value)<1e-10?1:.3}));
+    const value=xd[0]+frac*(xd[1]-xd[0]),xx=sx(value),raw=c2?-100*soft*Math.sinh(value):100*value,zero=Math.abs(value)<1e-10;
+    if(!zero)g.appendChild(el('line',{x1:xx,y1:T,x2:xx,y2:H-B,stroke:'#8a9690','stroke-width':.8,'stroke-dasharray':'2 5',opacity:.3}));
     const tick=el('text',{x:xx,y:H-B+22,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d'});
     tick.textContent=(raw>0?'+':'')+raw.toFixed(Math.abs(raw)<.1?2:1);
     g.appendChild(tick)
@@ -1742,8 +1781,8 @@ drawActivity=function(){
       base=c2?(d.deltaShare<0?conditionColor(2):conditionColor(1)):conditionColor(1),
       strength=.82+.16*clamp(Math.abs(d.logfc)/lim,0,1),
       point=el('circle',{cx:px,cy:py,r:selected?r+5:r,fill:selected?'#111':base,opacity:selected?1:strength,stroke:'#fff','stroke-width':selected?3:.8,style:'cursor:pointer'}),
-      message=d.tf+'\n'+conditionLabel(c1)+' normalized FP: '+(100*d.shareA).toFixed(3)+'%'+
-        (c2?'\n'+conditionLabel(c2)+' normalized FP: '+(100*d.shareB).toFixed(3)+'%\nTF expression log2FC: '+d.logfc.toFixed(3):'\nTF expression: '+d.exprA.toFixed(3))+
+      message=d.tf+
+        (c2?'\nTF expression log2FC: '+d.logfc.toFixed(3):'\nTF expression: '+d.exprA.toFixed(3))+
         '\nunique targets: '+d.y;
     point.addEventListener('click',()=>selectTf(d.tfu));
     point.addEventListener('mousemove',event=>tooltip('activityTooltip',event,message));
@@ -1773,7 +1812,7 @@ drawPathways=function(){
   const g=byId('pathLayer');
   g.replaceChildren();
   const W=1120,H=900,LABEL_X=700,PLOT_L=750,R=54,PLOT_R=W-R,T=96,B=76,
-    BOTTOM_AXIS_Y=H-B+8,overall=overallMode(),paired=!!cond2Select.value,
+    TOP_AXIS_Y=T-8,BOTTOM_AXIS_Y=H-B+8,overall=overallMode(),paired=!!cond2Select.value,
     rows=pageRows(PATH_ROWS,'path'),rowH=Math.min(27,(H-T-B)/Math.max(rows.length,1)),
     scoreLabel=!overall&&!paired&&rows.some(r=>r.conditionEnrichment)?'condition-topic enrichment combined score':pathwayScoreMethod.value==='rank_enrichment'?'ranked-expression enrichment z-score':'mean standardized-expression score',
     axisText=overall?'Overall topic enrichment combined score':paired?(pathwayScoreMethod.value==='rank_enrichment'?'Delta Rank in Expression':'Delta Z-scored Expression'):scoreLabel+': '+conditionLabel(cond1Select.value);
@@ -1798,12 +1837,14 @@ drawPathways=function(){
   });
   [0,.25,.5,.75,1].forEach(frac=>{
     const value=domain[0]+frac*span,xx=sx(value),zero=Math.abs(value)<span/1000;
-    g.appendChild(el('line',{x1:xx,y1:T-8,x2:xx,y2:BOTTOM_AXIS_Y,stroke:zero?'#4b5550':'#8a9690','stroke-width':zero?1.3:.9,'stroke-dasharray':zero?'5 4':'2 5',opacity:frac===0||frac===1||zero?1:.3}));
-    const tick=el('text',{x:xx,y:BOTTOM_AXIS_Y+18,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d',class:'pathAxisTickLabel'});
-    tick.textContent=formatTick(value);
-    g.appendChild(tick)
+    g.appendChild(el('line',{x1:xx,y1:TOP_AXIS_Y,x2:xx,y2:BOTTOM_AXIS_Y,stroke:zero?'#4b5550':'#8a9690','stroke-width':zero?1.3:.9,'stroke-dasharray':zero?'5 4':'2 5',opacity:frac===0||frac===1||zero?1:.3}));
+    [TOP_AXIS_Y-7,BOTTOM_AXIS_Y+18].forEach(y=>{
+      const tick=el('text',{x:xx,y,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d',class:'pathAxisTickLabel'});
+      tick.textContent=formatTick(value);
+      g.appendChild(tick)
+    })
   });
-  g.appendChild(el('line',{x1:PLOT_L,y1:BOTTOM_AXIS_Y,x2:PLOT_R,y2:BOTTOM_AXIS_Y,stroke:'#111','stroke-width':1.6}));
+  [TOP_AXIS_Y,BOTTOM_AXIS_Y].forEach(y=>g.appendChild(el('line',{x1:PLOT_L,y1:y,x2:PLOT_R,y2:y,stroke:'#111','stroke-width':1.6})));
   const axis=el('text',{x:(PLOT_L+PLOT_R)/2,y:H-7,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'#303834'});
   axis.textContent=axisText;
   g.appendChild(axis);
@@ -1929,8 +1970,10 @@ function networkTfLabel(tf,fallback=''){
 }
 function inducedLinkRank(a,b){
   const selected=tfKey(tfSelect.value),aSelf=a.tfu===geneKey(a.gene),bSelf=b.tfu===geneKey(b.gene),
-    aTfTarget=TF_LABELS.has(geneKey(a.gene)),bTfTarget=TF_LABELS.has(geneKey(b.gene));
-  return Number(b.seedRepresentative)-Number(a.seedRepresentative)||
+    aTfTarget=TF_LABELS.has(geneKey(a.gene)),bTfTarget=TF_LABELS.has(geneKey(b.gene)),
+    prioritizeTfTf=byId('networkPrioritizeTfTf').checked;
+  return (prioritizeTfTf?Number(bTfTarget)-Number(aTfTarget):0)||
+    Number(b.seedRepresentative)-Number(a.seedRepresentative)||
     Number(b.seedLink)-Number(a.seedLink)||
     Number(b.tfTfContext)-Number(a.tfTfContext)||
     Number(b.tfu===selected)-Number(a.tfu===selected)||
@@ -1960,7 +2003,7 @@ buildNetwork=function(){
     rank.set(row.tfu,record)
   });
   const context=networkContextKey(),
-    topTf=syncNetworkRange('networkTopTf','networkTopTfValue',rank.size,100,'tf|'+context),
+    topTf=syncNetworkRange('networkTopTf','networkTopTfValue',rank.size,rank.size,'tf|'+context),
     tfOrder=Array.from(rank.entries()).sort((a,b)=>
       Number(b[0]===tfKey(tfSelect.value))-Number(a[0]===tfKey(tfSelect.value))||
       b[1].correctGenes.size-a[1].correctGenes.size||
@@ -2045,7 +2088,7 @@ buildNetwork=function(){
       tf=addGene(row.tfu,row.tf,true,row.tfu===targetKey),
       target=addGene(row.gene,row.gene,targetIsTf,true),
       directionText=(cond2Select.value?'\ntarget RNA log2FC: '+row.geneLfc.toFixed(3)+'\nTF RNA log2FC: '+row.tfLfc.toFixed(3)+'\ncorrect direction: '+(row.correctDirection?'yes':'no'):'')+
-        (row.tfTfContext?'\noutside-topic TF-TF context: yes':''),
+        (row.tfTfContext?'\noutside-topic TF-TF link: yes':''),
       edgeMetadata={tfTfContext:!!row.tfTfContext,outsideTopicTfTf:!!row.outsideTopicTfTf};
     if(row.tfTfContext)contextLinks.add(row.tfu+'\t'+targetKey);
     if(mode==='tf_peak_gene'){
@@ -2150,10 +2193,9 @@ function networkEdgePath(edge,byNode){
   const from=byNode.get(edge.from),to=byNode.get(edge.to);
   if(!from||!to)return'';
   if(from===to){
-    const halfWidth=Math.max(from.isTf?from.boxW/2:from.r,12),
-      halfHeight=Math.max(from.isTf?from.r*.8:from.r,8),
+    const halfHeight=Math.max(from.isTf?from.r*.8:from.r,8),
       radius=clamp(10+from.r*.3,12,18),
-      startX=from.x+Math.min(halfWidth*.35,halfWidth-2),
+      startX=from.x-radius,
       centerY=from.y-halfHeight-radius-4;
     return'M '+startX+' '+centerY+
       ' a '+radius+' '+radius+' 0 1 1 '+(2*radius)+' 0'+
@@ -2264,7 +2306,7 @@ drawNetwork=function(){
   const counts=byId('networkMode').value==='tf_peak_gene'?
     'Showing '+graph.tfCount+' TFs, '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), and '+graph.peakCount+' peaks, connected by '+graph.linkCount+' unique TF-peak-gene links.':
     'Showing '+graph.tfCount+' TFs and '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), connected by '+graph.linkCount+' unique TF-target links.';
-  const contextCounts=graph.contextLinkCount?' Includes '+graph.contextLinkCount+' outside-topic TF-TF context links.':'';
+  const contextCounts=graph.contextLinkCount?' Includes '+graph.contextLinkCount+' outside-topic TF-TF links.':'';
   byId('networkStats').textContent=counts+contextCounts+' Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Condition 1 - Condition 2 delta FP')+'.'
 };
 if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');loadReportData().then(x=>{GROUP_MDS=x.group_mds||[];GROUP_TOPIC=x.group_topic||[];TF_TOPIC=x.tf_topic||{columns:[],data:[]};PATHWAYS=x.pathways||[];indexTfTopics();return loadOverviewPayload()}).then(()=>{init();setLoading(false)}).catch(e=>{byId('activityStats').textContent=e.message;indexPayload();indexTfTopics();init();setLoading(false)});

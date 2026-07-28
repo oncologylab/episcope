@@ -1872,6 +1872,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "defaults[key+'_suffix']", fixed = TRUE)
   expect_false(grepl("rows[i-1].scoreA>=rows[i-1].scoreB", html, fixed = TRUE))
   expect_match(html, "class:'pathAxisTickLabel'", fixed = TRUE)
+  expect_match(
+    html,
+    "[TOP_AXIS_Y-7,BOTTOM_AXIS_Y+18].forEach",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "[TOP_AXIS_Y,BOTTOM_AXIS_Y].forEach",
+    fixed = TRUE
+  )
   expect_match(html, "Math.pow(2,value)-1", fixed = TRUE)
   expect_match(
     html,
@@ -1927,9 +1937,21 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     'id="networkOutsideTopicTfTf" type="checkbox"',
     fixed = TRUE
   )
+  expect_match(html, "Outside-topic TF-TF link", fixed = TRUE)
+  expect_no_match(html, "Outside-topic TF-TF context <", fixed = TRUE)
   expect_no_match(
     html,
     'id="networkOutsideTopicTfTf" type="checkbox" checked',
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    'id="networkPrioritizeTfTf" type="checkbox"',
+    fixed = TRUE
+  )
+  expect_no_match(
+    html,
+    'id="networkPrioritizeTfTf" type="checkbox" checked',
     fixed = TRUE
   )
   expect_match(html, 'id="networkSpacing"', fixed = TRUE)
@@ -1988,6 +2010,13 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "'\\nTop TFs: '", fixed = TRUE)
   expect_match(html, "overall_pathway_top_tfs", fixed = TRUE)
   expect_match(html, "TF expression log2FC (", fixed = TRUE)
+  expect_match(html, "'data-activity-zero-axis':'x'", fixed = TRUE)
+  expect_match(html, "'data-activity-zero-axis':'y'", fixed = TRUE)
+  expect_match(
+    html,
+    "message=d.tf+\n        (c2?'\\nTF expression log2FC: '",
+    fixed = TRUE
+  )
   expect_match(html, "Delta Rank in Expression", fixed = TRUE)
   expect_match(html, "Delta Z-scored Expression", fixed = TRUE)
   expect_match(html, "function tfPassesTopicInCondition", fixed = TRUE)
@@ -2004,12 +2033,34 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "seedRepresentative", fixed = TRUE)
   expect_match(html, "representativeTargets", fixed = TRUE)
   expect_match(html, "if(from===to)", fixed = TRUE)
+  expect_match(html, "startX=from.x-radius", fixed = TRUE)
+  expect_no_match(
+    html,
+    "startX=from.x+Math.min(halfWidth*.35,halfWidth-2)",
+    fixed = TRUE
+  )
   expect_match(html, "' a '+radius+' '+radius+' 0 1 1 '", fixed = TRUE)
   expect_match(html, "unique TF-target links", fixed = TRUE)
   expect_match(html, "unique TF-peak-gene links", fixed = TRUE)
   expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)
   expect_match(html, "graph.targetCount+' target genes", fixed = TRUE)
   expect_match(html, "function syncNetworkRange", fixed = TRUE)
+  expect_match(
+    html,
+    "syncNetworkRange('networkTopTf','networkTopTfValue',rank.size,rank.size",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "prioritizeTfTf?Number(bTfTarget)-Number(aTfTarget):0",
+    fixed = TRUE
+  )
+  expect_match(html, "function cloneSvgForExport(svg)", fixed = TRUE)
+  expect_match(html, "SVG_EXPORT_STYLE_PROPERTIES", fixed = TRUE)
+  expect_match(html, "getComputedStyle(sourceNode)", fixed = TRUE)
+  expect_match(html, "data-svg-export-background", fixed = TRUE)
+  expect_match(html, "svg.getBoundingClientRect()", fixed = TRUE)
+  expect_match(html, "setTimeout(()=>URL.revokeObjectURL(url),1000)", fixed = TRUE)
   expect_match(html, "topTopic=topicNum(topRow.topic_num||topRow.topic)", fixed = TRUE)
   expect_match(
     html,
