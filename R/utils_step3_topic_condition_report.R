@@ -114,6 +114,78 @@
   }, character(1L)))
 }
 
+.m3cr_overall_pathway_top_tfs <- function(topic_pathways, parts, top_n = 5L) {
+  empty <- data.table::data.table(
+    topic_num = integer(),
+    pathway_key = character(),
+    tf = character(),
+    n_targets = integer(),
+    rank = integer()
+  )
+  pathways <- data.table::copy(data.table::as.data.table(topic_pathways))
+  if (!nrow(pathways) ||
+      !all(c("topic_num", "pathway_key") %in% names(pathways))) {
+    return(empty)
+  }
+  gene_column <- if ("genes" %in% names(pathways)) {
+    "genes"
+  } else if ("overlap_genes" %in% names(pathways)) {
+    "overlap_genes"
+  } else {
+    return(empty)
+  }
+  edge_parts <- lapply(parts, function(part) {
+    edges <- data.table::as.data.table(part$tf_gene)
+    if (!nrow(edges) ||
+        !all(c("tf", "gene_key") %in% names(edges))) {
+      return(NULL)
+    }
+    unique(edges[, .(
+      tf = as.character(tf),
+      gene_match = toupper(as.character(gene_key))
+    )])
+  })
+  edges <- data.table::rbindlist(edge_parts, use.names = TRUE, fill = TRUE)
+  if (!nrow(edges)) return(empty)
+  edges <- unique(edges[
+    !is.na(tf) & nzchar(tf) & !is.na(gene_match) & nzchar(gene_match)
+  ])
+  if (!nrow(edges)) return(empty)
+  tf_by_gene <- split(edges$tf, edges$gene_match)
+  top_n <- max(1L, as.integer(top_n)[[1L]])
+  rows <- lapply(seq_len(nrow(pathways)), function(i) {
+    genes <- unique(unlist(
+      .m3tb_subgrn_split_genes(pathways[[gene_column]][[i]]),
+      use.names = FALSE
+    ))
+    genes <- toupper(genes[!is.na(genes) & nzchar(genes)])
+    if (!length(genes)) return(NULL)
+    tf_values <- unlist(tf_by_gene[intersect(genes, names(tf_by_gene))],
+      use.names = FALSE
+    )
+    if (!length(tf_values)) return(NULL)
+    counts <- sort(table(tf_values), decreasing = TRUE)
+    labels <- names(counts)
+    order_index <- order(
+      -as.integer(counts),
+      tolower(labels),
+      labels
+    )
+    keep <- order_index[seq_len(min(top_n, length(order_index)))]
+    data.table::data.table(
+      topic_num = as.integer(pathways$topic_num[[i]]),
+      pathway_key = as.character(pathways$pathway_key[[i]]),
+      tf = labels[keep],
+      n_targets = as.integer(counts[keep]),
+      rank = seq_along(keep)
+    )
+  })
+  out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
+  if (!nrow(out)) return(empty)
+  data.table::setorder(out, topic_num, pathway_key, rank)
+  out[]
+}
+
 .m3cr_report_data_file <- function(out_html) {
   key <- digest::digest(
     basename(as.character(out_html)[[1L]]),
@@ -818,6 +890,11 @@
       max_peaks_per_tf_gene = max_peaks_per_tf_gene
     )
   })
+  overall_pathway_top_tfs <- .m3cr_overall_pathway_top_tfs(
+    topic_pathways = topic_pathways,
+    parts = parts,
+    top_n = 5L
+  )
   edge_gene_expr <- data.table::rbindlist(lapply(parts, function(part) {
     part$tf_gene[, .(
       gene_expr = max(gene_expr, na.rm = TRUE)
@@ -1022,6 +1099,7 @@
       condition_topic_expression = condition_topic_expression,
       pathway_activity = pathway_scores$activity,
       pathway_gene_expression = pathway_scores$gene_expression,
+      overall_pathway_top_tfs = overall_pathway_top_tfs,
       tf_dictionary = tf_dictionary,
       gene_dictionary = gene_dictionary
     ),
@@ -1168,13 +1246,13 @@
     ".pane{background:#fff;border:1px solid #cfd2cc;display:flex;flex-direction:column;min-height:0;overflow:hidden}.paneHead{min-height:42px;padding:8px 11px;border-bottom:1px solid #dfe2dc;display:flex;justify-content:space-between;gap:10px;align-items:center}",
     ".pane h2,.mini h2{font-size:14px;line-height:1.1;margin:0;white-space:nowrap}.body{position:relative;flex:1;min-height:0;overflow:hidden}.meta{font-size:11px;color:#52605a}.bottomPair .meta{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.bottomPair .paneHead{padding:6px 8px;gap:4px}.contextWrap,.headTools{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0}.conditionTopicMetricControl{width:142px;min-width:0;font-size:10px;padding:4px 5px}body.embed .conditionTopicMetricControl,body.embed .conditionTopicMetricControl+.help{display:none}.iconButton{width:25px;height:25px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:15px!important;line-height:1}.zoomButton{height:25px;padding:3px 8px!important;font-size:11px!important;line-height:1;white-space:nowrap}.pathScoreControl{font-size:11px;gap:4px!important}.pathScoreControl select{font-size:11px;padding:4px 6px}",
     ".help{display:inline-flex;width:19px;height:19px;border:1px solid #9ca3a0;border-radius:50%;align-items:center;justify-content:center;font-size:12px;color:#38413d;background:#fff;cursor:help}.tooltip{position:absolute;display:none;background:rgba(17,17,17,.96);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:8px 9px;border-radius:4px;pointer-events:none;max-width:460px;line-height:1.35;z-index:30}",
-    "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text{font-weight:700}#activityLayer text{font-size:16px;font-weight:700}#butterflyLayer text{font-size:21px;font-weight:700}#tfButterflyLayer text{font-size:18px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 18px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 12px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
-    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:92px;padding:0}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:10px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round;opacity:.58}",
+    "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text,#activityLayer text,#butterflyLayer text,#tfButterflyLayer text{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700}#pathLayer text{font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 14px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 14px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
+    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round;opacity:.58}",
     "body.network-open{overflow:hidden}body.embed .top{display:none}body.embed .grid{flex:1}",
     ".pathLabelTopicSpecific,.pathLabelConditionSpecific,.pathLabelBothSpecific{fill:#171717}.reportModeToggle{display:inline-flex;gap:2px}.reportModeToggle button{padding:4px 8px;background:#fff;color:#171717;border-color:#9ca3a0}.reportModeToggle button.active{background:#202322;color:#fff}.loadingOverlay{position:fixed;inset:0;z-index:1000;background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px}.loadingOverlay[hidden]{display:none}.loadingSpinner{width:26px;height:26px;border:4px solid #cfd5d0;border-top-color:#202322;border-radius:50%;animation:m3cr-spin .75s linear infinite}@keyframes m3cr-spin{to{transform:rotate(360deg)}}.networkControls{padding:5px 7px;gap:5px 8px}.networkHeading{min-height:46px;padding:5px 8px}.networkHeading button{padding:4px 7px}.singleColorInput{width:30px;height:27px;padding:2px}.singleColorInput[hidden]{display:none}",
     ".mdsConditionFilter{position:relative;z-index:45}.mdsConditionFilter summary{list-style:none;cursor:pointer;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:4px 7px;font:700 10px Arial,Helvetica,sans-serif;white-space:nowrap}.mdsConditionFilter summary::-webkit-details-marker{display:none}.mdsConditionFilter[open] summary{background:#202322;color:#fff}.mdsConditionFilterPanel{position:absolute;right:0;top:calc(100% + 5px);width:min(430px,calc(100vw - 24px));max-height:330px;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:7px;z-index:50}.mdsConditionFilterActions{display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #dfe2dc}.mdsConditionFilterActions button{padding:4px 8px;font-size:10px}.mdsConditionFilterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:270px;overflow:auto;padding-top:6px}.mdsConditionFilterOption{display:flex;align-items:center;gap:5px;min-width:0;font-size:10px;line-height:1.2;cursor:pointer}.mdsConditionFilterOption input{margin:0;padding:0;flex:0 0 auto}.mdsConditionFilterOption span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mdsStats{display:none}",
     "@media(max-width:1450px){.top{gap:7px}.top label+label{padding-left:7px}.bottomPair .help{display:none}.bottomPair .paneHead h2{font-size:13px}.paneHead:has(#shortConditionNames) .help,#mdsStats{display:none}.paneHead label:has(#shortConditionNames){font-size:10px!important}}",
-    "@media(max-width:1240px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.pathLabel{font-size:16px}}"
+    "@media(max-width:1240px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}"
   )
 }
 
@@ -1198,11 +1276,12 @@
     "<label>TF scope <select id=\"networkTfScope\"><option value=\"topic\" selected>In Topic</option><option value=\"all\">All TFs</option></select></label>",
     "<label>Topic theta &gt;= <select id=\"networkThetaPreset\"><option value=\"0.3\" selected>0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkThetaCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0.3\"/></label>",
     "<label>Topic Phi &gt;= <select id=\"networkPhiPreset\"><option value=\"0\" selected>0</option><option value=\"0.1\">0.1</option><option value=\"0.2\">0.2</option><option value=\"0.3\">0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkPhiCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0\"/></label>",
-    "<label>Primary topic only <input id=\"networkPrimaryOnly\" type=\"checkbox\"/></label>",
-    "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\"/></label>",
+    "<label>Primary topic only <input id=\"networkPrimaryOnly\" type=\"checkbox\" checked/></label>",
+    "<label title=\"Add one-hop TF-to-TF context when at least one endpoint is outside the selected topic. Every added edge must touch an in-topic TF.\">Outside-topic TF-TF context <input id=\"networkOutsideTopicTfTf\" type=\"checkbox\"/></label>",
+    "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Pathway only shows the selected pathway subnetwork. Full topic keeps the topic GRN and dims non-pathway elements.\">Pathway focus <select id=\"networkPathwayFocus\"><option value=\"filter\" selected>Pathway only</option><option value=\"highlight\">Full topic + highlight</option></select></label>",
     "<label>Network <select id=\"networkMode\"><option value=\"tf_gene\" selected>TF-gene</option><option value=\"tf_peak_gene\">TF-peak-gene</option></select></label>",
-    "<label>Top TFs <input id=\"networkTopTf\" type=\"number\" min=\"1\" value=\"100\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"number\" min=\"1\" value=\"300\"/></label>",
+    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><output id=\"networkTopTfValue\">100 / 100</output></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><output id=\"networkTopLinksValue\">300 / 300</output></label>",
     "<label>Select node <select id=\"networkNodeSelect\" class=\"wideSelect\"></select></label></div>",
     "<div id=\"networkTabLayout\" class=\"networkControls networkTabPanel\" data-network-panel=\"layout\">",
     "<label>Layout <select id=\"networkLayout\"><option value=\"force\" selected>Force</option><option value=\"auto\">Auto</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
@@ -1210,7 +1289,7 @@
     "<div id=\"networkTabAppearance\" class=\"networkControls networkTabPanel\" data-network-panel=\"appearance\">",
     "<label>TF palette <select id=\"networkTfPalette\">", palette_options, "</select><input id=\"networkTfSingleColor\" class=\"singleColorInput\" type=\"color\" value=\"#B2182B\" hidden title=\"Fixed TF color\"/></label><label>Gene palette <select id=\"networkGenePalette\">", palette_options, "</select><input id=\"networkGeneSingleColor\" class=\"singleColorInput\" type=\"color\" value=\"#2166AC\" hidden title=\"Fixed gene color\"/></label><label>Edge palette <select id=\"networkEdgePalette\">", palette_options, "</select><input id=\"networkEdgeSingleColor\" class=\"singleColorInput\" type=\"color\" value=\"#59615D\" hidden title=\"Fixed edge color\"/></label>",
     "<label title=\"Smallest TF node half-height, in SVG units.\">TF box min <input id=\"networkTfMin\" type=\"number\" min=\"6\" max=\"40\" value=\"14\"/></label><label title=\"Largest TF node half-height, in SVG units. Maximum 40.\">TF box max <input id=\"networkTfMax\" type=\"number\" min=\"6\" max=\"40\" value=\"20\"/></label>",
-    "<label title=\"Smallest displayed edge width, in SVG units.\">Edge min <input id=\"networkEdgeMin\" type=\"number\" min=\"0.2\" max=\"12\" step=\"0.1\" value=\"1.2\"/></label><label title=\"Largest displayed edge width, in SVG units.\">Edge max <input id=\"networkEdgeMax\" type=\"number\" min=\"0.2\" max=\"12\" step=\"0.1\" value=\"6.7\"/></label>",
+    "<label title=\"Smallest displayed edge width, in SVG units.\">Edge min <input id=\"networkEdgeMin\" type=\"number\" min=\"0.05\" max=\"12\" step=\"0.05\" value=\"0.25\"/></label><label title=\"Largest displayed edge width, in SVG units.\">Edge max <input id=\"networkEdgeMax\" type=\"number\" min=\"0.05\" max=\"12\" step=\"0.05\" value=\"1\"/></label>",
     "<label>Labels <input id=\"networkLabels\" type=\"checkbox\" checked/></label><label>Arrows <input id=\"networkArrows\" type=\"checkbox\" checked/></label></div>",
     "<div id=\"networkStats\" class=\"networkStats\"></div></div>",
     "<div id=\"networkCanvas\" class=\"networkCanvas\"><div id=\"networkTooltip\" class=\"tooltip\"></div>",
@@ -1259,7 +1338,7 @@ function mdsLayoutLabels(items,W,H,pad,compact=false){
   const bounds=compact?{x:54,y:54,w:W-108,h:H-108}:{x:pad+6,y:pad+5,w:W-2*pad-12,h:H-2*pad-10},
     points=items.map(q=>({x:q.x,y:q.y,r:24,id:q.id})),
     candidatesFor=q=>{const source=mdsLabelCandidates(q,bounds),own={x:q.pointX-28,y:q.pointY-28,w:56,h:56},clean=source.filter(d=>points.every(p=>mdsRectOverlap(d,{x:p.x-24,y:p.y-24,w:48,h:48})===0)),all=clean.length?clean:source.filter(d=>mdsRectOverlap(d,own)===0);if(!Number.isFinite(q.maxLeader))return all;const near=all.filter(d=>{const e=mdsCandidateLeader(q,d);return Math.hypot(e.x2-e.x1,e.y2-e.y1)<=q.maxLeader});return near.length?near:all};
-  items.forEach(q=>{q.compact=compact;q.fontSize=compact?17:18;q.w=Math.min(bounds.w,mdsTextWidth(q.text,q.fontSize));q.h=compact?27:36;q.maxLeader=compact?100:Infinity;q.nearest=Math.min(...points.filter(p=>p.id!==q.id).map(p=>Math.hypot(q.x-p.x,q.y-p.y)),Infinity)});
+  items.forEach(q=>{q.compact=compact;q.fontSize=19;q.w=Math.min(bounds.w,mdsTextWidth(q.text,q.fontSize));q.h=compact?27:36;q.maxLeader=compact?100:Infinity;q.nearest=Math.min(...points.filter(p=>p.id!==q.id).map(p=>Math.hypot(q.x-p.x,q.y-p.y)),Infinity)});
   const solve=compare=>{
     const work=items.map(q=>Object.assign({},q)),ordered=work.sort(compare),placed=[];
     ordered.forEach(q=>{const candidates=candidatesFor(q),best=candidates.reduce((winner,d)=>mdsLabelPenalty(d,q,placed,points,bounds)<mdsLabelPenalty(winner,q,placed,points,bounds)?d:winner,candidates[0]);Object.assign(q,best);placed.push(q)});
@@ -1404,13 +1483,13 @@ function drawMds(){
     t.addEventListener('mousemove',ev=>tooltip('mdsTooltip',ev,(q.d.display_label||q.id)+'\ndocuments: '+num(q.d.n_docs)));
     t.addEventListener('mouseout',()=>hideTip('mdsTooltip'));
     g.appendChild(t);
-    if(q.compact)fitSvgText(t,q.w,12);
+    if(q.compact)fitSvgText(t,q.w,19);
   });
   styleMdsPlot();
 }
 function scale(vals,lo,hi){const x=vals.filter(Number.isFinite);if(!x.length)return()=>((lo+hi)/2);const a=Math.min(...x),b=Math.max(...x);return v=>a===b?(lo+hi)/2:lo+(v-a)/(b-a)*(hi-lo)}
 function activityRows(){const c1=cond1Select.value,c2=cond2Select.value,by=(PAYLOAD.tf_activity||[]).filter(d=>[c1,c2].includes(String(d.condition_id))).reduce((m,d)=>{const key=tfKey(d.tf_upper||d.tf),q=m.get(key)||{tf:d.tf,tfu:key,a:0,b:0,y:0,exprA:0,exprB:0};if(String(d.condition_id)===String(c1)){q.a=num(d.fp_sum);q.y=Math.max(q.y,num(d.n_targets));q.exprA=num(d.tf_expr)}else{q.b=num(d.fp_sum);q.y=Math.max(q.y,num(d.n_targets));q.exprB=num(d.tf_expr)}m.set(key,q);return m},new Map()),rows=Array.from(by.values()),totalA=rows.reduce((s,d)=>s+Math.max(0,d.a),0),totalB=rows.reduce((s,d)=>s+Math.max(0,d.b),0),positive=[];rows.forEach(d=>{if(d.a>0&&totalA>0)positive.push(d.a/totalA);if(c2&&d.b>0&&totalB>0)positive.push(d.b/totalB)});const pseudo=Math.max(1e-12,(positive.length?Math.min(...positive):1e-8)/2);return rows.map(d=>{const shareA=totalA>0?Math.max(0,d.a)/totalA:0,shareB=totalB>0?Math.max(0,d.b)/totalB:0;return Object.assign(d,{shareA,shareB,deltaShare:shareA-shareB,relativeLog2:Math.log2((shareA+pseudo)/(shareB+pseudo)),expr:Math.max(d.exprA||0,d.exprB||0),logfc:c2?Math.log2((d.exprA+1)/(d.exprB+1)):tfTheta(c1,d.tfu,topicSelect.value)})})}
-function differentialConditionLabels(g,c1,c2,leftX,rightX,y=27){if(c2){const maxWidth=Math.max(70,Math.abs(rightX-leftX)-18),l=el('text',{x:leftX,y,'text-anchor':'middle','font-size':16,'font-weight':700,fill:conditionColor(1)});l.textContent=conditionLabel(c1);g.appendChild(l);fitSvgText(l,maxWidth);const r=el('text',{x:rightX,y,'text-anchor':'middle','font-size':16,'font-weight':700,fill:conditionColor(2)});r.textContent=conditionLabel(c2);g.appendChild(r);fitSvgText(r,maxWidth)}else{const t=el('text',{x:(leftX+rightX)/2,y,'text-anchor':'middle','font-size':16,'font-weight':700,fill:conditionColor(1)});t.textContent=conditionLabel(c1);g.appendChild(t);fitSvgText(t,Math.max(90,Math.abs(rightX-leftX)-18))}}
+function differentialConditionLabels(g,c1,c2,leftX,rightX,y=27){if(c2){const maxWidth=Math.max(70,Math.abs(rightX-leftX)-18),l=el('text',{x:leftX,y,'text-anchor':'middle','font-size':12,'font-weight':700,fill:conditionColor(1)});l.textContent=conditionLabel(c1);g.appendChild(l);fitSvgText(l,maxWidth,num(getComputedStyle(l).fontSize,12));const r=el('text',{x:rightX,y,'text-anchor':'middle','font-size':12,'font-weight':700,fill:conditionColor(2)});r.textContent=conditionLabel(c2);g.appendChild(r);fitSvgText(r,maxWidth,num(getComputedStyle(r).fontSize,12))}else{const t=el('text',{x:(leftX+rightX)/2,y,'text-anchor':'middle','font-size':12,'font-weight':700,fill:conditionColor(1)});t.textContent=conditionLabel(c1);g.appendChild(t);fitSvgText(t,Math.max(90,Math.abs(rightX-leftX)-18),num(getComputedStyle(t).fontSize,12))}}
 function activityViewDomain(lo,hi,offset){const full=Math.max(hi-lo,1e-9),span=full/ACTIVITY_VIEW.k,minCenter=lo+span/2,maxCenter=hi-span/2,center=clamp((lo+hi)/2+offset*full,minCenter,maxCenter);return[center-span/2,center+span/2]}
 function resetActivityZoom(){ACTIVITY_VIEW={k:1,ox:0,oy:0};ACTIVITY_RENDER_KEY=''}
 function changeActivityZoom(factor){ACTIVITY_VIEW.k=clamp(ACTIVITY_VIEW.k*factor,1,16);if(ACTIVITY_VIEW.k===1){ACTIVITY_VIEW.ox=0;ACTIVITY_VIEW.oy=0}ACTIVITY_RENDER_KEY='';drawActivity()}
@@ -1422,7 +1501,7 @@ const drawMdsWithPrunedLeaders=drawMds;drawMds=()=>{drawMdsWithPrunedLeaders();m
 const drawMdsUncached=drawMds;drawMds=()=>{const key=[cond1Select.value,cond2Select.value,byId('shortConditionNames')&&byId('shortConditionNames').checked,Array.from(MDS_VISIBLE_CONDITIONS).sort().join('|'),renderColorKey()].join('\t');if(key===MDS_RENDER_KEY)return;MDS_RENDER_KEY=key;drawMdsUncached()};
 const drawActivityUncached=drawActivity;drawActivity=()=>{const key=[cond1Select.value,cond2Select.value,tfSelect.value,DATA_VERSION,conditionColor(1),conditionColor(2),ACTIVITY_VIEW.k,ACTIVITY_VIEW.ox,ACTIVITY_VIEW.oy].join('\t');if(key===ACTIVITY_RENDER_KEY)return;ACTIVITY_RENDER_KEY=key;drawActivityUncached()};
 function singleAxisStart(rows,labelFn,minX,maxX){const longest=Math.max(0,...rows.map(d=>String(labelFn(d)||'').length));return clamp(34+longest*10.2,minX,maxX)}
-function butterflyAxes(g,c1,c2,W,H,L,R,T,B,gap,singleStart=L){const cx=c2?W/2:singleStart,xw=c2?(W-L-R-2*gap)/2:W-singleStart-R,axisY=T-10;if(!c2)g.appendChild(el('line',{x1:cx,y1:T-12,x2:cx,y2:H-B,stroke:'#111','stroke-width':1.5}));if(c2){g.appendChild(el('line',{x1:cx-gap-xw,y1:axisY,x2:cx-gap,y2:axisY,stroke:conditionColor(1),'stroke-width':1.5}));g.appendChild(el('line',{x1:cx+gap,y1:axisY,x2:cx+gap+xw,y2:axisY,stroke:conditionColor(2),'stroke-width':1.5}))}else g.appendChild(el('line',{x1:cx,y1:axisY,x2:cx+xw,y2:axisY,stroke:conditionColor(1),'stroke-width':1.5}));[.25,.5,.75,1].forEach(v=>{if(c2){const xl=cx-gap-v*xw,xr=cx+gap+v*xw;g.appendChild(el('line',{x1:xl,y1:T-15,x2:xl,y2:H-B,stroke:'#8a9690','stroke-width':1,opacity:.25}));g.appendChild(el('line',{x1:xr,y1:T-15,x2:xr,y2:H-B,stroke:'#8a9690','stroke-width':1,opacity:.25}))}});const t1=el('text',{x:c2?cx-gap-xw/2:cx+xw/2,y:18,'text-anchor':'middle','font-size':16,'font-weight':700,fill:conditionColor(1)});t1.textContent=conditionLabel(c1);g.appendChild(t1);fitSvgText(t1,Math.max(80,xw-12));if(c2){const t2=el('text',{x:cx+gap+xw/2,y:18,'text-anchor':'middle','font-size':16,'font-weight':700,fill:conditionColor(2)});t2.textContent=conditionLabel(c2);g.appendChild(t2);fitSvgText(t2,Math.max(80,xw-12))}[0,.5,1].forEach(v=>{const addTick=(x,color)=>{g.appendChild(el('line',{x1:x,y1:axisY-4,x2:x,y2:axisY+4,stroke:color,'stroke-width':1.2}));const q=el('text',{x,y:axisY-7,'text-anchor':'middle','font-size':12,'font-weight':700,fill:color});q.textContent=v.toFixed(1);g.appendChild(q)};if(c2){addTick(cx-gap-v*xw,conditionColor(1));addTick(cx+gap+v*xw,conditionColor(2))}else addTick(cx+v*xw,conditionColor(1))});return{cx,xw}}
+function butterflyAxes(g,c1,c2,W,H,L,R,T,B,gap,singleStart=L){const cx=c2?W/2:singleStart,xw=c2?(W-L-R-2*gap)/2:W-singleStart-R,axisY=T-10;if(!c2)g.appendChild(el('line',{x1:cx,y1:T-12,x2:cx,y2:H-B,stroke:'#111','stroke-width':1.5}));if(c2){g.appendChild(el('line',{x1:cx-gap-xw,y1:axisY,x2:cx-gap,y2:axisY,stroke:conditionColor(1),'stroke-width':1.5}));g.appendChild(el('line',{x1:cx+gap,y1:axisY,x2:cx+gap+xw,y2:axisY,stroke:conditionColor(2),'stroke-width':1.5}))}else g.appendChild(el('line',{x1:cx,y1:axisY,x2:cx+xw,y2:axisY,stroke:conditionColor(1),'stroke-width':1.5}));[.25,.5,.75,1].forEach(v=>{if(c2){const xl=cx-gap-v*xw,xr=cx+gap+v*xw;g.appendChild(el('line',{x1:xl,y1:T-15,x2:xl,y2:H-B,stroke:'#8a9690','stroke-width':1,opacity:.25}));g.appendChild(el('line',{x1:xr,y1:T-15,x2:xr,y2:H-B,stroke:'#8a9690','stroke-width':1,opacity:.25}))}});const t1=el('text',{x:c2?cx-gap-xw/2:cx+xw/2,y:18,'text-anchor':'middle','font-size':19,'font-weight':700,fill:conditionColor(1)});t1.textContent=conditionLabel(c1);g.appendChild(t1);fitSvgText(t1,Math.max(80,xw-12),19);if(c2){const t2=el('text',{x:cx+gap+xw/2,y:18,'text-anchor':'middle','font-size':19,'font-weight':700,fill:conditionColor(2)});t2.textContent=conditionLabel(c2);g.appendChild(t2);fitSvgText(t2,Math.max(80,xw-12),19)}[0,.5,1].forEach(v=>{const addTick=(x,color)=>{g.appendChild(el('line',{x1:x,y1:axisY-4,x2:x,y2:axisY+4,stroke:color,'stroke-width':1.2}));const q=el('text',{x,y:axisY-7,'text-anchor':'middle','font-size':19,'font-weight':700,fill:color});q.textContent=v.toFixed(1);g.appendChild(q)};if(c2){addTick(cx-gap-v*xw,conditionColor(1));addTick(cx+gap+v*xw,conditionColor(2))}else addTick(cx+v*xw,conditionColor(1))});return{cx,xw}}
 function conditionTopicRows(){const c1=cond1Select.value,c2=cond2Select.value,topics=Array.from(topicSelect.options).map(o=>Number(o.value));return topics.map(t=>({topic:t,a:groupTopic(c1,t),b:c2?groupTopic(c2,t):0})).sort((a,b)=>Math.max(b.a,b.b)-Math.max(a.a,a.b)||a.topic-b.topic)}
 function drawButterfly(){const g=byId('butterflyLayer');g.replaceChildren();const c1=cond1Select.value,c2=cond2Select.value;if(!c1){panelMessage(g,'Select a condition to view topic activity.');byId('butterflyStats').textContent='Overall pathway mode';return}const W=760,H=760,L=24,R=24,T=58,B=30,gap=70,metric=conditionTopicMetricLabel(),all=conditionTopicRows(),vals=pageRows(all,'topic'),ax=butterflyAxes(g,c1,c2,W,H,L,R,T,B,gap,singleAxisStart(vals,d=>'Topic '+d.topic,165,245)),rowH=Math.min(40,(H-T-B)/Math.max(vals.length,1)),barH=Math.max(18,Math.min(28,rowH*.7));vals.forEach((d,i)=>{const y=T+i*rowH,w1=clamp(d.a,0,1)*ax.xw,w2=clamp(d.b,0,1)*ax.xw,sel=Number(topicSelect.value)===d.topic;if(i%2===1)g.appendChild(el('rect',{x:0,y:y-3,width:W,height:rowH,fill:'#f7f8f6'}));const label=el('text',{x:c2?ax.cx:ax.cx-10,y:y+barH*.79,'text-anchor':c2?'middle':'end','font-size':18,'font-weight':700,fill:sel?'#991B1B':'#171717',style:'cursor:pointer'});label.textContent='Topic '+d.topic;const choose=()=>{topicSelect.value=String(d.topic);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;refresh()};label.addEventListener('click',choose);g.appendChild(label);const a=el('rect',{x:c2?ax.cx-gap-w1:ax.cx,y,width:Math.max(2,w1),height:barH,fill:conditionColor(1),stroke:sel?'#111':'none','stroke-width':sel?3:0,style:'cursor:pointer'});a.addEventListener('click',choose);a.addEventListener('mousemove',ev=>tooltip('butterflyTooltip',ev,conditionLabel(c1)+' / Topic '+d.topic+'\n'+metric+': '+d.a.toFixed(4)));a.addEventListener('mouseout',()=>hideTip('butterflyTooltip'));g.appendChild(a);const av=el('text',{x:c2?Math.max(78,ax.cx-gap-w1-5):ax.cx+w1+5,y:y+barH*.73,'text-anchor':c2?'end':'start','font-size':12,'font-weight':700,fill:conditionColor(1),style:'pointer-events:none;paint-order:stroke;stroke:#fff;stroke-width:3px'});av.textContent=d.a.toFixed(3);g.appendChild(av);if(c2){const b=el('rect',{x:ax.cx+gap,y,width:Math.max(2,w2),height:barH,fill:conditionColor(2),stroke:sel?'#111':'none','stroke-width':sel?3:0,style:'cursor:pointer'});b.addEventListener('click',choose);b.addEventListener('mousemove',ev=>tooltip('butterflyTooltip',ev,conditionLabel(c2)+' / Topic '+d.topic+'\n'+metric+': '+d.b.toFixed(4)));b.addEventListener('mouseout',()=>hideTip('butterflyTooltip'));g.appendChild(b);const bv=el('text',{x:Math.min(W-78,ax.cx+gap+w2+5),y:y+barH*.73,'text-anchor':'start','font-size':12,'font-weight':700,fill:conditionColor(2),style:'pointer-events:none;paint-order:stroke;stroke:#fff;stroke-width:3px'});bv.textContent=d.b.toFixed(3);g.appendChild(bv)}});const start=all.length?PAGE_INDEX.topic*PAGE_SIZE.topic+1:0;byId('butterflyStats').textContent=start+'-'+(start+vals.length-1)+' of '+all.length}
 function tfButterflyRows(){const c1=cond1Select.value,c2=cond2Select.value,topic=Number(topicSelect.value),selected=tfKey(tfSelect.value);if(selected)return conditionTopicRows().map(d=>({key:'topic:'+d.topic,label:'Topic '+d.topic,topic:d.topic,a:tfTheta(c1,selected,d.topic),b:c2?tfTheta(c2,selected,d.topic):0}));const rows=Array.from(TF_LABELS,([key,label])=>({key,label,a:tfTheta(c1,key,topic),b:c2?tfTheta(c2,key,topic):0,delta:tfTheta(c1,key,topic)-(c2?tfTheta(c2,key,topic):0)}));if(!c2)return rows.sort((a,b)=>b.a-a.a||a.label.localeCompare(b.label,undefined,{sensitivity:'base'})).slice(0,20);const pos=rows.filter(d=>d.delta>=0).sort((a,b)=>b.delta-a.delta||a.label.localeCompare(b.label,undefined,{sensitivity:'base'})).slice(0,10),neg=rows.filter(d=>d.delta<0).sort((a,b)=>a.delta-b.delta||a.label.localeCompare(b.label,undefined,{sensitivity:'base'})).slice(0,10);return pos.concat(neg)}
@@ -1446,7 +1525,7 @@ const expressionPathwayRows=pathwayRows;
 pathwayRows=function(){const c1=cond1Select.value,c2=cond2Select.value;if(!c1||c2)return expressionPathwayRows();const topic=Number(topicSelect.value),source=CONDITION_PATHWAYS_BY_COND.get(String(c1))||[],tf=tfSelect.value,targets=tf?selectedTfTargets(c1,tf):new Set();let rows=source.filter(d=>topicNum(d.topic_num||d.topic)===topic&&num(d.padj,1)<=.05).map(d=>{const genes=splitGenes(d.genes||d.overlap_genes),overlap=Math.max(num(d.gene_in,0),genes.length),score=Number.isFinite(Number(d.combined_score))?Math.max(0,Number(d.combined_score)):-Math.log10(Math.max(num(d.padj,1),1e-300)),tfA=tf?genes.filter(g=>targets.has(g)):[];return{key:pathKey(d.pathway_key||d.pathway_norm_key||d.pathway),pathway:String(d.pathway),scoreA:score,scoreB:NaN,delta:score,padj:num(d.padj,1),overlap,deOverlap:0,deGenes:[],genesA:genes,genesB:[],genes,tfA,tfB:[],tfUnion:tfA,tfCountA:tfA.length,tfCountB:0,tfCountUnion:tfA.length,conditionEnrichment:true}});if(tf)rows=rows.filter(r=>r.tfCountA>0).sort((a,b)=>b.tfCountA-a.tfCountA||b.scoreA-a.scoreA||a.padj-b.padj||a.pathway.localeCompare(b.pathway));else rows.sort((a,b)=>b.scoreA-a.scoreA||a.padj-b.padj||b.overlap-a.overlap||a.pathway.localeCompare(b.pathway));return rows}
 function updatePathwaySelect(rows){const current=pathwaySelect.value,opts=[{value:'',label:'None'}].concat(rows.slice().sort((a,b)=>a.pathway.localeCompare(b.pathway,undefined,{sensitivity:'base'})).map(r=>({value:r.key,label:r.pathway})));fillSelect(pathwaySelect,opts,opts.some(x=>x.value===current)?current:'')}
 function pathwayLabelClass(pathway){const key=pathKey(pathway),topics=new Set(),conditions=new Set();PATHWAYS.forEach(d=>{if(pathKey(d.pathway_key||d.pathway_norm_key||d.pathway)!==key)return;topics.add(topicNum(d.topic_num||d.topic));const condition=String(d.comparison_label||d.condition_id||d.comparison_id||'');if(condition)conditions.add(condition)});const topicSpecific=topics.size===1,conditionSpecific=conditions.size===1;return topicSpecific&&conditionSpecific?'pathLabel pathLabelBothSpecific':topicSpecific?'pathLabel pathLabelTopicSpecific':conditionSpecific?'pathLabel pathLabelConditionSpecific':'pathLabel'}
-function wrapText(g,text,x,y,maxWidth,cls='pathLabel'){const value=String(text).trim(),t=el('text',{x,y,'text-anchor':'end',class:cls,style:'cursor:pointer'});t.textContent=value;g.appendChild(t);fitSvgText(t,maxWidth,13);return{node:t,lines:1}}
+function wrapText(g,text,x,y,maxWidth,cls='pathLabel'){const value=String(text).trim(),t=el('text',{x,y,'text-anchor':'end',class:cls,style:'cursor:pointer'});t.textContent=value;g.appendChild(t);fitSvgText(t,maxWidth,14);return{node:t,lines:1}}
 function addPathLegend(g,sizeLabel){const size=el('text',{x:24,y:20,class:'pathLegend',fill:'#46524d'});size.textContent='Size: '+sizeLabel.replace(/^Dot size\s*=\s*/i,'');g.appendChild(size)}
 function drawPathways(){
   PATH_ROWS=pathwayRows();
@@ -1540,7 +1619,7 @@ function refresh(){['mdsTooltip','activityTooltip','butterflyTooltip','tfButterf
 function refreshConditionData(){if(overallMode())return Promise.resolve(PAYLOAD);const tasks=[];if(!cond2Select.value)tasks.push(ensureSelectedConditionPathways());if(tfSelect.value||networkOpen)tasks.push(ensureSelectedConditionExpressions());if(tfSelect.value)tasks.push(ensureSelectedConditionTargets());if(networkOpen){const edgeConditions=[cond1Select.value,cond2Select.value].filter(Boolean),needsEdges=edgeConditions.some(x=>!LOADED_EDGE_CONDITIONS.has(String(x)));if(needsEdges)byId('activityStats').textContent='Loading direct target data...';tasks.push(ensureSelectedConditionEdges())}if(!tasks.length)return Promise.resolve(PAYLOAD);return Promise.all(tasks).then(()=>refresh()).catch(e=>{byId('activityStats').textContent=e.message})}
 function bindActivityZoom(){const svg=byId('activitySvg');let drag=null;svg.addEventListener('wheel',ev=>{ev.preventDefault();changeActivityZoom(ev.deltaY<0?1.25:.8)},{passive:false});svg.addEventListener('mousedown',ev=>{if(ACTIVITY_VIEW.k<=1)return;drag={x:ev.clientX,y:ev.clientY,ox:ACTIVITY_VIEW.ox,oy:ACTIVITY_VIEW.oy};svg.style.cursor='grabbing'});window.addEventListener('mousemove',ev=>{if(!drag)return;ACTIVITY_VIEW.ox=clamp(drag.ox-(ev.clientX-drag.x)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_VIEW.oy=clamp(drag.oy+(ev.clientY-drag.y)/600/ACTIVITY_VIEW.k,-.5,.5);ACTIVITY_RENDER_KEY='';drawActivity()});window.addEventListener('mouseup',()=>{drag=null;svg.style.cursor=''});svg.addEventListener('dblclick',()=>{resetActivityZoom();drawActivity()});byId('activityZoomIn').onclick=()=>changeActivityZoom(1.5);byId('activityZoomOut').onclick=()=>changeActivityZoom(1/1.5)}
 function applyExternalState(s,changed){if(!s)return;if(changed==='cond1')setActiveConditionSide(1);if(changed==='cond2')setActiveConditionSide(2);if(s.activeConditionSide)setActiveConditionSide(s.activeConditionSide);if(s.cond1!==undefined&&Array.from(cond1Select.options).some(o=>o.value===String(s.cond1)))cond1Select.value=String(s.cond1);if(s.cond2!==undefined&&Array.from(cond2Select.options).some(o=>o.value===String(s.cond2)))cond2Select.value=String(s.cond2);if(s.topic&&Array.from(topicSelect.options).some(o=>o.value===String(s.topic)))topicSelect.value=String(s.topic);if(s.tf!==undefined&&Array.from(tfSelect.options).some(o=>o.value===String(s.tf)))tfSelect.value=String(s.tf);if(s.metric&&Array.from(conditionTopicMetric.options).some(o=>o.value===String(s.metric)))conditionTopicMetric.value=String(s.metric);if(['method','k','condition','cond1','cond2','topic','tf','metric'].includes(changed))pathwaySelect.value='';if(changed==='condition'||changed==='cond1'||changed==='cond2'){resetPages();resetActivityZoom()}if(changed==='metric'){PAGE_INDEX.topic=0;PAGE_INDEX.path=0}if(changed==='tf'&&tfSelect.value)selectTopTfTopic(tfSelect.value);if(changed==='topic'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}if(changed==='tf'){PAGE_INDEX.tf=0;PAGE_INDEX.path=0}showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh();if(['cond1','cond2','condition','tf'].includes(changed))refreshConditionData();if(s.pathway!==undefined&&Array.from(pathwaySelect.options).some(o=>o.value===String(s.pathway))){pathwaySelect.value=String(s.pathway);showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();}if(changed==='pathway'&&pathwaySelect.value)openNetwork();else if(networkOpen){updateNetworkHeading();refreshConditionData()}}
-function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[cond1Select,1],[cond2Select,2]].forEach(([x,side])=>{x.addEventListener('focus',()=>setActiveConditionSide(side));x.addEventListener('change',()=>{setActiveConditionSide(side);pathwaySelect.value='';resetPages();resetActivityZoom();refresh()})});topicSelect.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));refresh()});tfSelect.addEventListener('change',()=>{if(tfSelect.value)selectTopTfTopic(tfSelect.value);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh()});pathwayScoreMethod.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}});pathwaySelect.addEventListener('change',()=>{showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();sendState(false);if(pathwaySelect.value){lastNetworkTrigger=pathwaySelect;openNetwork()}else if(networkOpen){updateNetworkHeading();drawNetwork()}});byId('topicPrev').onclick=()=>movePage('topic',-1,drawButterfly);byId('topicNext').onclick=()=>movePage('topic',1,drawButterfly);byId('tfPrev').onclick=()=>movePage('tf',-1,drawTfButterfly);byId('tfNext').onclick=()=>movePage('tf',1,drawTfButterfly);byId('pathPrev').onclick=()=>movePage('path',-1,drawPathways);byId('pathNext').onclick=()=>movePage('path',1,drawPathways);['networkTfScope','networkThetaCutoff','networkPhiCutoff','networkPrimaryOnly','networkMode','networkTopTf','networkTopLinks','networkLayout','networkTfPalette','networkGenePalette','networkEdgePalette','networkTfSingleColor','networkGeneSingleColor','networkEdgeSingleColor','networkTfMin','networkTfMax','networkEdgeMin','networkEdgeMax','networkLabels','networkArrows','networkPathwayFocus'].forEach(id=>{const x=byId(id);x.addEventListener('change',drawNetwork);x.addEventListener('input',drawNetwork)});[['networkThetaPreset','networkThetaCutoff'],['networkPhiPreset','networkPhiCutoff']].forEach(([presetId,inputId])=>{const preset=byId(presetId),input=byId(inputId);preset.addEventListener('change',()=>{if(preset.value!=='custom')input.value=preset.value;drawNetwork()});input.addEventListener('input',()=>{const match=Array.from(preset.options).find(o=>o.value!=='custom'&&Number(o.value)===Number(input.value));preset.value=match?match.value:'custom'})});const spacing=byId('networkSpacing'),spacingValue=byId('networkSpacingValue');spacing.addEventListener('input',()=>{spacingValue.value=spacing.value;drawNetwork()});spacingValue.addEventListener('input',()=>{spacing.value=clamp(num(spacingValue.value,1),.5,2);drawNetwork()});document.querySelectorAll('[data-network-tab]').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('[data-network-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('[data-network-panel]').forEach(x=>x.classList.toggle('active',x.dataset.networkPanel===tab.dataset.networkTab))}));byId('showPathwaysMode').onclick=closeNetwork;byId('showGrnMode').onclick=()=>{lastNetworkTrigger=byId('showGrnMode');openNetwork()};byId('networkFit').onclick=fitNetworkView;byId('networkReset').onclick=()=>{networkState.view={x:0,y:0,k:1};drawNetwork()};byId('networkExport').onclick=()=>exportSvg(byId('networkSvg'),'condition_topic_grn.svg');byId('exportSvgButton').onclick=()=>exportSvg(networkOpen?byId('networkSvg'):byId('pathSvg'),'condition_topic_report.svg');byId('networkNodeSelect').onchange=()=>{networkState.selected=byId('networkNodeSelect').value;markSelected()};document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&networkOpen)closeNetwork()});let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();if(networkOpen)fitNetworkView()},100)});window.addEventListener('message',ev=>{if(ev.data&&ev.data.type==='m3cr-set-state')applyExternalState(ev.data.state,ev.data.changed);if(ev.data&&ev.data.type==='m3cr-active-condition')setActiveConditionSide(ev.data.side);if(ev.data&&ev.data.type==='m3cr-action'&&ev.data.action==='export')byId('exportSvgButton').click()});refresh();sendState(true);refreshConditionData()}
+function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[cond1Select,1],[cond2Select,2]].forEach(([x,side])=>{x.addEventListener('focus',()=>setActiveConditionSide(side));x.addEventListener('change',()=>{setActiveConditionSide(side);pathwaySelect.value='';resetPages();resetActivityZoom();refresh()})});topicSelect.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));refresh()});tfSelect.addEventListener('change',()=>{if(tfSelect.value)selectTopTfTopic(tfSelect.value);pathwaySelect.value='';PAGE_INDEX.tf=0;PAGE_INDEX.path=0;showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));if(tfSelect.value)showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);refresh()});pathwayScoreMethod.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.path=0;drawPathways();sendState(false);if(networkOpen){updateNetworkHeading();drawNetwork()}});pathwaySelect.addEventListener('change',()=>{showItemPage(PATH_ROWS,'path',d=>d.key===pathwaySelect.value);drawPathways();sendState(false);if(pathwaySelect.value){lastNetworkTrigger=pathwaySelect;openNetwork()}else if(networkOpen){updateNetworkHeading();drawNetwork()}});byId('topicPrev').onclick=()=>movePage('topic',-1,drawButterfly);byId('topicNext').onclick=()=>movePage('topic',1,drawButterfly);byId('tfPrev').onclick=()=>movePage('tf',-1,drawTfButterfly);byId('tfNext').onclick=()=>movePage('tf',1,drawTfButterfly);byId('pathPrev').onclick=()=>movePage('path',-1,drawPathways);byId('pathNext').onclick=()=>movePage('path',1,drawPathways);['networkTfScope','networkThetaCutoff','networkPhiCutoff','networkPrimaryOnly','networkOutsideTopicTfTf','networkMode','networkTopTf','networkTopLinks','networkLayout','networkTfPalette','networkGenePalette','networkEdgePalette','networkTfSingleColor','networkGeneSingleColor','networkEdgeSingleColor','networkTfMin','networkTfMax','networkEdgeMin','networkEdgeMax','networkLabels','networkArrows','networkPathwayFocus'].forEach(id=>{const x=byId(id);x.addEventListener('change',drawNetwork);x.addEventListener('input',drawNetwork)});[['networkThetaPreset','networkThetaCutoff'],['networkPhiPreset','networkPhiCutoff']].forEach(([presetId,inputId])=>{const preset=byId(presetId),input=byId(inputId);preset.addEventListener('change',()=>{if(preset.value!=='custom')input.value=preset.value;drawNetwork()});input.addEventListener('input',()=>{const match=Array.from(preset.options).find(o=>o.value!=='custom'&&Number(o.value)===Number(input.value));preset.value=match?match.value:'custom'})});const spacing=byId('networkSpacing'),spacingValue=byId('networkSpacingValue');spacing.addEventListener('input',()=>{spacingValue.value=spacing.value;drawNetwork()});spacingValue.addEventListener('input',()=>{spacing.value=clamp(num(spacingValue.value,1),.5,2);drawNetwork()});document.querySelectorAll('[data-network-tab]').forEach(tab=>tab.addEventListener('click',()=>{document.querySelectorAll('[data-network-tab]').forEach(x=>x.classList.toggle('active',x===tab));document.querySelectorAll('[data-network-panel]').forEach(x=>x.classList.toggle('active',x.dataset.networkPanel===tab.dataset.networkTab))}));byId('showPathwaysMode').onclick=closeNetwork;byId('showGrnMode').onclick=()=>{lastNetworkTrigger=byId('showGrnMode');openNetwork()};byId('networkFit').onclick=fitNetworkView;byId('networkReset').onclick=()=>{networkState.view={x:0,y:0,k:1};drawNetwork()};byId('networkExport').onclick=()=>exportSvg(byId('networkSvg'),'condition_topic_grn.svg');byId('exportSvgButton').onclick=()=>exportSvg(networkOpen?byId('networkSvg'):byId('pathSvg'),'condition_topic_report.svg');byId('networkNodeSelect').onchange=()=>{networkState.selected=byId('networkNodeSelect').value;markSelected()};document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&networkOpen)closeNetwork()});let resizeTimer=null;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{drawMds();drawActivity();drawButterfly();drawTfButterfly();drawPathways();if(networkOpen)fitNetworkView()},100)});window.addEventListener('message',ev=>{if(ev.data&&ev.data.type==='m3cr-set-state')applyExternalState(ev.data.state,ev.data.changed);if(ev.data&&ev.data.type==='m3cr-active-condition')setActiveConditionSide(ev.data.side);if(ev.data&&ev.data.type==='m3cr-action'&&ev.data.action==='export')byId('exportSvgButton').click()});refresh();sendState(true);refreshConditionData()}
 [cond1Select,cond2Select,tfSelect].forEach(x=>x.addEventListener('change',refreshConditionData));
 conditionTopicMetric.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('thetaAggregation').addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
@@ -1549,6 +1628,645 @@ document.addEventListener('click',ev=>{const filter=byId('mdsConditionFilter');i
 byId('networkMode').addEventListener('change',()=>{if(byId('networkMode').value!=='tf_peak_gene')return;byId('networkStats').textContent='Loading peak data...';ensureSelectedConditionPeaks().then(()=>{if(networkOpen)drawNetwork()}).catch(e=>{byId('networkStats').textContent=e.message})});
 cond1Color.addEventListener('input',()=>{if(cond1Select.value)CONDITION_COLORS[cond1Select.value]=cond1Color.value;refresh()});cond2Color.addEventListener('input',()=>{if(cond2Select.value)CONDITION_COLORS[cond2Select.value]=cond2Color.value;refresh()});
 window.addEventListener('message',ev=>{if(!ev.data||ev.data.type!=='m3cr-set-state')return;const s=ev.data.state||{};if(s.colors&&typeof s.colors==='object')Object.entries(s.colors).forEach(([k,v])=>{if(/^#[0-9a-f]{6}$/i.test(String(v)))CONDITION_COLORS[k]=v});if(cond1Select.value&&/^#[0-9a-f]{6}$/i.test(String(s.color1||'')))CONDITION_COLORS[cond1Select.value]=s.color1;if(cond2Select.value&&/^#[0-9a-f]{6}$/i.test(String(s.color2||'')))CONDITION_COLORS[cond2Select.value]=s.color2;refresh()});
+let PATHWAY_TARGET_PREFETCH_KEY='';
+const refreshBeforePilot=refresh;
+refresh=function(){
+  const deOnly=pathwayDeOnly.checked;
+  refreshBeforePilot();
+  pathwayDeOnly.checked=deOnly;
+};
+function quietLoadConditionTargets(condition){
+  const key=String(condition||''),files=conditionPayloadFiles(key),file=files.target_file;
+  if(!key||!file||LOADED_TARGET_CONDITIONS.has(key))return Promise.resolve(PAYLOAD);
+  return loadPayloadFile(file).then(x=>{
+    indexConditionPart(key,'target',x);
+    LOADED_TARGET_CONDITIONS.add(key);
+    PAYLOAD_PROMISES.delete(file);
+    return PAYLOAD
+  })
+}
+function prefetchSelectedTargetIndexes(){
+  const conditions=selectedConditions(),key=conditions.join('|');
+  if(!conditions.length||conditions.every(c=>LOADED_TARGET_CONDITIONS.has(String(c))))return;
+  if(PATHWAY_TARGET_PREFETCH_KEY===key)return;
+  PATHWAY_TARGET_PREFETCH_KEY=key;
+  const load=()=>conditions.reduce(
+    (promise,condition)=>promise.then(()=>quietLoadConditionTargets(condition)),
+    Promise.resolve()
+  ).then(()=>{
+    if(selectedConditions().join('|')===key)drawPathways()
+  }).catch(()=>{}).finally(()=>{
+    if(PATHWAY_TARGET_PREFETCH_KEY===key)PATHWAY_TARGET_PREFETCH_KEY=''
+  });
+  if('requestIdleCallback' in window)window.requestIdleCallback(load,{timeout:1200});
+  else window.setTimeout(load,60)
+}
+function pathwayTopTfRows(row){
+  if(overallMode()){
+    return(PAYLOAD.overall_pathway_top_tfs||[])
+      .filter(d=>topicNum(d.topic_num)===Number(topicSelect.value)&&pathKey(d.pathway_key)===row.key)
+      .sort((a,b)=>num(a.rank,99)-num(b.rank,99)||num(b.n_targets)-num(a.n_targets)||String(a.tf).localeCompare(String(b.tf),undefined,{sensitivity:'base'}))
+      .slice(0,5)
+      .map(d=>({tf:String(d.tf),n:num(d.n_targets)}))
+  }
+  const genes=new Set((row.genes||[]).map(geneKey)),byTf=new Map();
+  selectedConditions().forEach(condition=>{
+    const index=TF_TARGETS_BY_COND.get(String(condition))||new Map();
+    index.forEach((targets,tf)=>{
+      const record=byTf.get(tf)||new Set();
+      targets.forEach(gene=>{if(genes.has(geneKey(gene)))record.add(geneKey(gene))});
+      if(record.size)byTf.set(tf,record)
+    })
+  });
+  return Array.from(byTf.entries())
+    .map(([tf,targets])=>({tf:TF_LABELS.get(tf)||tf,n:targets.size}))
+    .sort((a,b)=>b.n-a.n||a.tf.localeCompare(b.tf,undefined,{sensitivity:'base'}))
+    .slice(0,5)
+}
+function pathwayHoverMessage(row){
+  const genes=Array.from(new Set((row.genes||[]).map(String))).sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'})),
+    ready=overallMode()||selectedConditions().every(c=>LOADED_TARGET_CONDITIONS.has(String(c))),
+    top=ready?pathwayTopTfRows(row):[];
+  return'Target genes ('+genes.length+'): '+(genes.length?genes.join(', '):'none')+
+    '\nTop TFs: '+(ready?(top.length?top.map(d=>d.tf+' ('+d.n+')').join(', '):'none'):'loading...')
+}
+drawActivity=function(){
+  const g=byId('activityLayer');
+  g.replaceChildren();
+  const c1=cond1Select.value,c2=cond2Select.value;
+  if(!c1){
+    panelMessage(g,'Select a condition to view TF activity.');
+    byId('activityStats').textContent='Overall pathway mode';
+    return
+  }
+  const W=760,H=760,L=88,R=120,T=58,B=78,pointInset=22,rows=activityRows(),
+    absDelta=rows.map(d=>Math.abs(d.deltaShare)).filter(v=>v>0&&Number.isFinite(v)).sort((a,b)=>a-b),
+    soft=Math.max(1e-8,absDelta.length?absDelta[Math.floor((absDelta.length-1)*.5)]:1e-4),
+    displayX=d=>c2?-Math.asinh(d.deltaShare/soft):d.shareA,
+    displayY=d=>c2?d.logfc:Math.log2(Math.max(0,d.exprA)+directionConfig().pseudocount),
+    xvals=rows.map(displayX).filter(Number.isFinite),
+    xlim=c2?Math.max(...xvals.map(Math.abs),1):Math.max(...xvals,1e-6),
+    fullX=c2?[-xlim,xlim]:[0,xlim],
+    yvals=rows.map(displayY).filter(Number.isFinite),
+    yLoRaw=Math.min(0,...yvals),yHiRaw=Math.max(0,...yvals),
+    ySpan=Math.max(yHiRaw-yLoRaw,.5),yPad=.08*ySpan,
+    fullY=[yLoRaw-yPad,yHiRaw+yPad],
+    xd=activityViewDomain(fullX[0],fullX[1],ACTIVITY_VIEW.ox),
+    yd=activityViewDomain(fullY[0],fullY[1],ACTIVITY_VIEW.oy),
+    sx=scale(xd,L+pointInset,W-R-pointInset),
+    sy=scale(yd,H-B-pointInset,T+pointInset),
+    lim=Math.max(...rows.map(d=>Math.abs(d.logfc)).filter(Number.isFinite),1),
+    exprMax=Math.max(...rows.map(d=>Math.log2(Math.max(0,d.expr)+1)),1);
+  differentialConditionLabels(g,c1,c2,L+(W-L-R)/4,L+3*(W-L-R)/4);
+  g.appendChild(el('line',{x1:L,y1:H-B,x2:W-R,y2:H-B,stroke:'#111','stroke-width':1.5}));
+  g.appendChild(el('line',{x1:L,y1:T,x2:L,y2:H-B,stroke:'#111','stroke-width':1.5}));
+  [0,.25,.5,.75,1].forEach(frac=>{
+    const value=yd[0]+frac*(yd[1]-yd[0]),yy=sy(value);
+    g.appendChild(el('line',{x1:L,y1:yy,x2:W-R,y2:yy,stroke:Math.abs(value)<1e-10?'#555':'#8a9690','stroke-width':Math.abs(value)<1e-10?1.2:.8,opacity:frac===0?.45:.25}));
+    const tick=el('text',{x:L-10,y:yy+4,'text-anchor':'end','font-size':12,'font-weight':700,fill:'#46524d'});
+    tick.textContent=value.toFixed(Math.abs(value)<1?2:1);
+    g.appendChild(tick)
+  });
+  [0,.25,.5,.75,1].forEach(frac=>{
+    const value=xd[0]+frac*(xd[1]-xd[0]),xx=sx(value),raw=c2?-100*soft*Math.sinh(value):100*value;
+    g.appendChild(el('line',{x1:xx,y1:T,x2:xx,y2:H-B,stroke:Math.abs(value)<1e-10?'#555':'#8a9690','stroke-width':Math.abs(value)<1e-10?1.2:.8,'stroke-dasharray':Math.abs(value)<1e-10?'4 4':'2 5',opacity:Math.abs(value)<1e-10?1:.3}));
+    const tick=el('text',{x:xx,y:H-B+22,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d'});
+    tick.textContent=(raw>0?'+':'')+raw.toFixed(Math.abs(raw)<.1?2:1);
+    g.appendChild(tick)
+  });
+  rows.slice().sort((a,b)=>Number(tfKey(tfSelect.value)===a.tfu)-Number(tfKey(tfSelect.value)===b.tfu)).forEach(d=>{
+    const dx=displayX(d),dy=displayY(d);
+    if(!Number.isFinite(dx)||!Number.isFinite(dy)||dx<xd[0]||dx>xd[1]||dy<yd[0]||dy>yd[1])return;
+    const px=sx(dx),py=sy(dy),r=2.8+3*Math.sqrt(Math.log2(Math.max(0,d.expr)+1)/exprMax),
+      selected=tfKey(tfSelect.value)===d.tfu,
+      base=c2?(d.deltaShare<0?conditionColor(2):conditionColor(1)):conditionColor(1),
+      strength=.82+.16*clamp(Math.abs(d.logfc)/lim,0,1),
+      point=el('circle',{cx:px,cy:py,r:selected?r+5:r,fill:selected?'#111':base,opacity:selected?1:strength,stroke:'#fff','stroke-width':selected?3:.8,style:'cursor:pointer'}),
+      message=d.tf+'\n'+conditionLabel(c1)+' normalized FP: '+(100*d.shareA).toFixed(3)+'%'+
+        (c2?'\n'+conditionLabel(c2)+' normalized FP: '+(100*d.shareB).toFixed(3)+'%\nTF expression log2FC: '+d.logfc.toFixed(3):'\nTF expression: '+d.exprA.toFixed(3))+
+        '\nunique targets: '+d.y;
+    point.addEventListener('click',()=>selectTf(d.tfu));
+    point.addEventListener('mousemove',event=>tooltip('activityTooltip',event,message));
+    point.addEventListener('mouseout',()=>hideTip('activityTooltip'));
+    g.appendChild(point);
+    if(selected){
+      const right=px<W-R-95,label=el('text',{x:px+(right?r+12:-r-12),y:py-9,'text-anchor':right?'start':'end','font-size':14,'font-weight':700,fill:'#111',style:'cursor:pointer;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round'});
+      label.textContent=d.tf;
+      label.addEventListener('click',()=>selectTf(d.tfu));
+      g.appendChild(label)
+    }
+  });
+  const xTitle=el('text',{x:(L+W-R)/2,y:H-14,'text-anchor':'middle','font-size':14,'font-weight':700});
+  xTitle.textContent=c2?'Normalized FP difference (pp): '+conditionLabel(c1)+' - '+conditionLabel(c2):'Normalized FP: '+conditionLabel(c1);
+  g.appendChild(xTitle);
+  fitSvgText(xTitle,W-L-R-12,19);
+  const yTitle=el('text',{x:25,y:(T+H-B)/2,'text-anchor':'middle','font-size':14,'font-weight':700,transform:'rotate(-90 25 '+((T+H-B)/2)+')'});
+  yTitle.textContent=c2?'TF expression log2FC ('+conditionLabel(c1)+' / '+conditionLabel(c2)+')':'TF expression (log2 scale)';
+  g.appendChild(yTitle);
+  fitSvgText(yTitle,H-T-B-12,19);
+  byId('activityStats').textContent=rows.length+' TFs | '+ACTIVITY_VIEW.k.toFixed(1)+'x'
+};
+drawPathways=function(){
+  prefetchSelectedTargetIndexes();
+  PATH_ROWS=pathwayRows();
+  updatePathwaySelect(PATH_ROWS);
+  const g=byId('pathLayer');
+  g.replaceChildren();
+  const W=1120,H=900,LABEL_X=700,PLOT_L=750,R=54,PLOT_R=W-R,T=96,B=76,
+    BOTTOM_AXIS_Y=H-B+8,overall=overallMode(),paired=!!cond2Select.value,
+    rows=pageRows(PATH_ROWS,'path'),rowH=Math.min(27,(H-T-B)/Math.max(rows.length,1)),
+    scoreLabel=!overall&&!paired&&rows.some(r=>r.conditionEnrichment)?'condition-topic enrichment combined score':pathwayScoreMethod.value==='rank_enrichment'?'ranked-expression enrichment z-score':'mean standardized-expression score',
+    axisText=overall?'Overall topic enrichment combined score':paired?(pathwayScoreMethod.value==='rank_enrichment'?'Delta Rank in Expression':'Delta Z-scored Expression'):scoreLabel+': '+conditionLabel(cond1Select.value);
+  addPathLegend(g,overall?'Dot size = topic-overlap genes':'Dot size = expressed overlap genes');
+  if(paired)differentialConditionLabels(g,cond1Select.value,cond2Select.value,PLOT_L+(PLOT_R-PLOT_L)/4,PLOT_L+3*(PLOT_R-PLOT_L)/4,43);
+  else if(!overall)differentialConditionLabels(g,cond1Select.value,'',PLOT_L,PLOT_R,43);
+  if(!rows.length){
+    const text=el('text',{x:30,y:112,'font-size':14,'font-weight':700});
+    text.textContent=overall?'No significant overall pathways are available for this topic.':tfSelect.value?'No significant overall topic pathways contain direct targets of the selected TF.':'No significant overall topic pathways have at least three expression-matched genes.';
+    g.appendChild(text);
+    byId('pathStats').textContent='0 pathways';
+    return
+  }
+  const scores=PATH_ROWS.map(r=>r.delta).filter(Number.isFinite),maxAbs=Math.max(...scores.map(Math.abs),.05),
+    domain=paired?[-maxAbs,maxAbs]:[Math.min(0,...scores),Math.max(...scores,.05)],
+    span=Math.max(domain[1]-domain[0],1e-9),sx=value=>PLOT_L+(value-domain[0])/span*(PLOT_R-PLOT_L),
+    formatTick=value=>Math.abs(value)>=1?value.toFixed(1):value.toFixed(2),
+    maxLogp=Math.max(...PATH_ROWS.map(r=>-Math.log10(Math.max(r.padj,1e-300))),1);
+  rows.forEach((row,index)=>{
+    const y=T+index*rowH;
+    if(index%2===1)g.appendChild(el('rect',{x:8,y:y-1,width:W-16,height:rowH,fill:'#f7f8f6'}))
+  });
+  [0,.25,.5,.75,1].forEach(frac=>{
+    const value=domain[0]+frac*span,xx=sx(value),zero=Math.abs(value)<span/1000;
+    g.appendChild(el('line',{x1:xx,y1:T-8,x2:xx,y2:BOTTOM_AXIS_Y,stroke:zero?'#4b5550':'#8a9690','stroke-width':zero?1.3:.9,'stroke-dasharray':zero?'5 4':'2 5',opacity:frac===0||frac===1||zero?1:.3}));
+    const tick=el('text',{x:xx,y:BOTTOM_AXIS_Y+18,'text-anchor':'middle','font-size':12,'font-weight':700,fill:'#46524d',class:'pathAxisTickLabel'});
+    tick.textContent=formatTick(value);
+    g.appendChild(tick)
+  });
+  g.appendChild(el('line',{x1:PLOT_L,y1:BOTTOM_AXIS_Y,x2:PLOT_R,y2:BOTTOM_AXIS_Y,stroke:'#111','stroke-width':1.6}));
+  const axis=el('text',{x:(PLOT_L+PLOT_R)/2,y:H-7,'text-anchor':'middle','font-size':14,'font-weight':700,fill:'#303834'});
+  axis.textContent=axisText;
+  g.appendChild(axis);
+  fitSvgText(axis,PLOT_R-PLOT_L-12,14);
+  rows.forEach((row,index)=>{
+    const y=T+index*rowH,yy=y+rowH/2,selected=row.key===pathwaySelect.value;
+    if(selected)g.appendChild(el('rect',{x:8,y:y-1,width:W-16,height:rowH,rx:3,class:'pathRowSelected'}));
+    const label=wrapText(g,row.pathway,LABEL_X,yy,LABEL_X-16,pathwayLabelClass(row.pathway)),
+      stars=pathwayStars(row.padj),
+      star=el('text',{x:LABEL_X+7,y:yy+4,'text-anchor':'start','font-size':12,'font-weight':700,fill:'#9A6700',style:'cursor:pointer'}),
+      x=sx(row.delta),radius=Math.min(12,3.2+Math.sqrt(Math.max(1,row.overlap))*.85),
+      opacity=.5+.5*clamp(-Math.log10(Math.max(row.padj,1e-300))/maxLogp,0,1),
+      dot=el('circle',{cx:x,cy:yy,r:radius,fill:overall?'#4E79A7':paired&&row.delta>0?conditionColor(2):conditionColor(1),opacity,stroke:selected?'#111':'#fff','stroke-width':selected?4:2,style:'cursor:pointer'}),
+      countValue=tfSelect.value?(paired?row.tfCountUnion:row.tfCountA):0,countText=tfSelect.value?String(countValue):'';
+    star.textContent=stars;
+    label.node.setAttribute('y',yy+5.5);
+    [dot,label.node,star].forEach(node=>{
+      node.addEventListener('click',()=>{lastNetworkTrigger=node;pathwaySelect.value=row.key;sendState(false);if(!overall)openNetwork()});
+      node.addEventListener('mousemove',event=>tooltip('pathTooltip',event,pathwayHoverMessage(row)));
+      node.addEventListener('mouseout',()=>hideTip('pathTooltip'))
+    });
+    g.appendChild(star);
+    g.appendChild(dot);
+    if(countText){
+      const right=x>PLOT_R-75,count=el('text',{x:x+(right?-radius-5:radius+5),y:yy+4,'text-anchor':right?'end':'start','font-size':11,'font-weight':700,fill:'#111',class:'pathTfCount',style:'pointer-events:none;paint-order:stroke;stroke:#fff;stroke-width:3px'});
+      count.textContent=countText;
+      g.appendChild(count)
+    }
+  });
+  byId('pathStats').textContent=PATH_ROWS.length+' significant pathways'
+};
+function edgePresentInCondition(row,side){
+  return side===1?num(row.nA,0)>0:num(row.nB,0)>0
+}
+function tfPassesTopicInCondition(condition,tf,topic,cutoff,primary){
+  return tfTheta(condition,tf,topic)>=cutoff&&(!primary||tfPrimaryTopic(condition,tf)===topic)
+}
+function networkConditionRowsForGenes(genes){
+  let rows=edgePairIndex(genes).rows.filter(rowPairExpressed);
+  if(cond2Select.value&&byId('networkCorrectDirectionOnly').checked)rows=rows.filter(row=>row.correctDirection);
+  return rows
+}
+function rowTfPassesSelectedTopic(row,tf){
+  const cutoff=num(byId('networkThetaCutoff').value,.3),primary=byId('networkPrimaryOnly').checked,
+    topic=Number(topicSelect.value),c1=cond1Select.value,c2=cond2Select.value;
+  return(edgePresentInCondition(row,1)&&tfPassesTopicInCondition(c1,tf,topic,cutoff,primary))||
+    (c2&&edgePresentInCondition(row,2)&&tfPassesTopicInCondition(c2,tf,topic,cutoff,primary))
+}
+function networkRowsForGenes(genes,restrictToSelectedTargets){
+  const selected=tfKey(tfSelect.value);
+  let out=networkConditionRowsForGenes(genes);
+  if(restrictToSelectedTargets&&selected){
+    const targets=new Set(out.filter(row=>row.tfu===selected).map(row=>geneKey(row.gene)));
+    out=out.filter(row=>targets.has(geneKey(row.gene)))
+  }
+  if(byId('networkTfScope').value==='topic'){
+    out=out.filter(row=>rowTfPassesSelectedTopic(row,row.tfu))
+  }
+  return out
+}
+function outsideTopicTfTfRows(anchorTfs){
+  if(!byId('networkOutsideTopicTfTf').checked||!anchorTfs.size)return[];
+  const tfGenes=new Set(Array.from(TF_LABELS.keys(),tfKey));
+  return networkConditionRowsForGenes(tfGenes).filter(row=>{
+    const source=tfKey(row.tfu),target=tfKey(row.gene),
+      touchesAnchor=anchorTfs.has(source)||anchorTfs.has(target);
+    if(!TF_LABELS.has(target)||!touchesAnchor)return false;
+    if(byId('networkTfScope').value!=='topic')return true;
+    return!rowTfPassesSelectedTopic(row,source)||!rowTfPassesSelectedTopic(row,target)
+  }).map(row=>Object.assign({},row,{
+    seedLink:false,seedRepresentative:false,tfTfContext:true,outsideTopicTfTf:true,
+    contextAnchorSource:anchorTfs.has(tfKey(row.tfu)),
+    contextAnchorTarget:anchorTfs.has(tfKey(row.gene))
+  }))
+}
+networkPairRows=function(){
+  const allowed=topicGenes(),path=currentPath(),filterPath=path&&byId('networkPathwayFocus').value==='filter';
+  if(filterPath){
+    const pathwayGenes=new Set(path.genes.map(geneKey));
+    Array.from(allowed).forEach(gene=>{if(!pathwayGenes.has(geneKey(gene)))allowed.delete(gene)})
+  }
+  return networkRowsForGenes(allowed,true)
+};
+function networkContextKey(){
+  return[
+    cond1Select.value,cond2Select.value,topicSelect.value,tfSelect.value,pathwaySelect.value,
+    byId('networkTfScope').value,byId('networkThetaCutoff').value,
+    byId('networkPhiCutoff').value,byId('networkPrimaryOnly').checked,
+    byId('networkOutsideTopicTfTf').checked,
+    byId('networkCorrectDirectionOnly').checked,byId('networkPathwayFocus').value,
+    byId('networkMode').value,DATA_VERSION
+  ].join('|')
+}
+function syncNetworkRange(id,outputId,maximum,cap,context){
+  const input=byId(id),output=byId(outputId),maxValue=Math.max(0,Math.floor(maximum));
+  if(maxValue<1){
+    input.min='0';
+    input.max='0';
+    input.value='0';
+    input.disabled=true;
+    input.dataset.limitContext=context;
+    input.dataset.hadValues='0';
+    output.value='0 / 0';
+    output.textContent='0 / 0';
+    return 0
+  }
+  const reset=input.dataset.limitContext!==context||input.dataset.hadValues!=='1';
+  input.disabled=false;
+  input.min='1';
+  input.max=String(maxValue);
+  input.value=String(reset?Math.min(cap,maxValue):clamp(Math.round(num(input.value,cap)),1,maxValue));
+  input.dataset.limitContext=context;
+  input.dataset.hadValues='1';
+  output.value=input.value+' / '+maxValue;
+  output.textContent=output.value;
+  return Number(input.value)
+}
+function canonicalGeneId(gene){
+  return'GENE:'+geneKey(gene)
+}
+function networkTfLabel(tf,fallback=''){
+  return TF_LABELS.get(tfKey(tf))||String(fallback||tf)
+}
+function inducedLinkRank(a,b){
+  const selected=tfKey(tfSelect.value),aSelf=a.tfu===geneKey(a.gene),bSelf=b.tfu===geneKey(b.gene),
+    aTfTarget=TF_LABELS.has(geneKey(a.gene)),bTfTarget=TF_LABELS.has(geneKey(b.gene));
+  return Number(b.seedRepresentative)-Number(a.seedRepresentative)||
+    Number(b.seedLink)-Number(a.seedLink)||
+    Number(b.tfTfContext)-Number(a.tfTfContext)||
+    Number(b.tfu===selected)-Number(a.tfu===selected)||
+    Number(bSelf)-Number(aSelf)||
+    Number(bTfTarget)-Number(aTfTarget)||
+    Number(b.correctDirection)-Number(a.correctDirection)||
+    Math.abs(b.fpChange??b.delta)-Math.abs(a.fpChange??a.delta)||
+    String(a.tf).localeCompare(String(b.tf),undefined,{sensitivity:'base'})||
+    String(a.gene).localeCompare(String(b.gene),undefined,{sensitivity:'base'})
+}
+function selectNetworkLinks(rows,limit){
+  const maximum=Math.max(0,Math.floor(limit)),ordered=rows.slice().sort(inducedLinkRank);
+  if(!byId('networkOutsideTopicTfTf').checked||!ordered.some(row=>row.tfTfContext))return ordered.slice(0,maximum);
+  const context=ordered.filter(row=>row.tfTfContext),core=ordered.filter(row=>!row.tfTfContext);
+  let contextCount=Math.min(context.length,Math.max(1,Math.floor(maximum*.25))),
+    coreCount=Math.min(core.length,maximum-contextCount);
+  contextCount=Math.min(context.length,maximum-coreCount);
+  return core.slice(0,coreCount).concat(context.slice(0,contextCount)).sort(inducedLinkRank)
+}
+buildNetwork=function(){
+  const seedRows=networkPairRows(),rank=new Map();
+  seedRows.forEach(row=>{
+    const record=rank.get(row.tfu)||{genes:new Set(),correctGenes:new Set(),score:0,label:row.tf};
+    record.genes.add(geneKey(row.gene));
+    if(row.correctDirection)record.correctGenes.add(geneKey(row.gene));
+    record.score+=Math.abs(row.fpChange??row.delta);
+    rank.set(row.tfu,record)
+  });
+  const context=networkContextKey(),
+    topTf=syncNetworkRange('networkTopTf','networkTopTfValue',rank.size,100,'tf|'+context),
+    tfOrder=Array.from(rank.entries()).sort((a,b)=>
+      Number(b[0]===tfKey(tfSelect.value))-Number(a[0]===tfKey(tfSelect.value))||
+      b[1].correctGenes.size-a[1].correctGenes.size||
+      b[1].genes.size-a[1].genes.size||
+      b[1].score-a[1].score||
+      String(a[1].label).localeCompare(String(b[1].label),undefined,{sensitivity:'base'})
+    ),
+    keptTfs=new Set(tfOrder.slice(0,topTf).map(entry=>entry[0])),
+    retainedSeeds=seedRows.filter(row=>keptTfs.has(row.tfu)),
+    displayedGenes=new Set();
+  retainedSeeds.forEach(row=>{
+    displayedGenes.add(geneKey(row.gene));
+    displayedGenes.add(row.tfu)
+  });
+  const inducedMap=new Map();
+  networkRowsForGenes(displayedGenes,false)
+    .filter(row=>keptTfs.has(row.tfu)&&displayedGenes.has(geneKey(row.gene)))
+    .forEach(row=>inducedMap.set(
+      row.tfu+'\t'+geneKey(row.gene),
+      Object.assign({},row,{seedLink:false,seedRepresentative:false})
+    ));
+  outsideTopicTfTfRows(keptTfs).forEach(row=>inducedMap.set(
+    row.tfu+'\t'+geneKey(row.gene),
+    row
+  ));
+  const representativeTargets=new Set();
+  retainedSeeds.slice().sort(inducedLinkRank).forEach(row=>{
+    const target=geneKey(row.gene),representative=!representativeTargets.has(target);
+    representativeTargets.add(target);
+    inducedMap.set(
+      row.tfu+'\t'+target,
+      Object.assign({},row,{seedLink:true,seedRepresentative:representative})
+    )
+  });
+  const inducedRows=Array.from(inducedMap.values()).sort(inducedLinkRank),mode=byId('networkMode').value,
+    seedMeta=new Map(inducedRows.map(row=>[
+      row.tfu+'\t'+geneKey(row.gene),
+      {
+        seedLink:row.seedLink,
+        seedRepresentative:row.seedRepresentative,
+        tfTfContext:row.tfTfContext,
+        outsideTopicTfTf:row.outsideTopicTfTf,
+        contextAnchorSource:row.contextAnchorSource,
+        contextAnchorTarget:row.contextAnchorTarget
+      }
+    ])),
+    candidateLinks=mode==='tf_peak_gene'?peakPairRows(inducedRows).map(row=>
+      Object.assign(row,seedMeta.get(row.tfu+'\t'+geneKey(row.gene))||{
+        seedLink:false,seedRepresentative:false
+      })
+    ).sort(inducedLinkRank):inducedRows,
+    topLinks=syncNetworkRange('networkTopLinks','networkTopLinksValue',candidateLinks.length,300,'link|'+context+'|'+topTf),
+    source=selectNetworkLinks(candidateLinks,topLinks),nodes=new Map(),edgesByKey=new Map(),
+    biologicalLinks=new Set(),contextLinks=new Set();
+  function addGene(gene,label,isTf,isTarget){
+    const key=geneKey(gene),id=canonicalGeneId(key),existing=nodes.get(id),
+      value=isTf?networkTfRnaValue(key):networkGeneRnaValue(key);
+    if(existing){
+      existing.isTf=existing.isTf||isTf;
+      existing.isTarget=existing.isTarget||isTarget;
+      existing.type=existing.isTf?'TF':'Gene';
+      if(isTf)existing.label=networkTfLabel(key,label);
+      if(Number.isFinite(value))existing.value=value;
+      return existing
+    }
+    const node={id,type:isTf?'TF':'Gene',label:isTf?networkTfLabel(key,label):String(label||gene),value,count:0,x:800,y:450,isTf:!!isTf,isTarget:!!isTarget};
+    nodes.set(id,node);
+    return node
+  }
+  function addPeak(peak,value){
+    const id='PEAK:'+String(peak);
+    if(!nodes.has(id))nodes.set(id,{id,type:'Peak',label:String(peak),value,count:0,x:800,y:450,isTf:false,isTarget:false});
+    return nodes.get(id)
+  }
+  function addEdge(from,to,value,title,metadata={}){
+    const key=from+'\t'+to,old=edgesByKey.get(key),
+      record=Object.assign({from,to,value,title},metadata);
+    if(!old||Math.abs(value)>Math.abs(old.value))edgesByKey.set(key,record)
+  }
+  source.forEach(row=>{
+    const targetKey=tfKey(row.gene),targetIsTf=TF_LABELS.has(targetKey),
+      tf=addGene(row.tfu,row.tf,true,row.tfu===targetKey),
+      target=addGene(row.gene,row.gene,targetIsTf,true),
+      directionText=(cond2Select.value?'\ntarget RNA log2FC: '+row.geneLfc.toFixed(3)+'\nTF RNA log2FC: '+row.tfLfc.toFixed(3)+'\ncorrect direction: '+(row.correctDirection?'yes':'no'):'')+
+        (row.tfTfContext?'\noutside-topic TF-TF context: yes':''),
+      edgeMetadata={tfTfContext:!!row.tfTfContext,outsideTopicTfTf:!!row.outsideTopicTfTf};
+    if(row.tfTfContext)contextLinks.add(row.tfu+'\t'+targetKey);
+    if(mode==='tf_peak_gene'){
+      const peak=addPeak(row.peak,row.delta),linkKey=row.tfu+'\t'+row.peak+'\t'+geneKey(row.gene);
+      biologicalLinks.add(linkKey);
+      addEdge(tf.id,peak.id,row.delta,row.tf+' -> '+row.peak+'\ndelta FP: '+row.delta.toFixed(3)+directionText,edgeMetadata);
+      addEdge(peak.id,target.id,row.delta,row.peak+' -> '+row.gene+'\ndelta FP: '+row.delta.toFixed(3)+directionText,edgeMetadata)
+    }else{
+      biologicalLinks.add(row.tfu+'\t'+geneKey(row.gene));
+      addEdge(tf.id,target.id,row.delta,row.tf+' -> '+row.gene+'\nFP '+conditionLabel(cond1Select.value)+': '+row.a.toFixed(3)+(cond2Select.value?'\nFP '+conditionLabel(cond2Select.value)+': '+row.b.toFixed(3)+'\ndelta FP: '+row.delta.toFixed(3)+directionText:''),edgeMetadata)
+    }
+  });
+  const edges=Array.from(edgesByKey.values());
+  edges.forEach(edge=>{
+    const from=nodes.get(edge.from),to=nodes.get(edge.to);
+    if(from)from.count++;
+    if(to&&to!==from)to.count++
+  });
+  const path=currentPath(),highlight=!!(path&&byId('networkPathwayFocus').value==='highlight'),hit=new Set();
+  if(highlight){
+    const genes=new Set(path.genes.map(geneKey));
+    nodes.forEach(node=>{if(node.type!=='Peak'&&genes.has(geneKey(node.label)))hit.add(node.id)});
+    for(let pass=0;pass<3;pass++)edges.slice().reverse().forEach(edge=>{
+      if(hit.has(edge.to)){
+        edge.pathwayHit=true;
+        hit.add(edge.from)
+      }
+    })
+  }
+  nodes.forEach(node=>node.pathwayHit=!highlight||hit.has(node.id));
+  edges.forEach(edge=>edge.pathwayHit=!highlight||edge.pathwayHit===true);
+  const nodeRows=Array.from(nodes.values());
+  return{
+    nodes:nodeRows,edges,rows:source,linkCount:biologicalLinks.size,
+    contextLinkCount:contextLinks.size,
+    tfCount:nodeRows.filter(node=>node.isTf).length,
+    targetCount:nodeRows.filter(node=>node.isTarget).length,
+    bothCount:nodeRows.filter(node=>node.isTf&&node.isTarget).length,
+    peakCount:nodeRows.filter(node=>node.type==='Peak').length
+  }
+};
+placeNetwork=function(graph){
+  const mode=byId('networkMode').value,requested=byId('networkLayout').value,
+    layout=requested==='auto'?(tfSelect.value?'focused':'columns'):requested,
+    types=type=>graph.nodes.filter(node=>node.type===type).sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label,undefined,{sensitivity:'base'})),
+    column=(rows,x,top=70,bottom=830)=>rows.forEach((node,index)=>{node.x=x;node.y=top+(index+1)*((bottom-top)/Math.max(1,rows.length+1))});
+  if(layout==='focused'){
+    const selected=canonicalGeneId(tfSelect.value),chosen=graph.nodes.find(node=>node.id===selected),otherTfs=types('TF').filter(node=>node.id!==selected);
+    if(mode==='tf_peak_gene'){
+      const allTfs=chosen?[chosen].concat(otherTfs):otherTfs;
+      column(allTfs,180);
+      if(chosen)chosen.y=450;
+      column(types('Peak'),610);
+      column(types('Gene'),1110)
+    }else{
+      if(chosen){chosen.x=190;chosen.y=450}
+      column(types('Gene'),790);
+      column(otherTfs,1380)
+    }
+    return
+  }
+  if(['columns','bipartite','hierarchy'].includes(layout)){
+    column(types('TF'),mode==='tf_peak_gene'?210:300);
+    if(mode==='tf_peak_gene')column(types('Peak'),790);
+    column(types('Gene'),mode==='tf_peak_gene'?1370:1270);
+    return
+  }
+  const rows=graph.nodes.slice().sort((a,b)=>a.type.localeCompare(b.type)||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));
+  if(layout==='grid'){
+    const columns=Math.ceil(Math.sqrt(rows.length));
+    rows.forEach((node,index)=>{node.x=120+(index%columns)*1360/Math.max(1,columns-1);node.y=90+Math.floor(index/columns)*720/Math.max(1,Math.ceil(rows.length/columns)-1)});
+    return
+  }
+  if(layout==='circle'){
+    rows.forEach((node,index)=>{const angle=2*Math.PI*index/Math.max(1,rows.length)-Math.PI/2;node.x=800+360*Math.cos(angle);node.y=450+360*Math.sin(angle)});
+    return
+  }
+  if(layout==='spiral'){
+    rows.forEach((node,index)=>{const angle=index*.62,radius=35+330*index/Math.max(1,rows.length-1);node.x=800+radius*Math.cos(angle);node.y=450+radius*Math.sin(angle)});
+    return
+  }
+  if(layout==='clustered'){
+    const tfs=types('TF'),byNode=new Map(graph.nodes.map(node=>[node.id,node]));
+    tfs.forEach((node,index)=>{const angle=2*Math.PI*index/Math.max(1,tfs.length)-Math.PI/2;node.x=800+300*Math.cos(angle);node.y=450+300*Math.sin(angle)});
+    const owners=new Map();
+    graph.edges.forEach(edge=>{const source=byNode.get(edge.from);if(source&&source.isTf&&!owners.has(edge.to))owners.set(edge.to,edge.from)});
+    rows.filter(node=>!node.isTf).forEach((node,index)=>{const owner=byNode.get(owners.get(node.id)),angle=index*2.4;node.x=(owner?owner.x:800)+78*Math.cos(angle);node.y=(owner?owner.y:450)+78*Math.sin(angle)});
+    return
+  }
+  const rings=layout==='radial'?{TF:100,Peak:265,Gene:395}:{TF:225,Peak:315,Gene:395};
+  ['TF','Peak','Gene'].forEach(type=>types(type).forEach((node,index,array)=>{
+    const angle=2*Math.PI*index/Math.max(1,array.length)-Math.PI/2;
+    node.x=800+rings[type]*Math.cos(angle);
+    node.y=450+rings[type]*Math.sin(angle)
+  }));
+  if(layout==='force')forceNetwork(graph)
+};
+function networkNodeRadius(node){
+  return node.isTf?Math.max(node.r+3,node.boxW/2+3):node.r+4
+}
+function networkEdgePath(edge,byNode){
+  const from=byNode.get(edge.from),to=byNode.get(edge.to);
+  if(!from||!to)return'';
+  if(from===to){
+    const halfWidth=Math.max(from.isTf?from.boxW/2:from.r,12),
+      halfHeight=Math.max(from.isTf?from.r*.8:from.r,8),
+      radius=clamp(10+from.r*.3,12,18),
+      startX=from.x+Math.min(halfWidth*.35,halfWidth-2),
+      centerY=from.y-halfHeight-radius-4;
+    return'M '+startX+' '+centerY+
+      ' a '+radius+' '+radius+' 0 1 1 '+(2*radius)+' 0'+
+      ' a '+radius+' '+radius+' 0 1 1 '+(-2*radius)+' 0'
+  }
+  const dx=to.x-from.x,dy=to.y-from.y,distance=Math.max(1,Math.hypot(dx,dy)),end=networkNodeRadius(to);
+  return'M '+from.x+' '+from.y+' L '+(to.x-dx/distance*end)+' '+(to.y-dy/distance*end)
+}
+redrawNetwork=function(){
+  const byNode=new Map(networkState.nodes.map(node=>[node.id,node]));
+  byId('networkNodes').querySelectorAll('.node').forEach(shape=>{
+    const node=byNode.get(shape.dataset.id);
+    if(!node)return;
+    if(shape.tagName==='rect'){
+      shape.setAttribute('x',node.x-node.boxW/2);
+      shape.setAttribute('y',node.y-node.r*.8)
+    }else{
+      shape.setAttribute('cx',node.x);
+      shape.setAttribute('cy',node.y)
+    }
+  });
+  byId('networkLabelsLayer').querySelectorAll('[data-id]').forEach(label=>{
+    const node=byNode.get(label.dataset.id);
+    if(node){
+      label.setAttribute('x',node.isTf?node.x:node.x+node.r+6);
+      label.setAttribute('y',node.y+4)
+    }
+  });
+  byId('networkEdges').querySelectorAll('[data-from]').forEach(path=>{
+    const edge=networkState.edges[Number(path.dataset.edgeIndex)];
+    if(edge)path.setAttribute('d',networkEdgePath(edge,byNode))
+  })
+};
+drawNetwork=function(){
+  let tfMin=clamp(num(byId('networkTfMin').value,14),6,40),tfMax=clamp(num(byId('networkTfMax').value,20),6,40),
+    edgeMin=clamp(num(byId('networkEdgeMin').value,.25),.05,12),edgeMax=clamp(num(byId('networkEdgeMax').value,1),.05,12);
+  if(tfMin>tfMax)tfMax=tfMin;
+  if(edgeMin>edgeMax)edgeMax=edgeMin;
+  byId('networkTfMin').value=tfMin;
+  byId('networkTfMax').value=tfMax;
+  byId('networkEdgeMin').value=edgeMin;
+  byId('networkEdgeMax').value=edgeMax;
+  syncSingleColorControls();
+  const graph=buildNetwork();
+  networkState.nodes=graph.nodes;
+  networkState.edges=graph.edges;
+  placeNetwork(graph);
+  const spacing=clamp(num(byId('networkSpacingValue').value,1),.5,2);
+  graph.nodes.forEach(node=>{node.x=800+(node.x-800)*spacing;node.y=450+(node.y-450)*spacing});
+  const edgeLayer=byId('networkEdges'),nodeLayer=byId('networkNodes'),labelLayer=byId('networkLabelsLayer'),nodeSelect=byId('networkNodeSelect');
+  edgeLayer.replaceChildren();
+  nodeLayer.replaceChildren();
+  labelLayer.replaceChildren();
+  nodeSelect.replaceChildren();
+  const byNode=new Map(graph.nodes.map(node=>[node.id,node])),values=graph.edges.map(edge=>Math.abs(edge.value)),
+    edgeLimit=robustColorLimit(values,.9,1e-6),single=!cond2Select.value,
+    tfLimit=networkExpressionLimit(TF_EXPR_INDEX,networkTfRnaValue),
+    geneLimit=networkExpressionLimit(GENE_EXPR_INDEX,networkGeneRnaValue),
+    tfPalette=byId('networkTfPalette').value,genePalette=byId('networkGenePalette').value,edgePalette=byId('networkEdgePalette').value,
+    tfCounts=graph.nodes.filter(node=>node.isTf).map(node=>node.count),countMin=Math.min(...tfCounts,1),countMax=Math.max(...tfCounts,1),
+    selectedTfId=tfSelect.value?canonicalGeneId(tfSelect.value):'',
+    rnaLabel=single?'RNA log2(expression + 1)':'RNA log2FC ('+conditionLabel(cond1Select.value)+' / '+conditionLabel(cond2Select.value)+')',
+    highlight=!!(currentPath()&&byId('networkPathwayFocus').value==='highlight');
+  graph.nodes.forEach(node=>{
+    const selected=node.id===selectedTfId;
+    node.r=node.isTf?(countMax===countMin?(tfMin+tfMax)/2:tfMin+(node.count-countMin)/(countMax-countMin)*(tfMax-tfMin)):node.type==='Peak'?7:9;
+    if(selected)node.r+=4;
+    node.boxW=node.isTf?Math.max(node.r*3.2,Math.min(190,22+String(node.label).length*8)):0
+  });
+  if(!graph.nodes.length){
+    const empty=el('text',{x:800,y:450,'text-anchor':'middle','font-size':18,'font-weight':700,fill:'#4b5550'});
+    empty.textContent='No network edges pass the current filters.';
+    labelLayer.appendChild(empty)
+  }
+  graph.edges.forEach((edge,index)=>{
+    const focus=!selectedTfId||edge.from===selectedTfId,
+      path=el('path',{class:'edge',d:networkEdgePath(edge,byNode),stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),opacity:highlight&&!edge.pathwayHit?.36:focus?.86:.24,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
+    if(byId('networkArrows').checked)path.setAttribute('marker-end','url(#networkArrow)');
+    edgeLayer.appendChild(path)
+  });
+  graph.nodes.forEach(node=>{
+    const selected=node.id===selectedTfId,palette=node.isTf?tfPalette:genePalette,
+      fill=node.type==='Peak'?'#E99B18':palette==='single'?(node.isTf?byId('networkTfSingleColor').value:byId('networkGeneSingleColor').value):Number.isFinite(node.value)?colorScale(node.value,node.isTf?tfLimit:geneLimit,palette,single,node.isTf?'TF':'Gene'):'#9CA3A0',
+      shape=node.isTf?el('rect',{class:'node'+(selected?' selected':''),x:node.x-node.boxW/2,y:node.y-node.r*.8,width:node.boxW,height:node.r*1.6,rx:4,fill,stroke:selected?'#111':'#fff','stroke-width':selected?5:1.5}):el('circle',{class:'node',cx:node.x,cy:node.y,r:node.r,fill,stroke:node.type==='Peak'?'#A85B00':'#0B6E75','stroke-width':2.5}),
+      roles=node.isTf&&node.isTarget?'TF and target gene':node.isTf?'TF':node.isTarget?'target gene':node.type;
+    shape.dataset.id=node.id;
+    shape.dataset.title=node.label+'\n'+roles+(selected?' (selected TF)':'')+'\n'+rnaLabel+': '+(Number.isFinite(node.value)?node.value.toFixed(3):'NA')+'\nedges: '+node.count;
+    shape.setAttribute('opacity',!highlight||node.pathwayHit||selected?1:.65);
+    nodeLayer.appendChild(shape);
+    if(byId('networkLabels').checked){
+      const contrast=node.isTf?labelContrast(fill):{fill:'#171717',stroke:'#fff'},
+        label=el('text',{class:'nodeLabel','data-id':node.id,x:node.isTf?node.x:node.x+node.r+7,y:node.y+5,'text-anchor':node.isTf?'middle':'start',fill:contrast.fill,stroke:contrast.stroke,opacity:!highlight||node.pathwayHit||selected?1:.72});
+      label.textContent=node.label;
+      labelLayer.appendChild(label)
+    }
+  });
+  graph.nodes.slice().sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id)).forEach(node=>{
+    const option=document.createElement('option');
+    option.value=node.id;
+    option.textContent=node.label;
+    nodeSelect.appendChild(option)
+  });
+  networkState.selected=selectedTfId&&byNode.has(selectedTfId)?selectedTfId:byNode.has(networkState.selected)?networkState.selected:'';
+  if(networkState.selected)nodeSelect.value=networkState.selected;
+  bindNetworkPointer();
+  markSelected();
+  fitNetworkView();
+  const counts=byId('networkMode').value==='tf_peak_gene'?
+    'Showing '+graph.tfCount+' TFs, '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), and '+graph.peakCount+' peaks, connected by '+graph.linkCount+' unique TF-peak-gene links.':
+    'Showing '+graph.tfCount+' TFs and '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), connected by '+graph.linkCount+' unique TF-target links.';
+  const contextCounts=graph.contextLinkCount?' Includes '+graph.contextLinkCount+' outside-topic TF-TF context links.':'';
+  byId('networkStats').textContent=counts+contextCounts+' Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Condition 1 - Condition 2 delta FP')+'.'
+};
 if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');loadReportData().then(x=>{GROUP_MDS=x.group_mds||[];GROUP_TOPIC=x.group_topic||[];TF_TOPIC=x.tf_topic||{columns:[],data:[]};PATHWAYS=x.pathways||[];indexTfTopics();return loadOverviewPayload()}).then(()=>{init();setLoading(false)}).catch(e=>{byId('activityStats').textContent=e.message;indexPayload();indexTfTopics();init();setLoading(false)});
 )---"
 }
@@ -1619,7 +2337,7 @@ if(new URLSearchParams(location.search).get('embed')==='1')document.body.classLi
     "<div class=\"mini\"><div class=\"paneHead\"><h2>TF Activity</h2><div class=\"headTools\"><button id=\"activityZoomOut\" class=\"secondary zoomButton\" type=\"button\" title=\"Zoom out\" aria-label=\"Zoom out\">Zoom out</button><button id=\"activityZoomIn\" class=\"secondary zoomButton\" type=\"button\" title=\"Zoom in\" aria-label=\"Zoom in\">Zoom in</button><span class=\"help\" title=\"TF FP activity is normalized by total retained FP activity in each condition. Use the buttons or mouse wheel to zoom, drag to pan, and double-click to reset.\">?</span><span id=\"activityStats\" class=\"meta\"></span></div></div><div class=\"body\"><div id=\"activityTooltip\" class=\"tooltip\"></div><svg id=\"activitySvg\" viewBox=\"0 0 760 760\"><g id=\"activityLayer\"></g></svg></div></div>",
     "</div></section>",
     "<section class=\"pane\"><div class=\"bottomPair\"><div class=\"mini\"><div class=\"paneHead\"><h2 id=\"conditionProbabilityTitle\">Topic Activity</h2><div class=\"headTools\"><select id=\"conditionTopicMetric\" class=\"conditionTopicMetricControl\" title=\"Choose fitted model theta or pairwise differential RNA activity\"><option value=\"theta\">Model theta</option><option value=\"rna_delta\">Differential RNA activity</option></select><span class=\"help\" title=\"Model theta is the fitted topic mixture. Differential RNA activity uses the same assigned genes in both selected conditions and sums positive log2 expression differences by topic.\">?</span><span id=\"butterflyStats\" class=\"meta\"></span><span class=\"pager\"><button id=\"topicPrev\" class=\"secondary\" type=\"button\" title=\"Previous topics\" aria-label=\"Previous topics\">&lt;</button><span id=\"topicPageStatus\" class=\"pageStatus\"></span><button id=\"topicNext\" class=\"secondary\" type=\"button\" title=\"Next topics\" aria-label=\"Next topics\">&gt;</button></span></div></div><div class=\"body\"><div id=\"butterflyTooltip\" class=\"tooltip\"></div><div class=\"fixedChart\"><svg id=\"butterflySvg\" viewBox=\"0 0 760 760\"><g id=\"butterflyLayer\"></g></svg></div></div></div><div class=\"mini\"><div class=\"paneHead\"><h2 id=\"tfConditionProbabilityTitle\">TF Probability</h2><div class=\"headTools\"><span class=\"help\" title=\"With TF set to All, this shows the ten largest positive and negative TF probability differences for the selected topic. With a TF selected, it preserves the condition-topic order.\">?</span><span id=\"tfButterflyStats\" class=\"meta\"></span><span class=\"pager\"><button id=\"tfPrev\" class=\"secondary\" type=\"button\" title=\"Previous rows\" aria-label=\"Previous rows\">&lt;</button><span id=\"tfPageStatus\" class=\"pageStatus\"></span><button id=\"tfNext\" class=\"secondary\" type=\"button\" title=\"Next rows\" aria-label=\"Next rows\">&gt;</button></span></div></div><div class=\"body\"><div id=\"tfButterflyTooltip\" class=\"tooltip\"></div><div class=\"fixedChart\"><svg id=\"tfButterflySvg\" viewBox=\"0 0 760 760\"><g id=\"tfButterflyLayer\"></g></svg></div></div></div></div></section></div>",
-    "<section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><div class=\"contextWrap\"><span class=\"reportModeToggle\" role=\"group\" aria-label=\"Pathway or GRN view\"><button id=\"showPathwaysMode\" class=\"active\" type=\"button\" title=\"Show the pathway plot.\">Pathways</button><button id=\"showGrnMode\" type=\"button\" title=\"Show the topic GRN. The selected pathway can highlight or filter it.\">GRN</button></span><label class=\"pathScoreControl\">Score <select id=\"pathwayScoreMethod\"><option value=\"rank_enrichment\" selected>Ranked expression</option><option value=\"mean_gene_zscore\">Mean standardized expression</option></select></label><label class=\"pathScoreControl\" title=\"Show only pathways containing at least one expressed target with pairwise absolute RNA log2FC at least the configured cutoff. This display filter does not change pathway scores, dot sizes, overlap genes, or Sub-GRNs.\"><input id=\"pathwayDeOnly\" type=\"checkbox\"/> DE targets only</label><span id=\"pathStats\" class=\"meta\"></span><span class=\"pager\"><button id=\"pathPrev\" class=\"secondary\" type=\"button\" title=\"Previous pathways\" aria-label=\"Previous pathways\">&lt;</button><span id=\"pathPageStatus\" class=\"pageStatus\"></span><button id=\"pathNext\" class=\"secondary\" type=\"button\" title=\"Next pathways\" aria-label=\"Next pathways\">&gt;</button></span><span class=\"help\" title=\"Asterisks show adjusted pathway significance. Dot size is the number of overlapping genes. Single-condition mode uses the saved per-condition enrichment table; pairwise mode compares expression over the overall topic-pathway genes.\">?</span></div></div><div class=\"body\"><div id=\"pathTooltip\" class=\"tooltip\"></div><div class=\"fixedChart\"><svg id=\"pathSvg\" viewBox=\"0 0 1120 900\"><g id=\"pathLayer\"></g></svg></div>",
+    "<section class=\"pane\"><div class=\"paneHead\"><h2>Pathways</h2><div class=\"contextWrap\"><span class=\"reportModeToggle\" role=\"group\" aria-label=\"Pathway or GRN view\"><button id=\"showPathwaysMode\" class=\"active\" type=\"button\" title=\"Show the pathway plot.\">Pathways</button><button id=\"showGrnMode\" type=\"button\" title=\"Show the topic GRN. The selected pathway can highlight or filter it.\">GRN</button></span><label class=\"pathScoreControl\">Score <select id=\"pathwayScoreMethod\"><option value=\"rank_enrichment\" selected>Ranked expression</option><option value=\"mean_gene_zscore\">Mean standardized expression</option></select></label><label class=\"pathScoreControl\" title=\"Show only pathways containing at least one expressed target with pairwise absolute RNA log2FC at least the configured cutoff. This display filter does not change pathway scores, dot sizes, overlap genes, or Sub-GRNs.\"><input id=\"pathwayDeOnly\" type=\"checkbox\" checked/> DE targets only</label><span id=\"pathStats\" class=\"meta\"></span><span class=\"pager\"><button id=\"pathPrev\" class=\"secondary\" type=\"button\" title=\"Previous pathways\" aria-label=\"Previous pathways\">&lt;</button><span id=\"pathPageStatus\" class=\"pageStatus\"></span><button id=\"pathNext\" class=\"secondary\" type=\"button\" title=\"Next pathways\" aria-label=\"Next pathways\">&gt;</button></span><span class=\"help\" title=\"Asterisks show adjusted pathway significance. Dot size is the number of overlapping genes. Single-condition mode uses the saved per-condition enrichment table; pairwise mode compares expression over the overall topic-pathway genes.\">?</span></div></div><div class=\"body\"><div id=\"pathTooltip\" class=\"tooltip\"></div><div class=\"fixedChart\"><svg id=\"pathSvg\" viewBox=\"0 0 1120 900\"><g id=\"pathLayer\"></g></svg></div>",
     .m3cr_network_panel_html(),
     "</div></section></main>",
     "<script>",

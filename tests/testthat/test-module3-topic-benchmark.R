@@ -340,6 +340,44 @@ test_that("Module 3 topic reports use overlap denominator for pathway universe s
   expect_equal(out$gene_out, 855L)
 })
 
+test_that("Module 3 overall pathway hover data ranks TFs by unique targets", {
+  pathways <- data.table::data.table(
+    topic_num = c(1L, 1L),
+    pathway_key = c("path:a", "path:b"),
+    genes = c("G1;G2;G3", "G4")
+  )
+  parts <- list(
+    list(tf_gene = data.table::data.table(
+      tf = c("TF1", "TF1", "TF1", "TF2", "TF2"),
+      gene_key = c("G1", "G1", "G2", "G1", "G3")
+    )),
+    list(tf_gene = data.table::data.table(
+      tf = c("TF3", "TF1"),
+      gene_key = c("G2", "g4")
+    )),
+    list(tf_gene = data.table::data.table())
+  )
+
+  out <- craftgrn:::.m3cr_overall_pathway_top_tfs(
+    topic_pathways = pathways,
+    parts = parts,
+    top_n = 2L
+  )
+
+  expect_equal(
+    out[pathway_key == "path:a", .(tf, n_targets, rank)],
+    data.table::data.table(
+      tf = c("TF1", "TF2"),
+      n_targets = c(2L, 2L),
+      rank = c(1L, 2L)
+    )
+  )
+  expect_equal(
+    out[pathway_key == "path:b", .(tf, n_targets, rank)],
+    data.table::data.table(tf = "TF1", n_targets = 1L, rank = 1L)
+  )
+})
+
 test_that("Module 3 condition reports fall back to topic-level pathways", {
   root <- tempfile("module3-condition-pathway-fallback-")
   extraction_dir <- file.path(root, "topic_extraction", "K2")
@@ -1748,7 +1786,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "conditionColor(2)", fixed = TRUE)
   expect_match(html, "fill:conditionColor(1)", fixed = TRUE)
   expect_match(html, "fill:conditionColor(2)", fixed = TRUE)
-  expect_match(html, "fitSvgText(t,maxWidth,13)", fixed = TRUE)
+  expect_match(html, "fitSvgText(t,maxWidth,14)", fixed = TRUE)
   expect_false(grepl("syncConditionPlotColors", html, fixed = TRUE))
   expect_match(html, "q.textContent=v.toFixed(1)", fixed = TRUE)
   expect_match(html, "x1:cx-gap-xw,y1:axisY", fixed = TRUE)
@@ -1776,7 +1814,18 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "Uint8Array.fromBase64", fixed = TRUE)
   expect_no_match(html, "detailed=LOADED_EDGE_CONDITIONS", fixed = TRUE)
   expect_match(html, "id=\"networkTfPalette\"", fixed = TRUE)
-  expect_match(html, 'id="networkTopTf" type="number" min="1" value="100"', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkTopTf" type="range" min="1" max="100" step="1" value="100"',
+    fixed = TRUE
+  )
+  expect_match(html, 'id="networkTopTfValue">100 / 100', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkTopLinks" type="range" min="1" max="300" step="1" value="300"',
+    fixed = TRUE
+  )
+  expect_match(html, 'id="networkTopLinksValue">300 / 300', fixed = TRUE)
   expect_match(html, 'id="topicPageStatus"', fixed = TRUE)
   expect_match(html, 'id="tfPageStatus"', fixed = TRUE)
   expect_match(html, 'id="pathPageStatus"', fixed = TRUE)
@@ -1785,7 +1834,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "box.width-t.offsetWidth-8", fixed = TRUE)
   expect_match(html, "const PAGE_SIZE={topic:20,tf:20,path:28}", fixed = TRUE)
   expect_match(html, 'id="pathwayScoreMethod"', fixed = TRUE)
-  expect_match(html, 'id="pathwayDeOnly" type="checkbox"', fixed = TRUE)
+  expect_match(html, 'id="pathwayDeOnly" type="checkbox" checked', fixed = TRUE)
   expect_match(html, "const displayRows=x=>deOnly?x.filter(r=>r.deOverlap>0):x", fixed = TRUE)
   expect_match(html, "Dot size = expressed overlap genes", fixed = TRUE)
   expect_match(html, "Dot size = topic-overlap genes", fixed = TRUE)
@@ -1794,7 +1843,11 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "if(!c1)return PATHWAYS.filter", fixed = TRUE)
   expect_no_match(html, ".slice(0,PAGE_SIZE.path)", fixed = TRUE)
   expect_no_match(html, ".filter(g=>!deOnly||", fixed = TRUE)
-  expect_match(html, 'id="networkCorrectDirectionOnly" type="checkbox"', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkCorrectDirectionOnly" type="checkbox" checked',
+    fixed = TRUE
+  )
   expect_match(html, "function dynamicPathwayScore", fixed = TRUE)
   expect_match(html, "function decorateLinkDirection", fixed = TRUE)
   expect_match(html, "correctGenes", fixed = TRUE)
@@ -1822,10 +1875,14 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "Math.pow(2,value)-1", fixed = TRUE)
   expect_match(
     html,
-    "#activityLayer text{font-size:16px;font-weight:700}",
+    "#mdsLayer text,#activityLayer text,#butterflyLayer text,#tfButterflyLayer text{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700}#pathLayer text{font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700}",
     fixed = TRUE
   )
-  expect_match(html, "#mdsLayer text{font-weight:700}", fixed = TRUE)
+  expect_match(
+    html,
+    ".pathLabel{font:700 14px Arial,Helvetica,sans-serif",
+    fixed = TRUE
+  )
   expect_no_match(
     html,
     "#mdsLayer text{font-size:24px",
@@ -1860,7 +1917,21 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_false(grepl("byId('networkBack')", html, fixed = TRUE))
   expect_match(html, 'id="networkThetaPreset"', fixed = TRUE)
   expect_match(html, 'id="networkPhiPreset"', fixed = TRUE)
-  expect_match(html, 'id="networkPrimaryOnly"', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkPrimaryOnly" type="checkbox" checked',
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    'id="networkOutsideTopicTfTf" type="checkbox"',
+    fixed = TRUE
+  )
+  expect_no_match(
+    html,
+    'id="networkOutsideTopicTfTf" type="checkbox" checked',
+    fixed = TRUE
+  )
   expect_match(html, 'id="networkSpacing"', fixed = TRUE)
   expect_match(html, '>Reset layout</button>', fixed = TRUE)
   expect_match(html, '>Condition contrast<', fixed = TRUE)
@@ -1875,8 +1946,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, 'id="networkEdgeSingleColor"', fixed = TRUE)
   expect_match(html, 'id="networkTfMin" type="number" min="6" max="40"', fixed = TRUE)
   expect_match(html, 'id="networkTfMax" type="number" min="6" max="40"', fixed = TRUE)
-  expect_match(html, 'id="networkEdgeMin" type="number" min="0.2" max="12"', fixed = TRUE)
-  expect_match(html, 'id="networkEdgeMax" type="number" min="0.2" max="12"', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkEdgeMin" type="number" min="0.05" max="12" step="0.05" value="0.25"',
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    'id="networkEdgeMax" type="number" min="0.05" max="12" step="0.05" value="1"',
+    fixed = TRUE
+  )
   expect_match(html, "shape.setAttribute('fill'", fixed = TRUE)
   expect_match(html, "label.setAttribute('fill',contrast.fill)", fixed = TRUE)
   expect_match(html, '<option value="tailwind">Tailwind CSS inspired</option>', fixed = TRUE)
@@ -1904,6 +1983,33 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "stroke:n.type==='Peak'?'#A85B00':'#0B6E75'", fixed = TRUE)
   expect_match(html, "tfv=networkTfRnaValue(r.tfu)", fixed = TRUE)
   expect_match(html, "gv=networkGeneRnaValue(r.gene)", fixed = TRUE)
+  expect_match(html, "function pathwayHoverMessage(row)", fixed = TRUE)
+  expect_match(html, "Target genes ('+genes.length+'):", fixed = TRUE)
+  expect_match(html, "'\\nTop TFs: '", fixed = TRUE)
+  expect_match(html, "overall_pathway_top_tfs", fixed = TRUE)
+  expect_match(html, "TF expression log2FC (", fixed = TRUE)
+  expect_match(html, "Delta Rank in Expression", fixed = TRUE)
+  expect_match(html, "Delta Z-scored Expression", fixed = TRUE)
+  expect_match(html, "function tfPassesTopicInCondition", fixed = TRUE)
+  expect_match(html, "function networkConditionRowsForGenes", fixed = TRUE)
+  expect_match(html, "function outsideTopicTfTfRows", fixed = TRUE)
+  expect_match(html, "touchesAnchor", fixed = TRUE)
+  expect_match(html, "outsideTopicTfTf:true", fixed = TRUE)
+  expect_match(html, "function selectNetworkLinks", fixed = TRUE)
+  expect_match(html, "Math.floor(maximum*.25)", fixed = TRUE)
+  expect_match(html, "contextLinkCount", fixed = TRUE)
+  expect_match(html, "edgePresentInCondition(row,1)", fixed = TRUE)
+  expect_match(html, "edgePresentInCondition(row,2)", fixed = TRUE)
+  expect_match(html, "function canonicalGeneId(gene)", fixed = TRUE)
+  expect_match(html, "seedRepresentative", fixed = TRUE)
+  expect_match(html, "representativeTargets", fixed = TRUE)
+  expect_match(html, "if(from===to)", fixed = TRUE)
+  expect_match(html, "' a '+radius+' '+radius+' 0 1 1 '", fixed = TRUE)
+  expect_match(html, "unique TF-target links", fixed = TRUE)
+  expect_match(html, "unique TF-peak-gene links", fixed = TRUE)
+  expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)
+  expect_match(html, "graph.targetCount+' target genes", fixed = TRUE)
+  expect_match(html, "function syncNetworkRange", fixed = TRUE)
   expect_match(html, "topTopic=topicNum(topRow.topic_num||topRow.topic)", fixed = TRUE)
   expect_match(
     html,
