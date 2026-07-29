@@ -2051,13 +2051,18 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "seedRepresentative", fixed = TRUE)
   expect_match(html, "representativeTargets", fixed = TRUE)
   expect_match(html, "if(from===to)", fixed = TRUE)
-  expect_match(html, "startX=from.x-radius", fixed = TRUE)
-  expect_no_match(
-    html,
-    "startX=from.x+Math.min(halfWidth*.35,halfWidth-2)",
-    fixed = TRUE
-  )
-  expect_match(html, "' a '+radius+' '+radius+' 0 1 1 '", fixed = TRUE)
+  expect_match(html, "function networkPointSegmentDistance(x,y,from,to)", fixed = TRUE)
+  expect_match(html, "function assignNetworkSelfLoopCorners(graph)", fixed = TRUE)
+  expect_match(html, "networkPointSegmentDistance(centerX,centerY,from,to)-radius", fixed = TRUE)
+  expect_match(html, "function networkSelfLoopGeometry(node)", fixed = TRUE)
+  expect_match(html, "radius=clamp(20+node.r*.45,24,32)", fixed = TRUE)
+  expect_match(html, "' A '+loop.radius+' '+loop.radius+' 0 1 '+loop.sweep", fixed = TRUE)
+  expect_match(html, "Number(a.edge.from===a.edge.to)-Number(b.edge.from===b.edge.to)", fixed = TRUE)
+  expect_match(html, "selfLoop?Math.max(1.4,width):width", fixed = TRUE)
+  expect_false(grepl(".edge{fill:none;stroke-linecap:round;opacity:", html, fixed = TRUE))
+  expect_match(html, "const selfLoopIds=new Set", fixed = TRUE)
+  expect_match(html, "const halfWidth=node.isTf?node.boxW/2", fixed = TRUE)
+  expect_match(html, "loop?loop.maxX+12:-Infinity", fixed = TRUE)
   expect_match(html, "unique TF-target links", fixed = TRUE)
   expect_match(html, "unique TF-peak-gene links", fixed = TRUE)
   expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)

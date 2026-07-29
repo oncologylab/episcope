@@ -1247,7 +1247,7 @@
     ".pane h2,.mini h2{font-size:14px;line-height:1.1;margin:0;white-space:nowrap}.body{position:relative;flex:1;min-height:0;overflow:hidden}.meta{font-size:11px;color:#52605a}.bottomPair .meta{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.bottomPair .paneHead{padding:6px 8px;gap:4px}.contextWrap,.headTools{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0}.conditionTopicMetricControl{width:142px;min-width:0;font-size:10px;padding:4px 5px}body.embed .conditionTopicMetricControl,body.embed .conditionTopicMetricControl+.help{display:none}.iconButton{width:25px;height:25px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:15px!important;line-height:1}.zoomButton{height:25px;padding:3px 8px!important;font-size:11px!important;line-height:1;white-space:nowrap}.pathScoreControl{font-size:11px;gap:4px!important}.pathScoreControl select{font-size:11px;padding:4px 6px}",
     ".help{display:inline-flex;width:19px;height:19px;border:1px solid #9ca3a0;border-radius:50%;align-items:center;justify-content:center;font-size:12px;color:#38413d;background:#fff;cursor:help}.tooltip{position:absolute;display:none;background:rgba(17,17,17,.96);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:8px 9px;border-radius:4px;pointer-events:none;max-width:460px;line-height:1.35;z-index:30}",
     "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text,#activityLayer text,#butterflyLayer text,#tfButterflyLayer text{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700}#pathLayer text{font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 14px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 14px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
-    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round;opacity:.58}",
+    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round}",
     "body.network-open{overflow:hidden}body.embed .top{display:none}body.embed .grid{flex:1}",
     ".pathLabelTopicSpecific,.pathLabelConditionSpecific,.pathLabelBothSpecific{fill:#171717}.reportModeToggle{display:inline-flex;gap:2px}.reportModeToggle button{padding:4px 8px;background:#fff;color:#171717;border-color:#9ca3a0}.reportModeToggle button.active{background:#202322;color:#fff}.loadingOverlay{position:fixed;inset:0;z-index:1000;background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px}.loadingOverlay[hidden]{display:none}.loadingSpinner{width:26px;height:26px;border:4px solid #cfd5d0;border-top-color:#202322;border-radius:50%;animation:m3cr-spin .75s linear infinite}@keyframes m3cr-spin{to{transform:rotate(360deg)}}.networkControls{padding:5px 7px;gap:5px 8px}.networkHeading{min-height:46px;padding:5px 8px}.networkHeading button{padding:4px 7px}.singleColorInput,.paletteEndpointInput{width:30px;height:27px;padding:2px}.singleColorInput[hidden],.paletteEndpointInput[hidden],.paletteEndpointLabel[hidden]{display:none}.paletteEndpointLabel{font-size:9px;color:#52605a}",
     ".mdsConditionFilter{position:relative;z-index:45}.mdsConditionFilter summary{list-style:none;cursor:pointer;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:4px 7px;font:700 10px Arial,Helvetica,sans-serif;white-space:nowrap}.mdsConditionFilter summary::-webkit-details-marker{display:none}.mdsConditionFilter[open] summary{background:#202322;color:#fff}.mdsConditionFilterPanel{position:absolute;right:0;top:calc(100% + 5px);width:min(430px,calc(100vw - 24px));max-height:330px;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:7px;z-index:50}.mdsConditionFilterActions{display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #dfe2dc}.mdsConditionFilterActions button{padding:4px 8px;font-size:10px}.mdsConditionFilterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:270px;overflow:auto;padding-top:6px}.mdsConditionFilterOption{display:flex;align-items:center;gap:5px;min-width:0;font-size:10px;line-height:1.2;cursor:pointer}.mdsConditionFilterOption input{margin:0;padding:0;flex:0 0 auto}.mdsConditionFilterOption span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mdsStats{display:none}",
@@ -1606,7 +1606,30 @@ const buildNetworkBase=buildNetwork;
 buildNetwork=function(){const g=buildNetworkBase(),p=currentPath(),highlight=!!(p&&byId('networkPathwayFocus').value==='highlight'),hit=new Set();if(highlight){const genes=new Set(p.genes.map(geneKey));g.nodes.filter(n=>n.type==='Gene'&&genes.has(geneKey(n.label))).forEach(n=>hit.add(n.id));for(let pass=0;pass<3;pass++)g.edges.slice().reverse().forEach(e=>{if(hit.has(e.to)){e.pathwayHit=true;hit.add(e.from)}})}g.nodes.forEach(n=>n.pathwayHit=!highlight||hit.has(n.id));g.edges.forEach(e=>e.pathwayHit=!highlight||e.pathwayHit===true);return g}
 function placeNetwork(g){const mode=byId('networkMode').value,requested=byId('networkLayout').value,layout=requested==='auto'?(tfSelect.value?'focused':'columns'):requested,types=t=>g.nodes.filter(n=>n.type===t).sort((a,b)=>b.count-a.count||a.label.localeCompare(b.label,undefined,{sensitivity:'base'})),column=(arr,x,top=70,bottom=830)=>arr.forEach((n,i)=>{n.x=x;n.y=top+(i+1)*((bottom-top)/Math.max(1,arr.length+1))});if(layout==='focused'){const selected='TF:'+tfKey(tfSelect.value),chosen=g.nodes.find(n=>n.id===selected),otherTfs=types('TF').filter(n=>n.id!==selected);if(mode==='tf_peak_gene'){const allTfs=chosen?[chosen].concat(otherTfs):otherTfs;column(allTfs,180);if(chosen)chosen.y=450;column(types('Peak'),610);column(types('Gene'),1110)}else{if(chosen){chosen.x=190;chosen.y=450}column(types('Gene'),790);column(otherTfs,1380)}return}if(['columns','bipartite','hierarchy'].includes(layout)){column(types('TF'),mode==='tf_peak_gene'?210:300);if(mode==='tf_peak_gene')column(types('Peak'),790);column(types('Gene'),mode==='tf_peak_gene'?1370:1270);return}const arr=g.nodes.slice().sort((a,b)=>a.type.localeCompare(b.type)||a.label.localeCompare(b.label,undefined,{sensitivity:'base'}));if(layout==='grid'){const cols=Math.ceil(Math.sqrt(arr.length));arr.forEach((n,i)=>{n.x=120+(i%cols)*1360/Math.max(1,cols-1);n.y=90+Math.floor(i/cols)*720/Math.max(1,Math.ceil(arr.length/cols)-1)});return}if(layout==='circle'){arr.forEach((n,i)=>{const a=2*Math.PI*i/Math.max(1,arr.length)-Math.PI/2;n.x=800+360*Math.cos(a);n.y=450+360*Math.sin(a)});return}if(layout==='spiral'){arr.forEach((n,i)=>{const a=i*.62,r=35+330*i/Math.max(1,arr.length-1);n.x=800+r*Math.cos(a);n.y=450+r*Math.sin(a)});return}if(layout==='clustered'){const tfs=types('TF'),byIdMap=new Map(g.nodes.map(n=>[n.id,n]));tfs.forEach((n,i)=>{const a=2*Math.PI*i/Math.max(1,tfs.length)-Math.PI/2;n.x=800+300*Math.cos(a);n.y=450+300*Math.sin(a)});const owners=new Map();g.edges.forEach(e=>{if(e.from.startsWith('TF:')&&!owners.has(e.to))owners.set(e.to,e.from)});arr.filter(n=>n.type!=='TF').forEach((n,i)=>{const o=byIdMap.get(owners.get(n.id)),a=i*2.4;n.x=(o?o.x:800)+78*Math.cos(a);n.y=(o?o.y:450)+78*Math.sin(a)});return}const rings=layout==='radial'?{TF:100,Peak:265,Gene:395}:{TF:225,Peak:315,Gene:395};['TF','Peak','Gene'].forEach(type=>types(type).forEach((n,i,a)=>{const ang=2*Math.PI*i/Math.max(1,a.length)-Math.PI/2;n.x=800+rings[type]*Math.cos(ang);n.y=450+rings[type]*Math.sin(ang)}));if(layout==='force')forceNetwork(g)}
 function forceNetwork(g){const by=new Map(g.nodes.map(n=>[n.id,n]));for(let z=0;z<120;z++){g.nodes.forEach(n=>{n.vx=n.vx||0;n.vy=n.vy||0});for(let i=0;i<g.nodes.length;i++)for(let j=i+1;j<g.nodes.length;j++){const a=g.nodes[i],b=g.nodes[j],dx=a.x-b.x,dy=a.y-b.y,d2=Math.max(dx*dx+dy*dy,100),d=Math.sqrt(d2),f=Math.min(3,2800/d2);a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f}g.edges.forEach(e=>{const a=by.get(e.from),b=by.get(e.to),dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),f=(d-125)*.01;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f});g.nodes.forEach(n=>{n.vx+=(800-n.x)*.002;n.vy+=(450-n.y)*.002;n.x=clamp(n.x+n.vx,35,1565);n.y=clamp(n.y+n.vy,35,865);n.vx*=.75;n.vy*=.75})}}
-function fitNetworkView(){const nodes=networkState.nodes;if(!nodes.length){networkState.view={x:0,y:0,k:1};applyNetworkView();return}let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;nodes.forEach(n=>{const hw=n.type==='TF'?n.boxW/2:Math.max(n.r,24),hh=n.type==='TF'?n.r:Math.max(n.r,18);x0=Math.min(x0,n.x-hw-22);x1=Math.max(x1,n.x+hw+Math.min(150,String(n.label).length*8)+22);y0=Math.min(y0,n.y-hh-22);y1=Math.max(y1,n.y+hh+22)});const margin=72,bw=Math.max(120,x1-x0),bh=Math.max(100,y1-y0),k=clamp(Math.min((1600-2*margin)/bw,(900-2*margin)/bh),.3,1.8),cx=(x0+x1)/2,cy=(y0+y1)/2;networkState.view={x:800-cx*k,y:450-cy*k,k};applyNetworkView()}
+function fitNetworkView(){
+  const nodes=networkState.nodes;
+  if(!nodes.length){
+    networkState.view={x:0,y:0,k:1};
+    applyNetworkView();
+    return
+  }
+  const selfLoopIds=new Set(networkState.edges.filter(edge=>edge.from===edge.to).map(edge=>edge.from));
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  nodes.forEach(node=>{
+    const halfWidth=node.isTf?node.boxW/2:Math.max(node.r,24),
+      halfHeight=node.isTf?node.r:Math.max(node.r,18),
+      loop=selfLoopIds.has(node.id)?networkSelfLoopGeometry(node):null;
+    x0=Math.min(x0,node.x-halfWidth-22,loop?loop.minX-12:Infinity);
+    x1=Math.max(x1,node.x+halfWidth+Math.min(150,String(node.label).length*8)+22,loop?loop.maxX+12:-Infinity);
+    y0=Math.min(y0,node.y-halfHeight-22,loop?loop.minY-12:Infinity);
+    y1=Math.max(y1,node.y+halfHeight+22,loop?loop.maxY+12:-Infinity)
+  });
+  const margin=72,bw=Math.max(120,x1-x0),bh=Math.max(100,y1-y0),
+    k=clamp(Math.min((1600-2*margin)/bw,(900-2*margin)/bh),.3,1.8),
+    cx=(x0+x1)/2,cy=(y0+y1)/2;
+  networkState.view={x:800-cx*k,y:450-cy*k,k};
+  applyNetworkView()
+}
 function drawNetwork(){const g=buildNetwork();networkState.nodes=g.nodes;networkState.edges=g.edges;placeNetwork(g);const spacing=clamp(num(byId('networkSpacingValue').value,1),.5,2);g.nodes.forEach(n=>{n.x=800+(n.x-800)*spacing;n.y=450+(n.y-450)*spacing});const eg=byId('networkEdges'),ng=byId('networkNodes'),lg=byId('networkLabelsLayer'),sel=byId('networkNodeSelect');eg.replaceChildren();ng.replaceChildren();lg.replaceChildren();sel.replaceChildren();const by=new Map(g.nodes.map(n=>[n.id,n])),vals=g.edges.map(e=>Math.abs(e.value)),elim=robustColorLimit(vals,.9,1e-6),single=!cond2Select.value,tfLim=networkExpressionLimit(TF_EXPR_INDEX,networkTfRnaValue),geneLim=networkExpressionLimit(GENE_EXPR_INDEX,networkGeneRnaValue),tfp=byId('networkTfPalette').value,gp=byId('networkGenePalette').value,ep=byId('networkEdgePalette').value,tf0=num(byId('networkTfMin').value,14),tf1=num(byId('networkTfMax').value,20),edge0=num(byId('networkEdgeMin').value,1.2),edge1=num(byId('networkEdgeMax').value,6.7),tfCounts=g.nodes.filter(n=>n.type==='TF').map(n=>n.count),cmin=Math.min(...tfCounts,1),cmax=Math.max(...tfCounts,1),selectedTfId=tfSelect.value?'TF:'+tfKey(tfSelect.value):'',rnaLabel=single?'RNA log2(expression + 1)':'RNA log2FC ('+conditionLabel(cond1Select.value)+' / '+conditionLabel(cond2Select.value)+')';g.nodes.forEach(n=>{const selectedTf=n.id===selectedTfId;n.r=n.type==='TF'?(cmax===cmin?(tf0+tf1)/2:tf0+(n.count-cmin)/(cmax-cmin)*(tf1-tf0)):n.type==='Peak'?7:9;if(selectedTf)n.r+=4;n.boxW=n.type==='TF'?Math.max(n.r*3.2,Math.min(190,22+String(n.label).length*8)):0});if(!g.nodes.length){const empty=el('text',{x:800,y:450,'text-anchor':'middle','font-size':22,'font-weight':700,fill:'#4b5550'});empty.textContent='No network edges pass the current filters.';lg.appendChild(empty)}g.edges.forEach(e=>{const a=by.get(e.from),b=by.get(e.to),dx=b.x-a.x,dy=b.y-a.y,d=Math.max(1,Math.hypot(dx,dy)),endR=b.type==='TF'?Math.max(b.r+3,b.boxW/2+3):b.r+4,focus=!selectedTfId||e.from===selectedTfId,line=el('line',{class:'edge',x1:a.x,y1:a.y,x2:b.x-dx/d*endR,y2:b.y-dy/d*endR,stroke:colorScale(e.value,elim,ep,single,'Edge'),'stroke-width':edge0+(edge1-edge0)*Math.sqrt(Math.min(1,Math.abs(e.value)/elim)),opacity:focus?.86:.24,'data-title':e.title,'data-from':e.from,'data-to':e.to});if(byId('networkArrows').checked)line.setAttribute('marker-end','url(#networkArrow)');eg.appendChild(line)});g.nodes.forEach(n=>{const fill=n.type==='Peak'?'#E99B18':Number.isFinite(n.value)?colorScale(n.value,n.type==='TF'?tfLim:geneLim,n.type==='TF'?tfp:gp,single,n.type):'#9CA3A0',selectedTf=n.id===selectedTfId,shape=n.type==='TF'?el('rect',{class:'node'+(selectedTf?' selected':''),x:n.x-n.boxW/2,y:n.y-n.r*.8,width:n.boxW,height:n.r*1.6,rx:4,fill,stroke:selectedTf?'#111':'#fff','stroke-width':selectedTf?5:1.5}):el('circle',{class:'node',cx:n.x,cy:n.y,r:n.r,fill,stroke:n.type==='Peak'?'#A85B00':'#0B6E75','stroke-width':2.5});shape.dataset.id=n.id;shape.dataset.title=n.label+'\n'+n.type+(selectedTf?' (selected TF)':'')+'\n'+rnaLabel+': '+(Number.isFinite(n.value)?n.value.toFixed(3):'NA')+'\nedges: '+n.count;ng.appendChild(shape);if(byId('networkLabels').checked){const contrast=n.type==='TF'?labelContrast(fill):{fill:'#171717',stroke:'#fff'},t=el('text',{class:'nodeLabel','data-id':n.id,x:n.type==='TF'?n.x:n.x+n.r+7,y:n.y+5,'text-anchor':n.type==='TF'?'middle':'start',fill:contrast.fill,stroke:contrast.stroke});t.textContent=n.label;lg.appendChild(t)}});g.nodes.slice().sort((a,b)=>a.label.localeCompare(b.label,undefined,{sensitivity:'base'})||a.id.localeCompare(b.id)).forEach(n=>{const o=document.createElement('option');o.value=n.id;o.textContent=n.label;sel.appendChild(o)});networkState.selected=selectedTfId&&by.has(selectedTfId)?selectedTfId:networkState.selected;if(networkState.selected)sel.value=networkState.selected;bindNetworkPointer();markSelected();fitNetworkView();byId('networkStats').textContent='Showing '+g.nodes.length+' nodes and '+g.edges.length+' edges. Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Condition 1 - Condition 2 delta FP')+'.'}
 const drawNetworkBase=drawNetwork;
 function syncSingleColorControls(){[['networkTf','TF'],['networkGene','Gene'],['networkEdge','Edge']].forEach(([prefix,role])=>{const palette=byId(prefix+'Palette'),singleColor=byId(prefix+'SingleColor'),low=byId(prefix+'LowColor'),high=byId(prefix+'HighColor'),lowLabel=byId(prefix+'LowLabel'),highLabel=byId(prefix+'HighLabel'),custom=palette.value==='custom',fixed=palette.value==='single';singleColor.hidden=!fixed;low.hidden=!custom;high.hidden=!custom;lowLabel.hidden=!custom;highLabel.hidden=!custom;[low,high].forEach(input=>{if(input.dataset.bound)return;input.dataset.bound='1';input.addEventListener('input',drawNetwork)})})}
@@ -2211,17 +2234,73 @@ placeNetwork=function(graph){
 function networkNodeRadius(node){
   return node.isTf?Math.max(node.r+3,node.boxW/2+3):node.r+4
 }
+function networkPointSegmentDistance(x,y,from,to){
+  const dx=to.x-from.x,dy=to.y-from.y,lengthSquared=dx*dx+dy*dy;
+  if(!lengthSquared)return Math.hypot(x-from.x,y-from.y);
+  const fraction=clamp(((x-from.x)*dx+(y-from.y)*dy)/lengthSquared,0,1),
+    closestX=from.x+fraction*dx,closestY=from.y+fraction*dy;
+  return Math.hypot(x-closestX,y-closestY)
+}
+function assignNetworkSelfLoopCorners(graph){
+  const byNode=new Map(graph.nodes.map(node=>[node.id,node])),
+    selfIds=new Set(graph.edges.filter(edge=>edge.from===edge.to).map(edge=>edge.from)),
+    corners=[[1,-1],[1,1],[-1,1],[-1,-1]];
+  selfIds.forEach(id=>{
+    const node=byNode.get(id);
+    if(!node)return;
+    const halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
+      halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
+      radius=clamp(20+node.r*.45,24,32),
+      score=corner=>{
+        const centerX=node.x+corner[0]*(halfWidth+radius*.55),
+          centerY=node.y+corner[1]*(halfHeight+radius*.55);
+        let value=0;
+        graph.nodes.forEach(other=>{
+          if(other===node)return;
+          const extent=other.isTf?Math.max(other.r,(other.boxW||0)/4):Math.max(other.r,8),
+            gap=Math.hypot(centerX-other.x,centerY-other.y)-radius-extent;
+          if(gap<14)value+=Math.pow(14-gap,2)*6
+        });
+        graph.edges.forEach(edge=>{
+          if(edge.from===edge.to)return;
+          const from=byNode.get(edge.from),to=byNode.get(edge.to);
+          if(!from||!to)return;
+          const gap=networkPointSegmentDistance(centerX,centerY,from,to)-radius;
+          if(gap<8)value+=Math.pow(8-gap,2)*2
+        });
+        return value
+      };
+    node.selfLoopCorner=corners.slice().sort((a,b)=>score(a)-score(b))[0]
+  })
+}
+function networkSelfLoopGeometry(node){
+  const corner=Array.isArray(node.selfLoopCorner)?node.selfLoopCorner:[1,-1],
+    sideX=corner[0]===-1?-1:1,sideY=corner[1]===1?1:-1,
+    halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
+    halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
+    attach=clamp(halfHeight*.55,8,12),
+    radius=clamp(20+node.r*.45,24,32),
+    startX=node.x+sideX*(halfWidth-attach),
+    startY=node.y+sideY*halfHeight,
+    endX=node.x+sideX*halfWidth,
+    endY=node.y+sideY*(halfHeight-attach),
+    sweep=sideX*sideY<0?1:0,
+    outerX=node.x+sideX*(halfWidth+radius*1.6),
+    outerY=node.y+sideY*(halfHeight+radius*1.6);
+  return{
+    startX,startY,endX,endY,radius,sweep,
+    minX:Math.min(startX,endX,outerX),maxX:Math.max(startX,endX,outerX),
+    minY:Math.min(startY,endY,outerY),maxY:Math.max(startY,endY,outerY)
+  }
+}
 function networkEdgePath(edge,byNode){
   const from=byNode.get(edge.from),to=byNode.get(edge.to);
   if(!from||!to)return'';
   if(from===to){
-    const halfHeight=Math.max(from.isTf?from.r*.8:from.r,8),
-      radius=clamp(10+from.r*.3,12,18),
-      startX=from.x-radius,
-      centerY=from.y-halfHeight-radius-4;
-    return'M '+startX+' '+centerY+
-      ' a '+radius+' '+radius+' 0 1 1 '+(2*radius)+' 0'+
-      ' a '+radius+' '+radius+' 0 1 1 '+(-2*radius)+' 0'
+    const loop=networkSelfLoopGeometry(from);
+    return'M '+loop.startX+' '+loop.startY+
+      ' A '+loop.radius+' '+loop.radius+' 0 1 '+loop.sweep+
+      ' '+loop.endX+' '+loop.endY
   }
   const dx=to.x-from.x,dy=to.y-from.y,distance=Math.max(1,Math.hypot(dx,dy)),end=networkNodeRadius(to);
   return'M '+from.x+' '+from.y+' L '+(to.x-dx/distance*end)+' '+(to.y-dy/distance*end)
@@ -2287,14 +2366,20 @@ drawNetwork=function(){
     if(selected)node.r+=4;
     node.boxW=node.isTf?Math.max(node.r*3.2,Math.min(190,22+String(node.label).length*8)):0
   });
+  assignNetworkSelfLoopCorners(graph);
   if(!graph.nodes.length){
     const empty=el('text',{x:800,y:450,'text-anchor':'middle','font-size':18,'font-weight':700,fill:'#4b5550'});
     empty.textContent='No network edges pass the current filters.';
     labelLayer.appendChild(empty)
   }
-  graph.edges.forEach((edge,index)=>{
+  graph.edges.map((edge,index)=>({edge,index})).sort((a,b)=>
+    Number(a.edge.from===a.edge.to)-Number(b.edge.from===b.edge.to)
+  ).forEach(({edge,index})=>{
     const focus=!selectedTfId||edge.from===selectedTfId,
-      path=el('path',{class:'edge',d:networkEdgePath(edge,byNode),stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),opacity:highlight&&!edge.pathwayHit?.36:focus?.86:.24,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
+      selfLoop=edge.from===edge.to,
+      width=edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),
+      opacity=highlight&&!edge.pathwayHit?.36:focus?.86:.24,
+      path=el('path',{class:'edge',d:networkEdgePath(edge,byNode),stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':selfLoop?Math.max(1.4,width):width,opacity:selfLoop?Math.max(.9,opacity):opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
     if(byId('networkArrows').checked)path.setAttribute('marker-end','url(#networkArrow)');
     edgeLayer.appendChild(path)
   });
