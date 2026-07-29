@@ -1970,10 +1970,20 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     '<option value="rdbu" selected>Red-blue (Default)</option>',
     fixed = TRUE
   )
+  expect_match(html, '<option value="custom">Custom low-high</option>', fixed = TRUE)
   expect_match(html, '<option value="single">Single color</option>', fixed = TRUE)
   expect_match(html, 'id="networkTfSingleColor"', fixed = TRUE)
   expect_match(html, 'id="networkGeneSingleColor"', fixed = TRUE)
   expect_match(html, 'id="networkEdgeSingleColor"', fixed = TRUE)
+  expect_match(html, 'id="networkTfLowColor"', fixed = TRUE)
+  expect_match(html, 'id="networkTfHighColor"', fixed = TRUE)
+  expect_match(html, 'id="networkGeneLowColor"', fixed = TRUE)
+  expect_match(html, 'id="networkGeneHighColor"', fixed = TRUE)
+  expect_match(html, 'id="networkEdgeLowColor"', fixed = TRUE)
+  expect_match(html, 'id="networkEdgeHighColor"', fixed = TRUE)
+  expect_match(html, "function customPaletteColors(role)", fixed = TRUE)
+  expect_match(html, "return single?mix(p[0],p[2],t)", fixed = TRUE)
+  expect_match(html, 'fill="context-stroke"', fixed = TRUE)
   expect_match(html, 'id="networkTfMin" type="number" min="6" max="40"', fixed = TRUE)
   expect_match(html, 'id="networkTfMax" type="number" min="6" max="40"', fixed = TRUE)
   expect_match(
