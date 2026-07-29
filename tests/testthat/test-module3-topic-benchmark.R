@@ -1957,6 +1957,14 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     'id="networkPrioritizeTfTf" type="checkbox"',
     fixed = TRUE
   )
+  expect_match(
+    html,
+    "automatically increase Top links when needed to include every eligible TF-to-TF link",
+    fixed = TRUE
+  )
+  expect_match(html, "function setNetworkTfTfPriorityBase", fixed = TRUE)
+  expect_match(html, "candidateLinks.filter(isTfTfLink)", fixed = TRUE)
+  expect_match(html, "requiredKeys.size>topLinks", fixed = TRUE)
   expect_no_match(
     html,
     'id="networkPrioritizeTfTf" type="checkbox" checked',
@@ -1998,6 +2006,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   )
   expect_match(html, "shape.setAttribute('fill'", fixed = TRUE)
   expect_match(html, "label.setAttribute('fill',contrast.fill)", fixed = TRUE)
+  expect_match(html, "Cond 1 - Cond 2 delta FP", fixed = TRUE)
   expect_no_match(html, 'NPG inspired', fixed = TRUE)
   expect_no_match(html, 'Tailwind CSS inspired', fixed = TRUE)
   expect_match(html, 'role="dialog"', fixed = TRUE)
@@ -2084,8 +2093,8 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "const selfLoopIds=new Set", fixed = TRUE)
   expect_match(html, "const halfWidth=node.isTf?node.boxW/2", fixed = TRUE)
   expect_match(html, "loop?loop.maxX+12:-Infinity", fixed = TRUE)
-  expect_match(html, "unique TF-target links", fixed = TRUE)
-  expect_match(html, "unique TF-peak-gene links", fixed = TRUE)
+  expect_match(html, "TF-target links", fixed = TRUE)
+  expect_match(html, "TF-peak-gene links", fixed = TRUE)
   expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)
   expect_match(html, "graph.targetCount+' target genes", fixed = TRUE)
   expect_match(html, "function syncNetworkRange", fixed = TRUE)

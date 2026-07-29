@@ -1247,7 +1247,7 @@
     ".pane h2,.mini h2{font-size:14px;line-height:1.1;margin:0;white-space:nowrap}.body{position:relative;flex:1;min-height:0;overflow:hidden}.meta{font-size:11px;color:#52605a}.bottomPair .meta{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.bottomPair .paneHead{padding:6px 8px;gap:4px}.contextWrap,.headTools{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0}.conditionTopicMetricControl{width:142px;min-width:0;font-size:10px;padding:4px 5px}body.embed .conditionTopicMetricControl,body.embed .conditionTopicMetricControl+.help{display:none}.iconButton{width:25px;height:25px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:15px!important;line-height:1}.zoomButton{height:25px;padding:3px 8px!important;font-size:11px!important;line-height:1;white-space:nowrap}.pathScoreControl{font-size:11px;gap:4px!important}.pathScoreControl select{font-size:11px;padding:4px 6px}",
     ".help{display:inline-flex;width:19px;height:19px;border:1px solid #9ca3a0;border-radius:50%;align-items:center;justify-content:center;font-size:12px;color:#38413d;background:#fff;cursor:help}.tooltip{position:absolute;display:none;background:rgba(17,17,17,.96);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:8px 9px;border-radius:4px;pointer-events:none;max-width:460px;line-height:1.35;z-index:30}",
     "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text,#activityLayer text,#butterflyLayer text,#tfButterflyLayer text{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700}#pathLayer text{font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 14px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 14px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
-    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round}.selfLoopHalo{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}",
+    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.25;color:#46524d;padding:0 10px 5px;white-space:normal;overflow:visible;text-overflow:clip}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round}.selfLoopHalo{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}",
     "body.network-open{overflow:hidden}body.embed .top{display:none}body.embed .grid{flex:1}",
     ".pathLabelTopicSpecific,.pathLabelConditionSpecific,.pathLabelBothSpecific{fill:#171717}.reportModeToggle{display:inline-flex;gap:2px}.reportModeToggle button{padding:4px 8px;background:#fff;color:#171717;border-color:#9ca3a0}.reportModeToggle button.active{background:#202322;color:#fff}.loadingOverlay{position:fixed;inset:0;z-index:1000;background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px}.loadingOverlay[hidden]{display:none}.loadingSpinner{width:26px;height:26px;border:4px solid #cfd5d0;border-top-color:#202322;border-radius:50%;animation:m3cr-spin .75s linear infinite}@keyframes m3cr-spin{to{transform:rotate(360deg)}}.networkControls{padding:5px 7px;gap:5px 8px}.networkHeading{min-height:46px;padding:5px 8px}.networkHeading button{padding:4px 7px}.singleColorInput,.paletteEndpointInput{width:30px;height:27px;padding:2px}.singleColorInput[hidden],.paletteEndpointInput[hidden],.paletteEndpointLabel[hidden]{display:none}.paletteEndpointLabel{font-size:9px;color:#52605a}",
     ".mdsConditionFilter{position:relative;z-index:45}.mdsConditionFilter summary{list-style:none;cursor:pointer;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:4px 7px;font:700 10px Arial,Helvetica,sans-serif;white-space:nowrap}.mdsConditionFilter summary::-webkit-details-marker{display:none}.mdsConditionFilter[open] summary{background:#202322;color:#fff}.mdsConditionFilterPanel{position:absolute;right:0;top:calc(100% + 5px);width:min(430px,calc(100vw - 24px));max-height:330px;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:7px;z-index:50}.mdsConditionFilterActions{display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #dfe2dc}.mdsConditionFilterActions button{padding:4px 8px;font-size:10px}.mdsConditionFilterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:270px;overflow:auto;padding-top:6px}.mdsConditionFilterOption{display:flex;align-items:center;gap:5px;min-width:0;font-size:10px;line-height:1.2;cursor:pointer}.mdsConditionFilterOption input{margin:0;padding:0;flex:0 0 auto}.mdsConditionFilterOption span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mdsStats{display:none}",
@@ -1276,7 +1276,7 @@
     "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Pathway only shows the selected pathway subnetwork. Full topic keeps the topic GRN and dims non-pathway elements.\">Pathway focus <select id=\"networkPathwayFocus\"><option value=\"filter\" selected>Pathway only</option><option value=\"highlight\">Full topic + highlight</option></select></label>",
     "<label>Network <select id=\"networkMode\"><option value=\"tf_gene\" selected>TF-gene</option><option value=\"tf_peak_gene\">TF-peak-gene</option></select></label>",
-    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><input id=\"networkTopTfValue\" type=\"number\" min=\"1\" max=\"100\" step=\"1\" value=\"100\" aria-label=\"Top TF count\"/></label><label title=\"When Top links truncates the network, rank TF-to-TF links before TF-to-non-TF links without changing any biological filter.\">Prioritize TF-TF links <input id=\"networkPrioritizeTfTf\" type=\"checkbox\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><input id=\"networkTopLinksValue\" type=\"number\" min=\"1\" max=\"300\" step=\"1\" value=\"300\" aria-label=\"Top link count\"/></label>",
+    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><input id=\"networkTopTfValue\" type=\"number\" min=\"1\" max=\"100\" step=\"1\" value=\"100\" aria-label=\"Top TF count\"/></label><label title=\"Retain the current displayed links and automatically increase Top links when needed to include every eligible TF-to-TF link.\">Prioritize TF-TF links <input id=\"networkPrioritizeTfTf\" type=\"checkbox\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><input id=\"networkTopLinksValue\" type=\"number\" min=\"1\" max=\"300\" step=\"1\" value=\"300\" aria-label=\"Top link count\"/></label>",
     "<label>Select node <select id=\"networkNodeSelect\" class=\"wideSelect\"></select></label></div>",
     "<div id=\"networkTabLayout\" class=\"networkControls networkTabPanel\" data-network-panel=\"layout\">",
     "<label>Layout <select id=\"networkLayout\"><option value=\"force\" selected>Force</option><option value=\"auto\">Auto</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
@@ -1693,6 +1693,10 @@ function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[co
 conditionTopicMetric.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('thetaAggregation').addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('shortConditionNames').addEventListener('change',refresh);new MutationObserver(styleMdsPlot).observe(byId('mdsLayer'),{childList:true});
+byId('networkPrioritizeTfTf').addEventListener('input',()=>{setNetworkTfTfPriorityBase();drawNetwork()});
+byId('networkPrioritizeTfTf').addEventListener('change',()=>{setNetworkTfTfPriorityBase();drawNetwork()});
+byId('networkTopLinks').addEventListener('input',()=>{setNetworkTfTfPriorityBase(true);drawNetwork()});
+byId('networkTopLinks').addEventListener('change',()=>{setNetworkTfTfPriorityBase(true);drawNetwork()});
 document.addEventListener('click',ev=>{const filter=byId('mdsConditionFilter');if(filter&&filter.open&&!filter.contains(ev.target))filter.open=false});
 byId('networkMode').addEventListener('change',()=>{if(byId('networkMode').value!=='tf_peak_gene')return;byId('networkStats').textContent='Loading peak data...';ensureSelectedConditionPeaks().then(()=>{if(networkOpen)drawNetwork()}).catch(e=>{byId('networkStats').textContent=e.message})});
 cond1Color.addEventListener('input',()=>{if(cond1Select.value)CONDITION_COLORS[cond1Select.value]=cond1Color.value;refresh()});cond2Color.addEventListener('input',()=>{if(cond2Select.value)CONDITION_COLORS[cond2Select.value]=cond2Color.value;refresh()});
@@ -2006,12 +2010,22 @@ function bindNetworkCountInput(sliderId,inputId){
     const value=Number(input.value);
     if(!Number.isFinite(value))return;
     slider.value=String(clamp(Math.round(value),num(slider.min,0),num(slider.max,0)));
+    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
     drawNetwork()
   });
   input.addEventListener('change',()=>{
     input.value=slider.value;
+    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
     drawNetwork()
   })
+}
+function setNetworkTfTfPriorityBase(reset=false){
+  const priority=byId('networkPrioritizeTfTf'),control=byId('networkTopLinks');
+  if(!priority.checked){delete control.dataset.priorityBase;delete priority.dataset.active;return}
+  if(reset||priority.dataset.active!=='1'){
+    control.dataset.priorityBase=control.value;
+    priority.dataset.active='1'
+  }
 }
 function canonicalGeneId(gene){
   return'GENE:'+geneKey(gene)
@@ -2019,10 +2033,9 @@ function canonicalGeneId(gene){
 function networkTfLabel(tf,fallback=''){
   return TF_LABELS.get(tfKey(tf))||String(fallback||tf)
 }
-function inducedLinkRank(a,b){
+function inducedLinkRank(a,b,prioritizeTfTf=byId('networkPrioritizeTfTf').checked){
   const selected=tfKey(tfSelect.value),aSelf=a.tfu===geneKey(a.gene),bSelf=b.tfu===geneKey(b.gene),
-    aTfTarget=TF_LABELS.has(geneKey(a.gene)),bTfTarget=TF_LABELS.has(geneKey(b.gene)),
-    prioritizeTfTf=byId('networkPrioritizeTfTf').checked;
+    aTfTarget=TF_LABELS.has(geneKey(a.gene)),bTfTarget=TF_LABELS.has(geneKey(b.gene));
   return (prioritizeTfTf?Number(bTfTarget)-Number(aTfTarget):0)||
     Number(b.seedRepresentative)-Number(a.seedRepresentative)||
     Number(b.seedLink)-Number(a.seedLink)||
@@ -2035,14 +2048,26 @@ function inducedLinkRank(a,b){
     String(a.tf).localeCompare(String(b.tf),undefined,{sensitivity:'base'})||
     String(a.gene).localeCompare(String(b.gene),undefined,{sensitivity:'base'})
 }
-function selectNetworkLinks(rows,limit){
-  const maximum=Math.max(0,Math.floor(limit)),ordered=rows.slice().sort(inducedLinkRank);
-  if(!byId('networkOutsideTopicTfTf').checked||!ordered.some(row=>row.tfTfContext))return ordered.slice(0,maximum);
-  const context=ordered.filter(row=>row.tfTfContext),core=ordered.filter(row=>!row.tfTfContext);
+function networkLinkKey(row){return row.tfu+'\t'+String(row.peak||'')+'\t'+geneKey(row.gene)}
+function isTfTfLink(row){return TF_LABELS.has(geneKey(row.gene))}
+function selectNetworkLinks(rows,limit,prioritizeTfTf=byId('networkPrioritizeTfTf').checked,requiredKeys=null){
+  const maximum=Math.max(0,Math.floor(limit)),ordered=rows.slice().sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf)),
+    choose=source=>{
+      if(!byId('networkOutsideTopicTfTf').checked||!source.some(row=>row.tfTfContext))return source.slice(0,maximum);
+      const context=source.filter(row=>row.tfTfContext),core=source.filter(row=>!row.tfTfContext);
   let contextCount=Math.min(context.length,Math.max(1,Math.floor(maximum*.25))),
     coreCount=Math.min(core.length,maximum-contextCount);
   contextCount=Math.min(context.length,maximum-coreCount);
-  return core.slice(0,coreCount).concat(context.slice(0,contextCount)).sort(inducedLinkRank)
+      return core.slice(0,coreCount).concat(context.slice(0,contextCount)).sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf))
+    };
+  if(!requiredKeys||!requiredKeys.size)return choose(ordered);
+  const selected=new Map(choose(ordered).map(row=>[networkLinkKey(row),row]));
+  ordered.forEach(row=>{if(requiredKeys.has(networkLinkKey(row)))selected.set(networkLinkKey(row),row)});
+  for(const row of ordered){
+    if(selected.size>=maximum)break;
+    selected.set(networkLinkKey(row),row)
+  }
+  return Array.from(selected.values()).sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf))
 }
 buildNetwork=function(){
   const seedRows=networkPairRows(),rank=new Map();
@@ -2106,8 +2131,22 @@ buildNetwork=function(){
         seedLink:false,seedRepresentative:false
       })
     ).sort(inducedLinkRank):inducedRows,
-    topLinks=syncNetworkRange('networkTopLinks','networkTopLinksValue',candidateLinks.length,300,'link|'+context+'|'+topTf),
-    source=selectNetworkLinks(candidateLinks,topLinks),nodes=new Map(),edgesByKey=new Map(),
+    prioritizeTfTf=byId('networkPrioritizeTfTf').checked,
+    linkControl=byId('networkTopLinks'),linkOutput=byId('networkTopLinksValue');
+  let topLinks=syncNetworkRange('networkTopLinks','networkTopLinksValue',candidateLinks.length,300,'link|'+context+'|'+topTf);
+  let requiredKeys=null;
+  if(prioritizeTfTf){
+    const baseline=Math.min(candidateLinks.length,Math.max(1,num(linkControl.dataset.priorityBase,topLinks))),
+      current=selectNetworkLinks(candidateLinks,baseline,false),
+      required=current.concat(candidateLinks.filter(isTfTfLink));
+    requiredKeys=new Set(required.map(networkLinkKey));
+    if(requiredKeys.size>topLinks){
+      topLinks=requiredKeys.size;
+      linkControl.value=String(topLinks);
+      linkOutput.value=String(topLinks)
+    }
+  }
+  const source=selectNetworkLinks(candidateLinks,topLinks,prioritizeTfTf,requiredKeys),nodes=new Map(),edgesByKey=new Map(),
     biologicalLinks=new Set(),contextLinks=new Set();
   function addGene(gene,label,isTf,isTarget){
     const key=geneKey(gene),id=canonicalGeneId(key),existing=nodes.get(id),
@@ -2433,10 +2472,10 @@ drawNetwork=function(){
   markSelected();
   fitNetworkView();
   const counts=byId('networkMode').value==='tf_peak_gene'?
-    'Showing '+graph.tfCount+' TFs, '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), and '+graph.peakCount+' peaks, connected by '+graph.linkCount+' unique TF-peak-gene links.':
-    'Showing '+graph.tfCount+' TFs and '+graph.targetCount+' target genes ('+graph.bothCount+' have both roles), connected by '+graph.linkCount+' unique TF-target links.';
+    'Showing '+graph.tfCount+' TFs, '+graph.targetCount+' target genes, and '+graph.peakCount+' peaks, connected by '+graph.linkCount+' TF-peak-gene links.':
+    'Showing '+graph.tfCount+' TFs and '+graph.targetCount+' target genes, connected by '+graph.linkCount+' TF-target links.';
   const contextCounts=graph.contextLinkCount?' Includes '+graph.contextLinkCount+' outside-topic TF-TF links.':'';
-  byId('networkStats').textContent=counts+contextCounts+' Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Condition 1 - Condition 2 delta FP')+'.'
+  byId('networkStats').textContent=counts+contextCounts+' Node color: '+(single?'absolute log2 expression':'RNA log2FC')+'. Edge color and width: '+(single?'FP score':'Cond 1 - Cond 2 delta FP')+'.'
 };
 if(new URLSearchParams(location.search).get('embed')==='1')document.body.classList.add('embed');loadReportData().then(x=>{GROUP_MDS=x.group_mds||[];GROUP_TOPIC=x.group_topic||[];TF_TOPIC=x.tf_topic||{columns:[],data:[]};PATHWAYS=x.pathways||[];indexTfTopics();return loadOverviewPayload()}).then(()=>{init();setLoading(false)}).catch(e=>{byId('activityStats').textContent=e.message;indexPayload();indexTfTopics();init();setLoading(false)});
 )---"
