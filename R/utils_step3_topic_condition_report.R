@@ -1296,7 +1296,7 @@
     "<label>Labels <input id=\"networkLabels\" type=\"checkbox\" checked/></label><label>Arrows <input id=\"networkArrows\" type=\"checkbox\" checked/></label></div>",
     "<div id=\"networkStats\" class=\"networkStats\"></div></div>",
     "<div id=\"networkCanvas\" class=\"networkCanvas\"><div id=\"networkTooltip\" class=\"tooltip\"></div>",
-    "<svg id=\"networkSvg\" viewBox=\"0 0 1600 900\"><defs><marker id=\"networkArrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerUnits=\"userSpaceOnUse\" markerWidth=\"11\" markerHeight=\"11\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"context-stroke\"/></marker></defs><g id=\"networkView\"><g id=\"networkEdges\"></g><g id=\"networkNodes\"></g><g id=\"networkLabelsLayer\"></g></g></svg></div></div>"
+    "<svg id=\"networkSvg\" viewBox=\"0 0 1600 900\"><defs><marker id=\"networkArrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerUnits=\"userSpaceOnUse\" markerWidth=\"11\" markerHeight=\"11\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"context-stroke\"/></marker><marker id=\"networkSelfLoopArrow\" viewBox=\"0 0 10 10\" refX=\"8.5\" refY=\"5\" markerUnits=\"userSpaceOnUse\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"context-stroke\"/></marker></defs><g id=\"networkView\"><g id=\"networkEdges\"></g><g id=\"networkNodes\"></g><g id=\"networkLabelsLayer\"></g></g></svg></div></div>"
   )
 }
 
@@ -2250,8 +2250,8 @@ function assignNetworkSelfLoopCorners(graph){
     if(!node)return;
     const halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
       halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-      radius=clamp(13+node.r*.22,15,20),
-      stem=clamp(radius*.2,3,5),
+      radius=clamp(6+node.r*.06,7,9),
+      stem=clamp(radius*.14,1.2,2),
       score=corner=>{
         const centerX=node.x+corner[0]*(halfWidth+stem+radius*.5),
           centerY=node.y+corner[1]*(halfHeight+stem+radius*.5);
@@ -2279,9 +2279,9 @@ function networkSelfLoopGeometry(node){
     sideX=corner[0]===-1?-1:1,sideY=corner[1]===1?1:-1,
     halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
     halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-    attach=clamp(halfHeight*.45,6,9),
-    radius=clamp(13+node.r*.22,15,20),
-    stem=clamp(radius*.2,3,5),
+    attach=clamp(halfHeight*.25,3,4),
+    radius=clamp(6+node.r*.06,7,9),
+    stem=clamp(radius*.14,1.2,2),
     startX=node.x+sideX*(halfWidth-attach),
     startY=node.y+sideY*halfHeight,
     arcStartX=startX,
@@ -2392,11 +2392,11 @@ drawNetwork=function(){
       path=el('path',{class:'edge',d:edgePath,stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':selfLoop?Math.max(2.1,width):width,opacity:selfLoop?1:opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
     if(selfLoop){
       edgeLayer.appendChild(el('path',{
-        class:'selfLoopHalo',d:edgePath,'stroke-width':Math.max(6.5,width+4.4),
+        class:'selfLoopHalo',d:edgePath,'stroke-width':Math.max(4.2,width+2.2),
         opacity:1,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index
       }))
     }
-    if(byId('networkArrows').checked)path.setAttribute('marker-end','url(#networkArrow)');
+    if(byId('networkArrows').checked)path.setAttribute('marker-end',selfLoop?'url(#networkSelfLoopArrow)':'url(#networkArrow)');
     edgeLayer.appendChild(path)
   });
   graph.nodes.forEach(node=>{
