@@ -24,9 +24,19 @@ output_file <- if (length(args) >= 2L) {
     "run012_lda_K30_tf_topic_raw_theta_dotplot.pdf"
   )
 }
+topic_terms_file <- if (length(args) >= 3L) {
+  args[[3L]]
+} else {
+  run_root <- dirname(dirname(dirname(normalizePath(
+    theta_file,
+    winslash = "/",
+    mustWork = TRUE
+  ))))
+  file.path(run_root, "topic_extraction", "topic_terms.csv")
+}
 
 cutoffs <- c(0.3, 0.5)
-grid_columns <- 5L
+grid_columns <- 6L
 
 required_packages <- c("data.table", "ggplot2", "scales")
 missing_packages <- required_packages[
@@ -41,6 +51,9 @@ if (length(missing_packages)) {
 }
 if (!file.exists(theta_file)) {
   stop("Missing theta file: ", theta_file, call. = FALSE)
+}
+if (!file.exists(topic_terms_file)) {
+  stop("Missing final topic-term file: ", topic_terms_file, call. = FALSE)
 }
 
 theta_table <- data.table::fread(theta_file, showProgress = FALSE)
@@ -96,6 +109,47 @@ document_table[, tf_index := unname(tf_index[tf])]
 document_table[, page := ((tf_index - 1L) %/% rows_per_page) + 1L]
 n_pages <- max(document_table$page)
 
+topic_terms <- data.table::fread(topic_terms_file, showProgress = FALSE)
+required_term_columns <- c(
+  "term_id", "term_group", "topic_num", "in_topic", "assignment_method"
+)
+missing_term_columns <- setdiff(required_term_columns, names(topic_terms))
+if (length(missing_term_columns)) {
+  stop(
+    "Final topic-term file is missing: ",
+    paste(missing_term_columns, collapse = ", "),
+    call. = FALSE
+  )
+}
+in_topic_flag <- toupper(as.character(topic_terms$in_topic)) %in% c("TRUE", "T", "1")
+tf_term_assignments <- topic_terms[
+  term_group == "GENE" & in_topic_flag,
+  .(
+    tf_key = toupper(sub("^GENE:", "", as.character(term_id))),
+    topic_num = suppressWarnings(as.integer(topic_num)),
+    assignment_method = as.character(assignment_method)
+  )
+]
+if (!nrow(tf_term_assignments) ||
+    any(!grepl("^gammafit_maxprob", tf_term_assignments$assignment_method))) {
+  stop(
+    "Final GENE-term rows must use GammaFit+MaxProb assignment.",
+    call. = FALSE
+  )
+}
+if (tf_term_assignments[, .N, by = tf_key][N > 1L, .N]) {
+  stop(
+    "Final GammaFit+MaxProb GENE terms assign at least one TF to multiple topics.",
+    call. = FALSE
+  )
+}
+tf_term_assignments <- unique(
+  tf_term_assignments[tf_key %in% toupper(tf_levels), .(tf_key, topic_num)]
+)
+if (any(!tf_term_assignments$topic_num %in% topic_numbers)) {
+  stop("Final TF-term assignments contain topics absent from theta.", call. = FALSE)
+}
+
 theta_long <- data.table::melt(
   theta_table,
   id.vars = "doc_id",
@@ -127,26 +181,35 @@ make_page_data <- function(cutoff, page_number) {
     tf = page_tfs,
     unique = TRUE
   )
+  cells[, tf_key := toupper(tf)]
   cells <- merge(cells, page_rows, by = "tf", sort = FALSE)
+  term_borders <- merge(
+    cells,
+    tf_term_assignments,
+    by = c("tf_key", "topic_num"),
+    all = FALSE,
+    sort = FALSE
+  )
 
-  dots <- theta_long[
+  tiles <- theta_long[
     tf %in% page_tfs & theta >= cutoff,
     .(condition_id, tf, topic_num, theta)
   ]
-  data.table::setorder(dots, tf, topic_num, -theta, condition_id)
-  dots[, slot := seq_len(.N), by = .(tf, topic_num)]
-  dots[, slot_row := (slot - 1L) %/% grid_columns]
-  dots[, slot_column := (slot - 1L) %% grid_columns]
-  dots[, row_count := max(slot_row) + 1L, by = .(tf, topic_num)]
-  dots[, column_count := .N, by = .(tf, topic_num, slot_row)]
-  dots[, x := topic_num + (slot_column - (column_count - 1) / 2) * 0.15]
-  dots[, y_offset := (slot_row - (row_count - 1) / 2) * 0.19]
-  dots <- merge(dots, page_rows, by = "tf", sort = FALSE)
-  dots[, y := tf_row + y_offset]
+  data.table::setorder(tiles, tf, topic_num, -theta, condition_id)
+  tiles[, slot := seq_len(.N), by = .(tf, topic_num)]
+  tiles[, slot_row := (slot - 1L) %/% grid_columns]
+  tiles[, slot_column := (slot - 1L) %% grid_columns]
+  tiles[, row_count := max(slot_row) + 1L, by = .(tf, topic_num)]
+  tiles[, column_count := .N, by = .(tf, topic_num, slot_row)]
+  tiles[, x := topic_num + (slot_column - (column_count - 1) / 2) * 0.12]
+  tiles[, y_offset := (slot_row - (row_count - 1) / 2) * 0.31]
+  tiles <- merge(tiles, page_rows, by = "tf", sort = FALSE)
+  tiles[, y := tf_row + y_offset]
 
   list(
     cells = cells,
-    dots = dots,
+    tiles = tiles,
+    term_borders = term_borders,
     page_rows = page_rows,
     tf_start = tf_start,
     tf_end = tf_end
@@ -158,7 +221,7 @@ validate_cutoff <- function(cutoff) {
   observed <- theta_long[theta >= cutoff, .N]
   if (!identical(as.integer(observed), as.integer(expected))) {
     stop(
-      "Dot-count validation failed for cutoff ",
+      "Tile-count validation failed for cutoff ",
       cutoff,
       ": expected ",
       expected,
@@ -176,7 +239,7 @@ validate_cutoff <- function(cutoff) {
   ]
   observed_cells <- data.table::rbindlist(
     lapply(seq_len(n_pages), function(page_number) {
-      make_page_data(cutoff, page_number)$dots[
+      make_page_data(cutoff, page_number)$tiles[
         ,
         .(observed = .N),
         by = .(tf, topic_num)
@@ -193,7 +256,7 @@ validate_cutoff <- function(cutoff) {
   checked[is.na(observed), observed := 0L]
   if (checked[expected != observed, .N]) {
     stop(
-      "Per-cell dot-count validation failed for cutoff ",
+      "Per-cell tile-count validation failed for cutoff ",
       cutoff,
       ".",
       call. = FALSE
@@ -202,8 +265,21 @@ validate_cutoff <- function(cutoff) {
   as.integer(observed)
 }
 
-dot_counts <- vapply(cutoffs, validate_cutoff, integer(1L))
-names(dot_counts) <- format(cutoffs, nsmall = 1)
+tile_counts <- vapply(cutoffs, validate_cutoff, integer(1L))
+names(tile_counts) <- format(cutoffs, nsmall = 1)
+border_count <- sum(vapply(seq_len(n_pages), function(page_number) {
+  nrow(make_page_data(cutoffs[[1L]], page_number)$term_borders)
+}, integer(1L)))
+if (!identical(as.integer(border_count), as.integer(nrow(tf_term_assignments)))) {
+  stop(
+    "TF-term border validation failed: expected ",
+    nrow(tf_term_assignments),
+    ", observed ",
+    border_count,
+    ".",
+    call. = FALSE
+  )
+}
 
 plot_page <- function(cutoff, page_number) {
   page_data <- make_page_data(cutoff, page_number)
@@ -221,13 +297,22 @@ plot_page <- function(cutoff, page_number) {
       color = "#E2E7E4",
       linewidth = 0.15
     ) +
-    ggplot2::geom_point(
-      data = page_data$dots,
+    ggplot2::geom_tile(
+      data = page_data$tiles,
       ggplot2::aes(x = x, y = y, fill = theta),
-      shape = 21,
-      size = 1.25,
-      stroke = 0.2,
-      color = "white"
+      width = 0.105,
+      height = 0.28,
+      color = "white",
+      linewidth = 0.08
+    ) +
+    ggplot2::geom_tile(
+      data = page_data$term_borders,
+      ggplot2::aes(x = topic_num, y = tf_row),
+      width = 0.96,
+      height = 0.94,
+      fill = NA,
+      color = "#D62728",
+      linewidth = 0.85
     ) +
     ggplot2::scale_x_continuous(
       breaks = topic_numbers,
@@ -267,7 +352,8 @@ plot_page <- function(cutoff, page_number) {
       x = "Topic",
       y = "TF",
       caption = paste0(
-        "One dot per passing condition::TF document; dot fill is its raw theta. ",
+        "One tile per passing condition::TF document; tile fill is its raw theta. ",
+        "Red border: GENE:<TF> final GammaFit+MaxProb topic assignment. ",
         "No theta aggregation. ",
         length(condition_levels),
         " conditions."
@@ -360,6 +446,7 @@ message(
   length(topic_names)
 )
 message(
-  "Passing dots: ",
-  paste0(names(dot_counts), "=", dot_counts, collapse = "; ")
+  "Passing tiles: ",
+  paste0(names(tile_counts), "=", tile_counts, collapse = "; ")
 )
+message("TF-term topic borders: ", border_count)
