@@ -2105,17 +2105,22 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "function setNetworkRequestedCount", fixed = TRUE)
   expect_match(html, "input.dataset.requestedValue", fixed = TRUE)
   expect_match(html, "setNetworkRequestedCount(slider)", fixed = TRUE)
-  expect_match(html, "function tfPrimaryTopicForView", fixed = TRUE)
+  expect_match(html, "TF_GLOBAL_PRIMARY_TOPIC=new Map()", fixed = TRUE)
+  expect_match(html, "function tfOverallPrimaryTopic", fixed = TRUE)
+  expect_match(html, "record.sum/record.n", fixed = TRUE)
   expect_match(
     html,
-    "tfPrimaryTopicForView(tf)===topic",
+    "tfOverallPrimaryTopic(tf)===topic",
     fixed = TRUE
   )
   expect_match(
     html,
-    "Paired views use mean raw theta across the selected conditions.",
+    "highest mean raw theta across all available condition::TF documents",
     fixed = TRUE
   )
+  expect_no_match(html, "function tfPrimaryTopicForView", fixed = TRUE)
+  expect_no_match(html, "r.tfu===tfKey(tf)||conds.some", fixed = TRUE)
+  expect_match(html, "const best=tfOverallPrimaryTopic(tf)", fixed = TRUE)
   expect_match(html, "function bindNetworkCountInput", fixed = TRUE)
   expect_match(html, "input.addEventListener('change',commit)", fixed = TRUE)
   expect_match(html, "input.addEventListener('keydown',event=>", fixed = TRUE)
