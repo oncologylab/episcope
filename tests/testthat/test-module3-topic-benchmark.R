@@ -1819,13 +1819,21 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     'id="networkTopTf" type="range" min="1" max="100" step="1" value="100"',
     fixed = TRUE
   )
-  expect_match(html, 'id="networkTopTfValue">100 / 100', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkTopTfValue" type="number" min="1" max="100" step="1" value="100"',
+    fixed = TRUE
+  )
   expect_match(
     html,
     'id="networkTopLinks" type="range" min="1" max="300" step="1" value="300"',
     fixed = TRUE
   )
-  expect_match(html, 'id="networkTopLinksValue">300 / 300', fixed = TRUE)
+  expect_match(
+    html,
+    'id="networkTopLinksValue" type="number" min="1" max="300" step="1" value="300"',
+    fixed = TRUE
+  )
   expect_match(html, 'id="topicPageStatus"', fixed = TRUE)
   expect_match(html, 'id="tfPageStatus"', fixed = TRUE)
   expect_match(html, 'id="pathPageStatus"', fixed = TRUE)
@@ -2045,6 +2053,17 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)
   expect_match(html, "graph.targetCount+' target genes", fixed = TRUE)
   expect_match(html, "function syncNetworkRange", fixed = TRUE)
+  expect_match(html, "function bindNetworkCountInput", fixed = TRUE)
+  expect_match(
+    html,
+    "bindNetworkCountInput('networkTopTf','networkTopTfValue')",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "bindNetworkCountInput('networkTopLinks','networkTopLinksValue')",
+    fixed = TRUE
+  )
   expect_match(
     html,
     "syncNetworkRange('networkTopTf','networkTopTfValue',rank.size,rank.size",
