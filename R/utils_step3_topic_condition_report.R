@@ -1271,7 +1271,7 @@
     "<label>TF scope <select id=\"networkTfScope\"><option value=\"topic\" selected>In Topic</option><option value=\"all\">All TFs</option></select></label>",
     "<label>Topic theta &gt;= <select id=\"networkThetaPreset\"><option value=\"0.3\" selected>0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkThetaCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0.3\"/></label>",
     "<label>Topic Phi &gt;= <select id=\"networkPhiPreset\"><option value=\"0\" selected>0</option><option value=\"0.1\">0.1</option><option value=\"0.2\">0.2</option><option value=\"0.3\">0.3</option><option value=\"0.5\">0.5</option><option value=\"0.7\">0.7</option><option value=\"custom\">Custom</option></select><input id=\"networkPhiCutoff\" type=\"number\" min=\"0\" max=\"1\" step=\"0.01\" value=\"0\"/></label>",
-    "<label>Primary topic only <input id=\"networkPrimaryOnly\" type=\"checkbox\" checked/></label>",
+    "<label title=\"Keep each TF only in its single highest-theta topic for the current condition view. Paired views use mean raw theta across the selected conditions.\">Primary topic only <input id=\"networkPrimaryOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Add one-hop TF-to-TF links when at least one endpoint is outside the selected topic. Every added edge must touch an in-topic TF.\">Outside-topic TF-TF link <input id=\"networkOutsideTopicTfTf\" type=\"checkbox\"/></label>",
     "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Pathway only shows the selected pathway subnetwork. Full topic keeps the topic GRN and dims non-pathway elements.\">Pathway focus <select id=\"networkPathwayFocus\"><option value=\"filter\" selected>Pathway only</option><option value=\"highlight\">Full topic + highlight</option></select></label>",
@@ -1435,6 +1435,7 @@ function groupTopic(cond,topic){if(conditionTopicMetric&&conditionTopicMetric.va
 function conditionTopicMetricLabel(){if(conditionTopicMetric&&conditionTopicMetric.value==='rna_delta')return cond2Select.value?'share of positive pairwise RNA activity':'assigned-gene RNA activity share';const matched=byId('thetaAggregation')&&byId('thetaAggregation').value==='matched'&&cond2Select.value;return matched?'mean theta across matched TF documents':'mean theta across available TF documents'}
 function tfTheta(cond,tf,topic){return num(TF_TOPIC_INDEX.get(String(cond)+'\t'+tfKey(tf)+'\t'+Number(topic)),0)}
 function tfPrimaryTopic(cond,tf){let best=NaN,bestV=-Infinity;Array.from(topicSelect.options).forEach(o=>{const t=Number(o.value),v=tfTheta(cond,tf,t);if(v>bestV||(v===bestV&&t<best)){best=t;bestV=v}});return best}
+function tfPrimaryTopicForView(tf){const key=tfKey(tf),selected=[cond1Select.value,cond2Select.value].filter(Boolean),available=selected.filter(cond=>(TF_BY_CONDITION.get(String(cond))||new Set()).has(key)),conditions=available.length?available:selected;let best=NaN,bestV=-Infinity;Array.from(topicSelect.options).forEach(option=>{const topic=Number(option.value),value=conditions.reduce((sum,cond)=>sum+tfTheta(cond,key,topic),0)/Math.max(1,conditions.length);if(value>bestV||(value===bestV&&topic<best)){best=topic;bestV=value}});return best}
 function selectTopTfTopic(tf){if(!tf)return;const conds=[cond1Select.value,cond2Select.value].filter(Boolean),topics=Array.from(topicSelect.options).map(o=>Number(o.value));let best=topics[0],bestV=-Infinity;topics.forEach(t=>{const v=conds.reduce((s,c)=>s+tfTheta(c,tf,t),0)/Math.max(1,conds.length);if(v>bestV){bestV=v;best=t}});topicSelect.value=String(best);pathwaySelect.value=''}
 function customPaletteColors(role){const prefix=role==='TF'?'networkTf':role==='Gene'?'networkGene':'networkEdge',low=byId(prefix+'LowColor'),high=byId(prefix+'HighColor');return[low?low.value:'#2166AC','#E0E3E1',high?high.value:'#B2182B']}function colorScale(v,limit,palette='condition',single=false,role='node'){if(palette==='custom'){const p=customPaletteColors(role),t=clamp(v/Math.max(limit,1e-9),single?0:-1,1);return single?mix(p[0],p[2],t):t<0?mix(p[1],p[0],-t):mix(p[1],p[2],t)}if(palette==='condition'){const t=clamp(v/Math.max(limit,1e-9),single?0:-1,1);if(single){const colors=role==='TF'?['#F2D7DF','#9F1748']:role==='Gene'?['#D7EBEE','#056A78']:['#D7DDDA',mix(conditionColor(1),'#111827',.18)];return mix(colors[0],colors[1],t)}const p=[mix(conditionColor(2),'#111827',.14),'#D4DAD7',mix(conditionColor(1),'#111827',.14)];return t<0?mix(p[1],p[0],-t):mix(p[1],p[2],t)}const diverging={rdbu:['#2166AC','#E0E3E1','#B2182B'],prgn:['#762A83','#E0E3E1','#1B7837'],brbg:['#8C510A','#E0E3E1','#01665E']},p=diverging[palette]||diverging.rdbu;if(single){const t=clamp(v/Math.max(limit,1e-9),0,1);return mix('#D7DDDA',p[2],t)}const t=clamp(v/Math.max(limit,1e-9),-1,1);return t<0?mix(p[1],p[0],-t):mix(p[1],p[2],t)}function mix(a,b,t){const rgb=x=>{const s=String(x||'').trim();if(/^#[0-9a-f]{6}$/i.test(s)){const q=parseInt(s.slice(1),16);return[(q>>16)&255,(q>>8)&255,q&255]}const m=s.match(/[\d.]+/g);return m&&m.length>=3?m.slice(0,3).map(Number):[127,127,127]},x=rgb(a),y=rgb(b);return'rgb('+x.map((v,i)=>Math.round(v+(y[i]-v)*t)).join(',')+')'}
 function conditionColorForId(id){return CONDITION_COLORS[String(id)]||'#7F7F7F'}function conditionColor(side){return conditionColorForId(side===2?cond2Select.value:cond1Select.value)}function syncSelectedColorInputs(){cond1Color.value=conditionColor(1);cond2Color.value=conditionColor(2)}
@@ -1599,7 +1600,7 @@ function tfLabel(){const o=tfSelect.options[tfSelect.selectedIndex];return o?o.t
 function selectTf(tf){tfSelect.value=tfKey(tf);selectTopTfTopic(tf);showItemPage(conditionTopicRows(),'topic',d=>d.topic===Number(topicSelect.value));showItemPage(tfButterflyRows(),'tf',tfButterflyRowSelected);PAGE_INDEX.path=0;refresh();refreshConditionData()}
 function currentPath(){return PATH_ROWS.find(r=>r.key===pathwaySelect.value)||null}
 function rowPairExpressed(r){const cfg=directionConfig();return(Number.isFinite(r.gexprA)&&r.gexprA>=cfg.exprMin)||(Number.isFinite(r.gexprB)&&r.gexprB>=cfg.exprMin)}
-function networkPairRows(){const allowed=topicGenes(),p=currentPath(),filterPath=p&&byId('networkPathwayFocus').value==='filter';if(filterPath){const pg=new Set(p.genes.map(geneKey));Array.from(allowed).forEach(g=>{if(!pg.has(geneKey(g)))allowed.delete(g)})}const pairIndex=edgePairIndex(allowed);let rows=pairIndex.rows.filter(rowPairExpressed);const tf=tfSelect.value;if(tf){const seeds=new Set(rows.filter(r=>r.tfu===tfKey(tf)).map(r=>geneKey(r.gene)));rows=rows.filter(r=>seeds.has(geneKey(r.gene)))}if(byId('networkTfScope').value==='topic'){const cut=num(byId('networkThetaCutoff').value,.3),conds=[cond1Select.value,cond2Select.value].filter(Boolean),primary=byId('networkPrimaryOnly').checked,topic=Number(topicSelect.value);rows=rows.filter(r=>r.tfu===tfKey(tf)||conds.some(c=>tfTheta(c,r.tfu,topic)>=cut&&(!primary||tfPrimaryTopic(c,r.tfu)===topic)))}if(cond2Select.value&&byId('networkCorrectDirectionOnly').checked&&byId('networkMode').value==='tf_gene')rows=rows.filter(r=>r.correctDirection);return rows}
+function networkPairRows(){const allowed=topicGenes(),p=currentPath(),filterPath=p&&byId('networkPathwayFocus').value==='filter';if(filterPath){const pg=new Set(p.genes.map(geneKey));Array.from(allowed).forEach(g=>{if(!pg.has(geneKey(g)))allowed.delete(g)})}const pairIndex=edgePairIndex(allowed);let rows=pairIndex.rows.filter(rowPairExpressed);const tf=tfSelect.value;if(tf){const seeds=new Set(rows.filter(r=>r.tfu===tfKey(tf)).map(r=>geneKey(r.gene)));rows=rows.filter(r=>seeds.has(geneKey(r.gene)))}if(byId('networkTfScope').value==='topic'){const cut=num(byId('networkThetaCutoff').value,.3),conds=[cond1Select.value,cond2Select.value].filter(Boolean),primary=byId('networkPrimaryOnly').checked,topic=Number(topicSelect.value);rows=rows.filter(r=>r.tfu===tfKey(tf)||conds.some(c=>tfTheta(c,r.tfu,topic)>=cut)&&(!primary||tfPrimaryTopicForView(r.tfu)===topic))}if(cond2Select.value&&byId('networkCorrectDirectionOnly').checked&&byId('networkMode').value==='tf_gene')rows=rows.filter(r=>r.correctDirection);return rows}
 function peakPairRows(allowedPairs){const c1=cond1Select.value,c2=cond2Select.value,m=new Map(),pairKeys=Array.from(new Set(allowedPairs.map(r=>r.tfu+'\t'+geneKey(r.gene))));function add(cond,side){const compact=compactPeakRowsForPairs(cond,pairKeys),rows=compact===null?pairKeys.flatMap(pk=>((PEAK_BY_COND_PAIR.get(String(cond))||new Map()).get(pk)||[])):compact;rows.forEach(d=>{const k=tfKey(d.tf)+'\t'+d.peak_id+'\t'+geneKey(d.gene_key),r=m.get(k)||{tf:d.tf,tfu:tfKey(d.tf),peak:String(d.peak_id),gene:String(d.gene_key),a:0,b:0,exprA:NaN,exprB:NaN,gexprA:NaN,gexprB:NaN};if(side==='a'){r.a=num(d.fp_score);r.exprA=num(d.tf_expr,NaN);r.gexprA=num(d.gene_expr,NaN)}else{r.b=num(d.fp_score);r.exprB=num(d.tf_expr,NaN);r.gexprB=num(d.gene_expr,NaN)}m.set(k,r)})}add(c1,'a');if(c2)add(c2,'b');let rows=Array.from(m.values()).map(r=>decorateLinkDirection(Object.assign(r,{exprA:tfExpression(c1,r.tfu,r.exprA),exprB:c2?tfExpression(c2,r.tfu,r.exprB):NaN,gexprA:auditGeneExpr(c1,r.gene,r.gexprA),gexprB:c2?auditGeneExpr(c2,r.gene,r.gexprB):NaN})));if(c2&&byId('networkCorrectDirectionOnly').checked)rows=rows.filter(r=>r.correctDirection);return rows}
 function nodeLogfc(a,b){if(!cond2Select.value)return Math.log2(Math.max(0,Number.isFinite(a)?a:0)+1);if(!Number.isFinite(a)&&!Number.isFinite(b))return NaN;return Math.log2((Number.isFinite(a)?a:0)+1)-Math.log2((Number.isFinite(b)?b:0)+1)}
 function networkTfRnaValue(tf){const c1=cond1Select.value,c2=cond2Select.value;return nodeLogfc(tfExpression(c1,tf,NaN),c2?tfExpression(c2,tf,NaN):NaN)}
@@ -1693,10 +1694,12 @@ function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[co
 conditionTopicMetric.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('thetaAggregation').addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('shortConditionNames').addEventListener('change',refresh);new MutationObserver(styleMdsPlot).observe(byId('mdsLayer'),{childList:true});
-byId('networkPrioritizeTfTf').addEventListener('input',()=>{setNetworkTfTfPriorityBase();drawNetwork()});
-byId('networkPrioritizeTfTf').addEventListener('change',()=>{setNetworkTfTfPriorityBase();drawNetwork()});
-byId('networkTopLinks').addEventListener('input',()=>{setNetworkTfTfPriorityBase(true);drawNetwork()});
-byId('networkTopLinks').addEventListener('change',()=>{setNetworkTfTfPriorityBase(true);drawNetwork()});
+byId('networkPrioritizeTfTf').addEventListener('input',()=>setNetworkTfTfPriorityBase());
+byId('networkPrioritizeTfTf').addEventListener('change',()=>setNetworkTfTfPriorityBase());
+byId('networkTopTf').addEventListener('input',()=>setNetworkRequestedCount(byId('networkTopTf')));
+byId('networkTopTf').addEventListener('change',()=>setNetworkRequestedCount(byId('networkTopTf')));
+byId('networkTopLinks').addEventListener('input',()=>{setNetworkRequestedCount(byId('networkTopLinks'));setNetworkTfTfPriorityBase(true)});
+byId('networkTopLinks').addEventListener('change',()=>{setNetworkRequestedCount(byId('networkTopLinks'));setNetworkTfTfPriorityBase(true)});
 document.addEventListener('click',ev=>{const filter=byId('mdsConditionFilter');if(filter&&filter.open&&!filter.contains(ev.target))filter.open=false});
 byId('networkMode').addEventListener('change',()=>{if(byId('networkMode').value!=='tf_peak_gene')return;byId('networkStats').textContent='Loading peak data...';ensureSelectedConditionPeaks().then(()=>{if(networkOpen)drawNetwork()}).catch(e=>{byId('networkStats').textContent=e.message})});
 cond1Color.addEventListener('input',()=>{if(cond1Select.value)CONDITION_COLORS[cond1Select.value]=cond1Color.value;refresh()});cond2Color.addEventListener('input',()=>{if(cond2Select.value)CONDITION_COLORS[cond2Select.value]=cond2Color.value;refresh()});
@@ -1926,8 +1929,9 @@ function networkConditionRowsForGenes(genes){
 function rowTfPassesSelectedTopic(row,tf){
   const cutoff=num(byId('networkThetaCutoff').value,.3),primary=byId('networkPrimaryOnly').checked,
     topic=Number(topicSelect.value),c1=cond1Select.value,c2=cond2Select.value;
-  return(edgePresentInCondition(row,1)&&tfPassesTopicInCondition(c1,tf,topic,cutoff,primary))||
-    (c2&&edgePresentInCondition(row,2)&&tfPassesTopicInCondition(c2,tf,topic,cutoff,primary))
+  const passesCutoff=(edgePresentInCondition(row,1)&&tfPassesTopicInCondition(c1,tf,topic,cutoff,false))||
+    (c2&&edgePresentInCondition(row,2)&&tfPassesTopicInCondition(c2,tf,topic,cutoff,false));
+  return passesCutoff&&(!primary||tfPrimaryTopicForView(tf)===topic)
 }
 function networkRowsForGenes(genes,restrictToSelectedTargets){
   const selected=tfKey(tfSelect.value);
@@ -1993,7 +1997,10 @@ function syncNetworkRange(id,outputId,maximum,cap,context){
   input.disabled=false;
   input.min='1';
   input.max=String(maxValue);
-  input.value=String(reset?Math.min(cap,maxValue):clamp(Math.round(num(input.value,cap)),1,maxValue));
+  const preferred=input.dataset.userSet==='1'?
+    num(input.dataset.requestedValue,input.value):
+    reset?cap:input.value;
+  input.value=String(clamp(Math.round(num(preferred,cap)),1,maxValue));
   output.disabled=false;
   output.min='1';
   output.max=String(maxValue);
@@ -2003,20 +2010,41 @@ function syncNetworkRange(id,outputId,maximum,cap,context){
   output.title='Maximum: '+maxValue;
   return Number(input.value)
 }
+function setNetworkRequestedCount(control){
+  const value=clamp(Math.round(num(control.value,control.min)),num(control.min,0),num(control.max,0));
+  control.dataset.userSet='1';
+  control.dataset.requestedValue=String(value)
+}
 function bindNetworkCountInput(sliderId,inputId){
   const slider=byId(sliderId),input=byId(inputId);
+  const commit=()=>{
+    if(input.value===''){
+      input.value=slider.value;
+      return
+    }
+    const value=Number(input.value);
+    if(!Number.isFinite(value)){
+      input.value=slider.value;
+      return
+    }
+    slider.value=String(clamp(Math.round(value),num(slider.min,0),num(slider.max,0)));
+    setNetworkRequestedCount(slider);
+    input.value=slider.value;
+    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
+    drawNetwork()
+  };
   input.addEventListener('input',()=>{
     if(input.value==='')return;
     const value=Number(input.value);
     if(!Number.isFinite(value))return;
-    slider.value=String(clamp(Math.round(value),num(slider.min,0),num(slider.max,0)));
-    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
-    drawNetwork()
+    slider.value=String(clamp(Math.round(value),num(slider.min,0),num(slider.max,0)))
   });
-  input.addEventListener('change',()=>{
-    input.value=slider.value;
-    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
-    drawNetwork()
+  input.addEventListener('change',commit);
+  input.addEventListener('keydown',event=>{
+    if(event.key!=='Enter')return;
+    event.preventDefault();
+    commit();
+    input.select()
   })
 }
 function setNetworkTfTfPriorityBase(reset=false){
@@ -2145,6 +2173,9 @@ buildNetwork=function(){
       linkControl.value=String(topLinks);
       linkOutput.value=String(topLinks)
     }
+    linkOutput.title=topLinks>baseline?
+      'Requested '+baseline+'; raised to '+topLinks+' to include every eligible TF-TF link.':
+      'Maximum: '+candidateLinks.length
   }
   const source=selectNetworkLinks(candidateLinks,topLinks,prioritizeTfTf,requiredKeys),nodes=new Map(),edgesByKey=new Map(),
     biologicalLinks=new Set(),contextLinks=new Set();

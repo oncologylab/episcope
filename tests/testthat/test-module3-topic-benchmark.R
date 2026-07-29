@@ -2098,7 +2098,29 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "graph.tfCount+' TFs", fixed = TRUE)
   expect_match(html, "graph.targetCount+' target genes", fixed = TRUE)
   expect_match(html, "function syncNetworkRange", fixed = TRUE)
+  expect_match(html, "function setNetworkRequestedCount", fixed = TRUE)
+  expect_match(html, "input.dataset.requestedValue", fixed = TRUE)
+  expect_match(html, "setNetworkRequestedCount(slider)", fixed = TRUE)
+  expect_match(html, "function tfPrimaryTopicForView", fixed = TRUE)
+  expect_match(
+    html,
+    "tfPrimaryTopicForView(tf)===topic",
+    fixed = TRUE
+  )
+  expect_match(
+    html,
+    "Paired views use mean raw theta across the selected conditions.",
+    fixed = TRUE
+  )
   expect_match(html, "function bindNetworkCountInput", fixed = TRUE)
+  expect_match(html, "input.addEventListener('change',commit)", fixed = TRUE)
+  expect_match(html, "input.addEventListener('keydown',event=>", fixed = TRUE)
+  expect_match(html, "event.key!=='Enter'", fixed = TRUE)
+  expect_match(
+    html,
+    "raised to '+topLinks+' to include every eligible TF-TF link",
+    fixed = TRUE
+  )
   expect_match(
     html,
     "bindNetworkCountInput('networkTopTf','networkTopTfValue')",
