@@ -1665,10 +1665,10 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   )
   expect_match(
     html,
-    "points.every(p=>mdsRectOverlap(d,{x:p.x-24,y:p.y-24,w:48,h:48})===0)",
+    "points.every(p=>mdsRectOverlap(d,{x:p.x-pointClearance,y:p.y-pointClearance,w:2*pointClearance,h:2*pointClearance})===0)",
     fixed = TRUE
   )
-  expect_match(html, "q.maxLeader=compact?100:Infinity", fixed = TRUE)
+  expect_match(html, "q.maxLeader=compact?100:160", fixed = TRUE)
   expect_match(html, "'data-condition-id':q.id", fixed = TRUE)
   expect_match(
     html,
@@ -1998,7 +1998,8 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   )
   expect_match(html, "shape.setAttribute('fill'", fixed = TRUE)
   expect_match(html, "label.setAttribute('fill',contrast.fill)", fixed = TRUE)
-  expect_match(html, '<option value="tailwind">Tailwind CSS inspired</option>', fixed = TRUE)
+  expect_no_match(html, 'NPG inspired', fixed = TRUE)
+  expect_no_match(html, 'Tailwind CSS inspired', fixed = TRUE)
   expect_match(html, 'role="dialog"', fixed = TRUE)
   expect_match(html, ".networkPanel{position:absolute;inset:0", fixed = TRUE)
   expect_false(grepl(".networkPanel{position:fixed", html, fixed = TRUE))
