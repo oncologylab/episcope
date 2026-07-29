@@ -1247,7 +1247,7 @@
     ".pane h2,.mini h2{font-size:14px;line-height:1.1;margin:0;white-space:nowrap}.body{position:relative;flex:1;min-height:0;overflow:hidden}.meta{font-size:11px;color:#52605a}.bottomPair .meta{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.bottomPair .paneHead{padding:6px 8px;gap:4px}.contextWrap,.headTools{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0}.conditionTopicMetricControl{width:142px;min-width:0;font-size:10px;padding:4px 5px}body.embed .conditionTopicMetricControl,body.embed .conditionTopicMetricControl+.help{display:none}.iconButton{width:25px;height:25px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;font-size:15px!important;line-height:1}.zoomButton{height:25px;padding:3px 8px!important;font-size:11px!important;line-height:1;white-space:nowrap}.pathScoreControl{font-size:11px;gap:4px!important}.pathScoreControl select{font-size:11px;padding:4px 6px}",
     ".help{display:inline-flex;width:19px;height:19px;border:1px solid #9ca3a0;border-radius:50%;align-items:center;justify-content:center;font-size:12px;color:#38413d;background:#fff;cursor:help}.tooltip{position:absolute;display:none;background:rgba(17,17,17,.96);color:#fff;font:700 12px Arial,Helvetica,sans-serif;padding:8px 9px;border-radius:4px;pointer-events:none;max-width:460px;line-height:1.35;z-index:30}",
     "svg{width:100%;height:100%;display:block}.fixedChart{position:absolute;inset:0;overflow:hidden;background:#fff}#mdsLayer text,#activityLayer text,#butterflyLayer text,#tfButterflyLayer text{font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700}#pathLayer text{font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700}.pager{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pager button{width:25px;height:25px;padding:0;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;background:#fff;color:#171717;border-color:#9ca3a0}.pager button:hover:not(:disabled){background:#eceeeb}.pager button:disabled{opacity:.35;cursor:default}.pageStatus{min-width:42px;text-align:center;font-size:11px;color:#52605a}.pathLabel{font:700 14px Arial,Helvetica,sans-serif;fill:#171717}.pathLabelTopicSpecific{fill:#c42f3c}.pathLabelConditionSpecific{fill:#1f5fb8}.pathLabelBothSpecific{fill:#7626a8}.pathLegend{font:700 14px Arial,Helvetica,sans-serif}.pathRowSelected{fill:#f0f2ef}",
-    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round}",
+    ".networkPanel{position:absolute;inset:0;background:#fff;border:0;box-shadow:none;display:none;flex-direction:column;z-index:100}.networkTop{border-bottom:1px solid #cfd2cc;background:#f8f9f7}.networkHeading{min-height:54px;padding:7px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #dfe2dc}.networkHeadingText{min-width:0;flex:1}.networkTitle{font-size:15px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}.networkContext{font-size:10px;line-height:1.25;color:#52605a;margin-top:3px;white-space:normal}.networkActions{display:flex;gap:6px;flex:0 0 auto}.networkActions button{padding:5px 8px}.networkTabs{height:31px;padding:3px 10px 0;display:flex;gap:3px;border-bottom:1px solid #cfd2cc}.networkTab{height:28px;padding:4px 13px;border:1px solid transparent;border-bottom:0;background:transparent;color:#26342e;border-radius:4px 4px 0 0}.networkTab:hover{background:#eceeeb}.networkTab.active{background:#fff;border-color:#cfd2cc;color:#111}.networkTabPanel{display:none;min-height:43px;padding:6px 10px;gap:6px 10px;align-items:center;flex-wrap:wrap;background:#fff}.networkTabPanel.active{display:flex}.networkControls label{display:flex;gap:4px;align-items:center;font-size:11px;white-space:nowrap}.networkControls select,.networkControls input{font-size:11px;padding:4px 6px}.networkControls input[type=number]{width:57px}.networkControls input[type=range]{width:118px;padding:0}.networkControls output{min-width:58px;font-size:11px;color:#46524d}.networkControls .wideSelect{min-width:132px;max-width:205px}.networkStats{font-size:11px;line-height:1.2;color:#46524d;padding:0 10px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.networkCanvas{position:relative;flex:1;min-height:0;background:#fff}.node{cursor:grab}.node.selected{stroke:#111;stroke-width:5}.nodeLabel{font:700 14px Arial,Helvetica,sans-serif;paint-order:stroke;stroke-width:4px;stroke-linejoin:round;pointer-events:none}.edge{fill:none;stroke-linecap:round}.selfLoopHalo{fill:none;stroke:#fff;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}",
     "body.network-open{overflow:hidden}body.embed .top{display:none}body.embed .grid{flex:1}",
     ".pathLabelTopicSpecific,.pathLabelConditionSpecific,.pathLabelBothSpecific{fill:#171717}.reportModeToggle{display:inline-flex;gap:2px}.reportModeToggle button{padding:4px 8px;background:#fff;color:#171717;border-color:#9ca3a0}.reportModeToggle button.active{background:#202322;color:#fff}.loadingOverlay{position:fixed;inset:0;z-index:1000;background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px}.loadingOverlay[hidden]{display:none}.loadingSpinner{width:26px;height:26px;border:4px solid #cfd5d0;border-top-color:#202322;border-radius:50%;animation:m3cr-spin .75s linear infinite}@keyframes m3cr-spin{to{transform:rotate(360deg)}}.networkControls{padding:5px 7px;gap:5px 8px}.networkHeading{min-height:46px;padding:5px 8px}.networkHeading button{padding:4px 7px}.singleColorInput,.paletteEndpointInput{width:30px;height:27px;padding:2px}.singleColorInput[hidden],.paletteEndpointInput[hidden],.paletteEndpointLabel[hidden]{display:none}.paletteEndpointLabel{font-size:9px;color:#52605a}",
     ".mdsConditionFilter{position:relative;z-index:45}.mdsConditionFilter summary{list-style:none;cursor:pointer;border:1px solid #9ca3a0;border-radius:4px;background:#fff;color:#171717;padding:4px 7px;font:700 10px Arial,Helvetica,sans-serif;white-space:nowrap}.mdsConditionFilter summary::-webkit-details-marker{display:none}.mdsConditionFilter[open] summary{background:#202322;color:#fff}.mdsConditionFilterPanel{position:absolute;right:0;top:calc(100% + 5px);width:min(430px,calc(100vw - 24px));max-height:330px;background:#fff;border:1px solid #9ca3a0;box-shadow:0 8px 22px rgba(0,0,0,.18);padding:7px;z-index:50}.mdsConditionFilterActions{display:flex;gap:5px;padding-bottom:6px;border-bottom:1px solid #dfe2dc}.mdsConditionFilterActions button{padding:4px 8px;font-size:10px}.mdsConditionFilterList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:270px;overflow:auto;padding-top:6px}.mdsConditionFilterOption{display:flex;align-items:center;gap:5px;min-width:0;font-size:10px;line-height:1.2;cursor:pointer}.mdsConditionFilterOption input{margin:0;padding:0;flex:0 0 auto}.mdsConditionFilterOption span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#mdsStats{display:none}",
@@ -2250,10 +2250,11 @@ function assignNetworkSelfLoopCorners(graph){
     if(!node)return;
     const halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
       halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-      radius=clamp(20+node.r*.45,24,32),
+      radius=clamp(16+node.r*.3,18,24),
+      stem=clamp(radius*.22,4,6),
       score=corner=>{
-        const centerX=node.x+corner[0]*(halfWidth+radius*.55),
-          centerY=node.y+corner[1]*(halfHeight+radius*.55);
+        const centerX=node.x+corner[0]*(halfWidth+stem+radius*.5),
+          centerY=node.y+corner[1]*(halfHeight+stem+radius*.5);
         let value=0;
         graph.nodes.forEach(other=>{
           if(other===node)return;
@@ -2278,17 +2279,22 @@ function networkSelfLoopGeometry(node){
     sideX=corner[0]===-1?-1:1,sideY=corner[1]===1?1:-1,
     halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
     halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-    attach=clamp(halfHeight*.55,8,12),
-    radius=clamp(20+node.r*.45,24,32),
+    attach=clamp(halfHeight*.5,7,10),
+    radius=clamp(16+node.r*.3,18,24),
+    stem=clamp(radius*.22,4,6),
     startX=node.x+sideX*(halfWidth-attach),
     startY=node.y+sideY*halfHeight,
+    arcStartX=startX,
+    arcStartY=startY+sideY*stem,
     endX=node.x+sideX*halfWidth,
     endY=node.y+sideY*(halfHeight-attach),
+    arcEndX=endX+sideX*stem,
+    arcEndY=endY,
     sweep=sideX*sideY<0?1:0,
-    outerX=node.x+sideX*(halfWidth+radius*1.6),
-    outerY=node.y+sideY*(halfHeight+radius*1.6);
+    outerX=node.x+sideX*(halfWidth+stem+radius*1.65),
+    outerY=node.y+sideY*(halfHeight+stem+radius*1.65);
   return{
-    startX,startY,endX,endY,radius,sweep,
+    startX,startY,arcStartX,arcStartY,arcEndX,arcEndY,endX,endY,radius,sweep,
     minX:Math.min(startX,endX,outerX),maxX:Math.max(startX,endX,outerX),
     minY:Math.min(startY,endY,outerY),maxY:Math.max(startY,endY,outerY)
   }
@@ -2299,13 +2305,16 @@ function networkEdgePath(edge,byNode){
   if(from===to){
     const loop=networkSelfLoopGeometry(from);
     return'M '+loop.startX+' '+loop.startY+
+      ' L '+loop.arcStartX+' '+loop.arcStartY+
       ' A '+loop.radius+' '+loop.radius+' 0 1 '+loop.sweep+
-      ' '+loop.endX+' '+loop.endY
+      ' '+loop.arcEndX+' '+loop.arcEndY+
+      ' L '+loop.endX+' '+loop.endY
   }
   const dx=to.x-from.x,dy=to.y-from.y,distance=Math.max(1,Math.hypot(dx,dy)),end=networkNodeRadius(to);
   return'M '+from.x+' '+from.y+' L '+(to.x-dx/distance*end)+' '+(to.y-dy/distance*end)
 }
 redrawNetwork=function(){
+  assignNetworkSelfLoopCorners(networkState);
   const byNode=new Map(networkState.nodes.map(node=>[node.id,node]));
   byId('networkNodes').querySelectorAll('.node').forEach(shape=>{
     const node=byNode.get(shape.dataset.id);
@@ -2379,7 +2388,14 @@ drawNetwork=function(){
       selfLoop=edge.from===edge.to,
       width=edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),
       opacity=highlight&&!edge.pathwayHit?.36:focus?.86:.24,
-      path=el('path',{class:'edge',d:networkEdgePath(edge,byNode),stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':selfLoop?Math.max(1.4,width):width,opacity:selfLoop?Math.max(.9,opacity):opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
+      edgePath=networkEdgePath(edge,byNode),
+      path=el('path',{class:'edge',d:edgePath,stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':selfLoop?Math.max(2.1,width):width,opacity:selfLoop?1:opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
+    if(selfLoop){
+      edgeLayer.appendChild(el('path',{
+        class:'selfLoopHalo',d:edgePath,'stroke-width':Math.max(6.5,width+4.4),
+        opacity:1,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index
+      }))
+    }
     if(byId('networkArrows').checked)path.setAttribute('marker-end','url(#networkArrow)');
     edgeLayer.appendChild(path)
   });
