@@ -1276,7 +1276,7 @@
     "<label title=\"Keep links whose target RNA change and footprint change pass project cutoffs in the same direction; exclude significant opposing TF RNA changes.\">Correct direction only <input id=\"networkCorrectDirectionOnly\" type=\"checkbox\" checked/></label>",
     "<label title=\"Pathway only shows the selected pathway subnetwork. Full topic keeps the topic GRN and dims non-pathway elements.\">Pathway focus <select id=\"networkPathwayFocus\"><option value=\"filter\" selected>Pathway only</option><option value=\"highlight\">Full topic + highlight</option></select></label>",
     "<label>Network <select id=\"networkMode\"><option value=\"tf_gene\" selected>TF-gene</option><option value=\"tf_peak_gene\">TF-peak-gene</option></select></label>",
-    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><input id=\"networkTopTfValue\" type=\"number\" min=\"1\" max=\"100\" step=\"1\" value=\"100\" aria-label=\"Top TF count\"/></label><label title=\"Retain the current displayed links and automatically increase Top links when needed to include every eligible TF-to-TF link.\">Prioritize TF-TF links <input id=\"networkPrioritizeTfTf\" type=\"checkbox\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><input id=\"networkTopLinksValue\" type=\"number\" min=\"1\" max=\"300\" step=\"1\" value=\"300\" aria-label=\"Top link count\"/></label>",
+    "<label>Top TFs <input id=\"networkTopTf\" type=\"range\" min=\"1\" max=\"100\" step=\"1\" value=\"100\"/><input id=\"networkTopTfValue\" type=\"number\" min=\"1\" max=\"100\" step=\"1\" value=\"100\" aria-label=\"Top TF count\"/></label><label title=\"Show TF-to-TF links before other links within the selected Top links limit.\">Prioritize TF-TF links <input id=\"networkPrioritizeTfTf\" type=\"checkbox\"/></label><label>Top links <input id=\"networkTopLinks\" type=\"range\" min=\"1\" max=\"300\" step=\"1\" value=\"300\"/><input id=\"networkTopLinksValue\" type=\"number\" min=\"1\" max=\"300\" step=\"1\" value=\"300\" aria-label=\"Top link count\"/></label>",
     "<label>Select node <select id=\"networkNodeSelect\" class=\"wideSelect\"></select></label></div>",
     "<div id=\"networkTabLayout\" class=\"networkControls networkTabPanel\" data-network-panel=\"layout\">",
     "<label>Layout <select id=\"networkLayout\"><option value=\"force\" selected>Force</option><option value=\"auto\">Auto</option><option value=\"radial\">Radial</option><option value=\"columns\">Columns</option><option value=\"bipartite\">Bipartite</option><option value=\"hierarchy\">Hierarchy</option><option value=\"concentric\">Concentric</option><option value=\"circle\">Circle</option><option value=\"grid\">Grid</option><option value=\"spiral\">Spiral</option><option value=\"clustered\">Clustered</option></select></label>",
@@ -1694,12 +1694,10 @@ function init(){initControls();setActiveConditionSide(1);bindActivityZoom();[[co
 conditionTopicMetric.addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('thetaAggregation').addEventListener('change',()=>{pathwaySelect.value='';PAGE_INDEX.topic=0;PAGE_INDEX.path=0;refresh()});
 byId('shortConditionNames').addEventListener('change',refresh);new MutationObserver(styleMdsPlot).observe(byId('mdsLayer'),{childList:true});
-byId('networkPrioritizeTfTf').addEventListener('input',()=>setNetworkTfTfPriorityBase());
-byId('networkPrioritizeTfTf').addEventListener('change',()=>setNetworkTfTfPriorityBase());
 byId('networkTopTf').addEventListener('input',()=>setNetworkRequestedCount(byId('networkTopTf')));
 byId('networkTopTf').addEventListener('change',()=>setNetworkRequestedCount(byId('networkTopTf')));
-byId('networkTopLinks').addEventListener('input',()=>{setNetworkRequestedCount(byId('networkTopLinks'));setNetworkTfTfPriorityBase(true)});
-byId('networkTopLinks').addEventListener('change',()=>{setNetworkRequestedCount(byId('networkTopLinks'));setNetworkTfTfPriorityBase(true)});
+byId('networkTopLinks').addEventListener('input',()=>setNetworkRequestedCount(byId('networkTopLinks')));
+byId('networkTopLinks').addEventListener('change',()=>setNetworkRequestedCount(byId('networkTopLinks')));
 document.addEventListener('click',ev=>{const filter=byId('mdsConditionFilter');if(filter&&filter.open&&!filter.contains(ev.target))filter.open=false});
 byId('networkMode').addEventListener('change',()=>{if(byId('networkMode').value!=='tf_peak_gene')return;byId('networkStats').textContent='Loading peak data...';ensureSelectedConditionPeaks().then(()=>{if(networkOpen)drawNetwork()}).catch(e=>{byId('networkStats').textContent=e.message})});
 cond1Color.addEventListener('input',()=>{if(cond1Select.value)CONDITION_COLORS[cond1Select.value]=cond1Color.value;refresh()});cond2Color.addEventListener('input',()=>{if(cond2Select.value)CONDITION_COLORS[cond2Select.value]=cond2Color.value;refresh()});
@@ -2030,7 +2028,6 @@ function bindNetworkCountInput(sliderId,inputId){
     slider.value=String(clamp(Math.round(value),num(slider.min,0),num(slider.max,0)));
     setNetworkRequestedCount(slider);
     input.value=slider.value;
-    if(sliderId==='networkTopLinks')setNetworkTfTfPriorityBase(true);
     drawNetwork()
   };
   input.addEventListener('input',()=>{
@@ -2046,14 +2043,6 @@ function bindNetworkCountInput(sliderId,inputId){
     commit();
     input.select()
   })
-}
-function setNetworkTfTfPriorityBase(reset=false){
-  const priority=byId('networkPrioritizeTfTf'),control=byId('networkTopLinks');
-  if(!priority.checked){delete control.dataset.priorityBase;delete priority.dataset.active;return}
-  if(reset||priority.dataset.active!=='1'){
-    control.dataset.priorityBase=control.value;
-    priority.dataset.active='1'
-  }
 }
 function canonicalGeneId(gene){
   return'GENE:'+geneKey(gene)
@@ -2077,8 +2066,7 @@ function inducedLinkRank(a,b,prioritizeTfTf=byId('networkPrioritizeTfTf').checke
     String(a.gene).localeCompare(String(b.gene),undefined,{sensitivity:'base'})
 }
 function networkLinkKey(row){return row.tfu+'\t'+String(row.peak||'')+'\t'+geneKey(row.gene)}
-function isTfTfLink(row){return TF_LABELS.has(geneKey(row.gene))}
-function selectNetworkLinks(rows,limit,prioritizeTfTf=byId('networkPrioritizeTfTf').checked,requiredKeys=null){
+function selectNetworkLinks(rows,limit,prioritizeTfTf=byId('networkPrioritizeTfTf').checked){
   const maximum=Math.max(0,Math.floor(limit)),ordered=rows.slice().sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf)),
     choose=source=>{
       if(!byId('networkOutsideTopicTfTf').checked||!source.some(row=>row.tfTfContext))return source.slice(0,maximum);
@@ -2088,14 +2076,7 @@ function selectNetworkLinks(rows,limit,prioritizeTfTf=byId('networkPrioritizeTfT
   contextCount=Math.min(context.length,maximum-coreCount);
       return core.slice(0,coreCount).concat(context.slice(0,contextCount)).sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf))
     };
-  if(!requiredKeys||!requiredKeys.size)return choose(ordered);
-  const selected=new Map(choose(ordered).map(row=>[networkLinkKey(row),row]));
-  ordered.forEach(row=>{if(requiredKeys.has(networkLinkKey(row)))selected.set(networkLinkKey(row),row)});
-  for(const row of ordered){
-    if(selected.size>=maximum)break;
-    selected.set(networkLinkKey(row),row)
-  }
-  return Array.from(selected.values()).sort((a,b)=>inducedLinkRank(a,b,prioritizeTfTf))
+  return choose(ordered)
 }
 buildNetwork=function(){
   const seedRows=networkPairRows(),rank=new Map();
@@ -2160,24 +2141,8 @@ buildNetwork=function(){
       })
     ).sort(inducedLinkRank):inducedRows,
     prioritizeTfTf=byId('networkPrioritizeTfTf').checked,
-    linkControl=byId('networkTopLinks'),linkOutput=byId('networkTopLinksValue');
-  let topLinks=syncNetworkRange('networkTopLinks','networkTopLinksValue',candidateLinks.length,300,'link|'+context+'|'+topTf);
-  let requiredKeys=null;
-  if(prioritizeTfTf){
-    const baseline=Math.min(candidateLinks.length,Math.max(1,num(linkControl.dataset.priorityBase,topLinks))),
-      current=selectNetworkLinks(candidateLinks,baseline,false),
-      required=current.concat(candidateLinks.filter(isTfTfLink));
-    requiredKeys=new Set(required.map(networkLinkKey));
-    if(requiredKeys.size>topLinks){
-      topLinks=requiredKeys.size;
-      linkControl.value=String(topLinks);
-      linkOutput.value=String(topLinks)
-    }
-    linkOutput.title=topLinks>baseline?
-      'Requested '+baseline+'; raised to '+topLinks+' to include every eligible TF-TF link.':
-      'Maximum: '+candidateLinks.length
-  }
-  const source=selectNetworkLinks(candidateLinks,topLinks,prioritizeTfTf,requiredKeys),nodes=new Map(),edgesByKey=new Map(),
+    topLinks=syncNetworkRange('networkTopLinks','networkTopLinksValue',candidateLinks.length,300,'link|'+context+'|'+topTf);
+  const source=selectNetworkLinks(candidateLinks,topLinks,prioritizeTfTf),nodes=new Map(),edgesByKey=new Map(),
     biologicalLinks=new Set(),contextLinks=new Set();
   function addGene(gene,label,isTf,isTarget){
     const key=geneKey(gene),id=canonicalGeneId(key),existing=nodes.get(id),

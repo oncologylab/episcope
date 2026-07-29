@@ -1959,12 +1959,16 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   )
   expect_match(
     html,
-    "automatically increase Top links when needed to include every eligible TF-to-TF link",
+    "Show TF-to-TF links before other links within the selected Top links limit",
     fixed = TRUE
   )
-  expect_match(html, "function setNetworkTfTfPriorityBase", fixed = TRUE)
-  expect_match(html, "candidateLinks.filter(isTfTfLink)", fixed = TRUE)
-  expect_match(html, "requiredKeys.size>topLinks", fixed = TRUE)
+  expect_no_match(html, "function setNetworkTfTfPriorityBase", fixed = TRUE)
+  expect_no_match(html, "requiredKeys.size>topLinks", fixed = TRUE)
+  expect_match(
+    html,
+    "selectNetworkLinks(candidateLinks,topLinks,prioritizeTfTf)",
+    fixed = TRUE
+  )
   expect_no_match(
     html,
     'id="networkPrioritizeTfTf" type="checkbox" checked',
@@ -2116,11 +2120,7 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, "input.addEventListener('change',commit)", fixed = TRUE)
   expect_match(html, "input.addEventListener('keydown',event=>", fixed = TRUE)
   expect_match(html, "event.key!=='Enter'", fixed = TRUE)
-  expect_match(
-    html,
-    "raised to '+topLinks+' to include every eligible TF-TF link",
-    fixed = TRUE
-  )
+  expect_no_match(html, "raised to '+topLinks+'", fixed = TRUE)
   expect_match(html, "contextEdge?(focus?.9:.7)", fixed = TRUE)
   expect_match(html, "Math.max(1.4,baseWidth)", fixed = TRUE)
   expect_match(
