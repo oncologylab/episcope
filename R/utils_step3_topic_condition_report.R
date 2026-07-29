@@ -2250,8 +2250,8 @@ function assignNetworkSelfLoopCorners(graph){
     if(!node)return;
     const halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
       halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-      radius=clamp(16+node.r*.3,18,24),
-      stem=clamp(radius*.22,4,6),
+      radius=clamp(13+node.r*.22,15,20),
+      stem=clamp(radius*.2,3,5),
       score=corner=>{
         const centerX=node.x+corner[0]*(halfWidth+stem+radius*.5),
           centerY=node.y+corner[1]*(halfHeight+stem+radius*.5);
@@ -2279,9 +2279,9 @@ function networkSelfLoopGeometry(node){
     sideX=corner[0]===-1?-1:1,sideY=corner[1]===1?1:-1,
     halfWidth=Math.max(node.isTf?(node.boxW||node.r*3.2)/2:node.r,8),
     halfHeight=Math.max(node.isTf?node.r*.8:node.r,8),
-    attach=clamp(halfHeight*.5,7,10),
-    radius=clamp(16+node.r*.3,18,24),
-    stem=clamp(radius*.22,4,6),
+    attach=clamp(halfHeight*.45,6,9),
+    radius=clamp(13+node.r*.22,15,20),
+    stem=clamp(radius*.2,3,5),
     startX=node.x+sideX*(halfWidth-attach),
     startY=node.y+sideY*halfHeight,
     arcStartX=startX,
