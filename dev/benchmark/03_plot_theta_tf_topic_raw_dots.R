@@ -201,8 +201,8 @@ make_page_data <- function(cutoff, page_number) {
   tiles[, slot_column := (slot - 1L) %% grid_columns]
   tiles[, row_count := max(slot_row) + 1L, by = .(tf, topic_num)]
   tiles[, column_count := .N, by = .(tf, topic_num, slot_row)]
-  tiles[, x := topic_num + (slot_column - (column_count - 1) / 2) * 0.12]
-  tiles[, y_offset := (slot_row - (row_count - 1) / 2) * 0.31]
+  tiles[, x := topic_num + (slot_column - (column_count - 1) / 2) * 0.16]
+  tiles[, y_offset := (slot_row - (row_count - 1) / 2) * 0.285]
   tiles <- merge(tiles, page_rows, by = "tf", sort = FALSE)
   tiles[, y := tf_row + y_offset]
 
@@ -300,8 +300,8 @@ plot_page <- function(cutoff, page_number) {
     ggplot2::geom_tile(
       data = page_data$tiles,
       ggplot2::aes(x = x, y = y, fill = theta),
-      width = 0.105,
-      height = 0.28,
+      width = 0.15,
+      height = 0.36,
       color = "white",
       linewidth = 0.08
     ) +
