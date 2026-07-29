@@ -2121,6 +2121,14 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
     "raised to '+topLinks+' to include every eligible TF-TF link",
     fixed = TRUE
   )
+  expect_match(html, "contextEdge?(focus?.9:.7)", fixed = TRUE)
+  expect_match(html, "Math.max(1.4,baseWidth)", fixed = TRUE)
+  expect_match(
+    html,
+    "mix(mappedColor,'#111827',.3)",
+    fixed = TRUE
+  )
+  expect_match(html, "'data-context-link':contextEdge?'true':'false'", fixed = TRUE)
   expect_match(
     html,
     "bindNetworkCountInput('networkTopTf','networkTopTfValue')",

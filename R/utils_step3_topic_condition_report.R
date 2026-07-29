@@ -2461,11 +2461,14 @@ drawNetwork=function(){
     Number(a.edge.from===a.edge.to)-Number(b.edge.from===b.edge.to)
   ).forEach(({edge,index})=>{
     const focus=!selectedTfId||edge.from===selectedTfId,
-      selfLoop=edge.from===edge.to,
-      width=edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),
-      opacity=highlight&&!edge.pathwayHit?.36:focus?.86:.24,
+      selfLoop=edge.from===edge.to,contextEdge=!!edge.tfTfContext,
+      baseWidth=edgeMin+(edgeMax-edgeMin)*Math.sqrt(Math.min(1,Math.abs(edge.value)/edgeLimit)),
+      width=contextEdge?Math.max(1.4,baseWidth):baseWidth,
+      opacity=contextEdge?(focus?.9:.7):highlight&&!edge.pathwayHit?.36:focus?.86:.24,
+      mappedColor=byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),
+      edgeColor=contextEdge&&byId('networkEdgePalette').value!=='single'?mix(mappedColor,'#111827',.3):mappedColor,
       edgePath=networkEdgePath(edge,byNode),
-      path=el('path',{class:'edge',d:edgePath,stroke:byId('networkEdgePalette').value==='single'?byId('networkEdgeSingleColor').value:colorScale(edge.value,edgeLimit,edgePalette,single,'Edge'),'stroke-width':selfLoop?Math.max(2.1,width):width,opacity:selfLoop?1:opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index});
+      path=el('path',{class:'edge',d:edgePath,stroke:edgeColor,'stroke-width':selfLoop?Math.max(2.1,width):width,opacity:selfLoop?1:opacity,'data-title':edge.title,'data-from':edge.from,'data-to':edge.to,'data-edge-index':index,'data-context-link':contextEdge?'true':'false'});
     if(selfLoop){
       edgeLayer.appendChild(el('path',{
         class:'selfLoopHalo',d:edgePath,'stroke-width':Math.max(4.2,width+2.2),
