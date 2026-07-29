@@ -26,7 +26,6 @@ output_file <- if (length(args) >= 2L) {
 }
 
 cutoffs <- c(0.3, 0.5)
-rows_per_page <- 45L
 grid_columns <- 5L
 
 required_packages <- c("data.table", "ggplot2", "scales")
@@ -90,6 +89,8 @@ document_table <- data.table::data.table(
 )
 tf_levels <- sort(unique(document_table$tf), method = "radix")
 condition_levels <- sort(unique(document_table$condition_id), method = "radix")
+rows_per_page <- length(tf_levels)
+page_height <- max(20, 3.5 + 0.135 * length(tf_levels))
 tf_index <- stats::setNames(seq_along(tf_levels), tf_levels)
 document_table[, tf_index := unname(tf_index[tf])]
 document_table[, page := ((tf_index - 1L) %/% rows_per_page) + 1L]
@@ -224,8 +225,8 @@ plot_page <- function(cutoff, page_number) {
       data = page_data$dots,
       ggplot2::aes(x = x, y = y, fill = theta),
       shape = 21,
-      size = 0.82,
-      stroke = 0.16,
+      size = 1.25,
+      stroke = 0.2,
       color = "white"
     ) +
     ggplot2::scale_x_continuous(
@@ -332,7 +333,7 @@ dir.create(dirname(output_file), recursive = TRUE, showWarnings = FALSE)
 grDevices::cairo_pdf(
   output_file,
   width = 16,
-  height = 10,
+  height = page_height,
   family = "Helvetica",
   onefile = TRUE,
   bg = "white"
