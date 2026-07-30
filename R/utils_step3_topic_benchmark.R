@@ -4414,6 +4414,19 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #'   clusters. Required only when `doc_mode = "tf_cluster"`.
 #' @param doc_mode Document mode, either `"tf"` or `"tf_cluster"`.
 #' @param doc_design Document design, either `"condition"` or `"comparison"`.
+#' @param condition_document_unit Condition-mode document unit. The standard
+#'   `"condition_tf"` value builds one document per condition and TF.
+#'   Experimental `"condition"` builds one document per condition from unique
+#'   Gene and coordinate Peak terms; its theta is therefore direct
+#'   condition-topic activity and not TF-topic membership.
+#' @param condition_gene_token_fraction Exact fraction of post-transformation
+#'   model tokens allocated to Gene terms in each condition document.
+#' @param condition_document_token_budget Exact total model tokens allocated to
+#'   each condition document.
+#' @param condition_specificity_temperature Positive temperature controlling
+#'   condition-specific feature weighting for condition documents.
+#' @param condition_specificity_floor Uniform baseline retained during
+#'   condition-specific feature weighting.
 #' @param fp_term_mode Term mode: `"aggregate_weight"`, `"aggregate"`,
 #'   `"unique"`, gene-expression-only `"gene_expression"`, or experimental
 #'   `"tf_target"`. The latter renames each target-aggregated Peak term in a
@@ -4462,6 +4475,11 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          input_source = c("differential_links", "condition_links"),
                                          doc_mode = c("tf", "tf_cluster"),
                                          doc_design = c("condition", "comparison"),
+                                         condition_document_unit = c("condition_tf", "condition"),
+                                         condition_gene_token_fraction = 0.6,
+                                         condition_document_token_budget = 1000000L,
+                                         condition_specificity_temperature = 0.5,
+                                         condition_specificity_floor = 0.1,
                                          fp_term_mode = c("aggregate_weight", "aggregate", "unique", "gene_expression", "tf_target"),
                                          gene_term_mode = c("unique", "aggregate"),
                                          sample_subset = NULL,
@@ -4492,6 +4510,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   input_source <- match.arg(input_source)
   doc_mode <- match.arg(doc_mode)
   doc_design <- match.arg(doc_design)
+  condition_document_unit <- match.arg(condition_document_unit)
   if (identical(input_source, "condition_links") && !identical(doc_design, "condition")) {
     .log_abort("input_source = 'condition_links' requires doc_design = 'condition'.")
   }
@@ -4518,6 +4537,15 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     settings = list(
       doc_mode = doc_mode,
       doc_design = doc_design,
+      condition_document_unit = condition_document_unit,
+      condition_gene_token_fraction =
+        as.numeric(condition_gene_token_fraction),
+      condition_document_token_budget =
+        as.integer(condition_document_token_budget),
+      condition_specificity_temperature =
+        as.numeric(condition_specificity_temperature),
+      condition_specificity_floor =
+        as.numeric(condition_specificity_floor),
       fp_term_mode = fp_term_mode,
       gene_term_mode = gene_term_mode,
       count_method = count_method,
@@ -4545,11 +4573,24 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   summary_path <- file.path(output_dir, "topic_input_summary.csv")
   if (!isTRUE(overwrite) && all(file.exists(required_cache)) && file.exists(summary_path)) {
     summary_dt <- data.table::fread(summary_path, showProgress = FALSE)
+    document_unit_matches <- if (identical(
+      condition_document_unit,
+      "condition"
+    )) {
+      "condition_document_unit" %in% names(summary_dt) &&
+        identical(
+          as.character(summary_dt$condition_document_unit[[1L]]),
+          "condition"
+        )
+    } else {
+      "doc_mode" %in% names(summary_dt) &&
+        identical(as.character(summary_dt$doc_mode[[1L]]), doc_mode)
+    }
     cache_matches <- nrow(summary_dt) &&
-      all(c("input_source", "doc_design", "doc_mode", "fp_term_mode", "input_signature") %in% names(summary_dt)) &&
+      all(c("input_source", "doc_design", "fp_term_mode", "input_signature") %in% names(summary_dt)) &&
       identical(as.character(summary_dt$input_source[[1L]]), input_source) &&
       identical(as.character(summary_dt$doc_design[[1L]]), doc_design) &&
-      identical(as.character(summary_dt$doc_mode[[1L]]), doc_mode) &&
+      isTRUE(document_unit_matches) &&
       identical(as.character(summary_dt$fp_term_mode[[1L]]), fp_term_mode) &&
       identical(as.character(summary_dt$input_signature[[1L]]), input_signature) &&
       all(c("count_method", "count_input_effective") %in% names(summary_dt)) &&
@@ -4564,6 +4605,39 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     if (isTRUE(verbose)) {
       .log_inform("Existing Module 3 topic input cache does not match requested document settings; rebuilding: {output_dir}")
     }
+  }
+  if (identical(condition_document_unit, "condition")) {
+    if (!identical(input_source, "condition_links") ||
+        !identical(doc_design, "condition")) {
+      .log_abort(
+        "`condition_document_unit = 'condition'` requires condition-link input and condition design."
+      )
+    }
+    if (!identical(fp_term_mode, "unique") ||
+        !identical(gene_term_mode, "unique")) {
+      .log_abort(
+        "Condition documents currently require unique Gene and coordinate Peak terms."
+      )
+    }
+    if (!identical(count_method, "log")) {
+      .log_abort("Condition documents currently require `count_method = 'log'`.")
+    }
+    return(.module3_prepare_condition_document_inputs(
+      filtered_dir = filtered_dir,
+      output_dir = output_dir,
+      sample_subset = sample_subset,
+      analysis_label = analysis_label,
+      threshold_gene_expr = threshold_gene_expr,
+      threshold_fp_score = threshold_fp_score,
+      condition_specificity_temperature =
+        condition_specificity_temperature,
+      condition_specificity_floor = condition_specificity_floor,
+      condition_gene_token_fraction = condition_gene_token_fraction,
+      condition_document_token_budget = condition_document_token_budget,
+      input_signature = input_signature,
+      save_full_doc_term_csv = save_full_doc_term_csv,
+      verbose = verbose
+    ))
   }
   if (identical(input_source, "condition_links")) {
     if (isTRUE(verbose)) .log_inform("Loading condition-native links from {filtered_dir}.")
@@ -4722,6 +4796,18 @@ module3_prepare_topic_inputs <- function(filtered_dir,
 #' @param check_repeated_values Warn about repeated inconsistent term values.
 #'   The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
 #'   audits.
+#' @param condition_document_unit Condition-mode document unit. The standard
+#'   `"condition_tf"` value builds one document per condition and TF.
+#'   Experimental `"condition"` builds one document per condition from unique
+#'   Gene and coordinate Peak terms.
+#' @param condition_gene_token_fraction Exact fraction of model tokens allocated
+#'   to Gene terms in each condition document.
+#' @param condition_document_token_budget Exact total model tokens allocated to
+#'   each condition document.
+#' @param condition_specificity_temperature Positive temperature controlling
+#'   condition-specific feature weighting for condition documents.
+#' @param condition_specificity_floor Uniform baseline retained during
+#'   condition-specific feature weighting.
 #' @param ... Additional topic-document construction arguments passed to the
 #'   internal Module 3 document builder.
 #'
@@ -4731,12 +4817,23 @@ module3_construct_docs <- function(filtered_dir,
                                    output_dir,
                                    tf_cluster_map = NULL,
                                    check_repeated_values = FALSE,
+                                   condition_document_unit = c("condition_tf", "condition"),
+                                   condition_gene_token_fraction = 0.6,
+                                   condition_document_token_budget = 1000000L,
+                                   condition_specificity_temperature = 0.5,
+                                   condition_specificity_floor = 0.1,
                                    ...) {
+  condition_document_unit <- match.arg(condition_document_unit)
   module3_prepare_topic_inputs(
     filtered_dir = filtered_dir,
     output_dir = output_dir,
     tf_cluster_map = tf_cluster_map,
     check_repeated_values = check_repeated_values,
+    condition_document_unit = condition_document_unit,
+    condition_gene_token_fraction = condition_gene_token_fraction,
+    condition_document_token_budget = condition_document_token_budget,
+    condition_specificity_temperature = condition_specificity_temperature,
+    condition_specificity_floor = condition_specificity_floor,
     ...
   )
 }

@@ -15934,8 +15934,10 @@ build_doc_term_condition_union <- function(edges_condition,
                                             output_dir,
                                             count_column = NULL,
                                             title = "Module 3 document-term QC",
+                                            document_unit = c("tf", "condition"),
                                             verbose = TRUE) {
   .assert_pkg("ggplot2")
+  document_unit <- match.arg(document_unit)
   summary <- .module3_document_term_qc_summary(doc_term, count_column = count_column)
   if (!nrow(summary)) {
     if (isTRUE(verbose)) .log_warn("Document-term QC skipped because no gene or peak terms were available.")
@@ -15996,7 +15998,11 @@ build_doc_term_condition_union <- function(edges_condition,
     ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
     ggplot2::labs(
       title = title,
-      subtitle = "Term counts per TF document; each condition uses its own y-axis",
+      subtitle = if (identical(document_unit, "condition")) {
+        "Term counts per condition document; each condition uses its own y-axis"
+      } else {
+        "Term counts per TF document; each condition uses its own y-axis"
+      },
       x = "Term type",
       y = "Distinct terms per document",
       fill = "Term type"

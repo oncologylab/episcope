@@ -9,6 +9,11 @@ module3_construct_docs(
   output_dir,
   tf_cluster_map = NULL,
   check_repeated_values = FALSE,
+  condition_document_unit = c("condition_tf", "condition"),
+  condition_gene_token_fraction = 0.6,
+  condition_document_token_budget = 1000000L,
+  condition_specificity_temperature = 0.5,
+  condition_specificity_floor = 0.1,
   ...
 )
 }
@@ -23,6 +28,23 @@ CSV files.}
 \item{check_repeated_values}{Warn about repeated inconsistent term values.
 The high-throughput default is `FALSE`; set to `TRUE` for diagnostic
 audits.}
+
+\item{condition_document_unit}{Condition-mode document unit. The standard
+`"condition_tf"` value builds one document per condition and TF.
+Experimental `"condition"` builds one document per condition from unique
+Gene and coordinate Peak terms.}
+
+\item{condition_gene_token_fraction}{Exact fraction of model tokens allocated
+to Gene terms in each condition document.}
+
+\item{condition_document_token_budget}{Exact total model tokens allocated to
+each condition document.}
+
+\item{condition_specificity_temperature}{Positive temperature controlling
+condition-specific feature weighting for condition documents.}
+
+\item{condition_specificity_floor}{Uniform baseline retained during
+condition-specific feature weighting.}
 
 \item{...}{Additional topic-document construction arguments passed to the
 internal Module 3 document builder.}
