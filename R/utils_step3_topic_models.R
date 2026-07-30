@@ -8663,26 +8663,16 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     res_dt <- .select_best_human_mouse_pathways(res_dt)
     log_msg(sprintf("Human/mouse best rows selected: %d.", nrow(res_dt)))
   }
-  if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
-    res_dt <- res_dt[order(-logp), .SD[seq_len(min(.N, as.integer(top_n_per_topic)))], by = topic]
-  } else {
-    res_dt <- res_dt[order(topic, -logp)]
-  }
-  if (nrow(res_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
-    path_rank <- res_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway]
-    if (nrow(path_rank) > as.integer(max_pathways)) {
-      keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway]
-      res_dt <- res_dt[pathway %in% keep]
-      log_msg(sprintf("Filtered pathways to top %d by max logp.", as.integer(max_pathways)))
-    }
-  }
   res_dt[, topic := as.integer(topic)]
   data.table::setorder(res_dt, topic)
   data.table::fwrite(
     res_dt,
     file.path(dirname(out_file), "topic_pathway_enrichment_topic_terms.csv")
   )
-  log_msg(sprintf("Total enriched pathways (unique): %d", length(unique(res_dt$pathway))))
+  log_msg(sprintf(
+    "Total significant enriched pathways written (unique): %d",
+    length(unique(res_dt$pathway))
+  ))
   log_msg(sprintf("Debug log written to: %s", log_path))
 
   if (isTRUE(make_heatmap)) {
@@ -8693,6 +8683,13 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     dot_path <- file.path(dirname(out_file), "topic_pathway_enrichment_dotplot.pdf")
     plot_dt <- data.table::copy(res_dt)
     plot_dt <- plot_dt[is.finite(padj)]
+    if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+      plot_dt <- plot_dt[
+        order(-logp),
+        .SD[seq_len(min(.N, as.integer(top_n_per_topic)))],
+        by = topic
+      ]
+    }
     plot_dt[, topic_num := as.integer(topic)]
     plot_dt <- plot_dt[is.finite(topic_num)]
     if (!("overlap_hits" %in% names(plot_dt))) {
