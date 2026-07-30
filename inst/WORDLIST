@@ -139,6 +139,7 @@ AnnotationDbi
 cobinding
 dotplots
 downweights
+de
 ENSEMBL
 ENTREZ
 gammafit
@@ -152,6 +153,7 @@ LDAvis
 logp
 maxprob
 mlp
+MultiVI
 multivi
 normtop
 preflight

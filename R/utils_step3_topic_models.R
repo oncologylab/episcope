@@ -10014,9 +10014,10 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
                                               run_topic_by_comparison_heatmaps = TRUE,
                                               run_intertopic_distance_map = TRUE,
                                               optimize_topics = NULL,
-                                              topic_merge_min_genes = 50L,
+                                              topic_merge_min_genes = 150L,
                                               topic_merge_min_links = 200L,
-                                              topic_merge_similarity_threshold = 0.90,
+                                              topic_merge_similarity_threshold = 0.65,
+                                              topic_merge_tf_theta_preference = TRUE,
                                               run_topic_assignment_qc = NULL,
                                               topic_qc_umap_links_per_condition = 3000L,
                                               topic_qc_top_tfs = 150L,
@@ -10318,6 +10319,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
           min_genes = topic_merge_min_genes,
           min_links = topic_merge_min_links,
           similarity_threshold = topic_merge_similarity_threshold,
+          prefer_tf_theta_correspondence =
+            topic_merge_tf_theta_preference,
           tf_topic_cutoff = topic_tf_membership_cutoff,
           umap_max_links_per_condition = topic_qc_umap_links_per_condition,
           seed = topic_qc_seed
@@ -13795,6 +13798,9 @@ extract_regulatory_topics <- function(k,
 #'   retain a topic without a size-based merge.
 #' @param topic_merge_similarity_threshold Mean Gene/Peak Hellinger similarity
 #'   at or above which two topics are merged.
+#' @param topic_merge_tf_theta_preference Whether eligible topic merges must
+#'   preserve target assignments and prefer mappings that reduce TF terms
+#'   without a matching condition::TF theta membership.
 #' @param run_topic_assignment_qc Whether to write the standard per-K topic
 #'   assignment QC PDF and optimization audit tables.
 #' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
@@ -13831,9 +13837,10 @@ module3_extract_topics <- function(k,
                                    topic_score_method = c("normtop_specificity", "rowmax_phi"),
                                    topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
                                    optimize_topics = NULL,
-                                   topic_merge_min_genes = 50L,
+                                   topic_merge_min_genes = 150L,
                                    topic_merge_min_links = 200L,
-                                   topic_merge_similarity_threshold = 0.90,
+                                   topic_merge_similarity_threshold = 0.65,
+                                   topic_merge_tf_theta_preference = TRUE,
                                    run_topic_assignment_qc = NULL,
                                    topic_qc_umap_links_per_condition = 3000L,
                                    topic_qc_top_tfs = 150L,
@@ -13861,6 +13868,8 @@ module3_extract_topics <- function(k,
       topic_merge_min_genes = topic_merge_min_genes,
       topic_merge_min_links = topic_merge_min_links,
       topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+      topic_merge_tf_theta_preference =
+        topic_merge_tf_theta_preference,
       run_topic_assignment_qc = run_topic_assignment_qc,
       topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
       topic_qc_top_tfs = topic_qc_top_tfs,

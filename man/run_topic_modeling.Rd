@@ -35,6 +35,7 @@ run_topic_modeling(
   topic_merge_min_genes = NULL,
   topic_merge_min_links = NULL,
   topic_merge_similarity_threshold = NULL,
+  topic_merge_tf_theta_preference = NULL,
   topic_qc_umap_links_per_condition = NULL,
   topic_qc_top_tfs = NULL,
   topic_qc_reference_condition = NULL,
@@ -175,6 +176,10 @@ retain a topic without a size-based merge. If `NULL`, use project config.}
 
 \item{topic_merge_similarity_threshold}{Mean Gene/Peak Hellinger similarity
 at or above which topics are merged. If `NULL`, use project config.}
+
+\item{topic_merge_tf_theta_preference}{Whether merge selection should retain
+target assignments and prefer mappings that reduce TF terms lacking a
+matching condition::TF theta membership. If `NULL`, use project config.}
 
 \item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
 size per condition. Full-universe counts are not sampled.}

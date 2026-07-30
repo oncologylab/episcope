@@ -90,6 +90,130 @@ test_that("small distinct topics are not forced into unrelated topics", {
   expect_equal(nrow(result$audit), 0L)
 })
 
+test_that("topic merging prefers TF-term and theta correspondence", {
+  phi <- rbind(
+    Topic1 = c(0.45, 0.05, 0.45, 0.05),
+    Topic2 = c(0.40, 0.10, 0.40, 0.10),
+    Topic3 = c(0.30, 0.20, 0.30, 0.20)
+  )
+  colnames(phi) <- c(
+    "GENE:TFX", "GENE:OTHER", "PEAK:TFX", "PEAK:OTHER"
+  )
+  theta <- rbind(`C1::TFX` = c(0.2, 0.1, 0.7))
+  colnames(theta) <- rownames(phi)
+  dtm <- Matrix::Matrix(
+    1,
+    nrow = 1,
+    ncol = 4,
+    sparse = TRUE,
+    dimnames = list(rownames(theta), colnames(phi))
+  )
+  pair_assignment <- data.table::data.table(
+    target_gene = "TFX",
+    gene_term_id = "GENE:TFX",
+    peak_term_id = "PEAK:TFX",
+    gene_gammafit_topics = "1;2;3",
+    peak_gammafit_topics = "1;2;3",
+    assigned = TRUE,
+    assigned_topic = 1L,
+    assignment_status = "assigned_gammafit_maxprob_agreement"
+  )
+
+  legacy <- .m3_opt_merge_map(
+    phi = phi,
+    theta = theta,
+    dtm = dtm,
+    raw_topic_ids = 1:3,
+    raw_links = c(1, 10, 10),
+    raw_genes = c(1, 10, 10),
+    gene_ids = 1:2,
+    peak_ids = 3:4,
+    pair_assignment = pair_assignment,
+    min_genes = 2,
+    min_links = 2,
+    similarity_threshold = 0.9,
+    prefer_tf_theta_correspondence = FALSE
+  )
+  preferred <- .m3_opt_merge_map(
+    phi = phi,
+    theta = theta,
+    dtm = dtm,
+    raw_topic_ids = 1:3,
+    raw_links = c(1, 10, 10),
+    raw_genes = c(1, 10, 10),
+    gene_ids = 1:2,
+    peak_ids = 3:4,
+    pair_assignment = pair_assignment,
+    min_genes = 2,
+    min_links = 2,
+    similarity_threshold = 0.9,
+    prefer_tf_theta_correspondence = TRUE,
+    tf_topic_cutoff = 0.3
+  )
+
+  expect_equal(legacy$mapping[[1L]], 2L)
+  expect_equal(preferred$mapping[[1L]], 3L)
+  expect_equal(preferred$audit$tf_theta_empty_before, 1L)
+  expect_equal(preferred$audit$tf_theta_empty_after, 0L)
+  expect_gt(
+    preferred$audit$tf_theta_mean_after,
+    legacy$audit$tf_theta_mean_after
+  )
+})
+
+test_that("TF-term correspondence normalizes Tbet to Tbx21", {
+  phi <- rbind(Topic1 = c(1, 1))
+  colnames(phi) <- c("GENE:Tbx21", "PEAK:Tbx21")
+  theta <- rbind(`C1::Tbet` = 1)
+  colnames(theta) <- "Topic1"
+  pair_assignment <- data.table::data.table(
+    target_gene = "Tbx21",
+    gene_term_id = "GENE:Tbx21",
+    peak_term_id = "PEAK:Tbx21",
+    gene_gammafit_topics = "1",
+    peak_gammafit_topics = "1",
+    assigned = TRUE,
+    assigned_topic = 1L,
+    assignment_status = "assigned_gammafit_maxprob_agreement"
+  )
+
+  observed <- .m3_opt_tf_theta_correspondence(
+    theta = theta,
+    phi = phi,
+    pair_assignment = pair_assignment,
+    raw_topic_ids = 1L,
+    raw_to_group = 1L,
+    cutoff = 0.3
+  )
+
+  expect_true(observed$available)
+  expect_equal(observed$tf_term_assignments, 1L)
+  expect_equal(observed$supported_tf_terms, 1L)
+  expect_equal(observed$empty_tf_terms, 0L)
+})
+
+test_that("optimized theta uses the maximum raw member-topic value", {
+  theta <- rbind(
+    `C1::TF1` = c(0.2, 0.3, 0.5),
+    `C2::TF1` = c(0.7, 0.1, 0.2)
+  )
+  colnames(theta) <- paste0("Topic", 1:3)
+  mapping <- c(`3` = 3L, `1` = 2L, `2` = 2L)
+
+  observed <- .m3_opt_max_theta(
+    theta = theta,
+    raw_topic_ids = 1:3,
+    raw_to_group = mapping
+  )
+
+  expect_equal(colnames(observed), c("Topic2", "Topic3"))
+  expect_equal(
+    unname(observed),
+    rbind(c(0.3, 0.5), c(0.7, 0.2))
+  )
+  expect_false(isTRUE(all.equal(observed[, "Topic2"], c(0.5, 0.8))))
+})
+
 test_that("topic merging can recover Gene and Peak agreement", {
   phi <- rbind(
     Topic1 = c(0.8, 0.2),

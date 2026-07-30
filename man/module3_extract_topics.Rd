@@ -12,9 +12,10 @@ module3_extract_topics(
   topic_score_method = c("normtop_specificity", "rowmax_phi"),
   topic_term_assignment_method = c("gammafit_maxprob", "max_phi", "gammafit"),
   optimize_topics = NULL,
-  topic_merge_min_genes = 50L,
+  topic_merge_min_genes = 150L,
   topic_merge_min_links = 200L,
-  topic_merge_similarity_threshold = 0.9,
+  topic_merge_similarity_threshold = 0.65,
+  topic_merge_tf_theta_preference = TRUE,
   run_topic_assignment_qc = NULL,
   topic_qc_umap_links_per_condition = 3000L,
   topic_qc_top_tfs = 150L,
@@ -63,6 +64,10 @@ retain a topic without a size-based merge.}
 
 \item{topic_merge_similarity_threshold}{Mean Gene/Peak Hellinger similarity
 at or above which two topics are merged.}
+
+\item{topic_merge_tf_theta_preference}{Whether eligible topic merges must
+preserve target assignments and prefer mappings that reduce TF terms
+without a matching condition::TF theta membership.}
 
 \item{run_topic_assignment_qc}{Whether to write the standard per-K topic
 assignment QC PDF and optimization audit tables.}

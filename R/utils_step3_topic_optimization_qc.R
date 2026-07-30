@@ -258,6 +258,105 @@
   pairs[]
 }
 
+.m3_opt_tf_identity_key <- function(x) {
+  out <- toupper(trimws(as.character(x)))
+  out[out == "TBET"] <- "TBX21"
+  out
+}
+
+.m3_opt_max_theta <- function(theta, raw_topic_ids, raw_to_group) {
+  if (ncol(theta) != length(raw_topic_ids) ||
+      length(raw_to_group) != length(raw_topic_ids)) {
+    .log_abort(
+      "Raw theta columns, topic IDs, and optimization mapping must align."
+    )
+  }
+  if (!is.null(names(raw_to_group))) {
+    mapped_positions <- match(as.character(raw_topic_ids), names(raw_to_group))
+    if (anyNA(mapped_positions)) {
+      .log_abort(
+        "The named optimization mapping does not cover every raw topic."
+      )
+    }
+    raw_to_group <- raw_to_group[mapped_positions]
+  }
+  groups <- sort(unique(raw_to_group))
+  out <- matrix(0, nrow(theta), length(groups))
+  for (i in seq_along(groups)) {
+    out[, i] <- apply(
+      theta[, raw_to_group == groups[[i]], drop = FALSE],
+      1L,
+      max
+    )
+  }
+  rownames(out) <- rownames(theta)
+  colnames(out) <- paste0("Topic", groups)
+  out
+}
+
+.m3_opt_tf_theta_correspondence <- function(theta,
+                                            phi,
+                                            pair_assignment,
+                                            raw_topic_ids,
+                                            raw_to_group,
+                                            cutoff = 0.3) {
+  empty_result <- list(
+    available = FALSE,
+    target_assignments = NA_integer_,
+    tf_term_assignments = NA_integer_,
+    supported_tf_terms = NA_integer_,
+    empty_tf_terms = NA_integer_,
+    support_rate = NA_real_,
+    mean_theta = NA_real_
+  )
+  if (is.null(pair_assignment) ||
+      !"target_gene" %in% names(pair_assignment) ||
+      is.null(rownames(theta))) {
+    return(empty_result)
+  }
+  docs <- .m3_opt_doc_metadata(rownames(theta))
+  docs[, tf_key := .m3_opt_tf_identity_key(tf)]
+  assignments <- .m3_opt_target_assignment(
+    phi = phi,
+    pair_assignment = pair_assignment,
+    raw_topic_ids = raw_topic_ids,
+    raw_to_group = raw_to_group
+  )
+  assignments[, tf_key := .m3_opt_tf_identity_key(target_gene)]
+  tf_assignments <- unique(assignments[
+    .as_logical_flag(assigned) & tf_key %in% docs$tf_key,
+    .(
+      tf_key,
+      optimized_topic = suppressWarnings(as.integer(optimized_assigned_topic))
+    )
+  ])
+  if (!nrow(tf_assignments)) {
+    empty_result$target_assignments <- sum(.as_logical_flag(assignments$assigned))
+    return(empty_result)
+  }
+  optimized_theta <- .m3_opt_max_theta(theta, raw_topic_ids, raw_to_group)
+  optimized_topic_ids <- .m3_opt_topic_ids(optimized_theta, "column")
+  theta_max <- vapply(seq_len(nrow(tf_assignments)), function(i) {
+    topic_position <- match(
+      tf_assignments$optimized_topic[[i]],
+      optimized_topic_ids
+    )
+    doc_rows <- which(docs$tf_key == tf_assignments$tf_key[[i]])
+    if (!length(doc_rows) || !is.finite(topic_position)) return(NA_real_)
+    max(optimized_theta[doc_rows, topic_position], na.rm = TRUE)
+  }, numeric(1L))
+  supported <- is.finite(theta_max) & theta_max >= cutoff
+  list(
+    available = TRUE,
+    target_assignments = sum(.as_logical_flag(assignments$assigned)),
+    tf_term_assignments = length(theta_max),
+    supported_tf_terms = sum(supported),
+    empty_tf_terms = sum(!supported),
+    support_rate = mean(supported),
+    mean_theta = mean(theta_max[is.finite(theta_max)])
+  )
+}
+
 .m3_opt_group_phi <- function(phi, theta, dtm, raw_topic_ids, raw_to_group) {
   doc_tokens <- as.numeric(Matrix::rowSums(dtm))
   topic_mass <- colSums(theta * doc_tokens)
@@ -282,13 +381,18 @@
                               raw_genes,
                               gene_ids,
                               peak_ids,
-                              min_genes = 50L,
+                              pair_assignment = NULL,
+                              min_genes = 150L,
                               min_links = 200L,
-                              similarity_threshold = 0.90,
+                              similarity_threshold = 0.65,
+                              prefer_tf_theta_correspondence = TRUE,
+                              tf_topic_cutoff = 0.3,
                               min_topics = 2L) {
   mapping <- stats::setNames(raw_topic_ids, raw_topic_ids)
   audit <- list()
   step <- 0L
+  use_correspondence <- isTRUE(prefer_tf_theta_correspondence) &&
+    !is.null(pair_assignment)
   repeat {
     group_phi <- .m3_opt_group_phi(phi, theta, dtm, raw_topic_ids, mapping)
     groups <- .m3_opt_topic_ids(group_phi, "row")
@@ -297,61 +401,164 @@
     similarity <- .m3_opt_hellinger_similarity(group_phi, gene_ids, peak_ids)
     diag(similarity) <- -Inf
     small <- which(links < min_links | genes < min_genes)
-    reason <- NULL
     if (length(groups) <= min_topics) break
-    if (length(small)) {
-      small <- small[order(links[small], genes[small], groups[small])]
-      nearest <- vapply(small, function(source) {
-        which.max(similarity[source, ])
-      }, integer(1L))
-      nearest_similarity <- similarity[cbind(small, nearest)]
-      eligible <- which(
-        is.finite(nearest_similarity) &
-          nearest_similarity >= similarity_threshold
-      )
-      if (!length(eligible)) break
-      source_pos <- small[eligible[[1L]]]
-      target_pos <- nearest[eligible[[1L]]]
-      reason <- data.table::fcase(
-        links[[source_pos]] < min_links & genes[[source_pos]] < min_genes, "small_links_and_genes",
-        links[[source_pos]] < min_links, "small_links",
-        default = "small_genes"
+    candidate_positions <- if (length(small)) {
+      which(
+        row(similarity) %in% small &
+          similarity >= similarity_threshold,
+        arr.ind = TRUE
       )
     } else {
-      pair <- which(similarity == max(similarity), arr.ind = TRUE)
-      pair <- pair[pair[, 1L] < pair[, 2L], , drop = FALSE]
-      if (!nrow(pair) || similarity[pair[1L, 1L], pair[1L, 2L]] < similarity_threshold) break
-      source_pos <- pair[1L, 1L]
-      target_pos <- pair[1L, 2L]
-      reason <- "high_similarity"
+      which(
+        upper.tri(similarity) &
+          similarity >= similarity_threshold,
+        arr.ind = TRUE
+      )
     }
-    source_group <- groups[[source_pos]]
-    target_group <- groups[[target_pos]]
-    source_size <- c(links[[source_pos]], genes[[source_pos]])
-    target_size <- c(links[[target_pos]], genes[[target_pos]])
-    if (source_size[[1L]] > target_size[[1L]] ||
-        (source_size[[1L]] == target_size[[1L]] && source_size[[2L]] > target_size[[2L]]) ||
-        (identical(source_size, target_size) && source_group < target_group)) {
-      tmp <- source_group
-      source_group <- target_group
-      target_group <- tmp
-      tmp <- source_pos
-      source_pos <- target_pos
-      target_pos <- tmp
-    }
-    step <- step + 1L
-    audit[[step]] <- data.table::data.table(
-      merge_step = step,
-      source_topic = source_group,
-      representative_topic = target_group,
-      reason = reason,
-      similarity = similarity[source_pos, target_pos],
-      source_links = links[source_pos],
-      source_genes = genes[source_pos],
-      representative_links_before = links[target_pos],
-      representative_genes_before = genes[target_pos]
+    if (!nrow(candidate_positions)) break
+    candidates <- lapply(seq_len(nrow(candidate_positions)), function(i) {
+      source_pos <- candidate_positions[[i, 1L]]
+      target_pos <- candidate_positions[[i, 2L]]
+      source_group <- groups[[source_pos]]
+      target_group <- groups[[target_pos]]
+      source_size <- c(links[[source_pos]], genes[[source_pos]])
+      target_size <- c(links[[target_pos]], genes[[target_pos]])
+      if (source_size[[1L]] > target_size[[1L]] ||
+          (source_size[[1L]] == target_size[[1L]] &&
+            source_size[[2L]] > target_size[[2L]]) ||
+          (identical(source_size, target_size) && source_group < target_group)) {
+        tmp <- source_group
+        source_group <- target_group
+        target_group <- tmp
+        tmp <- source_pos
+        source_pos <- target_pos
+        target_pos <- tmp
+      }
+      data.table::data.table(
+        source_pos = source_pos,
+        target_pos = target_pos,
+        source_topic = source_group,
+        representative_topic = target_group,
+        reason = if (length(small)) {
+          data.table::fcase(
+            links[[source_pos]] < min_links & genes[[source_pos]] < min_genes,
+            "small_links_and_genes",
+            links[[source_pos]] < min_links,
+            "small_links",
+            default = "small_genes"
+          )
+        } else {
+          "high_similarity"
+        },
+        similarity = similarity[source_pos, target_pos],
+        source_links = links[[source_pos]],
+        source_genes = genes[[source_pos]],
+        representative_links_before = links[[target_pos]],
+        representative_genes_before = genes[[target_pos]]
+      )
+    })
+    candidates <- unique(data.table::rbindlist(candidates), by = c(
+      "source_topic", "representative_topic"
+    ))
+    correspondence_before <- .m3_opt_tf_theta_correspondence(
+      theta = theta,
+      phi = phi,
+      pair_assignment = pair_assignment,
+      raw_topic_ids = raw_topic_ids,
+      raw_to_group = mapping,
+      cutoff = tf_topic_cutoff
     )
-    mapping[mapping == source_group] <- target_group
+    candidates[, `:=`(
+      target_assignments_before = correspondence_before$target_assignments,
+      tf_term_assignments_before = correspondence_before$tf_term_assignments,
+      tf_theta_supported_before = correspondence_before$supported_tf_terms,
+      tf_theta_empty_before = correspondence_before$empty_tf_terms,
+      tf_theta_support_rate_before = correspondence_before$support_rate,
+      tf_theta_mean_before = correspondence_before$mean_theta,
+      target_assignments_after = NA_integer_,
+      tf_term_assignments_after = NA_integer_,
+      tf_theta_supported_after = NA_integer_,
+      tf_theta_empty_after = NA_integer_,
+      tf_theta_support_rate_after = NA_real_,
+      tf_theta_mean_after = NA_real_,
+      correspondence_eligible = TRUE
+    )]
+    if (isTRUE(correspondence_before$available)) {
+      for (i in seq_len(nrow(candidates))) {
+        candidate_mapping <- mapping
+        candidate_mapping[
+          candidate_mapping == candidates$source_topic[[i]]
+        ] <- candidates$representative_topic[[i]]
+        after <- .m3_opt_tf_theta_correspondence(
+          theta = theta,
+          phi = phi,
+          pair_assignment = pair_assignment,
+          raw_topic_ids = raw_topic_ids,
+          raw_to_group = candidate_mapping,
+          cutoff = tf_topic_cutoff
+        )
+        candidates[i, `:=`(
+          target_assignments_after = after$target_assignments,
+          tf_term_assignments_after = after$tf_term_assignments,
+          tf_theta_supported_after = after$supported_tf_terms,
+          tf_theta_empty_after = after$empty_tf_terms,
+          tf_theta_support_rate_after = after$support_rate,
+          tf_theta_mean_after = after$mean_theta,
+          correspondence_eligible = isTRUE(after$available) &&
+            after$target_assignments >=
+              correspondence_before$target_assignments &&
+            after$supported_tf_terms >=
+              correspondence_before$supported_tf_terms &&
+            after$empty_tf_terms <= correspondence_before$empty_tf_terms
+        )]
+      }
+    }
+    if (use_correspondence && isTRUE(correspondence_before$available)) {
+      candidates <- candidates[
+        candidates[["correspondence_eligible"]] %in% TRUE
+      ]
+      if (!nrow(candidates)) break
+      data.table::setorderv(
+        candidates,
+        c(
+          "tf_theta_empty_after",
+          "tf_theta_supported_after",
+          "target_assignments_after",
+          "tf_theta_support_rate_after",
+          "tf_theta_mean_after",
+          "similarity",
+          "source_topic",
+          "representative_topic"
+        ),
+        c(1L, -1L, -1L, -1L, -1L, -1L, 1L, 1L)
+      )
+    } else if (length(small)) {
+      data.table::setorderv(
+        candidates,
+        c(
+          "source_links",
+          "source_genes",
+          "source_topic",
+          "similarity",
+          "representative_topic"
+        ),
+        c(1L, 1L, 1L, -1L, 1L)
+      )
+    } else {
+      data.table::setorderv(
+        candidates,
+        c("similarity", "source_topic", "representative_topic"),
+        c(-1L, 1L, 1L)
+      )
+    }
+    winner <- candidates[1L]
+    step <- step + 1L
+    audit[[step]] <- cbind(
+      data.table::data.table(merge_step = step),
+      winner[, -c("source_pos", "target_pos", "correspondence_eligible")]
+    )
+    mapping[mapping == winner[["source_topic"]]] <-
+      winner[["representative_topic"]]
   }
   list(
     mapping = as.integer(mapping),
@@ -367,7 +574,19 @@
         source_links = numeric(),
         source_genes = numeric(),
         representative_links_before = numeric(),
-        representative_genes_before = numeric()
+        representative_genes_before = numeric(),
+        target_assignments_before = integer(),
+        tf_term_assignments_before = integer(),
+        tf_theta_supported_before = integer(),
+        tf_theta_empty_before = integer(),
+        tf_theta_support_rate_before = numeric(),
+        tf_theta_mean_before = numeric(),
+        target_assignments_after = integer(),
+        tf_term_assignments_after = integer(),
+        tf_theta_supported_after = integer(),
+        tf_theta_empty_after = integer(),
+        tf_theta_support_rate_after = numeric(),
+        tf_theta_mean_after = numeric()
       )
     }
   )
@@ -628,9 +847,10 @@
                                                condition_upregulated_genes = NULL,
                                                upregulation_reference_condition = NULL,
                                                upregulated_log2fc_min = 1,
-                                               min_genes = 50L,
+                                               min_genes = 150L,
                                                min_links = 200L,
-                                               similarity_threshold = 0.90,
+                                               similarity_threshold = 0.65,
+                                               prefer_tf_theta_correspondence = TRUE,
                                                tf_topic_cutoff = 0.3,
                                                umap_max_links_per_condition = 10000L,
                                                seed = 20260716L,
@@ -709,9 +929,12 @@
     raw_genes = raw_genes,
     gene_ids = gene_ids,
     peak_ids = peak_ids,
+    pair_assignment = pair_assignment,
     min_genes = min_genes,
     min_links = min_links,
-    similarity_threshold = similarity_threshold
+    similarity_threshold = similarity_threshold,
+    prefer_tf_theta_correspondence = prefer_tf_theta_correspondence,
+    tf_topic_cutoff = tf_topic_cutoff
   )
   optimized_phi <- .m3_opt_group_phi(phi, theta, dtm, raw_topic_ids, merge$mapping)
   optimized_theta <- .m3_opt_theta(theta, raw_topic_ids, merge$mapping)
@@ -804,6 +1027,22 @@
     gene_ids,
     peak_ids
   )
+  raw_correspondence <- .m3_opt_tf_theta_correspondence(
+    theta = theta,
+    phi = phi,
+    pair_assignment = pair_assignment,
+    raw_topic_ids = raw_topic_ids,
+    raw_to_group = raw_topic_ids,
+    cutoff = tf_topic_cutoff
+  )
+  optimized_correspondence <- .m3_opt_tf_theta_correspondence(
+    theta = theta,
+    phi = phi,
+    pair_assignment = pair_assignment,
+    raw_topic_ids = raw_topic_ids,
+    raw_to_group = merge$mapping,
+    cutoff = tf_topic_cutoff
+  )
   qc <- .m3_opt_qc_tables(
     assignments = assignments,
     docs = universe$docs,
@@ -830,6 +1069,8 @@
     upregulated_log2fc_min = upregulated_log2fc_min,
     raw_to_optimized = stats::setNames(merge$mapping, raw_topic_ids),
     merge_audit = merge$audit,
+    raw_tf_theta_correspondence = raw_correspondence,
+    optimized_tf_theta_correspondence = optimized_correspondence,
     sample_rows = sample_rows,
     raw_sample_probability = raw_sample_posterior$sample_probability,
     optimized_sample_probability = optimized_sample_posterior$sample_probability,
@@ -837,6 +1078,9 @@
     min_genes = min_genes,
     min_links = min_links,
     similarity_threshold = similarity_threshold,
+    prefer_tf_theta_correspondence = isTRUE(
+      prefer_tf_theta_correspondence
+    ),
     umap_max_links_per_condition = umap_max_links_per_condition,
     qc_seed = as.integer(seed),
     qc = qc
@@ -2960,6 +3204,18 @@
     optimized_assigned_genes = data.table::uniqueN(
       optimization$qc$assignments[optimized_aligned == TRUE, target_index]
     ),
+    raw_tf_term_assignments =
+      optimization$raw_tf_theta_correspondence$tf_term_assignments,
+    raw_tf_theta_supported =
+      optimization$raw_tf_theta_correspondence$supported_tf_terms,
+    raw_tf_theta_empty =
+      optimization$raw_tf_theta_correspondence$empty_tf_terms,
+    optimized_tf_term_assignments =
+      optimization$optimized_tf_theta_correspondence$tf_term_assignments,
+    optimized_tf_theta_supported =
+      optimization$optimized_tf_theta_correspondence$supported_tf_terms,
+    optimized_tf_theta_empty =
+      optimization$optimized_tf_theta_correspondence$empty_tf_terms,
     tf_topic_cutoff = optimization$tf_topic_cutoff,
     umap_sampled_links = length(optimization$sample_rows)
   )
@@ -2973,6 +3229,10 @@
     min_genes = as.integer(optimization$min_genes %||% NA_integer_),
     min_links = as.integer(optimization$min_links %||% NA_integer_),
     similarity_threshold = as.numeric(optimization$similarity_threshold %||% NA_real_),
+    prefer_tf_theta_correspondence = isTRUE(
+      optimization$prefer_tf_theta_correspondence
+    ),
+    tf_theta_merge_aggregation = "max",
     tf_topic_cutoff = as.numeric(optimization$tf_topic_cutoff),
     umap_max_links_per_condition = as.integer(
       optimization$umap_max_links_per_condition %||% length(optimization$sample_rows)

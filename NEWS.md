@@ -22,6 +22,9 @@
   sticky navigation, accessible tabbed diagnostics, compact condition and
   correlation views, clearer candidate and final-link evidence, and a
   collapsed technical appendix that preserves all detailed checks.
+* Updated Module 3 topic optimization to merge small, similar topics while
+  preserving Gene/Peak assignments and improving TF-term versus document-theta
+  correspondence. Merged-topic theta QC uses the maximum member-topic value.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

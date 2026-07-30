@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 
-# Plot unaggregated condition::TF theta values by TF and topic.
+# Plot inclusive max-collapsed condition::TF theta tiles by optimized topic.
 
 args <- commandArgs(trailingOnly = TRUE)
 default_run_root <- paste0(
@@ -15,27 +15,28 @@ theta_file <- if (length(args) >= 1L) {
 } else {
   file.path(default_run_root, "topic_models", "vae_models", "theta_K30.csv")
 }
+run_root <- dirname(dirname(dirname(normalizePath(
+  theta_file,
+  winslash = "/",
+  mustWork = TRUE
+))))
 output_file <- if (length(args) >= 2L) {
   args[[2L]]
 } else {
-  file.path(
-    default_run_root,
-    "review",
-    "run012_lda_K30_tf_topic_raw_theta_dotplot.pdf"
-  )
+  NULL
 }
 topic_terms_file <- if (length(args) >= 3L) {
   args[[3L]]
 } else {
-  run_root <- dirname(dirname(dirname(normalizePath(
-    theta_file,
-    winslash = "/",
-    mustWork = TRUE
-  ))))
   file.path(run_root, "topic_extraction", "topic_terms.csv")
 }
+optimization_map_file <- if (length(args) >= 4L) {
+  args[[4L]]
+} else {
+  file.path(run_root, "topic_extraction", "topic_optimization_map.csv")
+}
 
-cutoffs <- c(0.3, 0.5)
+cutoffs <- c(0.1, 0.3, 0.5)
 grid_columns <- 6L
 
 required_packages <- c("data.table", "ggplot2", "scales")
@@ -55,6 +56,9 @@ if (!file.exists(theta_file)) {
 if (!file.exists(topic_terms_file)) {
   stop("Missing final topic-term file: ", topic_terms_file, call. = FALSE)
 }
+if (!file.exists(optimization_map_file)) {
+  stop("Missing topic optimization map: ", optimization_map_file, call. = FALSE)
+}
 
 theta_table <- data.table::fread(theta_file, showProgress = FALSE)
 if (ncol(theta_table) < 2L || !identical(names(theta_table)[[1L]], "doc_id")) {
@@ -66,26 +70,29 @@ if (anyDuplicated(theta_table$doc_id)) {
 if (any(!grepl("^.+::[^:]+$", theta_table$doc_id))) {
   stop("Every theta document ID must use condition::TF format.", call. = FALSE)
 }
+document_ids <- as.character(theta_table$doc_id)
 
-topic_names <- names(theta_table)[-1L]
-topic_numbers <- suppressWarnings(as.integer(sub("^Topic", "", topic_names)))
-if (anyNA(topic_numbers) || anyDuplicated(topic_numbers)) {
+raw_topic_names <- names(theta_table)[-1L]
+raw_topic_numbers <- suppressWarnings(
+  as.integer(sub("^Topic", "", raw_topic_names))
+)
+if (anyNA(raw_topic_numbers) || anyDuplicated(raw_topic_numbers)) {
   stop("theta topic columns must have unique Topic<number> names.", call. = FALSE)
 }
-topic_order <- order(topic_numbers)
-topic_names <- topic_names[topic_order]
-topic_numbers <- topic_numbers[topic_order]
-theta_table <- theta_table[, c("doc_id", topic_names), with = FALSE]
+topic_order <- order(raw_topic_numbers)
+raw_topic_names <- raw_topic_names[topic_order]
+raw_topic_numbers <- raw_topic_numbers[topic_order]
+theta_table <- theta_table[, c("doc_id", raw_topic_names), with = FALSE]
 
-theta_matrix <- as.matrix(theta_table[, ..topic_names])
-storage.mode(theta_matrix) <- "double"
-if (any(!is.finite(theta_matrix))) {
+raw_theta_matrix <- as.matrix(theta_table[, ..raw_topic_names])
+storage.mode(raw_theta_matrix) <- "double"
+if (any(!is.finite(raw_theta_matrix))) {
   stop("theta contains non-finite values.", call. = FALSE)
 }
-if (any(theta_matrix < 0 | theta_matrix > 1)) {
+if (any(raw_theta_matrix < 0 | raw_theta_matrix > 1)) {
   stop("theta values must be within [0, 1].", call. = FALSE)
 }
-row_error <- abs(rowSums(theta_matrix) - 1)
+row_error <- abs(rowSums(raw_theta_matrix) - 1)
 if (max(row_error) > 1e-8) {
   stop(
     "theta rows are not normalized; maximum absolute row-sum error is ",
@@ -94,6 +101,59 @@ if (max(row_error) > 1e-8) {
     call. = FALSE
   )
 }
+optimization_map <- data.table::fread(
+  optimization_map_file,
+  showProgress = FALSE
+)
+if (!all(c("raw_topic", "optimized_topic") %in% names(optimization_map))) {
+  stop(
+    "Topic optimization map must contain raw_topic and optimized_topic.",
+    call. = FALSE
+  )
+}
+optimization_map[, `:=`(
+  raw_topic = suppressWarnings(as.integer(raw_topic)),
+  optimized_topic = suppressWarnings(as.integer(optimized_topic))
+)]
+if (anyNA(optimization_map$raw_topic) ||
+    anyNA(optimization_map$optimized_topic) ||
+    anyDuplicated(optimization_map$raw_topic) ||
+    !setequal(optimization_map$raw_topic, raw_topic_numbers)) {
+  stop("Topic optimization map does not match raw theta topics.", call. = FALSE)
+}
+optimization_map <- optimization_map[
+  match(raw_topic_numbers, raw_topic)
+]
+topic_numbers <- sort(unique(optimization_map$optimized_topic))
+topic_names <- paste0("Topic", topic_numbers)
+if (is.null(output_file)) {
+  output_file <- file.path(
+    run_root,
+    "review",
+    sprintf(
+      "run012_lda_K%d_optimized_tf_topic_theta_tiles.pdf",
+      length(topic_numbers)
+    )
+  )
+}
+theta_matrix <- vapply(topic_numbers, function(topic_num) {
+  apply(
+    raw_theta_matrix[
+      ,
+      optimization_map$optimized_topic == topic_num,
+      drop = FALSE
+    ],
+    1L,
+    max
+  )
+}, numeric(nrow(raw_theta_matrix)))
+if (is.null(dim(theta_matrix))) {
+  theta_matrix <- matrix(theta_matrix, ncol = 1L)
+}
+colnames(theta_matrix) <- topic_names
+theta_table <- data.table::as.data.table(theta_matrix)
+theta_table[, doc_id := document_ids]
+data.table::setcolorder(theta_table, c("doc_id", topic_names))
 
 document_table <- data.table::data.table(
   doc_id = as.character(theta_table$doc_id),
@@ -110,6 +170,11 @@ document_table[, page := ((tf_index - 1L) %/% rows_per_page) + 1L]
 n_pages <- max(document_table$page)
 
 topic_terms <- data.table::fread(topic_terms_file, showProgress = FALSE)
+tf_identity_key <- function(x) {
+  out <- toupper(trimws(as.character(x)))
+  out[out == "TBET"] <- "TBX21"
+  out
+}
 required_term_columns <- c(
   "term_id", "term_group", "topic_num", "in_topic", "assignment_method"
 )
@@ -125,7 +190,7 @@ in_topic_flag <- toupper(as.character(topic_terms$in_topic)) %in% c("TRUE", "T",
 tf_term_assignments <- topic_terms[
   term_group == "GENE" & in_topic_flag,
   .(
-    tf_key = toupper(sub("^GENE:", "", as.character(term_id))),
+    tf_key = tf_identity_key(sub("^GENE:", "", as.character(term_id))),
     topic_num = suppressWarnings(as.integer(topic_num)),
     assignment_method = as.character(assignment_method)
   )
@@ -144,7 +209,10 @@ if (tf_term_assignments[, .N, by = tf_key][N > 1L, .N]) {
   )
 }
 tf_term_assignments <- unique(
-  tf_term_assignments[tf_key %in% toupper(tf_levels), .(tf_key, topic_num)]
+  tf_term_assignments[
+    tf_key %in% tf_identity_key(tf_levels),
+    .(tf_key, topic_num)
+  ]
 )
 if (any(!tf_term_assignments$topic_num %in% topic_numbers)) {
   stop("Final TF-term assignments contain topics absent from theta.", call. = FALSE)
@@ -181,7 +249,8 @@ make_page_data <- function(cutoff, page_number) {
     tf = page_tfs,
     unique = TRUE
   )
-  cells[, tf_key := toupper(tf)]
+  cells[, topic_index := match(topic_num, topic_numbers)]
+  cells[, tf_key := tf_identity_key(tf)]
   cells <- merge(cells, page_rows, by = "tf", sort = FALSE)
   term_borders <- merge(
     cells,
@@ -195,13 +264,14 @@ make_page_data <- function(cutoff, page_number) {
     tf %in% page_tfs & theta >= cutoff,
     .(condition_id, tf, topic_num, theta)
   ]
+  tiles[, topic_index := match(topic_num, topic_numbers)]
   data.table::setorder(tiles, tf, topic_num, -theta, condition_id)
   tiles[, slot := seq_len(.N), by = .(tf, topic_num)]
   tiles[, slot_row := (slot - 1L) %/% grid_columns]
   tiles[, slot_column := (slot - 1L) %% grid_columns]
   tiles[, row_count := max(slot_row) + 1L, by = .(tf, topic_num)]
   tiles[, column_count := .N, by = .(tf, topic_num, slot_row)]
-  tiles[, x := topic_num + (slot_column - (column_count - 1) / 2) * 0.16]
+  tiles[, x := topic_index + (slot_column - (column_count - 1) / 2) * 0.16]
   tiles[, y_offset := (slot_row - (row_count - 1) / 2) * 0.285]
   tiles <- merge(tiles, page_rows, by = "tf", sort = FALSE)
   tiles[, y := tf_row + y_offset]
@@ -290,7 +360,7 @@ plot_page <- function(cutoff, page_number) {
   ggplot2::ggplot() +
     ggplot2::geom_tile(
       data = page_data$cells,
-      ggplot2::aes(x = topic_num, y = tf_row),
+      ggplot2::aes(x = topic_index, y = tf_row),
       width = 0.96,
       height = 0.94,
       fill = "white",
@@ -307,7 +377,7 @@ plot_page <- function(cutoff, page_number) {
     ) +
     ggplot2::geom_tile(
       data = page_data$term_borders,
-      ggplot2::aes(x = topic_num, y = tf_row),
+      ggplot2::aes(x = topic_index, y = tf_row),
       width = 0.96,
       height = 0.94,
       fill = NA,
@@ -315,9 +385,9 @@ plot_page <- function(cutoff, page_number) {
       linewidth = 0.85
     ) +
     ggplot2::scale_x_continuous(
-      breaks = topic_numbers,
+      breaks = seq_along(topic_numbers),
       labels = paste0("T", topic_numbers),
-      limits = range(topic_numbers) + c(-0.55, 0.55),
+      limits = c(0.45, length(topic_numbers) + 0.55),
       expand = ggplot2::expansion(mult = 0)
     ) +
     ggplot2::scale_y_continuous(
@@ -332,11 +402,11 @@ plot_page <- function(cutoff, page_number) {
       limits = c(0, 1),
       breaks = c(0, 0.3, 0.5, 0.7, 1),
       oob = scales::squish,
-      name = "Raw theta"
+      name = "Max theta"
     ) +
     ggplot2::labs(
       title = sprintf(
-        "Raw condition::TF theta by TF and topic | theta >= %.1f",
+        "Optimized condition::TF theta by TF and topic | theta >= %.1f",
         cutoff
       ),
       subtitle = sprintf(
@@ -352,9 +422,9 @@ plot_page <- function(cutoff, page_number) {
       x = "Topic",
       y = "TF",
       caption = paste0(
-        "One tile per passing condition::TF document; tile fill is its raw theta. ",
+        "One tile per passing condition::TF document; tile fill is max raw theta. ",
         "Red border: GENE:<TF> final GammaFit+MaxProb topic assignment. ",
-        "No theta aggregation. ",
+        "Merged topics use the maximum member-topic theta. ",
         length(condition_levels),
         " conditions."
       )

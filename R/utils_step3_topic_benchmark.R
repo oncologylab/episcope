@@ -5643,7 +5643,7 @@ run_regulatory_topics <- function(filtered_dir,
       "topic_merge_min_genes", "module3_topic_merge_min_genes",
       "module3_merge_min_genes"
     ),
-    50L
+    150L
   )[[1L]]))
   topic_merge_min_links <- suppressWarnings(as.integer(.module3_cfg_value(
     cfg,
@@ -5660,8 +5660,17 @@ run_regulatory_topics <- function(filtered_dir,
       "module3_topic_merge_similarity_threshold",
       "module3_merge_similarity_threshold"
     ),
-    0.90
+    0.65
   )[[1L]]))
+  topic_merge_tf_theta_preference <- .as_logical_flag(.module3_cfg_value(
+    cfg,
+    c(
+      "topic_merge_tf_theta_preference",
+      "module3_topic_merge_tf_theta_preference",
+      "module3_merge_tf_theta_preference"
+    ),
+    TRUE
+  )[[1L]])
   run_topic_assignment_qc_raw <- .module3_cfg_value(
     cfg,
     c(
@@ -5774,6 +5783,8 @@ run_regulatory_topics <- function(filtered_dir,
       topic_merge_min_genes = topic_merge_min_genes,
       topic_merge_min_links = topic_merge_min_links,
       topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+      topic_merge_tf_theta_preference =
+        topic_merge_tf_theta_preference,
       run_topic_assignment_qc = run_topic_assignment_qc,
       topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
       topic_qc_top_tfs = topic_qc_top_tfs,
@@ -5884,6 +5895,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   retain a topic without a size-based merge. If `NULL`, use project config.
 #' @param topic_merge_similarity_threshold Mean Gene/Peak Hellinger similarity
 #'   at or above which topics are merged. If `NULL`, use project config.
+#' @param topic_merge_tf_theta_preference Whether merge selection should retain
+#'   target assignments and prefer mappings that reduce TF terms lacking a
+#'   matching condition::TF theta membership. If `NULL`, use project config.
 #' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
 #'   size per condition. Full-universe counts are not sampled.
 #' @param topic_qc_top_tfs Number of globally ranked TFs shown in the pooled
@@ -5965,6 +5979,7 @@ run_topic_modeling <- function(filtered_dir,
                                topic_merge_min_genes = NULL,
                                topic_merge_min_links = NULL,
                                topic_merge_similarity_threshold = NULL,
+                               topic_merge_tf_theta_preference = NULL,
                                topic_qc_umap_links_per_condition = NULL,
                                topic_qc_top_tfs = NULL,
                                topic_qc_reference_condition = NULL,
@@ -6027,6 +6042,8 @@ run_topic_modeling <- function(filtered_dir,
     topic_merge_min_genes = topic_merge_min_genes,
     topic_merge_min_links = topic_merge_min_links,
     topic_merge_similarity_threshold = topic_merge_similarity_threshold,
+    topic_merge_tf_theta_preference =
+      topic_merge_tf_theta_preference,
     topic_qc_umap_links_per_condition = topic_qc_umap_links_per_condition,
     topic_qc_top_tfs = topic_qc_top_tfs,
     topic_qc_reference_condition = topic_qc_reference_condition,
