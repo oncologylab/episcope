@@ -8444,6 +8444,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
                                                   min_genes = 5L,
                                                   top_n_per_topic = 20L,
                                                   dot_top_n_per_topic = 25L,
+                                                  dot_priority_patterns = NULL,
                                                   max_pathways = 200L,
                                                   title_prefix = NULL,
                                                   use_all_terms = FALSE,
@@ -8460,6 +8461,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
   tf_link_mode <- match.arg(tf_link_mode)
   enrichr_sleep_time <- .normalize_enrichr_sleep_time(enrichr_sleep_time)
   enrichr_n_cores <- .normalize_enrichr_n_cores(enrichr_n_cores)
+  if (!is.null(dot_priority_patterns)) {
+    dot_priority_patterns <- unique(as.character(dot_priority_patterns))
+    dot_priority_patterns <- dot_priority_patterns[
+      !is.na(dot_priority_patterns) & nzchar(dot_priority_patterns)
+    ]
+  }
   pathway_backend <- .pathway_backend(pathway_backend)
   pathway_species_mode <- .normalize_pathway_species_mode(pathway_species)
   human_mouse_best <- identical(pathway_species_mode, "human_mouse_best")
@@ -8683,13 +8690,6 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     dot_path <- file.path(dirname(out_file), "topic_pathway_enrichment_dotplot.pdf")
     plot_dt <- data.table::copy(res_dt)
     plot_dt <- plot_dt[is.finite(padj)]
-    if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
-      plot_dt <- plot_dt[
-        order(-logp),
-        .SD[seq_len(min(.N, as.integer(top_n_per_topic)))],
-        by = topic
-      ]
-    }
     plot_dt[, topic_num := as.integer(topic)]
     plot_dt <- plot_dt[is.finite(topic_num)]
     if (!("overlap_hits" %in% names(plot_dt))) {
@@ -8697,6 +8697,27 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     }
     plot_dt[is.na(overlap_hits), overlap_hits := 0L]
     plot_dt[, pathway_key := pathway]
+    priority_dt <- plot_dt[0]
+    priority_keys <- character()
+    if (length(dot_priority_patterns) && nrow(plot_dt)) {
+      priority_pattern <- paste0(
+        "(?:",
+        paste(dot_priority_patterns, collapse = ")|(?:"),
+        ")"
+      )
+      priority_dt <- plot_dt[
+        padj <= as.numeric(padj_cut) &
+          grepl(priority_pattern, pathway, ignore.case = TRUE, perl = TRUE)
+      ]
+      priority_keys <- unique(priority_dt$pathway_key)
+    }
+    if (is.finite(top_n_per_topic) && as.numeric(top_n_per_topic) > 0) {
+      plot_dt <- plot_dt[
+        order(-logp),
+        .SD[seq_len(min(.N, as.integer(top_n_per_topic)))],
+        by = topic
+      ]
+    }
     dot_n <- suppressWarnings(as.integer(dot_top_n_per_topic[[1L]]))
     if (!is.finite(dot_n) || dot_n <= 0L) {
       dot_n <- suppressWarnings(as.integer(top_n_per_topic[[1L]]))
@@ -8711,6 +8732,13 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     } else {
       plot_dt
     }
+    if (nrow(priority_dt)) {
+      top_dt <- unique(data.table::rbindlist(
+        list(top_dt, priority_dt),
+        use.names = TRUE,
+        fill = TRUE
+      ))
+    }
     if (nrow(top_dt)) {
       plot_dt <- plot_dt[pathway_key %in% unique(top_dt$pathway_key)]
       sig_keys <- unique(plot_dt[padj <= as.numeric(padj_cut), pathway_key])
@@ -8719,7 +8747,12 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
     if (nrow(plot_dt) && is.finite(max_pathways) && as.numeric(max_pathways) > 0) {
       path_rank <- plot_dt[, .(max_logp = max(logp, na.rm = TRUE)), by = pathway_key]
       if (nrow(path_rank) > as.integer(max_pathways)) {
-        keep <- path_rank[order(-max_logp)][seq_len(as.integer(max_pathways)), pathway_key]
+        keep_priority <- intersect(priority_keys, path_rank$pathway_key)
+        remaining_n <- max(0L, as.integer(max_pathways) - length(keep_priority))
+        keep_ranked <- path_rank[
+          !pathway_key %in% keep_priority
+        ][order(-max_logp)][seq_len(min(.N, remaining_n)), pathway_key]
+        keep <- unique(c(keep_priority, keep_ranked))
         plot_dt <- plot_dt[pathway_key %in% keep]
       }
     }
@@ -8820,10 +8853,7 @@ plot_topic_pathway_enrichment_heatmap <- function(topic_terms,
       ggplot2::scale_size_continuous(name = "Combined score", range = c(0.8, 3.2)) +
       ggplot2::scale_y_discrete(labels = function(x) {
         y <- as.character(x)
-        y <- gsub("\\s+", " ", y)
-        too_long <- nchar(y) > 58L
-        y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
-        y
+        gsub("\\s+", " ", y)
       }) +
       ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
       ggplot2::labs(
@@ -9119,10 +9149,7 @@ plot_topic_pathway_enrichment_by_comparison_terms <- function(topic_terms,
       ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
       ggplot2::scale_y_discrete(labels = function(x) {
         y <- as.character(x)
-        y <- gsub("\\s+", " ", y)
-        too_long <- nchar(y) > 58L
-        y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
-        y
+        gsub("\\s+", " ", y)
       }) +
       ggplot2::labs(
         x = "Topic",
@@ -9906,10 +9933,7 @@ plot_topic_pathway_enrichment_from_link_scores <- function(link_scores,
       ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
       ggplot2::scale_y_discrete(labels = function(x) {
         y <- as.character(x)
-        y <- gsub("\\s+", " ", y)
-        too_long <- nchar(y) > 58L
-        y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
-        y
+        gsub("\\s+", " ", y)
       }) +
       ggplot2::labs(
         x = "Topic",
@@ -10330,10 +10354,7 @@ filter_topic_pathway_dotplot_csv <- function(dotplot_csv,
     ggplot2::scale_x_discrete(labels = function(x) gsub("^Topic", "", x)) +
     ggplot2::scale_y_discrete(labels = function(x) {
       y <- as.character(x)
-      y <- gsub("\\s+", " ", y)
-      too_long <- nchar(y) > 58L
-      y[too_long] <- paste0(substr(y[too_long], 1L, 55L), "...")
-      y
+      gsub("\\s+", " ", y)
     }) +
     ggplot2::labs(
       x = "Topic",
