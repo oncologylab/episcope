@@ -968,12 +968,6 @@ List craftgrn_warplda_fit_cpp(const S4& dtm,
   if (sampler == "warp_ref") n_threads = 1;
 
   SparseDtmTokens dat = read_dgC_tokens(dtm);
-  const double delta_cells_per_thread = static_cast<double>(dat.n_word) * static_cast<double>(K);
-  const double max_delta_cells = 100000000.0;
-  if (delta_cells_per_thread > 0.0) {
-    const int memory_safe_threads = std::max(1, static_cast<int>(std::floor(max_delta_cells / delta_cells_per_thread)));
-    if (n_threads > memory_safe_threads) n_threads = memory_safe_threads;
-  }
   const int n_token = static_cast<int>(dat.token_word.size());
   std::vector<int> topic(static_cast<std::size_t>(n_token), 0);
   std::vector<int> doc_topic(static_cast<std::size_t>(dat.n_doc) * static_cast<std::size_t>(K), 0);

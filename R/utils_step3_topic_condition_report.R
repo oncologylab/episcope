@@ -301,6 +301,77 @@
   ])
 }
 
+.m3cr_tf_target_assignment_rows <- function(extraction_dir,
+                                             topic_space = "combined") {
+  stem <- if (identical(topic_space, "raw")) {
+    "topic_tf_target_assignment_raw"
+  } else {
+    "topic_tf_target_assignment"
+  }
+  parquet_path <- file.path(extraction_dir, paste0(stem, ".parquet"))
+  rds_path <- file.path(extraction_dir, paste0(stem, ".rds"))
+  out <- if (file.exists(parquet_path) &&
+             requireNamespace("arrow", quietly = TRUE)) {
+    data.table::as.data.table(arrow::read_parquet(parquet_path))
+  } else if (file.exists(rds_path)) {
+    data.table::as.data.table(readRDS(rds_path))
+  } else {
+    return(data.table::data.table())
+  }
+  required <- c("tf", "target_gene", "assigned")
+  if (!all(required %in% names(out))) {
+    .log_abort("TF-target assignment table is missing required columns.")
+  }
+  unique(out[
+    .as_logical_flag(assigned),
+    .(
+      tf_key = .m3cr_tf_match_key(tf),
+      gene_key = toupper(as.character(target_gene))
+    )
+  ])
+}
+
+.m3cr_filter_parts_by_tf_target_assignment <- function(parts,
+                                                        assignment) {
+  assignment <- data.table::as.data.table(assignment)
+  if (!nrow(assignment)) return(parts)
+  required <- c("tf_key", "gene_key")
+  if (!all(required %in% names(assignment))) {
+    .log_abort("TF-target report filter is missing tf_key or gene_key.")
+  }
+  assignment <- unique(assignment[, .(
+    tf_key = as.character(tf_key),
+    gene_key = toupper(as.character(gene_key))
+  )])
+  lapply(parts, function(part) {
+    for (table_name in c("tf_gene", "tf_peak_gene")) {
+      edge_rows <- data.table::copy(data.table::as.data.table(part[[table_name]]))
+      if (!nrow(edge_rows)) {
+        part[[table_name]] <- edge_rows
+        next
+      }
+      required_edges <- c("tf", "gene_key")
+      if (!all(required_edges %in% names(edge_rows))) {
+        .log_abort(
+          "Condition report edge table is missing tf or gene_key."
+        )
+      }
+      edge_rows[, `:=`(
+        tf_key__ = .m3cr_tf_match_key(tf),
+        gene_key__ = toupper(as.character(gene_key))
+      )]
+      edge_rows <- edge_rows[
+        assignment,
+        on = c(tf_key__ = "tf_key", gene_key__ = "gene_key"),
+        nomatch = 0L
+      ]
+      edge_rows[, c("tf_key__", "gene_key__") := NULL]
+      part[[table_name]] <- edge_rows
+    }
+    part
+  })
+}
+
 .m3cr_collect_condition_edges <- function(path,
                                           topic_genes = character(),
                                           max_peaks_per_tf_gene = 1L) {
@@ -890,6 +961,16 @@
       max_peaks_per_tf_gene = max_peaks_per_tf_gene
     )
   })
+  tf_target_assignment <- .m3cr_tf_target_assignment_rows(
+    extraction_dir,
+    topic_space = topic_space
+  )
+  if (nrow(tf_target_assignment)) {
+    parts <- .m3cr_filter_parts_by_tf_target_assignment(
+      parts,
+      tf_target_assignment
+    )
+  }
   overall_pathway_top_tfs <- .m3cr_overall_pathway_top_tfs(
     topic_pathways = topic_pathways,
     parts = parts,

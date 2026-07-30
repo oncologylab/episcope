@@ -48,10 +48,10 @@ row-maximum-scaled phi score.}
 
 \item{topic_term_assignment_method}{Term-to-topic assignment.
 `"gammafit_maxprob"` applies GammaFit first, independently selects the
-maximum-phi passing topic for each aggregate Gene and Peak term, and keeps
-the target only when those topics agree. `"max_phi"` assigns terms
-independently from raw `phi`; `"gammafit"` retains multi-topic cutoff
-membership.}
+maximum-phi passing topic for each paired term, and keeps a Gene/Peak pair
+or TF-target/Gene pair only when those topics agree. `"max_phi"` assigns
+terms independently from raw `phi`; `"gammafit"` retains multi-topic
+cutoff membership.}
 
 \item{optimize_topics}{Whether eligible condition-topic extractions merge
 undersized or highly similar topics before downstream reports.}
@@ -121,14 +121,20 @@ review outputs from trained Module 3 topic models.
 Topic assignment uses unit-specific evidence. By default, GammaFit first
 identifies candidate topics for each aggregate `GENE:<gene>` and
 `PEAK:<gene>` pair. Each term independently selects its maximum-phi passing
-topic, and the pair is retained only when those topics agree. The explicit
-`"max_phi"` and legacy `"gammafit"` methods remain available for comparison.
-TFs are
-assigned from raw document-topic `theta` with the TF membership and primary
-margin cutoffs. Per-comparison pathway gene sets are built from model
-outputs only: documents with theta above the TF membership cutoff intersect
-genes represented by topic-assigned `GENE:<gene>` and aggregate
-`PEAK:<gene>` terms. Physical TF-peak-gene links are not used to define
-pathway topic membership at extraction time; they can be projected later
-onto selected comparison/topic/pathway genes for subnetworks.
+topic, and the pair is retained only when those topics agree. Experimental
+`"tf_target"` inputs instead compare each `<TF>::<target>` winner with the
+corresponding `GENE:<target>` winner and retain the TF-target term only when
+they agree. This TF-target agreement does not add a theta gate. Overall
+pathway enrichment in this mode uses every assigned `GENE:<target>` term;
+retained TF-target terms define link topology and report subnetworks. The
+explicit `"max_phi"` and legacy `"gammafit"` methods remain available for
+comparison.
+
+TFs are assigned from raw document-topic `theta` with the TF membership and
+primary margin cutoffs. Per-comparison pathway gene sets are built from
+model outputs only: documents with theta above the TF membership cutoff
+intersect genes represented by topic-assigned terms. Physical
+TF-peak-gene links are not used to define pathway topic membership at
+extraction time; they can be projected later onto selected
+comparison/topic/pathway genes for subnetworks.
 }

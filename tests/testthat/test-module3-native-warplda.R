@@ -201,6 +201,28 @@ test_that("native WarpLDA defaults to available cores unless capped", {
   expect_identical(.warplda_default_threads(36L), 36L)
 })
 
+test_that("native WarpLDA preserves the requested safe sampler threads", {
+  dtm <- make_native_warplda_dtm()
+  requested <- min(4L, .warplda_available_threads())
+
+  fit <- fit_warplda_one(
+    dtm,
+    K = 2L,
+    iterations = 2L,
+    n_check_convergence = 0L,
+    n_iter_inference = 1L,
+    n_threads = requested,
+    sampler = "warp_omp",
+    progressbar = FALSE
+  )
+
+  skip_if(
+    requested > 1L && identical(fit$metrics$threads, 1L),
+    "The package-check OpenMP runtime is restricted to one thread."
+  )
+  expect_identical(fit$metrics$threads, requested)
+})
+
 test_that("native WarpLDA divides available threads across parallel K workers", {
   withr::local_options(list(craftgrn.warplda.max_threads = 4L))
   withr::local_envvar(c(CRAFTGRN_WARPLDA_MAX_THREADS = NA))

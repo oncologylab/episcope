@@ -1021,6 +1021,56 @@ test_that("condition FP term modes build unique, aggregated, and weighted terms"
   expect_equal(weighted[term_id == "GENE:G1", weight], 25)
 })
 
+test_that("TF-target terms preserve aggregate document values exactly", {
+  edges <- data.table::data.table(
+    condition_label = "CondA",
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = c("G1", "G1", "G2"),
+    peak_id = c("P1", "P2", "P3"),
+    fp_score_condition = c(2, 3, 4),
+    gene_expr_condition = c(5, 5, 6),
+    tf_expr_condition = c(10, 10, 10)
+  )
+  aggregate <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    fp_term_mode = "aggregate",
+    condition_peak_weighting = "tf_expression"
+  )
+  tf_target <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    fp_term_mode = "tf_target",
+    condition_peak_weighting = "tf_expression"
+  )
+  tf_target <- data.table::copy(tf_target)
+  tf_target[, comparable_term := data.table::fcase(
+    .term_group(term_id) == "TF_TARGET",
+    paste0("PEAK:", sub("^[^:]+::", "", term_id)),
+    default = term_id
+  )]
+  data.table::setnames(tf_target, "term_id", "tf_target_term")
+  observed <- merge(
+    aggregate,
+    tf_target,
+    by.x = c("doc_id", "term_id"),
+    by.y = c("doc_id", "comparable_term"),
+    suffixes = c("_aggregate", "_tf_target")
+  )
+  expect_equal(nrow(observed), nrow(aggregate))
+  expect_equal(observed$weight_aggregate, observed$weight_tf_target)
+  expect_equal(observed$pseudo_count_aggregate, observed$pseudo_count_tf_target)
+  expect_equal(
+    observed$pseudo_count_log_aggregate,
+    observed$pseudo_count_log_tf_target
+  )
+  expect_setequal(
+    tf_target[.term_group(tf_target_term) == "TF_TARGET", tf_target_term],
+    c("TF1::G1", "TF1::G2")
+  )
+})
+
 test_that("condition fp_aggr sanity check ignores expected TF self term only", {
   edges <- data.table::data.table(
     condition_label = "CondA",
@@ -1294,6 +1344,118 @@ test_that("gene-expression terms use GammaFit followed by one maximum-probabilit
   expect_true(summary[target_gene == "G1", assigned])
   expect_equal(summary[target_gene == "G1", assigned_topic], 1L)
   expect_false(summary[target_gene == "G3", assigned])
+})
+
+test_that("TF-target terms require agreement with the target-gene topic", {
+  raw_phi <- rbind(
+    Topic1 = c(0.8, 0.2, 0.1, 0.2),
+    Topic2 = c(0.2, 0.8, 0.9, 0.8)
+  )
+  colnames(raw_phi) <- c(
+    "GENE:G1", "GENE:G2", "TF1::G1", "TF1::G2"
+  )
+  observed <- .assign_tf_target_terms_compact(
+    raw_phi,
+    score_mat = raw_phi,
+    thrP = 0.7,
+    min_terms = 2L
+  )
+  expect_true(observed$gene_assignment[target_gene == "G1", assigned])
+  expect_equal(
+    observed$gene_assignment[target_gene == "G1", assigned_topic],
+    1L
+  )
+  expect_false(
+    observed$link_assignment[target_gene == "G1", assigned]
+  )
+  expect_equal(
+    observed$link_assignment[target_gene == "G1", assignment_status],
+    "maxprob_topic_disagreement"
+  )
+  expect_true(observed$link_assignment[target_gene == "G2", assigned])
+  expect_equal(
+    observed$link_assignment[target_gene == "G2", assigned_topic],
+    2L
+  )
+  expect_false("TF1::G1" %in% observed$topic_terms$term_id)
+  expect_true("TF1::G2" %in% observed$topic_terms$term_id)
+})
+
+test_that("optimized TF-target summaries preserve raw failure reasons", {
+  genes <- data.table::data.table(
+    assigned = c(TRUE, FALSE),
+    assigned_topic = c(1L, NA_integer_)
+  )
+  links <- data.table::data.table(
+    assigned = c(TRUE, FALSE, FALSE, FALSE),
+    assigned_topic = c(1L, NA_integer_, NA_integer_, NA_integer_),
+    peak_gammafit_topic_count = c(1L, 1L, 0L, 1L),
+    assignment_status = c(
+      "assigned_gammafit_maxprob_agreement",
+      "unassigned_after_topic_merge",
+      "unassigned_after_topic_merge",
+      "unassigned_after_topic_merge"
+    ),
+    raw_assignment_status = c(
+      "assigned_gammafit_maxprob_agreement",
+      "gene_no_gammafit_candidate",
+      "tf_target_no_gammafit_candidate",
+      "maxprob_topic_disagreement"
+    ),
+    recovered_after_merge = FALSE
+  )
+
+  observed <- .topic_gene_tf_target_assignment_summary(
+    genes,
+    links,
+    thrP = 0.7,
+    assignment_method = "gammafit_maxprob_optimized",
+    model_family = "lda",
+    expected_topic_count = 1L
+  )
+
+  expect_equal(observed$gene_no_gammafit_candidate_count, 1L)
+  expect_equal(observed$tf_target_no_gammafit_candidate_count, 1L)
+  expect_equal(observed$maxprob_topic_disagreement_count, 1L)
+})
+
+test_that("TF-target topic merging retains every assigned pathway gene", {
+  genes <- data.table::data.table(
+    term_id = paste0("GENE:G", 1:3),
+    target_gene = paste0("G", 1:3),
+    gene_maxprob_topic = c(1L, 2L, NA_integer_),
+    gene_maxprob_probability = c(0.8, 0.7, NA_real_),
+    gene_assigned_topic = c(1L, 2L, NA_integer_),
+    gene_assignment_status = c(
+      "assigned_gammafit_maxprob",
+      "assigned_gammafit_maxprob",
+      "no_gammafit_candidate"
+    ),
+    assigned = c(TRUE, TRUE, FALSE),
+    assigned_topic = c(1L, 2L, NA_integer_),
+    assignment_status = c(
+      "assigned_gammafit_maxprob",
+      "assigned_gammafit_maxprob",
+      "no_gammafit_candidate"
+    )
+  )
+
+  observed <- .topic_gene_assignment_after_topic_merge(
+    genes,
+    data.table::data.table(
+      target_gene = c("G1", "G2", "G3"),
+      optimized_gene_topic = c(1L, 1L, NA_integer_),
+      optimized_gene_probability = c(0.8, 0.9, NA_real_)
+    )
+  )
+
+  expect_equal(observed[assigned == TRUE, target_gene], c("G1", "G2"))
+  expect_equal(observed[assigned == TRUE, assigned_topic], c(1L, 1L))
+  expect_false(observed[target_gene == "G3", assigned])
+  expect_equal(
+    observed[target_gene == "G3", assignment_status],
+    "no_gammafit_candidate"
+  )
 })
 
 test_that("gene-expression assignments adapt deterministically for topic optimization", {
@@ -3248,15 +3410,21 @@ test_that("condition comparison-union filtering uses relevant comparisons", {
 
 test_that("condition document-term QC separates gene and peak terms", {
   doc_term <- data.table::data.table(
-    doc_id = c("A::TF1", "A::TF1", "A::TF2", "B::TF1", "B::TF1"),
-    term_id = c("GENE:G1", "PEAK:G1", "GENE:G2", "GENE:G1", "PEAK:G1"),
-    pseudo_count_log = c(2, 3, 4, 5, 6)
+    doc_id = c(
+      "A::TF1", "A::TF1", "A::TF2", "B::TF1", "B::TF1", "B::TF1"
+    ),
+    term_id = c(
+      "GENE:G1", "PEAK:G1", "GENE:G2", "GENE:G1", "PEAK:G1", "TF1::G2"
+    ),
+    pseudo_count_log = c(2, 3, 4, 5, 6, 7)
   )
   observed <- .module3_document_term_qc_summary(doc_term, "pseudo_count_log")
   expect_setequal(observed$condition_id, c("A", "B"))
   expect_setequal(observed$term_type, c("Gene", "Peak"))
   expect_equal(observed[doc_id == "A::TF1" & term_type == "Gene", n_terms], 1)
   expect_equal(observed[doc_id == "A::TF1" & term_type == "Peak", term_mass], 3)
+  expect_equal(observed[doc_id == "B::TF1" & term_type == "Peak", n_terms], 2)
+  expect_equal(observed[doc_id == "B::TF1" & term_type == "Peak", term_mass], 13)
 })
 
 test_that("condition gene specificity preserves mass and paired term weights", {
@@ -3294,6 +3462,46 @@ test_that("condition gene specificity preserves mass and paired term weights", {
   )
   expect_equal(observed$audit$max_document_token_difference, 0)
   expect_equal(observed$audit$expression_matched_fraction, 1)
+})
+
+test_that("condition gene specificity treats renamed TF-target terms like Peaks", {
+  aggregate <- data.table::data.table(
+    doc_id = rep(c("A::TF1", "B::TF1"), each = 4L),
+    term_id = rep(c("GENE:G1", "PEAK:G1", "GENE:G2", "PEAK:G2"), 2L),
+    pseudo_count_log = c(13, 17, 19, 23, 29, 31, 37, 41)
+  )
+  tf_target <- data.table::copy(aggregate)
+  tf_target[startsWith(term_id, "PEAK:"), term_id := paste0(
+    "TF1::",
+    sub("^PEAK:", "", term_id)
+  )]
+  expression_file <- tempfile(fileext = ".csv")
+  data.table::fwrite(data.table::data.table(
+    condition_id = rep(c("A", "B"), each = 2L),
+    gene_key = rep(c("G1", "G2"), 2L),
+    expression = c(8, 2, 1, 6)
+  ), expression_file)
+
+  weight_one <- function(x) {
+    .module3_apply_condition_gene_specificity(
+      doc_term = x,
+      expression_file = expression_file,
+      count_column = "pseudo_count_log",
+      expression_min = 1,
+      temperature = 0.5,
+      uniform_floor = 0.1
+    )$doc_term
+  }
+  aggregate_weighted <- weight_one(aggregate)
+  tf_target_weighted <- weight_one(tf_target)
+  tf_target_weighted[
+    grepl("^[^:]+::[^:]+$", term_id),
+    term_id := paste0("PEAK:", sub("^[^:]+::", "", term_id))
+  ]
+  data.table::setorder(aggregate_weighted, doc_id, term_id)
+  data.table::setorder(tf_target_weighted, doc_id, term_id)
+
+  expect_equal(tf_target_weighted, aggregate_weighted)
 })
 
 test_that("condition TF expression weights balanced aggregate Peaks before count conversion", {

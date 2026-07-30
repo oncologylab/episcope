@@ -21,6 +21,7 @@ run_topic_modeling(
   count_method = NULL,
   count_scale = NULL,
   count_input = NULL,
+  fp_term_mode = NULL,
   de_gene_union_scope = NULL,
   condition_gene_weighting = NULL,
   condition_peak_weighting = NULL,
@@ -119,6 +120,10 @@ from project config or use `50`.}
 \item{count_input}{Topic count column for model fitting. If `NULL`, inferred
 from `count_method`.}
 
+\item{fp_term_mode}{Optional term-mode override. This is intended for
+isolated experiments such as `"tf_target"`; `NULL` preserves the mode
+encoded by each selected method.}
+
 \item{de_gene_union_scope}{Differential-gene union used by filtered
 condition links. `"condition"` uses genes passing a configured comparison
 involving each condition; `"global"` applies the union from every
@@ -158,6 +163,9 @@ read from `project_config` or use `"normtop_specificity"`.}
 `NULL`, read from `project_config`. Aggregate Gene/Peak methods default to
 `"gammafit_maxprob"`, which applies GammaFit first and retains a Gene/Peak
 pair only when the independently selected maximum-phi passing topics agree.
+In experimental `"tf_target"` mode, Gene and TF-target terms are fit
+independently and a TF-target assignment is retained only when its
+maximum-phi passing topic agrees with the target Gene term.
 Unique or aggregate-weight methods retain the independent `"max_phi"`
 default.}
 

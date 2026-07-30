@@ -101,6 +101,65 @@
   )
 }
 
+.m3_opt_link_universe_tf_target <- function(dtm, pair_assignment) {
+  .assert_pkg("Matrix")
+  terms <- colnames(dtm)
+  if (is.null(terms) || is.null(rownames(dtm))) {
+    .log_abort("DTM must have document and term names for topic optimization.")
+  }
+  pairs <- data.table::copy(data.table::as.data.table(pair_assignment))
+  required <- c(
+    "tf", "target_gene", "gene_term_id", "peak_term_id"
+  )
+  missing <- setdiff(required, names(pairs))
+  if (length(missing)) {
+    .log_abort(
+      "TF-target optimization assignments are missing: {paste(missing, collapse = ', ')}."
+    )
+  }
+  pairs <- pairs[
+    !is.na(gene_term_id) & !is.na(peak_term_id) &
+      gene_term_id %in% terms & peak_term_id %in% terms
+  ]
+  if (!nrow(pairs)) {
+    .log_abort("No matched Gene and TF-target terms are available for optimization.")
+  }
+  pairs[, pair_index := seq_len(.N)]
+  gene_columns <- match(pairs$gene_term_id, terms)
+  link_columns <- match(pairs$peak_term_id, terms)
+  entries <- Matrix::summary(dtm[, link_columns, drop = FALSE])
+  if (!nrow(entries)) {
+    .log_abort("No condition-specific TF-target terms are represented in the DTM.")
+  }
+  gene_count <- as.numeric(dtm[cbind(
+    entries$i,
+    gene_columns[entries$j]
+  )])
+  keep <- is.finite(entries$x) & entries$x > 0 &
+    is.finite(gene_count) & gene_count > 0
+  entries <- entries[keep, , drop = FALSE]
+  gene_count <- gene_count[keep]
+  doc_meta <- .m3_opt_doc_metadata(rownames(dtm))
+  target_levels <- sort(unique(as.character(pairs$target_gene)))
+  pair_target_index <- match(pairs$target_gene, target_levels)
+  list(
+    links = data.table::data.table(
+      link_index = seq_len(nrow(entries)),
+      doc_index = as.integer(entries$i),
+      pair_index = as.integer(entries$j),
+      target_index = as.integer(pair_target_index[entries$j]),
+      gene_token_count = gene_count,
+      peak_token_count = as.numeric(entries$x),
+      condition_id = doc_meta$condition_id[entries$i]
+    ),
+    docs = doc_meta,
+    pairs = pairs,
+    target_levels = target_levels,
+    gene_columns = gene_columns,
+    peak_columns = link_columns
+  )
+}
+
 .m3_opt_probability_metrics <- function(probability) {
   primary <- max.col(probability, ties.method = "first")
   primary_probability <- probability[cbind(seq_len(nrow(probability)), primary)]
@@ -139,9 +198,14 @@
   chunks <- split(seq_len(n), ceiling(seq_len(n) / as.integer(chunk_size)))
   for (rows in chunks) {
     link_rows <- links[rows]
+    pair_index <- if ("pair_index" %in% names(link_rows)) {
+      link_rows$pair_index
+    } else {
+      link_rows$target_index
+    }
     theta_chunk <- theta[link_rows$doc_index, , drop = FALSE]
-    gene_phi <- t(phi[, universe$gene_columns[link_rows$target_index], drop = FALSE])
-    peak_phi <- t(phi[, universe$peak_columns[link_rows$target_index], drop = FALSE])
+    gene_phi <- t(phi[, universe$gene_columns[pair_index], drop = FALSE])
+    peak_phi <- t(phi[, universe$peak_columns[pair_index], drop = FALSE])
     gene_posterior <- .m3_opt_row_normalize(theta_chunk * gene_phi)
     peak_posterior <- .m3_opt_row_normalize(theta_chunk * peak_phi)
     probability <- .m3_opt_row_normalize(
@@ -608,7 +672,8 @@
                                 optimized_score,
                                 raw_topic_ids,
                                 raw_to_group,
-                                optimized_pairs) {
+                                optimized_pairs,
+                                optimized_gene_pairs = NULL) {
   terms <- data.table::as.data.table(raw_topic_terms)
   if (!"topic_num" %in% names(terms)) {
     terms[, topic_num := suppressWarnings(as.integer(sub("^Topic", "", topic)))]
@@ -639,25 +704,93 @@
   collapsed$optimized_score[valid] <- optimized_score[
     cbind(topic_position[valid], term_position[valid])
   ]
-  assigned_target <- stats::setNames(
-    optimized_pairs$optimized_assigned_topic,
-    optimized_pairs$target_gene
+  pair_terms <- data.table::as.data.table(optimized_pairs)
+  gene_pair_terms <- data.table::as.data.table(
+    optimized_gene_pairs %||% optimized_pairs
   )
-  collapsed[, target_key__ := data.table::fcase(
-    term_group == "GENE", sub("^GENE:", "", term_id),
-    term_group == "PEAK", sub("^PEAK:", "", term_id),
-    default = NA_character_
-  )]
+  assignment_map <- data.table::rbindlist(list(
+    unique(gene_pair_terms[
+      is.finite(optimized_gene_topic),
+      .(
+        term_id = as.character(gene_term_id),
+        term_group = "GENE",
+        assigned_topic__ = as.integer(optimized_gene_topic)
+      )
+    ]),
+    unique(pair_terms[
+      is.finite(optimized_assigned_topic),
+      .(
+        term_id = as.character(peak_term_id),
+        term_group = data.table::fifelse(
+          grepl("^[^:]+::[^:]+$", peak_term_id),
+          "TF_TARGET",
+          "PEAK"
+        ),
+        assigned_topic__ = as.integer(optimized_assigned_topic)
+      )
+    ])
+  ), use.names = TRUE, fill = TRUE)
+  conflicts <- assignment_map[, data.table::uniqueN(assigned_topic__),
+    by = term_id
+  ][V1 > 1L]
+  if (nrow(conflicts)) {
+    .log_abort("Optimized term assignment maps a term to multiple topics.")
+  }
+  assignment_map <- unique(assignment_map, by = "term_id")
+  assigned_topic_map <- stats::setNames(
+    assignment_map$assigned_topic__,
+    assignment_map$term_id
+  )
   collapsed[, in_topic := data.table::fcase(
-    term_group %in% c("GENE", "PEAK"),
-    is.finite(assigned_target[target_key__]) &
-      topic_num == assigned_target[target_key__],
+    term_group %in% c("GENE", "PEAK", "TF_TARGET"),
+    is.finite(assigned_topic_map[term_id]) &
+      topic_num == assigned_topic_map[term_id],
     default = gammafit_candidate
   )]
+  missing_assigned <- assignment_map[
+    !paste(term_id, assigned_topic__, sep = "\r") %in%
+      paste(collapsed$term_id, collapsed$topic_num, sep = "\r")
+  ]
+  if (nrow(missing_assigned)) {
+    topic_position <- match(
+      missing_assigned$assigned_topic__,
+      .m3_opt_topic_ids(optimized_phi, "row")
+    )
+    term_position <- match(missing_assigned$term_id, colnames(optimized_phi))
+    valid <- is.finite(topic_position) & is.finite(term_position)
+    missing_assigned <- missing_assigned[valid]
+    topic_position <- topic_position[valid]
+    term_position <- term_position[valid]
+    raw_members <- vapply(
+      missing_assigned$assigned_topic__,
+      function(topic) {
+        paste(raw_topic_ids[raw_to_group == topic], collapse = ";")
+      },
+      character(1L)
+    )
+    recovered <- data.table::data.table(
+      topic = paste0("Topic", missing_assigned$assigned_topic__),
+      topic_num = missing_assigned$assigned_topic__,
+      term_id = missing_assigned$term_id,
+      term_group = missing_assigned$term_group,
+      score = optimized_score[cbind(topic_position, term_position)],
+      phi = optimized_phi[cbind(topic_position, term_position)],
+      in_topic = TRUE,
+      assignment_method = "gammafit_maxprob_optimized",
+      gammafit_candidate = TRUE,
+      raw_topic_members = raw_members,
+      assignment_status = "assigned_after_topic_merge"
+    )
+    collapsed <- data.table::rbindlist(
+      list(collapsed, recovered),
+      use.names = TRUE,
+      fill = TRUE
+    )
+  }
   collapsed[, `:=`(
     topic = paste0("Topic", topic_num),
     assignment_method = data.table::fifelse(
-      term_group %in% c("GENE", "PEAK"),
+      term_group %in% c("GENE", "PEAK", "TF_TARGET"),
       "gammafit_maxprob_optimized",
       "gammafit"
     ),
@@ -668,7 +801,7 @@
       "not_assigned_optimized_topic"
     )
   )]
-  collapsed[, c("target_key__", "optimized_score") := NULL]
+  collapsed[, optimized_score := NULL]
   data.table::setcolorder(collapsed, c(
     "topic", "topic_num", "term_id", "term_group", "score", "phi",
     "in_topic", "assignment_method", "gammafit_candidate",
@@ -730,6 +863,7 @@
 .m3_opt_qc_tables <- function(assignments,
                               docs,
                               pairs,
+                              target_levels = NULL,
                               raw_similarity,
                               optimized_similarity,
                               raw_topic_ids,
@@ -820,6 +954,9 @@
   } else {
     list(link = matrix(numeric(), 0, 0), gene = matrix(numeric(), 0, 0), mean = matrix(numeric(), 0, 0))
   }
+  if (is.null(target_levels)) {
+    target_levels <- as.character(pairs$target_gene)
+  }
   list(
     assignments = x,
     raw_counts = raw_counts,
@@ -833,7 +970,7 @@
     optimized_topic_ids = optimized_topic_ids
     ,
     tf_levels = tf_levels,
-    target_levels = pairs$target_gene
+    target_levels = target_levels
   )
 }
 
@@ -842,7 +979,13 @@
                                                dtm,
                                                topic_terms,
                                                pair_assignment,
-                                               assignment_mode = c("gene_peak", "gene_only"),
+                                               assignment_mode = c(
+                                                 "gene_peak",
+                                                 "gene_only",
+                                                 "tf_target"
+                                               ),
+                                               correspondence_assignment = NULL,
+                                               require_theta_gate = TRUE,
                                                condition_gene_expression = NULL,
                                                condition_upregulated_genes = NULL,
                                                upregulation_reference_condition = NULL,
@@ -890,7 +1033,11 @@
   if (!identical(raw_topic_ids, .m3_opt_topic_ids(theta, "column"))) {
     .log_abort("Theta and phi topic IDs do not match for topic optimization.")
   }
-  universe <- .m3_opt_link_universe(dtm, pair_assignment)
+  universe <- if (identical(assignment_mode, "tf_target")) {
+    .m3_opt_link_universe_tf_target(dtm, pair_assignment)
+  } else {
+    .m3_opt_link_universe(dtm, pair_assignment)
+  }
   raw_posterior <- .m3_opt_link_posteriors(
     theta,
     phi,
@@ -898,7 +1045,12 @@
     chunk_size = chunk_size
   )
   raw_target_topic <- suppressWarnings(as.integer(universe$pairs$assigned_topic))
-  target_topic_for_link <- raw_target_topic[universe$links$target_index]
+  pair_index <- if ("pair_index" %in% names(universe$links)) {
+    universe$links$pair_index
+  } else {
+    universe$links$target_index
+  }
+  target_topic_for_link <- raw_target_topic[pair_index]
   raw_posterior_agrees <- is.finite(target_topic_for_link) &
     raw_posterior$topic == target_topic_for_link
   raw_target_position <- match(target_topic_for_link, raw_topic_ids)
@@ -908,9 +1060,15 @@
     universe$links$doc_index[valid_raw_theta],
     raw_target_position[valid_raw_theta]
   )] >= tf_topic_cutoff
-  raw_aligned <- raw_posterior_agrees & raw_theta_pass
+  raw_aligned <- if (isTRUE(require_theta_gate)) {
+    raw_posterior_agrees & raw_theta_pass
+  } else {
+    is.finite(target_topic_for_link)
+  }
   raw_links <- vapply(raw_topic_ids, function(topic) {
-    sum(raw_aligned & target_topic_for_link == topic)
+    data.table::uniqueN(pair_index[
+      raw_aligned & target_topic_for_link == topic
+    ])
   }, integer(1L))
   raw_genes <- vapply(raw_topic_ids, function(topic) {
     data.table::uniqueN(universe$links$target_index[
@@ -929,7 +1087,7 @@
     raw_genes = raw_genes,
     gene_ids = gene_ids,
     peak_ids = peak_ids,
-    pair_assignment = pair_assignment,
+    pair_assignment = correspondence_assignment %||% pair_assignment,
     min_genes = min_genes,
     min_links = min_links,
     similarity_threshold = similarity_threshold,
@@ -945,6 +1103,16 @@
     raw_topic_ids = raw_topic_ids,
     raw_to_group = merge$mapping
   )
+  optimized_gene_pairs <- if (is.null(correspondence_assignment)) {
+    NULL
+  } else {
+    .m3_opt_target_assignment(
+      phi = phi,
+      pair_assignment = correspondence_assignment,
+      raw_topic_ids = raw_topic_ids,
+      raw_to_group = merge$mapping
+    )
+  }
   optimized_posterior <- .m3_opt_link_posteriors(
     theta,
     phi,
@@ -952,9 +1120,7 @@
     group_index = merge$mapping,
     chunk_size = chunk_size
   )
-  optimized_target_topic <- optimized_pairs$optimized_assigned_topic[
-    universe$links$target_index
-  ]
+  optimized_target_topic <- optimized_pairs$optimized_assigned_topic[pair_index]
   optimized_posterior_agrees <- is.finite(optimized_target_topic) &
     optimized_posterior$topic == optimized_target_topic
   optimized_target_position <- match(optimized_target_topic, optimized_topic_ids)
@@ -964,7 +1130,11 @@
     universe$links$doc_index[valid_optimized_theta],
     optimized_target_position[valid_optimized_theta]
   )] >= tf_topic_cutoff
-  optimized_aligned <- optimized_posterior_agrees & optimized_theta_pass
+  optimized_aligned <- if (isTRUE(require_theta_gate)) {
+    optimized_posterior_agrees & optimized_theta_pass
+  } else {
+    is.finite(optimized_target_topic)
+  }
   eligible_sample_rows <- which(optimized_aligned)
   if (!length(eligible_sample_rows)) {
     .log_abort("No aligned links remain after topic optimization.")
@@ -1020,7 +1190,8 @@
     optimized_score = optimized_score,
     raw_topic_ids = raw_topic_ids,
     raw_to_group = merge$mapping,
-    optimized_pairs = optimized_pairs
+    optimized_pairs = optimized_pairs,
+    optimized_gene_pairs = optimized_gene_pairs
   )
   optimized_similarity <- .m3_opt_hellinger_similarity(
     optimized_phi,
@@ -1030,7 +1201,7 @@
   raw_correspondence <- .m3_opt_tf_theta_correspondence(
     theta = theta,
     phi = phi,
-    pair_assignment = pair_assignment,
+    pair_assignment = correspondence_assignment %||% pair_assignment,
     raw_topic_ids = raw_topic_ids,
     raw_to_group = raw_topic_ids,
     cutoff = tf_topic_cutoff
@@ -1038,7 +1209,7 @@
   optimized_correspondence <- .m3_opt_tf_theta_correspondence(
     theta = theta,
     phi = phi,
-    pair_assignment = pair_assignment,
+    pair_assignment = correspondence_assignment %||% pair_assignment,
     raw_topic_ids = raw_topic_ids,
     raw_to_group = merge$mapping,
     cutoff = tf_topic_cutoff
@@ -1047,6 +1218,7 @@
     assignments = assignments,
     docs = universe$docs,
     pairs = optimized_pairs,
+    target_levels = universe$target_levels %||% NULL,
     raw_similarity = raw_similarity,
     optimized_similarity = optimized_similarity,
     raw_topic_ids = raw_topic_ids,
@@ -1058,11 +1230,14 @@
     score = optimized_score,
     topic_terms = optimized_terms,
     pair_assignment = optimized_pairs,
+    gene_assignment = optimized_gene_pairs,
     raw_theta = theta,
     raw_phi = phi,
     raw_topic_terms = topic_terms,
     raw_pair_assignment = pair_assignment,
+    raw_correspondence_assignment = correspondence_assignment,
     assignment_mode = assignment_mode,
+    require_theta_gate = isTRUE(require_theta_gate),
     condition_gene_expression = condition_gene_expression,
     condition_upregulated_genes = condition_upregulated_genes,
     upregulation_reference_condition = upregulation_reference_condition,
@@ -1885,6 +2060,12 @@
                            heights = NULL) {
   .assert_pkg("gridExtra")
   plots <- list(...)
+  if (!is.null(title)) {
+    title <- paste(
+      base::strwrap(gsub("_", " ", as.character(title)), width = 92L),
+      collapse = "\n"
+    )
+  }
   top <- if (is.null(title)) NULL else grid::textGrob(
     title,
     gp = grid::gpar(
@@ -2764,9 +2945,16 @@
     topic_column = "raw_topic",
     topic_order = raw_topic_order,
     title = "Raw topic assignment structure",
-    subtitle = paste(
-      "Mean Hellinger similarity across separately normalized Gene and Peak phi;",
-      "bars show full-universe assigned counts"
+    subtitle = paste0(
+      "Mean Hellinger similarity across separately normalized ",
+      if (identical(optimization$assignment_mode, "tf_target")) {
+        "Gene and TF-target phi"
+      } else if (identical(optimization$assignment_mode, "gene_only")) {
+        "Gene phi"
+      } else {
+        "Gene and Peak phi"
+      },
+      "; bars show full-universe assigned counts"
     )
   )
 
@@ -3069,32 +3257,59 @@
   target_max <- is.finite(
     suppressWarnings(as.integer(optimization$raw_pair_assignment$assigned_topic))
   )
-  link_max <- target_max[assignments$target_index]
+  assignment_pair_index <- if ("pair_index" %in% names(assignments)) {
+    assignments$pair_index
+  } else {
+    assignments$target_index
+  }
+  link_max <- target_max[assignment_pair_index]
   retention_labels <- .m3_qc_retention_labels()
   retention_link_labels <- retention_labels$links
   retention_gene_labels <- retention_labels$genes
   retention_links <- c(
     .m3_qc_unique_link_count(assignments),
     .m3_qc_unique_link_count(
-      assignments[target_gamma[target_index] %in% TRUE]
+      assignments[target_gamma[assignment_pair_index] %in% TRUE]
     ),
     .m3_qc_unique_link_count(assignments[link_max %in% TRUE]),
     .m3_qc_unique_link_count(assignments[raw_aligned == TRUE])
   )
-  retention_genes <- c(
-    .m3_qc_unique_target_count(
-      optimization$raw_pair_assignment$target_gene
-    ),
-    .m3_qc_unique_target_count(
-      optimization$raw_pair_assignment[target_gamma %in% TRUE, target_gene]
-    ),
-    .m3_qc_unique_target_count(
-      optimization$raw_pair_assignment[target_max %in% TRUE, target_gene]
-    ),
-    .m3_qc_unique_target_count(
-      assignments[raw_aligned == TRUE, target_index]
+  retention_genes <- if (
+    identical(optimization$assignment_mode, "tf_target") &&
+      !is.null(optimization$raw_correspondence_assignment)
+  ) {
+    gene_rows <- data.table::as.data.table(
+      optimization$raw_correspondence_assignment
     )
-  )
+    gene_gamma <- lengths(.m3_opt_parse_topics(
+      gene_rows$gene_gammafit_topics,
+      qc$raw_topic_ids
+    )) > 0L
+    gene_max <- .as_logical_flag(gene_rows$assigned)
+    c(
+      .m3_qc_unique_target_count(gene_rows$target_gene),
+      .m3_qc_unique_target_count(gene_rows[gene_gamma, target_gene]),
+      .m3_qc_unique_target_count(gene_rows[gene_max, target_gene]),
+      .m3_qc_unique_target_count(
+        assignments[raw_aligned == TRUE, target_index]
+      )
+    )
+  } else {
+    c(
+      .m3_qc_unique_target_count(
+        optimization$raw_pair_assignment$target_gene
+      ),
+      .m3_qc_unique_target_count(
+        optimization$raw_pair_assignment[target_gamma %in% TRUE, target_gene]
+      ),
+      .m3_qc_unique_target_count(
+        optimization$raw_pair_assignment[target_max %in% TRUE, target_gene]
+      ),
+      .m3_qc_unique_target_count(
+        assignments[raw_aligned == TRUE, target_index]
+      )
+    )
+  }
   retention_page <- .m3_qc_arrange(
     .m3_qc_retention_plot(
       retention_link_labels,
@@ -3175,6 +3390,7 @@
   )
   summary <- data.table::data.table(
     assignment_mode = optimization$assignment_mode %||% "gene_peak",
+    require_theta_gate = isTRUE(optimization$require_theta_gate %||% TRUE),
     raw_topics = length(unique(mapping$raw_topic)),
     optimized_topics = length(unique(mapping$optimized_topic)),
     merged_topics = length(unique(mapping$raw_topic)) -
@@ -3192,12 +3408,44 @@
         condition_id, tf_index, target_index
       )]
     )),
-    raw_pair_assigned_genes = sum(.as_logical_flag(
-      optimization$raw_pair_assignment$assigned
-    )),
-    optimized_pair_assigned_genes = sum(.as_logical_flag(
-      optimization$pair_assignment$assigned
-    )),
+    raw_pair_assigned_genes = if (identical(
+      optimization$assignment_mode,
+      "tf_target"
+    )) {
+      data.table::uniqueN(optimization$raw_pair_assignment[
+        .as_logical_flag(assigned),
+        target_gene
+      ])
+    } else {
+      sum(.as_logical_flag(optimization$raw_pair_assignment$assigned))
+    },
+    optimized_pair_assigned_genes = if (identical(
+      optimization$assignment_mode,
+      "tf_target"
+    )) {
+      data.table::uniqueN(optimization$pair_assignment[
+        .as_logical_flag(assigned),
+        target_gene
+      ])
+    } else {
+      sum(.as_logical_flag(optimization$pair_assignment$assigned))
+    },
+    raw_assigned_tf_target_terms = if (identical(
+      optimization$assignment_mode,
+      "tf_target"
+    )) {
+      sum(.as_logical_flag(optimization$raw_pair_assignment$assigned))
+    } else {
+      NA_integer_
+    },
+    optimized_assigned_tf_target_terms = if (identical(
+      optimization$assignment_mode,
+      "tf_target"
+    )) {
+      sum(.as_logical_flag(optimization$pair_assignment$assigned))
+    } else {
+      NA_integer_
+    },
     raw_assigned_genes = data.table::uniqueN(
       optimization$qc$assignments[raw_aligned == TRUE, target_index]
     ),
@@ -3269,6 +3517,11 @@
   .save_all(out_dir, "topic_term_scores_optimized", optimization$score)
   assignments <- optimization$qc$assignments[, .(
     doc_index,
+    pair_index = if ("pair_index" %in% names(optimization$qc$assignments)) {
+      pair_index
+    } else {
+      NA_integer_
+    },
     target_index,
     gene_token_count,
     peak_token_count,

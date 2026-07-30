@@ -151,6 +151,7 @@
     aggregate = "aggr",
     aggregate_weight = "aggr_weight",
     gene_expression = "gene_expression",
+    tf_target = "tf_target",
     .log_abort("Unsupported Module 3 FP mode: {fp_mode}")
   )
   mode_label <- switch(
@@ -158,7 +159,8 @@
     unique = "fp uniq",
     aggregate = "fp aggr",
     aggregate_weight = "fp aggr weight",
-    gene_expression = "gene expression"
+    gene_expression = "gene expression",
+    tf_target = "TF-target"
   )
   combo_id <- paste(
     "doc_tf",
@@ -233,6 +235,43 @@
   out[, method_setup := paste(setup_label, model_label, sep = " | ")]
   out[, k_grid := paste(as.integer(k_grid), collapse = ",")]
   data.table::setorder(out, method_order)
+  out[]
+}
+
+.m3tb_override_fp_term_mode <- function(method_plan, fp_term_mode = NULL) {
+  if (is.null(fp_term_mode)) return(method_plan)
+  fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
+  out <- data.table::copy(data.table::as.data.table(method_plan))
+  for (i in seq_len(nrow(out))) {
+    info <- .m3tb_setup_info(
+      context_type = out$context_type[[i]],
+      fp_mode = fp_term_mode,
+      backend = out$backend[[i]],
+      vae_variant = out$vae_variant[[i]]
+    )
+    out[i, `:=`(
+      fp_mode = fp_term_mode,
+      experimental = TRUE,
+      setup = info$setup,
+      setup_label = info$setup_label,
+      doc_design = info$doc_design,
+      weight_label = info$weight_label,
+      combo_id = info$combo_id,
+      model_dir = file.path(
+        info$setup,
+        "01_topic_models",
+        info$combo_id,
+        paste0(
+          "GSE192390_vae_joint_tf_docs_",
+          info$weight_label,
+          "_",
+          .m3tb_model_name(out$backend[[i]], out$vae_variant[[i]]),
+          "_Kgrid"
+        )
+      ),
+      method_setup = paste(info$setup_label, model_label, sep = " | ")
+    )]
+  }
   out[]
 }
 
@@ -4015,6 +4054,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         count_method = c("log", "bin"),
                                         count_scale = 50,
                                         count_input = NULL,
+                                        fp_term_mode = NULL,
                                         condition_gene_weighting = c("none", "specificity"),
                                         condition_peak_weighting = c("none", "tf_expression"),
                                         condition_gene_expression_file = NULL,
@@ -4074,6 +4114,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
   }
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
   method_plan <- .module3_topic_method_plan(methods = methods, k_grid = k_grid)
+  method_plan <- .m3tb_override_fp_term_mode(method_plan, fp_term_mode)
   normalize_stage_methods <- function(x, label) {
     if (is.null(x)) return(method_plan$method)
     x <- unique(as.character(x))
@@ -4374,7 +4415,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #' @param doc_mode Document mode, either `"tf"` or `"tf_cluster"`.
 #' @param doc_design Document design, either `"condition"` or `"comparison"`.
 #' @param fp_term_mode Term mode: `"aggregate_weight"`, `"aggregate"`,
-#'   `"unique"`, or gene-expression-only `"gene_expression"`.
+#'   `"unique"`, gene-expression-only `"gene_expression"`, or experimental
+#'   `"tf_target"`. The latter renames each target-aggregated Peak term in a
+#'   condition::TF document to `<TF>::<target>` without changing its weight.
 #' @param gene_term_mode Gene term mode passed to comparison document-term
 #'   construction.
 #' @param sample_subset Optional condition/sample labels to retain.
@@ -4419,7 +4462,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          input_source = c("differential_links", "condition_links"),
                                          doc_mode = c("tf", "tf_cluster"),
                                          doc_design = c("condition", "comparison"),
-                                         fp_term_mode = c("aggregate_weight", "aggregate", "unique", "gene_expression"),
+                                         fp_term_mode = c("aggregate_weight", "aggregate", "unique", "gene_expression", "tf_target"),
                                          gene_term_mode = c("unique", "aggregate"),
                                          sample_subset = NULL,
                                          analysis_label = NULL,
@@ -4459,9 +4502,9 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   if (!identical(condition_peak_weighting, "none") &&
       (!identical(doc_design, "condition") ||
        !identical(doc_mode, "tf") ||
-       !identical(fp_term_mode, "aggregate"))) {
+       !fp_term_mode %in% c("aggregate", "tf_target"))) {
     .log_abort(
-      "TF-expression Peak weighting requires condition::TF documents with fp_term_mode = 'aggregate'."
+      "TF-expression Peak weighting requires condition::TF documents with aggregate or tf_target terms."
     )
   }
   count_input_requested <- if (is.null(count_input) || !length(count_input)) NA_character_ else as.character(count_input[[1L]])
@@ -5025,6 +5068,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   count_method = c("log", "bin"),
                                   count_scale = 50,
                                   count_input = NULL,
+                                  fp_term_mode = NULL,
                                   condition_gene_weighting = c("none", "specificity"),
                                   condition_peak_weighting = c("none", "tf_expression"),
                                   condition_gene_expression_file = NULL,
@@ -5088,6 +5132,7 @@ run_regulatory_topics <- function(filtered_dir,
     count_method = count_method,
     count_scale = count_scale,
     count_input = count_input,
+    fp_term_mode = fp_term_mode,
     condition_gene_weighting = condition_gene_weighting,
     condition_peak_weighting = condition_peak_weighting,
     condition_gene_expression_file = condition_gene_expression_file,
@@ -5851,6 +5896,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   from project config or use `50`.
 #' @param count_input Topic count column for model fitting. If `NULL`, inferred
 #'   from `count_method`.
+#' @param fp_term_mode Optional term-mode override. This is intended for
+#'   isolated experiments such as `"tf_target"`; `NULL` preserves the mode
+#'   encoded by each selected method.
 #' @param de_gene_union_scope Differential-gene union used by filtered
 #'   condition links. `"condition"` uses genes passing a configured comparison
 #'   involving each condition; `"global"` applies the union from every
@@ -5882,6 +5930,9 @@ run_regulatory_topics <- function(filtered_dir,
 #'   `NULL`, read from `project_config`. Aggregate Gene/Peak methods default to
 #'   `"gammafit_maxprob"`, which applies GammaFit first and retains a Gene/Peak
 #'   pair only when the independently selected maximum-phi passing topics agree.
+#'   In experimental `"tf_target"` mode, Gene and TF-target terms are fit
+#'   independently and a TF-target assignment is retained only when its
+#'   maximum-phi passing topic agrees with the target Gene term.
 #'   Unique or aggregate-weight methods retain the independent `"max_phi"`
 #'   default.
 #' @param optimize_topics Whether eligible condition-topic extractions merge
@@ -5965,6 +6016,7 @@ run_topic_modeling <- function(filtered_dir,
                                count_method = NULL,
                                count_scale = NULL,
                                count_input = NULL,
+                               fp_term_mode = NULL,
                                de_gene_union_scope = NULL,
                                condition_gene_weighting = NULL,
                                condition_peak_weighting = NULL,
@@ -6076,6 +6128,7 @@ run_topic_modeling <- function(filtered_dir,
     count_method = resolved$count_method,
     count_scale = resolved$count_scale,
     count_input = resolved$count_input,
+    fp_term_mode = fp_term_mode,
     condition_gene_weighting = resolved$condition_gene_weighting,
     condition_peak_weighting = resolved$condition_peak_weighting,
     condition_gene_expression_file = resolved$condition_gene_expression_file,

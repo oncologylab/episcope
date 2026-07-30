@@ -300,6 +300,69 @@ test_that("gene-only optimization records its assignment mode and settings", {
                observed$pair_assignment$optimized_peak_topic)
 })
 
+test_that("TF-target optimization retains term-aligned links without theta gate", {
+  phi <- rbind(
+    Topic1 = c(0.8, 0.2, 0.8, 0.2),
+    Topic2 = c(0.2, 0.8, 0.2, 0.8)
+  )
+  colnames(phi) <- c(
+    "GENE:A", "GENE:B", "TF1::A", "TF1::B"
+  )
+  theta <- rbind(
+    `C1::TF1` = c(0.01, 0.99),
+    `C2::TF1` = c(0.99, 0.01)
+  )
+  colnames(theta) <- rownames(phi)
+  dtm <- Matrix::Matrix(
+    matrix(
+      c(5, 0, 5, 0, 0, 5, 0, 5),
+      nrow = 2,
+      byrow = TRUE
+    ),
+    sparse = TRUE,
+    dimnames = list(rownames(theta), colnames(phi))
+  )
+  compact <- .assign_tf_target_terms_compact(
+    phi,
+    score_mat = phi,
+    thrP = 0.7,
+    min_terms = 1L
+  )
+  observed <- .module3_optimize_condition_topics(
+    theta = theta,
+    phi = phi,
+    dtm = dtm,
+    topic_terms = compact$topic_terms,
+    pair_assignment = compact$link_assignment,
+    assignment_mode = "tf_target",
+    correspondence_assignment =
+      .tf_target_gene_correspondence_assignment(compact$gene_assignment),
+    require_theta_gate = FALSE,
+    min_genes = 1L,
+    min_links = 1L,
+    similarity_threshold = 1,
+    tf_topic_cutoff = 0.3,
+    umap_max_links_per_condition = 10L,
+    seed = 7L
+  )
+
+  expect_identical(observed$assignment_mode, "tf_target")
+  expect_false(observed$require_theta_gate)
+  expect_true(all(observed$qc$assignments$optimized_aligned))
+  expect_true(any(!observed$qc$assignments$optimized_theta_pass))
+  expect_setequal(observed$qc$target_levels, c("A", "B"))
+  expect_true("pair_index" %in% names(observed$qc$assignments))
+  expect_equal(nrow(observed$gene_assignment), 2L)
+  expect_equal(nrow(observed$raw_correspondence_assignment), 2L)
+  expect_setequal(
+    observed$topic_terms[
+      term_group == "GENE" & in_topic == TRUE,
+      term_id
+    ],
+    c("GENE:A", "GENE:B")
+  )
+})
+
 test_that("optimized assignment summaries retain pre-merge failure reasons", {
   assignments <- data.table::data.table(
     gene_term_id = c("GENE:A", "GENE:B", "GENE:C"),

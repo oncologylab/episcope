@@ -2493,6 +2493,40 @@ test_that("Module 3 condition payload dictionaries are deterministic", {
   )
 })
 
+test_that("Module 3 condition payload keeps only assigned TF-target pairs", {
+  parts <- list(list(
+    tf_gene = data.table::data.table(
+      condition_id = "C1",
+      tf = c("BATF", "IRF4", "BATF"),
+      gene_key = c("GeneA", "GeneB", "GeneB"),
+      fp_sum = 1:3
+    ),
+    tf_peak_gene = data.table::data.table(
+      condition_id = "C1",
+      tf = c("BATF", "IRF4", "BATF"),
+      gene_key = c("GeneA", "GeneB", "GeneB"),
+      peak_id = c("P1", "P2", "P3")
+    )
+  ))
+  assignment <- data.table::data.table(
+    tf_key = c("BATF", "IRF4"),
+    gene_key = c("GENEA", "GENEB")
+  )
+
+  observed <- craftgrn:::.m3cr_filter_parts_by_tf_target_assignment(
+    parts,
+    assignment
+  )
+
+  expect_equal(nrow(observed[[1L]]$tf_gene), 2L)
+  expect_equal(nrow(observed[[1L]]$tf_peak_gene), 2L)
+  expect_setequal(
+    paste(observed[[1L]]$tf_gene$tf, observed[[1L]]$tf_gene$gene_key),
+    c("BATF GeneA", "IRF4 GeneB")
+  )
+  expect_false(any(grepl("__$", names(observed[[1L]]$tf_gene))))
+})
+
 test_that("Module 3 stage methods preserve the full method layout", {
   root <- tempfile("module3-stage-methods-")
   dir.create(root, recursive = TRUE)
@@ -2528,6 +2562,48 @@ test_that("Module 3 stage methods preserve the full method layout", {
     ),
     "training_methods must be a subset"
   )
+})
+
+test_that("Module 3 term-mode override rewrites setup metadata consistently", {
+  plan <- craftgrn:::.module3_topic_method_plan(
+    methods = "condition_aggr_lda",
+    k_grid = 30L
+  )
+
+  observed <- craftgrn:::.m3tb_override_fp_term_mode(plan, "tf_target")
+
+  expect_identical(observed$fp_mode, "tf_target")
+  expect_identical(observed$setup, "std_tf_cond_fp_tf_target")
+  expect_identical(observed$setup_label, "cond TF-target")
+  expect_true(observed$experimental)
+  expect_match(observed$combo_id, "fp_tf_target", fixed = TRUE)
+  expect_match(observed$method_setup, "cond TF-target | LDA", fixed = TRUE)
+})
+
+test_that("run_topic_modeling accepts an explicit term-mode override", {
+  root <- tempfile("module3-term-mode-wrapper-")
+  dir.create(root, recursive = TRUE)
+
+  observed <- craftgrn::run_topic_modeling(
+    filtered_dir = root,
+    comparisons = data.table::data.table(
+      condition_label = "C1",
+      condition_group = "C1"
+    ),
+    output_dir = root,
+    method = "condition_aggr_lda",
+    k_grid = 30L,
+    fp_term_mode = "tf_target",
+    input_source = "differential_links",
+    run_training = FALSE,
+    run_extraction = FALSE,
+    run_reports = FALSE,
+    build_qc_report = FALSE,
+    verbose = FALSE
+  )
+
+  expect_identical(observed$method_plan$fp_mode, "tf_target")
+  expect_identical(observed$method_plan$setup_label, "cond TF-target")
 })
 
 test_that("Module 3 condition review groups multiple K values inside one method report", {
