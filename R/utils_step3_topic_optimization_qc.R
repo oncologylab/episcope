@@ -1677,7 +1677,8 @@
                                         topic_column,
                                         topic_order,
                                         title,
-                                        subtitle) {
+                                        subtitle,
+                                        tf_title = "TFs") {
   similarity <- as.matrix(similarity)
   topic_ids <- suppressWarnings(as.integer(sub(
     "^Topic ",
@@ -1847,7 +1848,7 @@
       "text",
       x = tf_start + bar_width / 2,
       y = title_y,
-      label = "TFs",
+      label = tf_title,
       family = "Helvetica",
       fontface = "bold",
       size = 3.5
@@ -2813,16 +2814,84 @@
   ))
 }
 
+.m3_qc_apply_primary_tf_counts <- function(optimization,
+                                           tf_topic_evidence) {
+  evidence <- data.table::as.data.table(tf_topic_evidence)
+  .assert_has_cols(
+    evidence,
+    c(
+      "tf", "topic_num", "condition_id",
+      "global_primary_topic", "condition_primary_topic"
+    ),
+    context = "TF-topic evidence for assignment QC"
+  )
+  qc <- optimization$qc
+  global_primary <- unique(evidence[, .(
+    tf = as.character(tf),
+    topic_num = as.integer(global_primary_topic)
+  )])
+  global_counts <- global_primary[, .(
+    primary_tfs = data.table::uniqueN(tf)
+  ), by = topic_num]
+  update_primary_counts <- function(counts, topic_column) {
+    x <- data.table::copy(counts)
+    x <- global_counts[
+      x,
+      on = c("topic_num" = topic_column)
+    ]
+    x[, tfs := data.table::fcoalesce(as.integer(primary_tfs), 0L)]
+    x[, primary_tfs := NULL]
+    data.table::setnames(x, "topic_num", topic_column)
+    x[]
+  }
+  qc$optimized_counts <- update_primary_counts(
+    qc$optimized_counts,
+    "optimized_topic"
+  )
+  identity_map <- identical(
+    as.integer(optimization$raw_to_optimized),
+    as.integer(names(optimization$raw_to_optimized))
+  )
+  if (identity_map) {
+    qc$raw_counts <- update_primary_counts(qc$raw_counts, "raw_topic")
+  }
+  condition_primary <- unique(evidence[, .(
+    condition_id = as.character(condition_id),
+    tf = as.character(tf),
+    optimized_topic = as.integer(condition_primary_topic)
+  )])[, .(
+    primary_tfs = data.table::uniqueN(tf)
+  ), by = .(condition_id, optimized_topic)]
+  qc$condition_topic <- condition_primary[
+    qc$condition_topic,
+    on = c("condition_id", "optimized_topic")
+  ]
+  qc$condition_topic[, tfs := data.table::fcoalesce(
+    as.integer(primary_tfs),
+    0L
+  )]
+  qc$condition_topic[, primary_tfs := NULL]
+  optimization$qc <- qc
+  optimization
+}
+
 .write_module3_topic_assignment_qc <- function(optimization,
                                                out_file,
                                                title_prefix = NULL,
                                                condition_colors = NULL,
+                                               tf_topic_evidence = NULL,
                                                top_n_tfs = 150L,
                                                seed = 20260716L) {
   .assert_pkg("ggplot2")
   .assert_pkg("gridExtra")
   .assert_pkg("scales")
   .assert_pkg("uwot")
+  if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
+    optimization <- .m3_qc_apply_primary_tf_counts(
+      optimization,
+      tf_topic_evidence
+    )
+  }
   qc <- optimization$qc
   assignments <- qc$assignments
   sample_rows <- optimization$sample_rows
@@ -2955,7 +3024,12 @@
         "Gene and Peak phi"
       },
       "; bars show full-universe assigned counts"
-    )
+    ),
+    tf_title = if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
+      "Primary TFs"
+    } else {
+      "TFs"
+    }
   )
 
   optimized_topic_similarity <- qc$optimized_topic_similarity
@@ -2984,7 +3058,12 @@
       subtitle = paste(
         "Mean Hellinger similarity after deterministic topic merging;",
         "bars show full-universe assigned counts"
-      )
+      ),
+      tf_title = if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
+        "Primary TFs"
+      } else {
+        "TFs"
+      }
     ),
     ncol = 1L,
     heights = c(0.85, 1.15),
