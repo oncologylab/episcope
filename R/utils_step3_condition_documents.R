@@ -784,6 +784,11 @@
     condition_second_probability =
       if (.N > 1L) combined_probability[[2L]] else 0
   ), by = .(condition_id, tf)]
+  evidence[, condition_primary_margin :=
+    condition_primary_probability - condition_second_probability]
+  evidence[, condition_primary_confident :=
+    condition_primary_probability >= membership_cutoff &
+      condition_primary_margin >= primary_margin_cutoff]
   evidence[, membership_pass :=
     combined_probability >= membership_cutoff]
   global <- evidence[, .(
@@ -798,21 +803,31 @@
   ), by = tf]
   global[, global_primary_margin :=
     global_primary_probability - global_second_probability]
+  global[, global_primary_confident :=
+    global_primary_probability >= membership_cutoff &
+      global_primary_margin >= primary_margin_cutoff]
   evidence <- global[
     evidence,
     on = c("tf", "topic_num")
   ]
   evidence[, primary_confident :=
     topic_num == global_primary_topic &
-      global_primary_probability >= membership_cutoff &
-      global_primary_margin >= primary_margin_cutoff]
+      global_primary_confident]
   evidence[, `:=`(
     topic = paste0("Topic", topic_num),
     theta = combined_probability,
     comparison_id = condition_id,
     direction = "All",
-    primary_topic_num = as.integer(global_primary_topic),
-    primary_topic = paste0("Topic", global_primary_topic),
+    primary_topic_num = data.table::fifelse(
+      global_primary_confident,
+      as.integer(global_primary_topic),
+      NA_integer_
+    ),
+    primary_topic = data.table::fifelse(
+      global_primary_confident,
+      paste0("Topic", global_primary_topic),
+      NA_character_
+    ),
     assignment_source = "binding_target_evidence"
   )]
   data.table::setorder(evidence, condition_id, tf, topic_num)

@@ -463,7 +463,8 @@
     if (nrow(topic_tf) && all(c("comparison_id", "direction", "tf", "topic_num") %in% names(topic_tf))) {
       if (!"membership_pass" %in% names(topic_tf)) topic_tf[, membership_pass := TRUE]
       if (!"theta" %in% names(topic_tf)) topic_tf[, theta := NA_real_]
-      if (!"primary_topic_num" %in% names(topic_tf)) {
+      has_canonical_primary <- "primary_topic_num" %in% names(topic_tf)
+      if (!has_canonical_primary) {
         if ("primary_topic" %in% names(topic_tf)) {
           topic_tf[, primary_topic_num := suppressWarnings(as.integer(sub("^Topic", "", as.character(primary_topic))))]
         } else {
@@ -493,6 +494,8 @@
         primary_vals <- primary_topic_num[is.finite(primary_topic_num)]
         if (length(primary_vals)) {
           primary_num <- primary_vals[[1L]]
+        } else if (has_canonical_primary) {
+          primary_num <- NA_integer_
         } else {
           theta_vals <- theta
           finite_theta <- is.finite(theta_vals)

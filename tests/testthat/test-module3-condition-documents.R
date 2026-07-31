@@ -152,12 +152,56 @@ test_that("TF-topic evidence uses unique correlation-weighted peaks", {
   )
   expect_true(all(evidence$global_primary_topic == 1L))
   expect_true(all(evidence$primary_topic_num == 1L))
+  expect_true(all(evidence$global_primary_confident))
+  expect_true(all(evidence$condition_primary_confident))
   expect_true(all(evidence$assignment_source == "binding_target_evidence"))
   expect_equal(
     evidence[, sum(combined_probability), by = .(condition_id, tf)]$V1,
     c(1, 1),
     tolerance = 1e-10
   )
+})
+
+test_that("ambiguous TF-topic evidence does not force a primary assignment", {
+  links <- data.table::data.table(
+    condition_id = "C1",
+    tf = "TF1",
+    peak_id = c("P1", "P2"),
+    gene_key = c("G1", "G2"),
+    topic_num = 1:2,
+    tf_expression = 20
+  )
+  peaks <- data.table::data.table(
+    condition_id = "C1",
+    peak_id = c("P1", "P2"),
+    topic_num = 1:2,
+    token_share = c(0.5, 0.5)
+  )
+  genes <- data.table::data.table(
+    condition_id = "C1",
+    gene_key = c("G1", "G2"),
+    topic_num = 1:2,
+    token_share = c(0.5, 0.5)
+  )
+  prediction <- data.table::data.table(
+    tf = "TF1",
+    fp_id = c("P1", "P2"),
+    best_r = c(0.8, 0.8)
+  )
+
+  evidence <- craftgrn:::.module3_condition_tf_topic_evidence(
+    aligned_links = links,
+    peak_values = peaks,
+    gene_values = genes,
+    prediction_stats = prediction,
+    topic_count = 2L
+  )$evidence
+
+  expect_false(any(evidence$global_primary_confident))
+  expect_false(any(evidence$condition_primary_confident))
+  expect_false(any(evidence$primary_confident))
+  expect_true(all(is.na(evidence$primary_topic_num)))
+  expect_true(all(is.na(evidence$primary_topic)))
 })
 
 test_that("condition-document report state removes TF-document theta semantics", {
@@ -187,4 +231,10 @@ test_that("condition-document report state removes TF-document theta semantics",
     "topicCutoff.value='0.1'",
     fixed = TRUE
   )
+  expect_match(
+    html,
+    "hasCanonicalPrimary=cols.includes('primary_topic_num')",
+    fixed = TRUE
+  )
+  expect_match(html, "if(!hasCanonicalPrimary)", fixed = TRUE)
 })

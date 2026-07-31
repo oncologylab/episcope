@@ -901,7 +901,7 @@ test_that("dense heatmap counts use compact integer labels", {
   )
 })
 
-test_that("condition-document QC counts each TF once by primary topic", {
+test_that("condition-document QC counts only confident primary TFs", {
   optimization <- list(
     raw_to_optimized = stats::setNames(1:2, 1:2),
     qc = list(
@@ -928,22 +928,30 @@ test_that("condition-document QC counts each TF once by primary topic", {
     tf = rep(rep(c("TF1", "TF2", "TF3"), each = 2L), 2L),
     topic_num = rep(1:2, 6L),
     global_primary_topic = rep(c(1L, 1L, 1L, 1L, 2L, 2L), 2L),
+    global_primary_confident = rep(
+      c(TRUE, TRUE, FALSE, FALSE, TRUE, TRUE),
+      2L
+    ),
     condition_primary_topic = c(
       1L, 1L, 1L, 1L, 2L, 2L,
       2L, 2L, 1L, 1L, 2L, 2L
+    ),
+    condition_primary_confident = c(
+      TRUE, TRUE, FALSE, FALSE, TRUE, TRUE,
+      TRUE, TRUE, FALSE, FALSE, TRUE, TRUE
     )
   )
 
   observed <- .m3_qc_apply_primary_tf_counts(optimization, evidence)
 
-  expect_equal(observed$qc$raw_counts$tfs, c(2L, 1L))
-  expect_equal(observed$qc$optimized_counts$tfs, c(2L, 1L))
+  expect_equal(observed$qc$raw_counts$tfs, c(1L, 1L))
+  expect_equal(observed$qc$optimized_counts$tfs, c(1L, 1L))
   expect_equal(observed$qc$raw_counts$links, c(20L, 10L))
   expect_equal(
     observed$qc$condition_topic[
       order(condition_id, optimized_topic),
       tfs
     ],
-    c(2L, 1L, 1L, 2L)
+    c(1L, 1L, 0L, 2L)
   )
 })

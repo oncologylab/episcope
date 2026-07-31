@@ -647,6 +647,79 @@ test_that("Module 3 condition report HTML exposes pathway sub-GRN controls", {
   expect_match(html, "pathway_subgrn_payloads/chunk_001.js", fixed = TRUE)
 })
 
+test_that("condition report retains canonical TF primary topics", {
+  out_dir <- tempfile("canonical-primary-")
+  dir.create(out_dir)
+  out_file <- file.path(out_dir, "report.html")
+  craftgrn:::.m3tb_condition_report_html(
+    title = "Canonical primary topic test",
+    group_mds = data.table::data.table(
+      comparison_label = "CondA",
+      display_label = "Condition A",
+      group_label = "CondA",
+      MDS1 = 0,
+      MDS2 = 0,
+      n_docs = 1L
+    ),
+    group_topic = data.table::data.table(
+      comparison_label = "CondA",
+      display_label = "Condition A",
+      n_docs = 1L,
+      topic = "Topic1",
+      topic_num = 1L,
+      theta_mean = 0.8
+    ),
+    tf_topic = data.table::data.table(
+      comparison_label = "CondA",
+      group_label = "CondA",
+      tf = "TF1",
+      tf_display = "TF1",
+      tf_upper = "TF1",
+      topic = "Topic1",
+      topic_num = 1L,
+      theta = 0.8,
+      primary_topic_num = NA_integer_
+    ),
+    pathways = data.table::data.table(),
+    out_html = out_file,
+    condition_payload = list(
+      payload_file = "dummy.js",
+      payload_base = ".",
+      conditions = "CondA"
+    )
+  )
+  data_paths <- list.files(
+    file.path(
+      dirname(out_file),
+      "assets",
+      "condition_report_data"
+    ),
+    pattern = "[.]js$",
+    full.names = TRUE
+  )
+  expect_length(data_paths, 1L)
+  data_path <- data_paths[[1L]]
+  payload <- paste(readLines(data_path, warn = FALSE), collapse = "\n")
+  encoded <- sub(
+    ".*compressed_columnar:'([^']+)'.*",
+    "\\1",
+    payload
+  )
+  decoded <- jsonlite::fromJSON(rawToChar(memDecompress(
+    jsonlite::base64_dec(encoded),
+    "gzip"
+  )), simplifyVector = FALSE)
+
+  expect_true(file.exists(data_path))
+  expect_match(payload, "compressed_columnar", fixed = TRUE)
+  expect_true("primary_topic_num" %in% decoded$tf_topic$columns)
+  expect_match(
+    craftgrn:::.m3cr_condition_report_js(),
+    "hasCanonicalPrimary=cols.includes('primary_topic_num')",
+    fixed = TRUE
+  )
+})
+
 test_that("Module 3 pathway sub-GRN payload keeps theta and primary topic metadata", {
   pathways <- data.table::data.table(
     comparison_id = "CmpA",
@@ -672,7 +745,7 @@ test_that("Module 3 pathway sub-GRN payload keeps theta and primary topic metada
     topic_num = c(2L, 3L, 2L, 4L, 2L),
     theta = c(0.72, 0.20, 0.46, 0.51, 0.29),
     membership_pass = c(TRUE, FALSE, TRUE, TRUE, FALSE),
-    primary_topic_num = c(2L, 2L, 4L, 4L, 2L)
+    primary_topic_num = c(2L, 2L, 4L, 4L, NA_integer_)
   )
 
   payload <- craftgrn:::.m3tb_build_pathway_subgrn_compact_payload(
@@ -688,6 +761,7 @@ test_that("Module 3 pathway sub-GRN payload keeps theta and primary topic metada
   expect_match(tf_gene[tf == "TF1", tf_topic_scores], "3:0.2", fixed = TRUE)
   expect_equal(tf_gene[tf == "TF2", tf_topic_nums], "2;4")
   expect_equal(tf_gene[tf == "TF2", tf_primary_topic_num], 4L)
+  expect_true(is.na(tf_gene[tf == "TF3", tf_primary_topic_num]))
   expect_equal(payload$manifest$n_topic_tfs[[1L]], 2L)
 })
 
