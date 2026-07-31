@@ -170,6 +170,8 @@ utils::globalVariables(c(
   "model_k_short", "n_items", "n_pass_topics", "margin", "max_theta",
   "global_primary_confident", "global_primary_margin",
   "global_primary_probability", "global_primary_topic",
+  "global_probability_raw", "global_specificity_weight",
+  "global_topic_prevalence",
   "global_second_probability", "membership_pass", "panel_label", "percent",
   "primary_confident", "primary_theta", "primary_topic",
   "primary_topic_num", "row_label", "second_theta", "second_topic", "side",

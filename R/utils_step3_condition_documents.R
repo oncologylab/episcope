@@ -792,8 +792,22 @@
   evidence[, membership_pass :=
     combined_probability >= membership_cutoff]
   global <- evidence[, .(
-    global_probability = mean(combined_probability)
+    global_probability_raw = mean(combined_probability)
   ), by = .(tf, topic_num)]
+  # Reward concentrated TF evidence while correcting broadly popular topics.
+  global[, global_topic_prevalence := mean(global_probability_raw),
+         by = topic_num]
+  global[, global_specificity_weight :=
+    global_probability_raw^2 /
+      pmax(global_topic_prevalence, .Machine$double.eps)]
+  global[, global_probability := {
+    total <- sum(global_specificity_weight)
+    if (is.finite(total) && total > 0) {
+      global_specificity_weight / total
+    } else {
+      0
+    }
+  }, by = tf]
   data.table::setorder(global, tf, -global_probability, topic_num)
   global[, `:=`(
     global_primary_topic = topic_num[[1L]],
@@ -828,7 +842,7 @@
       paste0("Topic", global_primary_topic),
       NA_character_
     ),
-    assignment_source = "binding_target_evidence"
+    assignment_source = "binding_target_evidence_specificity_calibrated"
   )]
   data.table::setorder(evidence, condition_id, tf, topic_num)
   list(evidence = evidence[], join_audit = join_audit[])

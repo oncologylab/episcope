@@ -154,9 +154,69 @@ test_that("TF-topic evidence uses unique correlation-weighted peaks", {
   expect_true(all(evidence$primary_topic_num == 1L))
   expect_true(all(evidence$global_primary_confident))
   expect_true(all(evidence$condition_primary_confident))
-  expect_true(all(evidence$assignment_source == "binding_target_evidence"))
+  expect_true(all(
+    evidence$assignment_source ==
+      "binding_target_evidence_specificity_calibrated"
+  ))
+  expect_equal(
+    unique(evidence[, .(tf, topic_num, global_probability)])[
+      , sum(global_probability),
+      by = tf
+    ]$V1,
+    1,
+    tolerance = 1e-10
+  )
   expect_equal(
     evidence[, sum(combined_probability), by = .(condition_id, tf)]$V1,
+    c(1, 1),
+    tolerance = 1e-10
+  )
+})
+
+test_that("TF-topic evidence calibrates globally popular topics", {
+  links <- data.table::data.table(
+    condition_id = "C1",
+    tf = rep(c("TF1", "TF2"), each = 2L),
+    peak_id = c("P1", "P2", "P3", "P4"),
+    gene_key = c("G1", "G2", "G3", "G4"),
+    topic_num = rep(1:2, 2L),
+    tf_expression = 20
+  )
+  peaks <- data.table::data.table(
+    condition_id = "C1",
+    peak_id = c("P1", "P2", "P3", "P4"),
+    topic_num = rep(1:2, 2L),
+    token_share = c(0.45, 0.05, 0.30, 0.20)
+  )
+  genes <- data.table::data.table(
+    condition_id = "C1",
+    gene_key = c("G1", "G2", "G3", "G4"),
+    topic_num = rep(1:2, 2L),
+    token_share = c(0.45, 0.05, 0.30, 0.20)
+  )
+  prediction <- data.table::data.table(
+    tf = rep(c("TF1", "TF2"), each = 2L),
+    fp_id = c("P1", "P2", "P3", "P4"),
+    best_r = 0.8
+  )
+
+  evidence <- craftgrn:::.module3_condition_tf_topic_evidence(
+    aligned_links = links,
+    peak_values = peaks,
+    gene_values = genes,
+    prediction_stats = prediction,
+    topic_count = 2L,
+    membership_cutoff = 0,
+    primary_margin_cutoff = 0
+  )$evidence
+
+  tf2 <- evidence[tf == "TF2"]
+  expect_gt(
+    tf2[topic_num == 2L, global_probability],
+    tf2[topic_num == 2L, global_probability_raw]
+  )
+  expect_equal(
+    evidence[, sum(global_probability), by = tf]$V1,
     c(1, 1),
     tolerance = 1e-10
   )
