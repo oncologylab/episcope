@@ -4,7 +4,7 @@
 
 **Goal:** Make slide 14's complete live dashboard match its PowerPoint screenshot and make slide 43 display only its interactive network canvas.
 
-**Architecture:** Keep the presentation builder as the source of generated markup and runtime assets. Add per-demo presentation modes so slide 14 receives a 0.5-scale virtual viewport and slides 14/43 use overlay controls instead of a toolbar; add a query-driven canvas-only mode to the bundled slide-43 report.
+**Architecture:** Keep the presentation builder as the source of generated markup and runtime assets. Add per-demo presentation modes so slide 14 receives a 0.9-scale virtual viewport and slides 14/43 use overlay controls instead of a toolbar; add a query-driven canvas-only mode to the bundled slide-43 report.
 
 **Tech Stack:** Python 3 builder and unittest, Reveal.js 6, HTML/CSS/JavaScript, Playwright 1.62.1, GitHub Pages.
 
@@ -35,10 +35,10 @@
 - [ ] **Step 1: Add failing unit and browser assertions**
 
 Assert that slide 14 markup includes `data-demo-mode="scaled-dashboard"`,
-`--demo-scale:0.5`, and a seamless class; assert slide 20 retains its standard
+`--demo-scale:0.9`, and a seamless class; assert slide 20 retains its standard
 mode. In Playwright, activate slide 14 and assert its toolbar is an absolute
-overlay, its frame has no border, and its iframe rendered width is twice the
-visible frame width.
+overlay, its frame has no border, and its iframe rendered width is the visible
+frame width divided by 0.9.
 
 - [ ] **Step 2: Run the focused tests and verify the new assertions fail**
 

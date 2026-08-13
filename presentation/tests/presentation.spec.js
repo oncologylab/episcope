@@ -24,7 +24,14 @@ test("keeps remote reports lazy and provides exit and fallback controls", async 
   let reportRequests = 0;
   await page.route(reportUrl, async (route) => {
     reportRequests += 1;
-    await route.fulfill({ contentType: "text/html", body: "<!doctype html><div id=dashboard>Report ready</div>" });
+    await route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><button id="report-control" type="button">Update report</button>
+        <div id="dashboard">Report ready</div>
+        <script>document.querySelector("#report-control").onclick = () => {
+          document.querySelector("#dashboard").textContent = "Report updated";
+        };</script>`,
+    });
   });
   await openDeck(page);
   await goToSlide(page, 14);
@@ -55,6 +62,13 @@ test("keeps remote reports lazy and provides exit and fallback controls", async 
   expect(seamlessLayout.frameBoxShadow).toBe("none");
   await expect(slide.locator(".demo-new-tab")).toHaveAttribute("href", reportUrl);
   await expect(slide.locator("iframe").contentFrame().locator("#dashboard")).toHaveText("Report ready");
+  await slide.locator("iframe").contentFrame().locator("#report-control").click();
+  await expect(slide.locator("iframe").contentFrame().locator("#dashboard")).toHaveText("Report updated");
+  await slide.locator(".demo-new-tab").focus();
+  await expect(slide.locator(".demo-new-tab")).toBeFocused();
+  await expect(slide.locator(".demo-toolbar")).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Tab");
+  await expect(slide.locator(".demo-exit")).toBeFocused();
   expect(reportRequests).toBe(1);
   await slide.locator(".demo-exit").click();
   await expect(slide.locator(".demo-frame")).toBeHidden();
@@ -136,10 +150,41 @@ test("loads the GUI and local IRF4 network in their requested slides", async ({ 
   expect(canvasLayout.top).toBeCloseTo(0, 0);
   expect(canvasLayout.width).toBeCloseTo(canvasLayout.viewportWidth, 0);
   expect(canvasLayout.height).toBeCloseTo(canvasLayout.viewportHeight, 0);
-  await expect(network.locator("#nodeLayer > *").first()).toBeVisible();
-  await networkSlide.locator(".demo-exit").click();
-  await page.keyboard.press("ArrowRight");
+  const firstNode = network.locator("#nodeLayer > *").first();
+  await expect(firstNode).toBeVisible();
+  const nodeId = await firstNode.getAttribute("data-id");
+  await firstNode.hover();
+  await expect(network.locator("#tooltip")).toBeVisible();
+  await expect(network.locator("#tooltip")).not.toHaveText("");
+  await firstNode.click();
+  const selectedNode = network.locator(`#nodeLayer > [data-id="${nodeId}"]`);
+  await expect(selectedNode).toHaveAttribute("stroke", "#D7263D");
+  const beforeDrag = await selectedNode.evaluate((node) =>
+    Number(node.getAttribute("cx") || node.getAttribute("x"))
+  );
+  const nodeBounds = await selectedNode.boundingBox();
+  await page.mouse.move(nodeBounds.x + nodeBounds.width / 2, nodeBounds.y + nodeBounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    nodeBounds.x + nodeBounds.width / 2 + 120,
+    nodeBounds.y + nodeBounds.height / 2 + 60,
+    { steps: 10 }
+  );
+  await page.mouse.up();
+  const afterDrag = await network.locator(`#nodeLayer > [data-id="${nodeId}"]`).evaluate((node) =>
+    Number(node.getAttribute("cx") || node.getAttribute("x"))
+  );
+  expect(afterDrag).not.toBeCloseTo(beforeDrag, 0);
+  await page.evaluate(() => Reveal.slide(43));
   await expect(page.locator("#slide-44")).toHaveClass(/present/);
+  await expect(networkSlide.locator(".demo-frame")).toBeHidden();
+  await expect(networkSlide.locator(".demo-fallback")).toBeVisible();
+  const revealFocus = await page.evaluate(() => ({
+    isFocused: Reveal.isFocused(),
+    iframeFocused: document.activeElement === document.querySelector("#slide-43 iframe"),
+  }));
+  expect(revealFocus.isFocused).toBe(true);
+  expect(revealFocus.iframeFocused).toBe(false);
 });
 
 test("opens speaker view with current notes, next slide, clock, and timer", async ({ page }) => {
