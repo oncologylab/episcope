@@ -1,7 +1,7 @@
 {
   "source_filename": "20260813_thesis_presentation.pptx",
-  "source_sha256": "7bf130f07bc057d275ef2d5a5403edde3b8efa632d5558c0052c9479cf6becc9",
-  "slide_count": 59,
+  "source_sha256": "18f9afa2f7b8d9720888934baae21c01069c737296507e13902a655803eba4c0",
+  "slide_count": 68,
   "slide_size_emu": [
     12192000,
     6858000
@@ -16,8 +16,7 @@
     "ubuntu_snapshot": "20260813T001500Z",
     "certificate_bootstrap": "noble-release:ca-certificates=20240203,openssl=3.0.13-0ubuntu3",
     "libreoffice": "4:24.2.7-0ubuntu0.24.04.6",
-    "poppler_utils": "24.02.0-1ubuntu9.9",
-    "reused": "true"
+    "poppler_utils": "24.02.0-1ubuntu9.9"
   },
   "slides": [
     {
@@ -31,404 +30,467 @@
       "number": 2,
       "source_number": 2,
       "title": "A simple view of transcriptional regulation",
-      "notes_text": "I\u2019ll start with a simple view of transcriptional regulation. When chromatin is open, transcription factors can bind DNA and help recruit RNA polymerase II, which initiates transcription. This brings us to two main questions: where do transcription factors bind, and which genes do they regulate?",
+      "notes_text": "As everyone in this room know, transcription is a fundamental process in biology. Just a quick reminder: transcription happens at open chromatin.  It starts with transcription factors binding to enhancers or promoters and help recruit co-activators and ultimately RNA polymerase to initiate transcription. ",
       "image_sha256": "6e7275e7566463896e81a9791ab3044dde42c5c5533ce43475ac3bbc59dab904"
     },
     {
       "number": 3,
       "source_number": 3,
       "title": "Transcription factors recognize specific DNA sequence motifs",
-      "notes_text": "Let\u2019s start with the first question: where do TFs bind?\nFirst, the DNA needs to be accessible. Then a transcription factor can bind.\nBut TFs do not bind DNA randomly. They recognize short DNA sequence patterns called motifs, like the sequence logo shown here.\nDifferent TFs prefer different motifs. For example, HNF4A, GATA, SOX, and AP-1 each have their own sequence preference.\nThese known motifs are collected in databases such as JASPAR and HOCOMOCO.\nSo motifs tell us where a TF could bind, but not whether it is actually bound.\nBut there is another problem: different TFs can recognize very similar motifs.",
+      "notes_text": "But TFs do not bind DNA randomly. They recognize different short DNA sequence patterns called motifs such as shown in here. You can appreciate here that Different types of TFs prefer different sequences to bind. There are public database such as JASPAR and HOCOMOCO that collect thousands of known motifs that have already been discovered. However, a lot of TFs binding patterns are still unknown. ",
       "image_sha256": "70be5d8aa73bc9cd6045f077c2cac03cbbd89066e32f7e87b5c5d5f5cfeab8dd"
     },
     {
       "number": 4,
       "source_number": 4,
       "title": "TF motifs cluster into related families",
-      "notes_text": "Here, I took the JASPAR motifs and grouped them by sequence similarity.\nIn the center is the full motif collection, and around the outside you can see that similar motifs naturally form families, such as Forkhead, Homeobox, and bHLH, and other TF families\nThe important point is that TFs within the same family can recognize very similar DNA sequences.\nSo a motif may tell us the TF family, but not necessarily the exact TF that is bound.\nTo identify the specific TF, we need TF-specific experimental measurements",
+      "notes_text": "On the other hand, many different TFs can recognize very similar motifs as shown in from the JASPAR collection. I highlighted some of the large TF families, which can contain dozens of members.",
       "image_sha256": "8197231359b2d59dcb154d5e616c20dceaa5caaa0a4544e213503da91420d713"
     },
     {
       "number": 5,
       "source_number": 5,
-      "title": "Protein-specific assays provide direct evidence of TF binding",
-      "notes_text": "Here are three common TF-specific assays.\nOn the left, ChIP-seq uses an antibody to pull down DNA associated with the TF.\nIn the middle, CUT&RUN uses the antibody to recruit a nuclease and cut nearby DNA.\nOn the right, CUT&Tag uses the antibody to recruit Tn5 and cut and tag nearby DNA.\nDifferent mechanisms, but the same goal: after sequencing, we identify where that TF is bound.\nThese assays give us much stronger TF-binding evidence than motif matching alone",
-      "image_sha256": "7f20fe22a4464e48e1da9c22f7ee827dbd38f1b5364c1738306883f5a2a57aa4"
+      "title": "TF binding extends beyond canonical motifs",
+      "notes_text": "To make the story even more complex, TFs do not always bind to their canonical motifs. It is well known that TFs can bind slightly different sequences called motif variants, or they can bind cooperatively with other TFs to create new binding sites called composite sites, Alternatively, they can be recruited by other TFs to completely different genomic loci.",
+      "image_sha256": "587cd236858d67d7844420deabd1583fbe6c53d560b62a322332d4fdcb7710a4"
     },
     {
       "number": 6,
       "source_number": 6,
-      "title": "Experimental challenges in measuring TF binding",
-      "notes_text": "The problem is scale.\nWe have many TFs, but these are targeted assays, so each TF usually needs its own experiment. \nThat quickly becomes many experiments, and it also depends on having a good TF-specific antibody. \nMore experiments means more time and cost. \nSo we need a more scalable way to study TF binding. \nThat brings us to ATAC-seq.",
-      "image_sha256": "2bcd8963e42a96e850eff7d18dff55fd705871db22e65f4d625ac5f75af248d0"
+      "title": "TF binding is dynamic and cell-type specific",
+      "notes_text": "Furthermore, TF binding is cell type specific and highly dynamic. The same TFs can bind to completely different genomic regions in different cell types. And even within the same cell type, their binding can change between biological conditions. Therefore, a static motif matching cannot predict the actual TF binding.",
+      "image_sha256": "710f1325dcb8fba49571d816c8bc88658297d49740b32d4daaa7d91fb869ca7a"
     },
     {
       "number": 7,
       "source_number": 7,
-      "title": "ATAC-seq maps open chromatin",
-      "notes_text": "ATAC-seq tells us where the chromatin is open.\nFirst, we have closed and open chromatin.\nSecond, Tn5 inserts into the accessible DNA.\nAfter sequencing, those insertions build up into ATAC-seq peaks.\nSo a high ATAC-seq signal means the chromatin is more accessible.\nBut if we look inside that peak more closely, the local Tn5 pattern can tell us more about TF binding.\nATAC-seq (Assay for Transposase-Accessible Chromatin using sequencing)",
-      "image_sha256": "1b4b6a987daf163bb61f08da4b0b6ec7cb2d59cf1d26146046b3dcc120f538ff"
+      "title": "Protein-specific assays provide direct evidence of TF binding",
+      "notes_text": "As a result, people have developed many different techniques to detect actual TF binding. Here are three major assays, ChIP-seq, CUT&Run and CUT&Tag, all requiring specific antibodies to recognize the TFs. While ChIP-seq involves crosslinking and pulldown of fragmented DNA, CUT&Run and CUT&Tag use nuclease to cut native DNA near where TFs bind.  While these techniques are fundamental in helping us understand how TF bind to DNA and regulate transcription, they are technically challenging and require high quality antibodies that are not available for many TFs. They are time-consuming, labor intensive and expensive, and you can only study one TF at a time. ",
+      "image_sha256": "7f20fe22a4464e48e1da9c22f7ee827dbd38f1b5364c1738306883f5a2a57aa4"
     },
     {
       "number": 8,
       "source_number": 8,
-      "title": "ATAC-seq footprinting reveals protected TF-binding sites",
-      "notes_text": "Here is the basic idea of ATAC-seq footprinting.\nTn5 can cut the accessible DNA on both sides of the site.\nBut when a TF is bound in the middle, it protects that DNA, so we see fewer cuts in the center.\nThat dip in the middle is the footprint.\nAnd on the right, the AP-1 example shows the same pattern in real data \u2014 high signal on the sides, and a dip at the motif center.\nSo footprinting gives us more localized evidence of TF binding than the broad ATAC-seq peak alone.\nThen the next question is how to detect&analyze footprints?",
-      "image_sha256": "88b91dff39c076fccaa82c50927867af40f5a6717519faf832ee85b9eb631d91"
+      "title": "ATAC-seq maps open chromatin",
+      "notes_text": "So we need a more scalable way to study TF binding. \nThat brings us to ATAC-seq.\nATAC-seq take advantage of the simple fact that transcription happens at open chromatin where DNA is not protected by the nucleosomes. \nIt uses Tn5 transposes to cut and insert specific primers into these easily accessible genomic regions\nThen it uses PCR to amply out these open chromatin regions.\nThese ampllied fragments are subjected to HTS, mapped back to the reference genome, allowing us to identify highly accessible regions represented as peaks. ",
+      "image_sha256": "1b4b6a987daf163bb61f08da4b0b6ec7cb2d59cf1d26146046b3dcc120f538ff"
     },
     {
       "number": 9,
       "source_number": 9,
-      "title": "Gaps in existing ATAC-seq footprinting tools",
-      "notes_text": "ATAC-seq footprinting is not new. All of these tools can do the basic bulk footprinting analysis.\nSome newer tools also support single-cell analysis and de novo motif discovery.\nOur goal with fp-tools was not to replace these methods. \nWhat fp-tools adds is a footprinting framework that extends TOBIAS with de novo motif discovery, biological-replicate analysis, single-cell workflows, and improved computational efficiency.",
-      "image_sha256": "271c3f2db8582d2268100960bbb7ebae26f375ce271372e40b10dfa0dec3eb47"
+      "title": "ATAC-seq footprinting reveals protected TF-binding sites",
+      "notes_text": "But there is a twist. Within the open chromatin region, if a TF is bound, it protects the exact site where it binds from Tn5 cutting, causing a dip in the middle of the Peak, almost look like a footprint.\nHere is an actual example of the aggregated footprints around  JUN? motifs across the genomic from ATAC analysis of HPAFII? Cells . \nYou can appreciate the high signal on either side of the motif, but a clear drop in signal in the motif center, indicating strong binding at these sites. \nIn contrast, no dips are detected at the ## motif sites, suggesting little binding by this TF in this cell line. \nYou can actually compute a footprint by dividing the flank signals to the depth of the footprints, which reflect the relative binding strength of each TFs.\nAs a result, from a single ATAC experiment, you can predict global TF binding across the genome, making it a very simple yet powerful technique that is widely used by many labs. ",
+      "image_sha256": "5d3c9f083480073ee9d6209c50fcdf916ad868456704054a41b29745db5db238"
     },
     {
       "number": 10,
       "source_number": 10,
-      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
-      "notes_text": "The first part of my dissertation is fp-tools, a reproducible ATAC-seq footprinting framework for bulk and single-cell data.\nI\u2019ll begin with the overall workflow.",
-      "image_sha256": "9273c501fd768aeaac53d8d7fe03a027c872b9c74880f7a72f681b563f607d19"
+      "title": "Gaps in existing ATAC-seq footprinting tools",
+      "notes_text": "A number of tools are already available to perform footprinting. However, they each have their drawbacks as listed here. \nTherefore, we set out to develop a new framework called fp-tools to extend existing methods to support de novo motif discovery, biological-replicate analysis, single-cell workflows, and improved computational efficiency.",
+      "image_sha256": "c1e63cf809d28bfa6bd5a273a36e6c48ff28255affe0769ad2995639f7c9acf7"
     },
     {
       "number": 11,
       "source_number": 11,
-      "title": "fp-tools provides an end-to-end bulk and pseudobulk workflow",
-      "notes_text": "Here is the overall fp-tools workflow.\nWe can start from either bulk ATAC-seq or single-cell ATAC-seq, which we convert into pseudobulk groups.\nBoth then go through the same core steps: bias correction, footprint calling, and motif matching.\nFrom there, fp-tools can do differential footprinting, de novo motif discovery, and single-cell footprint analysis.\nOne feature I\u2019ll show next is de novo motif discovery.",
-      "image_sha256": "17b46074c69174cc1cae88b293626cdecc607fbfda7d8bfbb51ba5f5c2ff5adb"
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "Furthermore, we extended another package called CraftGRN that goes beyond basic footrpints and predict TF-binding sites and target genes from paired ATAC and RNAseq data.",
+      "image_sha256": "2131b3344cdcdc2d3f6085d4ce68346e13f6476271d31c68f791dda4aac6901d"
     },
     {
       "number": 12,
       "source_number": 12,
-      "title": "De novo motif discovery finds patterns missing from reference databases",
-      "notes_text": "Here, we start from the footprint regions.\nWe extract the surrounding DNA sequence, then run de novo motif discovery to find recurring sequence patterns.\nAfter that, we compare those motifs with the reference database.\nIn the bar plot below, most sites are associated with known motifs, shown in green, but a smaller fraction are de novo-only, shown in orange.\nSo the reference database captures most of the signal, but not all of it\nThe next question is whether these de novo motifs also show a real footprint pattern",
-      "image_sha256": "f4a6f5eb2824b64bb58c94e1f547db4011c2b3900a68b2729cb378d45e1e13a0"
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "I\u2019ll begin with the fp-tools",
+      "image_sha256": "9273c501fd768aeaac53d8d7fe03a027c872b9c74880f7a72f681b563f607d19"
     },
     {
       "number": 13,
       "source_number": 13,
-      "title": "De novo motifs show clear footprint signatures in K562 and HepG2",
-      "notes_text": "Here are representative de novo motifs from K562 on the left and HepG2 on the right.\nIn each example, the motif is centered at zero, and the Tn5 signal shows a clear dip at the motif center, with higher signal on the sides.\nThat is the footprint pattern we expect.\nSo these de novo motifs are not just recurring sequence patterns, they are also supported by local footprint signals.\nNext, we asked whether footprint activity changes between biological conditions.",
-      "image_sha256": "95263ea354f5db6247ebc2e82de7e16052221a34e8d315da5fc0c645106153d2"
+      "title": "fp-tools provides an end-to-end bulk and pseudobulk workflow",
+      "notes_text": "Here is the overall fp-tools workflow, which for the interest of time I will not bore you with details.\nBut briefly,  fp-tools can process both bulk ATAC-seq or single-cell ATAC-seq.\nBoth type of data will go through the same core processing steps  as listed here.\nFrom there, fp-tools can perform differential footprinting, de novo motif discovery, revealing biologically important TFs and discovering novel TF binding sites. ",
+      "image_sha256": "17b46074c69174cc1cae88b293626cdecc607fbfda7d8bfbb51ba5f5c2ff5adb"
     },
     {
       "number": 14,
       "source_number": 14,
       "title": "Differential footprinting highlights TF activity changes between conditions",
-      "notes_text": "Here, fp-tools compares footprint activity between two conditions with biological replicates.\nBefore comparison, we can scale the signals across samples; here I used q95 scaling.\nOn the left, we see the top differential motifs. In the center, the volcano plot shows the overall comparison. And on the right, we can directly inspect the footprint profiles behind those statistics.\nIn this example, HNF4A and ONECUT2 are stronger in HepG2, while GATA-family footprints are stronger in K562.\nSo the report connects the statistics directly to the actual footprint patterns\nWe then applied the same idea to single-cell ATAC-seq.",
+      "notes_text": "Here is what you get after running fp-tools on bulk ATAC data:\nIn this example of comparing a leukemia cell line K562 and a liver cancer HepG2 ATAC from Encode, which in case you don\u2019t know is a public genomics source. \nHere we have two cell types, each with biological replicates.\nOn the left shown in both waterfall and volcano plots, fp tools revealed the top differential motifs for each cell type. And on the right, we can directly inspect the aggregated footprint profiles behind those statistics, clearly seeing the differences in binding strengths between the two cell lines for each TF.\nImportantly, the fp-tool output is fully interactive. As you can see here, you can hover and click on any TF on either plots to see their aggregated footprint patterns. \nYou can also use dropdown buttons to select specific motifs\nYou can select different replicates to show. You can change colors and line thickness. Most importantly, you can download everything in a full editable SVG file for publication! \n HNF4A and ONECUT2 are stronger in HepG2, while GATA-family footprints are stronger in K562.",
       "image_sha256": "ddc16f9f459630edafc5dd509a893fa0149671d09161f82e37a4fb8238fabf7e"
     },
     {
       "number": 15,
       "source_number": 15,
       "title": "Single-cell footprints recover cell-type-specific TF programs",
-      "notes_text": "Here, the cells separate into three broad groups: B cells, monocytes, and T/NK cells.\nOn the left, B cells show stronger STAT6 and FOSB footprint signatures.\nIn the middle, monocytes show stronger CEBPA, IRF8, and RELA.\nAnd on the right, T/NK cells show stronger ZNF683, NR4A1, and SMAD3.\nSo the footprint profiles recover distinct TF programs for different cell types.\nLet me show a few of these examples more clearly on the UMAP",
+      "notes_text": "Here is an example of analyzing a public single cell ATAC data containing three major immune cell types: B cells, monocytes, and T/NK cells.\nFp-tools is able to identify cell-type specific footprint signatures for each cell type: \nSTAT6 and FOSB are enriched in B cells.\nCEBPA, IRF8, and RELA are enriched in Mnocotypes\nAnd ZNF683, NR4A1, and SMAD3 are enriched in T/NK cells",
       "image_sha256": "8836307893ecfc6a240d848161f197394058e13bfe10a8cb40d8982af1c53e74"
     },
     {
       "number": 16,
       "source_number": 16,
       "title": "B-cell footprint signatures highlight STAT6 and FOSB",
-      "notes_text": "First, the B-cell population.\nHere, STAT6 and FOSB show stronger footprint signals in the B-cell cluster.\nYou can see the red signal concentrated on the B cells on the left.\nSo these footprints recover a clear B-cell-associated TF pattern\nWe see a different pattern in monocytes",
-      "image_sha256": "75b57db955a8049ce00febd6c482285cc780fbf4a813fe4a19c859101d73d8c3"
+      "notes_text": "Fp tools also allows you to visualize the activity of each TF in UMAP\nHere, STAT6 and FOSB show stronger footprint signals in the B-cell cluster.",
+      "image_sha256": "566f9169ee61ba2770c828d53dd87c4054a2ad09d2cf277b13ae557302ad2147"
     },
     {
       "number": 17,
       "source_number": 17,
       "title": "Monocyte footprint signatures highlight CEBPA, IRF8, and RELA",
-      "notes_text": "In monocytes, CEBPA, IRF8, and RELA are much stronger.\nThe red signal is concentrated in the monocyte cluster on the right.\nThese TFs are consistent with myeloid and inflammatory regulation.\nSo the footprint signals again match the expected cell identity.\nAnd the T/NK population shows another distinct pattern",
-      "image_sha256": "2b34533992fa7fa918c61f6a6d91e0d320e1d8b14b203d62ec7bfeaa10cb3b52"
+      "notes_text": "Here are IRF8, and RELA are enriched in monocyte",
+      "image_sha256": "6ca6e4982d0a32b573abec97a5e950b93d5267813fdde2e56c43a8f5ba48eaaa"
     },
     {
       "number": 18,
       "source_number": 18,
       "title": "T/NK-cell footprints highlight ZNF683, NR4A1, and SMAD3",
-      "notes_text": "In T/NK cells, ZNF683, NR4A1, and SMAD3 show stronger footprint signals.\nHere, the red signal is concentrated mainly in the central T/NK population.\nSo across these three cell types, fp-tools recovers distinct TF programs from the same single-cell ATAC-seq dataset.\nSo fp-tools works in both bulk and single-cell settings. Next, I\u2019ll show the computational performance.",
-      "image_sha256": "eb5f34898a6ce20eb0f558470c2066bd5ba18e2dc192ad3853088715103da31b"
+      "notes_text": "NR4A1, and SMAD3 in T/NK cells",
+      "image_sha256": "aac4ab6cea55f9e22179b5493f0e2d768d56f075398bebe251a194d03a87034d"
     },
     {
       "number": 19,
       "source_number": 19,
-      "title": "fp-tools runs faster and uses less memory",
-      "notes_text": "We also improved the computational efficiency of the workflow.\nOn the left, fp-tools runs faster than TOBIAS.\nOn the right, it also uses less memory.\nSo fp-tools is not only more complete, but also lighter and faster to run.\nAnd we also wanted to make it easier to use, not just faster.",
-      "image_sha256": "80bb95dffa36d4a95a9eecb42fd18dfa1dd5a4bcefb5b3eec8e9640c776d6501"
+      "title": "De novo motif discovery finds patterns missing from reference databases",
+      "notes_text": "Importantly, fp-tools can also discover previously unknown TF motifs. \nAs you can see, up to 8% of footprotints detected by fp-tools do not match any motifs in the public databases. ",
+      "image_sha256": "f4a6f5eb2824b64bb58c94e1f547db4011c2b3900a68b2729cb378d45e1e13a0"
     },
     {
       "number": 20,
       "source_number": 20,
-      "title": "The fp-tools browser interface makes reproducible workflows easier to use",
-      "notes_text": "The browser interface exposes the same fp-tools commands through a webpage.\nUsers can select an analysis, load an example or enter their own paths, review the YAML configuration, start the run, and inspect the outputs.\nImportantly, the GUI does not create a separate analysis path. It launches the same reproducible workflow used by the command line.\nSo fp-tools makes footprinting more complete, efficient, reproducible, and accessible.\nWith those footprint measurements in place, I\u2019ll now move to CraftGRN Module 1.",
-      "image_sha256": "f9c9a1deebd245293e8a2626e2cf6d9ad45c69a5b29d7f096017b70f6299bae5"
+      "title": "De novo motifs show clear footprint signatures in K562 and HepG2",
+      "notes_text": "Importantly, these newly discovered motifs show strong clear aggregated footprint profiles, suggesting that these are truly active TF binding sites. ",
+      "image_sha256": "95263ea354f5db6247ebc2e82de7e16052221a34e8d315da5fc0c645106153d2"
     },
     {
       "number": 21,
       "source_number": 21,
-      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
-      "notes_text": "fp-tools tells us where footprint-like signals occur.\nCraftGRN Module 1 asks the next question: which TF is most likely responsible for each footprint?",
-      "image_sha256": "0ae70d4e30edec583f19e8b4d50fb8b76cefe7fdec3b74f73c538ed651c85276"
+      "title": "fp-tools runs faster and uses less memory",
+      "notes_text": "We also significantly improved the computational efficiency of the workflow.\nCompared to TOBIAS, on which fp-tools is based on, fp-tools runs almost twice as fast and requires nearly half of the memory. ",
+      "image_sha256": "a90f45f3d00f0ff453a8621365cb475242f7f3074b10208ac792938d4a2e34de"
     },
     {
       "number": 22,
       "source_number": 22,
-      "title": "TF binding is dynamic and cell-type specific",
-      "notes_text": "But assigning a TF to a footprint is not straightforward, because TF binding is highly dependent on biological context.\nThe same genomic site can be occupied in one cell type but not another. And even within the same cell type, binding can change between biological conditions. So TF binding is dynamic and cell-type specific. \nA static sequence motif alone cannot capture that context.\nAnd context is only one part of the problem. The DNA sequences recognized by TFs are also more flexible than a single canonical motif.",
-      "image_sha256": "710f1325dcb8fba49571d816c8bc88658297d49740b32d4daaa7d91fb869ca7a"
+      "title": "The fp-tools browser interface makes reproducible workflows easier to use",
+      "notes_text": "Finally, we made sure fp-tools is accessible to everyone with or without any coding background.\nThrough this browser interface, Users can simply select an analysis, load an example or select their own files, start the run, and get the results!\nImportantly, the GUI aunches the same reproducible workflow used by the command line, so you are not punished for lacking coding proficiency!",
+      "image_sha256": "f9c9a1deebd245293e8a2626e2cf6d9ad45c69a5b29d7f096017b70f6299bae5"
     },
     {
       "number": 23,
       "source_number": 23,
-      "title": "TF binding extends beyond canonical motifs",
-      "notes_text": "A TF may have a preferred canonical motif, but real binding is more complicated.\nTFs can recognize motif variants, bind cooperatively with another TF at composite sites, or be recruited indirectly through tethering without contacting their own motif.\nSo canonical motif matching alone cannot explain every TF-binding event.\nWe can see that limitation directly in our HNF4A data.",
-      "image_sha256": "587cd236858d67d7844420deabd1583fbe6c53d560b62a322332d4fdcb7710a4"
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "Now I will introduce CraftGRN. ",
+      "image_sha256": "0ae70d4e30edec583f19e8b4d50fb8b76cefe7fdec3b74f73c538ed651c85276"
     },
     {
       "number": 24,
       "source_number": 24,
-      "title": "HNF4A binding extends beyond canonical motif matches",
-      "notes_text": "Here I\u2019m using HNF4A in HPAF-II pancreatic cancer cells as a representative example.\nThe purple signal is the independent HNF4A CUT&Tag measurement, the purple bars mark called peaks, and the orange bars mark canonical HNF4A motif matches.\nSeveral strong HNF4A peaks do not contain a canonical motif match.\nThis shows that motif information explains only part of the observed HNF4A binding landscape.",
-      "image_sha256": "75e7dd289b09fdc317c954198e629eb64c270430462378818c322a41fd3e93ed"
+      "title": "TF binding is dynamic and cell-type specific",
+      "notes_text": "As I explained earlier, TF binding is dynamic and cell-type specific. ",
+      "image_sha256": "710f1325dcb8fba49571d816c8bc88658297d49740b32d4daaa7d91fb869ca7a"
     },
     {
       "number": 25,
       "source_number": 25,
-      "title": "Computational approaches for TF-binding prediction",
-      "notes_text": "There are three main computational approaches to TF-binding prediction.\nFirst, motif-based methods like FIMO or HOMER search for known TF sequence motifs and then treat motif matching as TF binding.\nSecond, footprinting methods like TOBIAS and HINT-ATAC treat footprint + motif matching as TF binding. \nThird, supervised models such as EPCOT learn from existing TF-binding data. EPCOT uses DNA sequence and cell-type-specific ATAC to predict TF binding. It can generalize to new cell types, but only for the TFs learned by the pretrained model, and its predictions are at one-kilobase resolution, rather than individual footprints. And limited to generalize to new cell types.\nSo what we still need is a way to assign candidate TFs directly at footprint resolution, using the biological context of our own samples.\nThat is the problem addressed by CraftGRN Module 1.",
-      "image_sha256": "a2972f235b9e815f6b934802b101ad92f6e4fcf891fb575e86bb3ac22d02f0d7"
+      "title": "TF binding extends beyond canonical motifs",
+      "notes_text": "TFs bind to both canonical and non-canonical sites. ",
+      "image_sha256": "587cd236858d67d7844420deabd1583fbe6c53d560b62a322332d4fdcb7710a4"
     },
     {
       "number": 26,
       "source_number": 26,
-      "title": "CraftGRN Module 1 assigns candidate TFs to footprinted sites",
-      "notes_text": "Module 1 uses matched ATAC-seq and RNA-seq across the same biological conditions.\nWe begin with a footprint and use motif information to define plausible TF candidates. We then compare the footprint activity with each candidate TF\u2019s expression across conditions.\nWhen TF expression and footprint activity vary together, that relationship provides condition-specific support for the TF\u2013footprint pair. When they do not vary together, the pair is not retained.\nFor supported footprints, we can then expand the search to the broader set of expressed TFs.",
-      "image_sha256": "6ac890a2d309a1cfb80a70dbf2b101e8e1db91226c2b2e2c3ea33de5e40c0503"
+      "title": "HNF4A binding extends beyond canonical motif matches",
+      "notes_text": "Here is an example showing detected HNF4A binding sites in HPAF-II pancreatic cancer cells using Cut&Tag.\nAs you can see, the majority of the HNF4A binding sites do not contain canonical HNF4A binding motifs. \nThus, motif/footprint alone are not sufficient for predicting actual TF binding sites.",
+      "image_sha256": "75e7dd289b09fdc317c954198e629eb64c270430462378818c322a41fd3e93ed"
     },
     {
       "number": 27,
       "source_number": 27,
-      "title": "Redundant footprint calls are merged before TF-binding prediction",
-      "notes_text": "Before predicting TF binding, we first remove redundancy.\nDifferent motif annotations can produce several overlapping calls over the same underlying footprint. Treating all of those calls as independent would overcount the region.\nCraftGRN therefore merges overlapping calls into a single nonredundant footprint, while retaining the original motif-family information for downstream analysis.",
-      "image_sha256": "587825bbca4d5af50a0d3f8de89047780030e7e7a502dbfb8137248081f932d5"
+      "title": "Existing computational approaches for TF-binding prediction",
+      "notes_text": "To address this issue, several supervised learning methods such as EPCOT have been developed to predict TF binding using existing TF-binding data. E\nHowever, because as I mentioned earlier, many TFs do not have published binding data. Even for those that have public binding data, they are usually limited to a few cell lines. Thus, these supervised learning methods can only predict TF bindings on on limited numbers of TFs and have to generalize TF binding to new cell types that are plagued with inaccuracies. \nBecause the computational intensive nature of these methods, these methods can only predict at around one-kilobase resolution, rather than at precise footprint level. \nFinally, these methods are so complex that only a skilled bioinformatician lilke me with access to high end server  is able to implement them. ",
+      "image_sha256": "58f917f352300cac8af5303a487740dc7d97988c498ae5c0ce901da439f450fa"
     },
     {
       "number": 28,
       "source_number": 28,
-      "title": "Consolidation reduces redundancy and reveals more diverse TF families",
-      "notes_text": "Here I compare the same number of top-ranked footprints before and after consolidation.\nBefore consolidation, many top calls are repeated observations from the same motif or TF families. After consolidation, those repeated calls are reduced.\nAs a result, the top footprint set represents a broader and less redundant collection of TF families.\nThis gives us a cleaner starting point for TF-binding prediction.",
-      "image_sha256": "4db9de7b54d5f95d354ab8c16f4d7b75d050e2235d4013feaf86572d74ac5ef6"
+      "title": "CraftGRN Module 1 assigns candidate TFs to footprinted sites",
+      "notes_text": "Instead of relying on existing mismatched data, CraftGRN uses matched ATAC-seq and RNA-seq across the same biological conditions.\nFirst, we use fp-tools to process ATAC-seq data to detect and score all the footprints across the genome. \nWe then compare the footprint activity with each TF\u2019s expression across conditions, under the assumption that if a TF truly binds to a specific genomic locus, its binding activities should correlate with its expression fluctuation across conditions.",
+      "image_sha256": "3ec9e739eeb702136334a2fa64747fbdae9bf8580333aca0045da15470e17a97"
     },
     {
       "number": 29,
       "source_number": 29,
-      "title": "Footprint signal improves TF-binding prediction",
-      "notes_text": "Before showing the comparison, I\u2019ll briefly define the main metrics.\nRecall, or true-positive rate, is the fraction of experimentally detected binding sites that we recover. Precision is the fraction of our predictions that are experimentally supported. The false-positive rate measures how often we incorrectly predict binding at negative sites.\nIn the curves below, blue uses the correlation between TF expression and the broad ATAC-seq signal. Orange uses the correlation with the localized footprint signal.\nIn both the MAFF and HNF4G benchmarks, the footprint-based approach gives higher true-positive rates and higher precision.\nSo the localized footprint signal is more informative for TF-binding prediction than accessibility alone.",
-      "image_sha256": "896b981e711dd0bf12b16cd7f5cb65ceae25535fa60684fc46a8c87beacc0067"
+      "title": "TF motifs cluster into related families",
+      "notes_text": "However, one of the technical issue we faced is that different TFs can recognize very similar motifs.",
+      "image_sha256": "8197231359b2d59dcb154d5e616c20dceaa5caaa0a4544e213503da91420d713"
     },
     {
       "number": 30,
       "source_number": 30,
-      "title": "Top footprint-ranked sites contain more true TF-binding predictions",
-      "notes_text": "Here I focus only on the top-ranked predictions.\nGreen represents true positives, and orange represents false positives. As we move from the top 30,000 predictions toward the top 5,000, the footprint-based ranking contains a progressively higher proportion of true positives.\nCompared with the ATAC-based ranking, the footprint ranking contains fewer false positives, especially among the highest-ranked sites.\nBased on this result, we use footprint activity as the main regulatory signal in the downstream CraftGRN predictions.",
-      "image_sha256": "81de0220a87adcfbede09bd36c7eb70c84e41182d4406f7cf7d46077647226e7"
+      "title": "Redundant footprint calls are merged before TF-binding prediction",
+      "notes_text": "As a result, the same footprint region is often matched to many TF motifs, and there is huge variation between regions with some regions matching to many TFs, others only matching to only a single motif. \nHowever, it is also true some TFs bind next to each other in separate motifs, so we also have to take care to not merge motifs that are functional distinct. \n \nBy utilizing motif scores as a guide, we were able to develop an optimized strategy that collapse truly redundant footprints. ",
+      "image_sha256": "587825bbca4d5af50a0d3f8de89047780030e7e7a502dbfb8137248081f932d5"
     },
     {
       "number": 31,
       "source_number": 31,
-      "title": "CraftGRN performs consistently across pancreatic TF-binding datasets",
-      "notes_text": "We then compared the complete CraftGRN method with EPCOT. Orange is CraftGRN, and gray is EPCOT.\nHere are two representative benchmarks: MAFF in HPAF-II and HNF4G in AsPC1.\nCraftGRN is comparable to or better than EPCOT in the ROC curves, but the clearest gain is in the precision\u2013recall curves.",
-      "image_sha256": "85b0a48cc2d2085c03634747fb533eeb6c441f34937e9bf353ad306c07f1f494"
+      "title": "Consolidation reduces redundancy and reveals more diverse TF families",
+      "notes_text": "Here I compare the top 100 differential footproints before and after collapsing. \nAs you can see, Before consolidation, the top TFs were dominated by a handful of large TF families. \nAfter consolidation, a much broader collection of TF families are represented.\nThis correction thus significantly reduced bias caused by TF redundancy.",
+      "image_sha256": "4db9de7b54d5f95d354ab8c16f4d7b75d050e2235d4013feaf86572d74ac5ef6"
     },
     {
       "number": 32,
       "source_number": 32,
-      "title": "CraftGRN maintains higher precision across additional pancreatic TFs",
-      "notes_text": "The same pattern appears for HNF4A and KLF5.\nCraftGRN again gives similar or better ROC performance, while maintaining higher precision across a broad range of recall.\nTaken together, these benchmarks show a consistent precision advantage across multiple pancreatic TF-binding datasets.\nWe next asked whether CraftGRN was also recovering the stronger experimental binding events.",
-      "image_sha256": "d4ec116ec42675ca95886dc5b743aebfdec50255777aa105ec913ae6aaee0b15"
+      "title": "CraftGRN performs consistently across pancreatic TF-binding datasets",
+      "notes_text": "Fo the interest of time, I will not belabor all the other technical optimization that we performed to optimize CrafGRN, instead show you how our final pipeline stacks against the state-of-art ,deep-learning method EPCOT. \nFor benchmarking, we compared CraftGRN and Epcot predictions against MAFF Cut&Tag in HPAF-II produced in our own lab and a published HNF4G ChIP-seq in AsPC1 from another lab, as ground truth.\nAs you can see from these curves, CraftGRN in green performs comparable to or better than EPCOT in grey in terms of precision\u2013recall rates. \nOn the bottom here, we plotted the percent of true positive and false positive for the top predicted binding sites, agains showing higher accuracies in CraftGRN predictions.",
+      "image_sha256": "8b08909fda69a87e6e57d43c4fd08ae25274b36fa3bd2be8f347bcc633b3acdf"
     },
     {
       "number": 33,
       "source_number": 33,
-      "title": "CraftGRN preferentially recovers stronger TF-binding events",
-      "notes_text": "Here, the solid lines represent true positives and the dashed lines represent false negatives. Orange is CraftGRN, and gray is EPCOT.\nAcross most benchmarks, the true-positive sites recovered by CraftGRN have stronger experimental TF-binding signal than the true positives recovered by EPCOT.\nAt the same time, the sites missed by CraftGRN generally have weaker signals.\nSo CraftGRN is not only recovering more supported sites\u2014it is preferentially recovering the stronger binding events, while many of the remaining false negatives are weaker.",
-      "image_sha256": "913774a3eb4d84d20aaa710fb52524179790ba2f813561b27546d09041a29a45"
+      "title": "CraftGRN performs consistently across pancreatic TF-binding datasets",
+      "notes_text": "The same patterns hold for two addition HNF4A Cut&Tag and KLF5 ChIIPseq in HPAFII cells.",
+      "image_sha256": "cbdf10bd8e278fd3aa6ae8f78dc5acfbd047c6e6b5b5aecea36f01e72024499f"
     },
     {
       "number": 34,
       "source_number": 34,
-      "title": "CraftGRN recovers experimentally supported TF-binding sites across TFs and cell lines",
-      "notes_text": "Here I show a set of representative loci: two each for HNF4A in AsPC1, KLF5 in HPAF-II, and FOSL2 in HPAC.\nIn each panel, we compare the ATAC signal, the experimental binding assay, the detected sites, and predictions from CraftGRN and EPCOT.\nAcross these loci, CraftGRN predictions track the experimentally detected binding sites more closely, while EPCOT tends to produce more dispersed predictions.\nSo at the genomic-region level, we again see that CraftGRN gives more precise TF-binding predictions across different pancreatic TFs and cell lines.",
-      "image_sha256": "990b59b59d0b500c933b421a1129b5505b7a0b990eaf376ca0fdd5eb3d642c13"
+      "title": "CraftGRN preferentially recovers stronger TF-binding events",
+      "notes_text": "Importantly, the corrected predicted TFBS by CraftGRN represented in solid orange lines here showed much strong actual binding signals compared to the TFBS missed by CraftGRN represented by dotted orange line.\nIn contrast, there is much less difference in signal between correctly and incorrectly predicted sites by EPCOT.\nSo CraftGRN preferentially recovers the stronger binding events as determined by experiments, while missing the weaker less confident sites.",
+      "image_sha256": "682fd73869155946b7bf386f6266d3e8a6b16562912177970b09aba890edd08c"
     },
     {
       "number": 35,
       "source_number": 35,
-      "title": "CraftGRN performs well in an independent T-cell dataset",
-      "notes_text": "So far, the main benchmarks have come from pancreatic cancer systems. We next tested whether the same framework performs well in an independent biological context.\nHere we use T-cell ChIP-seq for ETS1, IRF4, and JUND as the experimental reference. Orange is CraftGRN, and gray is EPCOT.\nAcross the three TFs, CraftGRN is comparable to or better than EPCOT in ROC performance, with the clearest precision gains for ETS1 and IRF4.\nThese results indicate that Module 1 is not limited to the pancreatic cancer datasets.",
-      "image_sha256": "542f6897ac1a4b9949baf04826405ade7cf313942da68c93ed1ed7a98263a74a"
+      "title": "CraftGRN recovers experimentally supported TF-binding sites across TFs and cell lines",
+      "notes_text": "Here I show a set of representative genomic tracks comparing CraftGRN, Epcot predictions to experimentally detected binding sites for HNF4A in AsPC1, KLF5 in HPAF-II, and FOSL2 in HPAC.\nAs you can appreciated, Across these loci, CraftGRN predictions closely match the experimentally detected binding sites, while EPCOT tends to produce more false positive predictions, likely due to their training on unrelated cell types.",
+      "image_sha256": "b742fb70ea0f63dfcb1a80b50fdf9c68de137d5ab8f6b58caacf0d6d7f36cc54"
     },
     {
       "number": 36,
       "source_number": 36,
-      "title": "CraftGRN covers more TFs with lower computational cost",
-      "notes_text": "Beyond prediction accuracy, we also compared computational practicality.\nCraftGRN runs faster on CPU, uses less memory, and can evaluate a substantially broader set of expressed TFs. EPCOT can benefit from GPU acceleration, but its outputs remain limited to the TFs supported by the pretrained model.\nSo Module 1 combines broader TF coverage, lower computational cost, and competitive or improved prediction performance.\nThat completes the first prediction task: identifying likely TF-binding sites. The next question is which genes those sites regulate.",
-      "image_sha256": "457b170ba11e33a7ca022674c94b92333444a5a748e545c13e5b8237eef425eb"
+      "title": "CraftGRN performs well in an independent T-cell dataset",
+      "notes_text": "We want to make sure that CraftGRN don\u2019t just work on data we produced. So we downloaded a published paired ATAC and RNAseq datasets for T-cells and performed the same head-to-head comparisons between CraftGRN And Epcot.\nAgain in this completely independent dataset, CraftGRN is comparable to or better than EPCOT in ROC performance.\nThese results indicate that CraftGRN performance is stable across datasets.",
+      "image_sha256": "1b39f8de1ec5854027a08273f798a4755cbdd03c15b22a5044310745ee3371a8"
     },
     {
       "number": 37,
       "source_number": 37,
-      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
-      "notes_text": "Module 1 tells us where a TF is likely to bind.\nCraftGRN Module 2 asks the next question: which gene is that TF likely to regulate?",
-      "image_sha256": "bf8137137c8e2086fa2e4f966109827134b2988314d693963995b9c82e7c42a9"
+      "title": "CraftGRN covers more TFs with lower computational cost",
+      "notes_text": "Beyond prediction accuracy, we also compared computational practicality.\nAs you can see, CraftGRN runs much faster on CPU alone, requires less memory, and can predict the binding patterns for any expressed TFs. \nEPCOT can benefit from GPU acceleration, but its outputs remain limited to the TFs supported by the pretrained model.\nSo Module 1 combines broader TF coverage, lower computational cost, and competitive or improved prediction performance.",
+      "image_sha256": "457b170ba11e33a7ca022674c94b92333444a5a748e545c13e5b8237eef425eb"
     },
     {
       "number": 38,
       "source_number": 38,
-      "title": "Experimental methods for linking TF-binding sites to target genes",
-      "notes_text": "A predicted TF-binding site does not automatically identify its target gene.\nExperimentally, there are two major types of evidence we can use.\nOne is TF perturbation followed by RNA-seq. We knock down, knock out, or overexpress a TF and look for genes that change. But these experiments are time-consuming and costly, and the expression changes can include both direct and indirect effects. A real target can also be missed if regulation depends on multiple TFs, if another TF compensates, or if we measure at the wrong time point.\nThe other is 3D chromatin interaction data, such as Hi-C or HiChIP. These assays can provide evidence of physical contact, but they are also resource-intensive, their resolution can be broad, and physical contact does not necessarily imply functional regulation.\nThat is why computational methods combine different types of evidence to predict target genes are needed.",
-      "image_sha256": "09befd061544b8e1aaa2ca1e494fd4918bafe2b6574a97a3559e1579c8a97327"
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "Module 1 tells us where a TF is likely to bind.\nCraftGRN Module 2 asks the next question: which genes are that TF likely to regulate from the genomic loci?",
+      "image_sha256": "bf8137137c8e2086fa2e4f966109827134b2988314d693963995b9c82e7c42a9"
     },
     {
       "number": 39,
       "source_number": 39,
-      "title": "Computational methods for linking TF to target genes",
-      "notes_text": "Computationally, there are several common strategies.\nThe simplest is proximity\u2014for example, linking a binding site to the nearest gene or to genes within a TSS window. This is easy to apply, but it can miss distal regulation.\nA second approach uses 3D contact information or regulatory priors. Hi-C and HiChIP provide physical-contact information, while models such as ABC and ENCODE-rE2G combine multiple features to predict enhancer\u2013gene relationships. \nCo-accessibility approaches ask whether regulatory regions and promoters show coordinated chromatin changes across cells or samples.\nFinally, Integrated models such as Taiji, GRaNIE, and SCENIC+ combine accessibility, expression, motif, and other regulatory evidence.\nThe important point is that these approaches use different types of evidence, and no single strategy is ideal for every dataset.\nCraftGRN Module 2 follows the same idea: use the predicted TF-binding sites from Module 1, then combine genomic distance with matched multi-omic evidence and optional regulatory priors to identify likely target genes\nBack up: integrated models combine multiple data types. For example, Taiji uses chromatin accessibility, motif and gene expression to build regulatory networks; GRaNIE integrates open chromatin with RNA-seq; and SCENIC+ combines single-cell chromatin accessibility, gene expression, and motif-based regulatory information. ",
-      "image_sha256": "2d543b40508d14c551a8538f27a6bd111601f7b8deabe6848fdc6bca2c32b1bf"
+      "title": "Experimental methods for linking TF-binding sites to target genes",
+      "notes_text": "Experimentally, there are two major types of evidence that people generally use to identify target genes.\nOne is TF perturbation followed by RNA-seq. We knock down, knock out, or overexpress a TF and look for genes that change. But these experiments are time-consuming and costly, and the expression changes can include both direct and indirect effects. A real target can also be missed if regulation depends on multiple TFs, if another TF compensates, or if we measure at the wrong time point.\nThe other is 3D chromatin interaction data, such as Hi-C or HiChIP. These assays can provide evidence of physical contact, but they are also resource-intensive, their resolution can be generally very low (often ~5kb), and physical contacts do not necessarily imply functional regulation.\nThat is why computational methods combine different types of evidence to predict target genes are needed.",
+      "image_sha256": "f14e63d68a969408623d1fc95bc5b80754a29f10bf33ada71b847493ed7a6a10"
     },
     {
       "number": 40,
       "source_number": 40,
-      "title": "CraftGRN Module 2 uses proximity and correlation to predict target genes",
-      "notes_text": "So rather than relying on only one type of evidence, CraftGRN combines the information available in our matched datasets\nModule 2 begins with the TF-binding sites predicted by Module 1.\nFor each site, we identify nearby candidate genes within a genomic window. If three-dimensional interaction information is available, it can be used as an additional prior.\nAcross matched biological conditions, we then ask two questions: does target-gene expression track with TF expression, and does it also track with footprint activity?\nWhen both relationships provide support, the TF\u2013binding-site\u2013gene relationship is retained as a predicted TF\u2013target gene link.\nWe then evaluated whether these predicted targets respond in independent TF-perturbation experiments.",
-      "image_sha256": "d08e365f56176637caf35df864c5a4e4afcfc10ff24adeae2de2c0fd754442cf"
+      "title": "Existing computational methods for linking TFBS to target genes",
+      "notes_text": "Computationally, there are several common strategies.\nThe simplest is proximity\u2014for example, linking a binding site to the nearest gene or to genes within a TSS window. This is easy to apply, but it is often wrong as Enhancers don\u2019t always regulate the closest genes.\nA second approach such as ABC and ENCODE-rE2G uses 3D contact information or regulatory priors. Basically combining Hi-C and HiChIP physical-contact information with RNAseq to predict enhancer\u2013gene relationships. \nA third Co-accessibility approach performs under the assumption that enhancers and promoters show coordinated chromatin changes across cells or samples should regulate each other. \nFinally, Integrated models such as Taiji, GRaNIE, and SCENIC+ combine accessibility, expression, motif, and other regulatory evidence. \nHowever, our experiences in implementing these methods have left us disappointed with their inaccuracies.\nWe therefore set out to develop our own method.",
+      "image_sha256": "42e11b98b47853ca9eebaa122fb95ca8b34e35ca856b448d448953569666d09d"
     },
     {
       "number": 41,
       "source_number": 41,
-      "title": "CraftGRN recovers perturbation-supported SOX9 and KLF5 targets",
-      "notes_text": "Panels A and B use independent siRNA RNA-seq experiments for SOX9 and KLF5.\nCraftGRN shows substantially higher precision than Taiji and GRaNIE. As we focus on the top-ranked CraftGRN targets, those genes also show stronger downregulation after TF knockdown.\nPanels C and D summarize the predicted networks. The central red node is SOX9 or KLF5, the blue boxes are additional TFs, and the gray circles are genes.\nThe important result is not simply that some TFs appear close together on the plot. The edges show that these TFs connect to overlapping sets of predicted target genes.\nThis suggests convergence on shared downstream genes, which is consistent with combinatorial regulation, rather than each TF acting independently.\nWe next tested Module 2 outside the pancreatic cancer system.",
-      "image_sha256": "de4018e3a644e015dcdc9869c1fff42696c73aa1f4864a303ca26727db5b9f5b"
+      "title": "CraftGRN Module 2 uses proximity and correlation to predict target genes",
+      "notes_text": "Module 2 begins with the TF-binding sites predicted by Module 1.\nFor each site, we identify nearby candidate genes within a user-defined genomic window. If three-dimensional interaction information is available, it can be used as an additional prior.\nAcross matched biological conditions, we then ask two questions: does target-gene expression track with TF expression, and does it also track with the footprint activities for that TF?\nWhen both relationships provide support, the TF\u2013binding-site\u2013gene relationship is retained as a predicted TF\u2013target gene link.\nWe then evaluated whether these predicted targets respond in independent TF-perturbation experiments.",
+      "image_sha256": "d08e365f56176637caf35df864c5a4e4afcfc10ff24adeae2de2c0fd754442cf"
     },
     {
       "number": 42,
       "source_number": 42,
-      "title": "CraftGRN recovers IRF4-responsive targets in an independent T-cell dataset",
-      "notes_text": "Here we tested Module 2 in an independent T-cell dataset with IRF4 overexpression.\nIn the ROC and precision\u2013recall curves, CraftGRN clearly outperforms Taiji and GRaNIE.\nAnd on the right, the top CraftGRN predictions are increasingly enriched for genes that are strongly upregulated after IRF4 overexpression. So the ranking is putting the most IRF4-responsive genes near the top.\nWe then looked at how these predicted IRF4 targets fit into the broader T-cell regulatory network.",
-      "image_sha256": "3ba599a6a571b0c06284fa05111902ea51d39f2b8d115e8fdf079e2109fe682e"
+      "title": "CraftGRN recovers perturbation-supported SOX9 and KLF5 targets",
+      "notes_text": "Again without boring you through the series of optimization steps we performed, here is the final benchmarking results comparing CraftGRN to two state-of-art target gene prediction methods, Tajji and GRaNIE. \nIn contrast to the low precision rates of these two existing methods, CraftGRN in green is able to identify experimentally supported target genes for SOX9 and AsPC1 in two different PDAC cell lines.\nImportantly, the target gene confidence score calculated by CraftGRN tracks with the magnitude of log2 fold change from genetic silencing as determined by actual RNAseq, with top 100 scored predicted target genes showing more average expression decrease compared to top 1000 scored target genes. \nPanels C and D summarize the predicted networks. The central red node is SOX9 or KLF5, the blue boxes are additional TFs, and the gray circles are genes.\nImportantly, CraftGRN not only accurately predicted target genes for individual TFs, it predicts target genes for all expressed TFs, thus allowing us to build gene regulatory networks. \nBy building these GRNs, we are able to find other TFs that work together with SOX9 or KLF5 in co-regulating these target genes, thus identifying biologically meaning regulatory edges for further investigation. \nSo for the experimental biologists in the room, CraftGRN can not only help you generate a list of potential target genes to validate for your favorite TF, it can also help you find its friends and collaborators, basically giving you clues on other relevant TFs you might want to consider.",
+      "image_sha256": "de4018e3a644e015dcdc9869c1fff42696c73aa1f4864a303ca26727db5b9f5b"
     },
     {
       "number": 43,
       "source_number": 43,
-      "title": "IRF4, BATF, RUNX3, and T-bet converge on shared T-cell target genes",
-      "notes_text": "In this network, IRF4 is connected with BATF, RUNX3, and T-bet, or TBX21, through overlapping sets of predicted target genes.\nThese TFs connect to overlapping predicted target genes.\nThat interpretation is biologically plausible because T-cell regulation is highly combinatorial. IRF4 and BATF cooperate in T-cell regulatory programs, while RUNX3 and T-bet are major regulators of T-cell differentiation and effector function.\nSo CraftGRN recovers a coordinated multi-TF regulatory program, rather than treating each TF as an isolated regulator.\nI\u2019ll now summarize the main contributions of the dissertation.",
-      "image_sha256": "81443feed83212dc34f3081b7d83abc209385ee05853288c4eccae12708074a4"
+      "title": "CraftGRN recovers IRF4-responsive targets in an independent T-cell dataset",
+      "notes_text": "Next, we tested CrafGRN Module 2 against an independent T-cell dataset,  this time with IRF4 overexpression. Again, in the ROC and precision\u2013recall curves, CraftGRN clearly outperforms Taiji and GRaNIE. On the right, you can see the top CraftGRN predictions are increasingly enriched for genes that are upregulated after IRF4, whereas the other methods show no such trends.",
+      "image_sha256": "3ba599a6a571b0c06284fa05111902ea51d39f2b8d115e8fdf079e2109fe682e"
     },
     {
       "number": 44,
       "source_number": 44,
-      "title": "Conclusion",
-      "notes_text": "To summarize, this work makes three connected contributions.\nFirst, fp-tools provides reproducible and efficient ATAC-seq footprinting for bulk and single-cell data.\nSecond, CraftGRN Module 1 combines footprints, motifs, and TF expression to predict condition-specific TF-binding sites.\nThird, CraftGRN Module 2 combines genomic proximity with matched regulatory evidence to predict likely target genes.\nIndependent TF-binding and perturbation datasets support these predictions across pancreatic cancer and T-cell systems.\nOverall, fp-tools and CraftGRN provide an integrated path from chromatin accessibility, to TF binding, and finally to predicted gene regulation.\nThese results also point to several future directions.",
-      "image_sha256": "ba9f809b9200349e762c6de81ab6bfc9529b9eced7cf738e53ce3830f67e5ae2"
+      "title": "IRF4, BATF, RUNX3, and T-bet converge on shared T-cell target genes",
+      "notes_text": "Here is CraftGRN-predicted top IRF4 regulatory network, IRF4 is predicted to work closely with BATF, RUNX3, and TBX21 (better know as T-bet), matching existing knowledge.",
+      "image_sha256": "06e81c7ff06bc4936f331de6df7f59258652713a4eacf74557cb7f41314db1fd"
     },
     {
       "number": 45,
       "source_number": 45,
-      "title": "Future Directions",
-      "notes_text": "There are three main directions for extending this work.\nFirst, because footprint performance depends on the TF, future versions could select or combine footprint callers based on TF-specific performance.\nSecond, CraftGRN can be extended from condition-level analysis to cell-state-resolved networks using single-cell multiome data.\nThird, Module 3 will focus on differential regulatory programs\u2014identifying coordinated TF\u2013gene programs that change across biological conditions.\nFinally, I\u2019d like to acknowledge the people who made this work possible.",
-      "image_sha256": "6f8715d80e80c862068b8a1bdb1842b644547cb04c32ae18c5e4eb8e8c7f4b39"
+      "title": "Conclusion",
+      "notes_text": "To summarize, this work makes three connected contributions.\nFirst, fp-tools provides reproducible and efficient ATAC-seq footprinting for bulk and single-cell data.\nSecond, CraftGRN Module 1 combines footprints, motifs, and TF expression to predict condition-specific TF-binding sites.\nThird, CraftGRN Module 2 combines genomic proximity with matched regulatory evidence to predict likely target genes.\nIndependent TF-binding and perturbation datasets support these predictions across pancreatic cancer and T-cell systems.\nOverall, fp-tools and CraftGRN provide an integrated path from chromatin accessibility, to TF binding, and finally to predicted gene regulation.\nThese results also point to several future directions.",
+      "image_sha256": "13fce0d22e728507c42752c4bcc8fdce23dfb3a8bd28cf6e19ac2e8652e02688"
     },
     {
       "number": 46,
       "source_number": 46,
+      "title": "Future Directions",
+      "notes_text": "There are 2 main directions for extending this work.\nFirst, we are in active development of CraftGRN Module 3, which focuses on automating the extraction of biologically meaningful GRNs and performing differential GRN analysis across conditions.\nSecond, we want to extend CraftGRN from condition-level analysis to cell-state-resolved networks using single-cell multiome data, and ultimately apply to spatial single-cell data.\nFinally, I\u2019d like to acknowledge the people who made this work possible.",
+      "image_sha256": "b04085c3d0af3cde91508508bdcdcefbb3e867a6c04988d81d2a0f5bdcf153c7"
+    },
+    {
+      "number": 47,
+      "source_number": 47,
       "title": "Acknowledgments",
       "notes_text": "I\u2019d first like to thank Dr. Yi for her guidance, patience, and continuous support throughout this work.\nI also sincerely thank Dr. Amri, Dr. Edwards, Dr. Nair, and Dr. Suter for their time, thoughtful feedback, and guidance as members of my committee.\nI\u2019d also like to thank Dr. Jessica Jones for her support throughout the program.\nFinally, thank you to all members of the Yi Lab for their help, discussions, collaboration, and encouragement.\nThank you very much. I\u2019m happy to take any questions.",
       "image_sha256": "af80ad2f5b92e3409b62f9ca9a89a3187644b16afcf61b4e6766b24abdfc019d"
     },
     {
-      "number": 47,
-      "source_number": 47,
+      "number": 48,
+      "source_number": 48,
       "title": "Backup slides",
       "notes_text": "",
       "image_sha256": "10da66c0680331e7b803727f55a44c1c281bceb46362ac37e1cead3dd0af99be"
     },
     {
-      "number": 48,
-      "source_number": 48,
+      "number": 49,
+      "source_number": 49,
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "I\u2019ll begin with the fp-tools",
+      "image_sha256": "9273c501fd768aeaac53d8d7fe03a027c872b9c74880f7a72f681b563f607d19"
+    },
+    {
+      "number": 50,
+      "source_number": 50,
+      "title": "Experimental challenges in measuring TF binding",
+      "notes_text": "While these The problem is scale.\nWe have many TFs, but these are targeted assays, so each TF usually needs its own experiment. \nThat quickly becomes many experiments, and it also depends on having a good TF-specific antibody. \nMore experiments means more time and cost. ",
+      "image_sha256": "2bcd8963e42a96e850eff7d18dff55fd705871db22e65f4d625ac5f75af248d0"
+    },
+    {
+      "number": 51,
+      "source_number": 51,
       "title": "Gaps in existing ATAC-seq footprinting tools",
       "notes_text": "novelty:\nfp-tools extends interpretable TOBIAS-style footprinting into a faster, replicate-aware, single-cell-capable, de novo-motif-aware, and fully reproducible analysis platform.\nCompared with the TOBIAS-style baseline, fp-tools adds or extends:\nImproved computational efficiency\nFaster execution and lower peak memory in the matched benchmark. \nDe novo motif discovery integrated with footprint analysis\nCandidate footprints can be exported, analyzed with MEME/DREME/STREME, compared with known motifs using Tomtom, and carried back into downstream analysis. \nBiological-replicate differential footprinting\nPer-replicate motif scores, replicate summaries, empirical-Bayes moderated testing, and multiple-testing correction rather than treating conditions as single profiles. \nCross-sample footprint normalization and scaled aggregation\nIncluding shared-background q95 scaling for multi-sample comparisons. \nIntegrated pseudobulk single-cell workflow\nGrouped scATAC fragments can enter the same core footprint pipeline, with cell-level KNN-smoothed footprint signatures for visualization. \nInteractive and publication-oriented reporting\nInteractive HTML reports, linked motif/footprint views, and editable SVG export. \nReproducible execution surfaces\nCommand line, saved YAML configurations, browser GUI, run history, and auditable analysis settings. \nOrthogonal validation framework\nThe full workflow was benchmarked against matched TF ChIP-seq across 12 TF\u2013cell-line comparisons in five cancer cell lines; footprint-score AUROC exceeded PWM AUROC in 10 of 12 comparisons.",
       "image_sha256": "c32b1d2ff31a176e9e7fa27fdbe4b6a1c0a14d8f9a752cdb83c286aae5db7b08"
     },
     {
-      "number": 49,
-      "source_number": 49,
+      "number": 52,
+      "source_number": 52,
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "Now I will introduce CraftGRN. ",
+      "image_sha256": "0ae70d4e30edec583f19e8b4d50fb8b76cefe7fdec3b74f73c538ed651c85276"
+    },
+    {
+      "number": 53,
+      "source_number": 53,
       "title": "CraftGRN recovers HNF4A binding beyond canonical motif matches",
       "notes_text": "Here I\u2019m showing representative HNF4A loci. The purple track is the independent CUT&Tag signal, the orange marks are canonical motif-supported sites, and the blue marks are CraftGRN predictions.\nYou can see that CraftGRN recovers many binding sites that are not captured by canonical motif matching alone. This is exactly the advantage we were aiming for: extending TF assignment beyond canonical motif matches while still keeping the predictions anchored to footprint activity and matched TF expression.",
       "image_sha256": "060e0cde769ada0f3ab53523accfb165cb0abaacf104f6663f365e4a9a6e5d80"
     },
     {
-      "number": 50,
-      "source_number": 50,
+      "number": 54,
+      "source_number": 54,
+      "title": "Footprint signal improves TF-binding prediction",
+      "notes_text": "Before showing the comparison, I\u2019ll briefly define the main metrics.\nRecall, or true-positive rate, is the fraction of experimentally detected binding sites that we recover. Precision is the fraction of our predictions that are experimentally supported. The false-positive rate measures how often we incorrectly predict binding at negative sites.\nIn the curves below, blue uses the correlation between TF expression and the broad ATAC-seq signal. Orange uses the correlation with the localized footprint signal.\nIn both the MAFF and HNF4G benchmarks, the footprint-based approach gives higher true-positive rates and higher precision.\nSo the localized footprint signal is more informative for TF-binding prediction than accessibility alone.",
+      "image_sha256": "896b981e711dd0bf12b16cd7f5cb65ceae25535fa60684fc46a8c87beacc0067"
+    },
+    {
+      "number": 55,
+      "source_number": 55,
+      "title": "Top footprint-ranked sites contain more true TF-binding predictions",
+      "notes_text": "Here I focus only on the top-ranked predictions.\nGreen represents true positives, and orange represents false positives. As we move from the top 30,000 predictions toward the top 5,000, the footprint-based ranking contains a progressively higher proportion of true positives.\nCompared with the ATAC-based ranking, the footprint ranking contains fewer false positives, especially among the highest-ranked sites.\nBased on this result, we use footprint activity as the main regulatory signal in the downstream CraftGRN predictions.",
+      "image_sha256": "81de0220a87adcfbede09bd36c7eb70c84e41182d4406f7cf7d46077647226e7"
+    },
+    {
+      "number": 56,
+      "source_number": 56,
       "title": "CraftGRN recovers TF-binding sites near epithelial and adaptive-response genes",
       "notes_text": "These tracks show what the predictions look like at individual genomic regions in HPAF-II cells.\nBlue is the ATAC-seq signal, purple is the independent TF-specific signal and detected peak calls, orange is CraftGRN, and gray is EPCOT. The gene models below provide the local genomic context.\nAcross regions near EPCAM, JUP, VIL1, ELF3, EGR1, PCK2, and JAG1, CraftGRN predictions align closely with experimentally detected TF-binding sites.\nThese genes are associated with epithelial identity, junction organization, stress response, metabolism, and Notch-related signaling.\nAt this stage, the gene names provide genomic context; the actual target-gene assignment comes later in Module 2.",
       "image_sha256": "3d0565123b1a52ab2f035c31cce97f830170d038d6c4131d377dbf397d3e8a15"
     },
     {
-      "number": 51,
-      "source_number": 51,
+      "number": 57,
+      "source_number": 57,
       "title": "CraftGRN recovers multi-TF binding near epithelial and survival genes",
       "notes_text": "We see similar locus-level agreement in AsPC1 across several TF families, including HNF4A, FOSL1, FOSL2, HNF4G, and KLF5.\nCraftGRN recovers experimentally supported binding sites near genes associated with epithelial identity and polarity, such as EPCAM, LGALS4, ELF3, PARD6B, and MUC17, as well as adaptive-response genes such as BNIP3L and EGR1.\nThe key result is agreement at individual binding sites across multiple TFs, rather than only an improvement in aggregate performance.",
       "image_sha256": "e78c7348248fbb859313e18ea21c036e68a68131577fd8fd34ee40c80380736e"
     },
     {
-      "number": 52,
-      "source_number": 52,
+      "number": 58,
+      "source_number": 58,
       "title": "CraftGRN recovers FOSL2 binding near invasion and epithelial genes",
       "notes_text": "This slide focuses on FOSL2 binding in HPAC cells.\nCraftGRN recovers experimentally supported sites near genes involved in invasion and remodeling, such as MMP7; metabolic adaptation, such as PCK2; AP-1 feedback, including FOS and JUND; and epithelial adhesion and polarity, including CDH1, CLDN3, CLDN7, and PARD6B.\nAgain, these are binding-site predictions near biologically relevant genes. They do not yet establish that every nearby gene is directly regulated by FOSL2.",
       "image_sha256": "3ec7e88c637982a446bcf435f42ace13e90a87a648e328ae58754254b6a0bfd0"
     },
     {
-      "number": 53,
-      "source_number": 53,
-      "title": "Combining TF\u2013gene and footprint\u2013gene evidence improves target ranking",
-      "notes_text": "",
-      "image_sha256": "d39ac64ae1787721cf711b9b45af405b7c5256a17c406b70e2af668cf48a9757"
+      "number": 59,
+      "source_number": 59,
+      "title": "fp-toolsReproducible ATAC-seq footprinting for bulk and single-cell dataCraftGRN Module 1Predicting condition-specific TF-binding sitesCraftGRN Module 2Predicting TF regulated target genes",
+      "notes_text": "Module 1 tells us where a TF is likely to bind.\nCraftGRN Module 2 asks the next question: which genes are that TF likely to regulate from the genomic loci?",
+      "image_sha256": "bf8137137c8e2086fa2e4f966109827134b2988314d693963995b9c82e7c42a9"
     },
     {
-      "number": 54,
-      "source_number": 54,
+      "number": 60,
+      "source_number": 60,
+      "title": "Combining TF\u2013gene and footprint\u2013gene evidence improves target ranking",
+      "notes_text": "",
+      "image_sha256": "78f19923645af13f6fa64f3564b90bf02dbe92a39551bfa0db24a8360da47725"
+    },
+    {
+      "number": 61,
+      "source_number": 61,
       "title": "Target-gene ranking is not determined by distance alone",
       "notes_text": "",
       "image_sha256": "3a5bf091db22ef6f4e08b63d21551c673b6a2e5344e9bdcf2625a094c48d52b5"
     },
     {
-      "number": 55,
-      "source_number": 55,
+      "number": 62,
+      "source_number": 62,
       "title": "Narrower windows reduce the candidate-gene search space",
       "notes_text": "",
       "image_sha256": "fd1bf02b99b3150c2127995d8e667d27a57afb5b7ab32cfb4b0cf91b27d6700b"
     },
     {
-      "number": 56,
-      "source_number": 56,
+      "number": 63,
+      "source_number": 63,
+      "title": "LASSO, Elastic Net, SuSiE for TF-target prediction",
+      "notes_text": "",
+      "image_sha256": "33b13724d9e40690ae9ae215fd1adbbe26c7cd4b817720fc4801a8131818dbce"
+    },
+    {
+      "number": 64,
+      "source_number": 64,
+      "title": "LASSO, Elastic Net, SuSiE for TF-target prediction",
+      "notes_text": "",
+      "image_sha256": "d6dfbd9afdb5d50fc812dbd020030ca44f609f740d125c302ec693b4abf4b3ff"
+    },
+    {
+      "number": 65,
+      "source_number": 65,
       "title": "CraftGRN shows stronger target ranking than Taiji and GRaNIE in the evaluated benchmarks",
       "notes_text": "compare CraftGRN with Taiji and GRaNIE for the KLF5 and SOX9 benchmarks. \nstronger CraftGRN performance for KLF5 and generally higher precision for SOX9.",
       "image_sha256": "ace7c8969779d5f74f090f32e93dbe619cf333575030be3f065e0e7eac5c001f"
     },
     {
-      "number": 57,
-      "source_number": 57,
+      "number": 66,
+      "source_number": 66,
       "title": "CraftGRN shows stronger target ranking than Taiji and GRaNIE in the evaluated benchmarks",
       "notes_text": "compare CraftGRN with Taiji and GRaNIE for the KLF5 and SOX9 benchmarks. \nstronger CraftGRN performance for KLF5 and generally higher precision for SOX9.",
       "image_sha256": "1d248b78732fbd5e90a36512da1048f6ad9268b1ad63e49a9c0f683cf04bcfe5"
     },
     {
-      "number": 58,
-      "source_number": 58,
+      "number": 67,
+      "source_number": 67,
       "title": "Top 200 predicted targets recover distinct TF-associated pathways",
       "notes_text": "",
       "image_sha256": "490745a678cc25b0e58c97260d630763043ce061560dc6b37d430dfcfeeaf7a3"
     },
     {
-      "number": 59,
-      "source_number": 59,
+      "number": 68,
+      "source_number": 68,
       "title": "BATF, IRF4, RUNX3, and T-bet targets converge on T-cell pathways",
       "notes_text": "",
       "image_sha256": "92b69a95a770fdbdb03c743e49b057f476244f4210cecc63af7b7b8a0ade6140"

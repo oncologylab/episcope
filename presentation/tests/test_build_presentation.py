@@ -104,6 +104,24 @@ class ParsePresentationTests(unittest.TestCase):
 
 
 class SiteGenerationTests(unittest.TestCase):
+    def test_production_contract_targets_updated_source_and_only_two_demos(self):
+        builder = load_builder()
+
+        self.assertEqual(builder.EXPECTED_SLIDE_COUNT, 68)
+        self.assertEqual(
+            builder.EXPECTED_SOURCE_SHA256,
+            "18f9afa2f7b8d9720888934baae21c01069c737296507e13902a655803eba4c0",
+        )
+        self.assertEqual(set(builder.DEMOS), {14, 22})
+        self.assertEqual(
+            builder.DEMOS[14]["url"],
+            "https://oncologylab.github.io/fp-tools/demos/reports/diff_footprints_K562_HepG2.html",
+        )
+        self.assertEqual(
+            builder.DEMOS[22]["url"],
+            "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home",
+        )
+
     def test_generates_reveal_sections_manifest_and_exact_demo_mappings(self):
         builder = load_builder()
         with tempfile.TemporaryDirectory() as directory:
@@ -143,39 +161,36 @@ class SiteGenerationTests(unittest.TestCase):
         self.assertIn('class="demo demo-seamless demo-scaled-dashboard"', builder._demo_markup(14))
         self.assertIn('data-demo-mode="scaled-dashboard"', builder._demo_markup(14))
         self.assertIn("--demo-scale:0.9", builder._demo_markup(14))
-        self.assertIn('data-demo-mode="standard"', builder._demo_markup(20))
-        self.assertNotIn("demo-seamless", builder._demo_markup(20))
+        self.assertIn('data-demo-mode="standard"', builder._demo_markup(22))
+        self.assertNotIn("demo-seamless", builder._demo_markup(22))
         self.assertEqual(
             builder.DEMOS[14]["url"],
             "https://oncologylab.github.io/fp-tools/demos/reports/diff_footprints_K562_HepG2.html",
         )
         self.assertEqual(
-            builder.DEMOS[20]["url"],
+            builder.DEMOS[22]["url"],
             "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home",
         )
-        self.assertEqual(
-            builder.DEMOS[43]["url"],
-            "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html?embed=canvas",
-        )
+        self.assertEqual(builder._demo_markup(20), "")
+        self.assertEqual(builder._demo_markup(43), "")
 
-    def test_writes_runtime_assets_and_copies_local_demo_byte_for_byte(self):
+    def test_writes_runtime_assets_and_removes_obsolete_local_demos(self):
         builder = load_builder()
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             output = directory / "site"
-            local_demo = directory / "network.html"
-            local_demo.write_bytes(b"<!doctype html><title>network</title>\n")
-            builder.write_runtime_assets(output, local_demo)
+            demos = output / "demos"
+            demos.mkdir(parents=True)
+            (demos / "obsolete.html").write_text("obsolete\n", encoding="ascii")
+            builder.write_runtime_assets(output)
 
             javascript = (output / "assets" / "presentation.js").read_text(encoding="ascii")
             stylesheet = (output / "assets" / "presentation.css").read_text(encoding="ascii")
-            copied_demo = output / "demos" / "IRF4_Fibroblast_top100_log2fc0p5_network.html"
-            copied_demo_bytes = copied_demo.read_bytes()
 
         self.assertIn("iframe.src = demo.dataset.demoUrl", javascript)
         self.assertIn("Reveal.on(\"slidechanged\"", javascript)
         self.assertIn("--demo-left", stylesheet)
-        self.assertEqual(copied_demo_bytes, b"<!doctype html><title>network</title>\n")
+        self.assertFalse(demos.exists())
 
     def test_render_validation_requires_every_4k_slide(self):
         builder = load_builder()
@@ -261,8 +276,6 @@ else:
             directory = Path(directory)
             source = directory / "fixture.pptx"
             write_fixture(source)
-            local_demo = directory / "network.html"
-            local_demo.write_text("<!doctype html>network\n", encoding="ascii")
             reveal = directory / "reveal.js"
             (reveal / "dist" / "plugin").mkdir(parents=True)
             for path in (
@@ -281,7 +294,6 @@ else:
             builder.build_deck(
                 source,
                 output,
-                local_demo,
                 reveal,
                 expected_slide_count=2,
                 render=False,
@@ -306,7 +318,6 @@ else:
                 builder.build_deck(
                     source,
                     output,
-                    local_demo,
                     reveal,
                     expected_slide_count=2,
                     expected_source_sha256="0" * 64,

@@ -10,13 +10,18 @@ async function goToSlide(page, number) {
   await expect(page.locator(`#slide-${number}`)).toHaveClass(/present/);
 }
 
-test("loads all 59 slides with matching deep links and numbering", async ({ page }) => {
+test("loads all 68 slides with matching deep links and numbering", async ({ page }) => {
   await openDeck(page);
-  await expect(page.locator(".reveal .slides > section")).toHaveCount(59);
-  await expect(page.locator(".slide-number")).toContainText("1 / 59");
-  await goToSlide(page, 59);
-  await expect(page).toHaveURL(/#\/slide-59$/);
-  await expect(page.locator(".slide-number")).toContainText("59 / 59");
+  await expect(page.locator(".reveal .slides > section")).toHaveCount(68);
+  await expect(page.locator(".slide-number")).toContainText("1 / 68");
+  await expect(page.locator(".demo")).toHaveCount(2);
+  const demoSlideIds = await page.locator("section:has(> .demo)").evaluateAll((slides) =>
+    slides.map((slide) => slide.id)
+  );
+  expect(demoSlideIds).toEqual(["slide-14", "slide-22"]);
+  await goToSlide(page, 68);
+  await expect(page).toHaveURL(/#\/slide-68$/);
+  await expect(page.locator(".slide-number")).toContainText("68 / 68");
 });
 
 test("keeps remote reports lazy and provides exit and fallback controls", async ({ page }) => {
@@ -115,76 +120,18 @@ test("restores the static slide and direct link when a remote demo is blocked", 
   await expect(slide.locator(".demo-fallback")).toHaveAttribute("href", reportUrl);
 });
 
-test("loads the GUI and local IRF4 network in their requested slides", async ({ page }) => {
+test("loads the GUI on slide 22 while the other slides remain static", async ({ page }) => {
   const guiUrl = "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home";
   await page.route("https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html", async (route) => {
     await route.fulfill({ contentType: "text/html", body: "<!doctype html><main id=main-content>GUI ready</main>" });
   });
   await openDeck(page);
-  await goToSlide(page, 20);
-  const guiSlide = page.locator("#slide-20");
+  await goToSlide(page, 22);
+  const guiSlide = page.locator("#slide-22");
   await guiSlide.locator(".demo-activate").click();
   await expect(guiSlide.locator("iframe").contentFrame().locator("#main-content")).toHaveText("GUI ready");
   await guiSlide.locator(".demo-exit").click();
-
-  await goToSlide(page, 43);
-  const networkSlide = page.locator("#slide-43");
-  await networkSlide.locator(".demo-activate").click();
-  await expect(networkSlide.locator("iframe")).toHaveAttribute("src", /embed=canvas$/);
-  const network = networkSlide.locator("iframe").contentFrame();
-  await expect(network.locator(".top")).toBeHidden();
-  await expect(network.locator("#stats")).toBeHidden();
-  await expect(network.locator("#canvas svg")).toBeVisible();
-  const canvasLayout = await network.locator("#canvas").evaluate((canvas) => {
-    const bounds = canvas.getBoundingClientRect();
-    return {
-      left: bounds.left,
-      top: bounds.top,
-      width: bounds.width,
-      height: bounds.height,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    };
-  });
-  expect(canvasLayout.left).toBeCloseTo(0, 0);
-  expect(canvasLayout.top).toBeCloseTo(0, 0);
-  expect(canvasLayout.width).toBeCloseTo(canvasLayout.viewportWidth, 0);
-  expect(canvasLayout.height).toBeCloseTo(canvasLayout.viewportHeight, 0);
-  const firstNode = network.locator("#nodeLayer > *").first();
-  await expect(firstNode).toBeVisible();
-  const nodeId = await firstNode.getAttribute("data-id");
-  await firstNode.hover();
-  await expect(network.locator("#tooltip")).toBeVisible();
-  await expect(network.locator("#tooltip")).not.toHaveText("");
-  await firstNode.click();
-  const selectedNode = network.locator(`#nodeLayer > [data-id="${nodeId}"]`);
-  await expect(selectedNode).toHaveAttribute("stroke", "#D7263D");
-  const beforeDrag = await selectedNode.evaluate((node) =>
-    Number(node.getAttribute("cx") || node.getAttribute("x"))
-  );
-  const nodeBounds = await selectedNode.boundingBox();
-  await page.mouse.move(nodeBounds.x + nodeBounds.width / 2, nodeBounds.y + nodeBounds.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(
-    nodeBounds.x + nodeBounds.width / 2 + 120,
-    nodeBounds.y + nodeBounds.height / 2 + 60,
-    { steps: 10 }
-  );
-  await page.mouse.up();
-  const afterDrag = await network.locator(`#nodeLayer > [data-id="${nodeId}"]`).evaluate((node) =>
-    Number(node.getAttribute("cx") || node.getAttribute("x"))
-  );
-  expect(afterDrag).not.toBeCloseTo(beforeDrag, 0);
-  await page.evaluate(() => Reveal.slide(43));
-  await expect(page.locator("#slide-44")).toHaveClass(/present/);
-  await expect(networkSlide.locator(".demo-frame")).toBeHidden();
-  await expect(networkSlide.locator(".demo-fallback")).toBeVisible();
-  const revealFocus = await page.evaluate(() => ({
-    isFocused: Reveal.isFocused(),
-    iframeFocused: document.activeElement === document.querySelector("#slide-43 iframe"),
-  }));
-  expect(revealFocus.isFocused).toBe(true);
-  expect(revealFocus.iframeFocused).toBe(false);
+  await expect(page.locator("#slide-20 .demo, #slide-43 .demo, #slide-44 .demo")).toHaveCount(0);
 });
 
 test("opens speaker view with current notes, next slide, clock, and timer", async ({ page }) => {
@@ -201,9 +148,10 @@ test("opens speaker view with current notes, next slide, clock, and timer", asyn
 
 test("has one aligned notes element per slide, including explicit empty notes", async ({ page }) => {
   await openDeck(page);
-  await expect(page.locator("aside.notes")).toHaveCount(59);
+  await expect(page.locator("aside.notes")).toHaveCount(68);
   await expect(page.locator("#slide-14 aside.notes")).toContainText("HNF4A and ONECUT2 are stronger in HepG2");
-  await expect(page.locator("#slide-20 aside.notes")).toContainText("same reproducible workflow");
-  await expect(page.locator("#slide-43 aside.notes")).toContainText("coordinated multi-TF regulatory program");
-  await expect(page.locator("#slide-59 aside.notes")).toHaveText("");
+  await expect(page.locator("#slide-22 aside.notes")).toContainText("same reproducible workflow used by the command line");
+  for (const number of [48, 60, 61, 62, 63, 64, 67, 68]) {
+    await expect(page.locator(`#slide-${number} aside.notes`)).toHaveText("");
+  }
 });

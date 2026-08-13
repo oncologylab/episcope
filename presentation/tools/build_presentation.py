@@ -26,7 +26,8 @@ NS = {"p": PRESENTATION_NS, "a": DRAWING_NS, "r": RELATIONSHIP_NS}
 
 EXPECTED_WIDTH = 12192000
 EXPECTED_HEIGHT = 6858000
-EXPECTED_SOURCE_SHA256 = "7bf130f07bc057d275ef2d5a5403edde3b8efa632d5558c0052c9479cf6becc9"
+EXPECTED_SLIDE_COUNT = 68
+EXPECTED_SOURCE_SHA256 = "18f9afa2f7b8d9720888934baae21c01069c737296507e13902a655803eba4c0"
 RENDERER_IMAGE = "craftgrn-presentation-renderer:ubuntu24.04-lo24.2.7-poppler24.02.0"
 RENDERER_PROVENANCE = {
     "mode": "docker",
@@ -48,7 +49,7 @@ DEMOS = {
         "width": 90.506,
         "height": 90.506,
     },
-    20: {
+    22: {
         "url": "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home",
         "label": "Activate fp-tools GUI demo",
         "mode": "standard",
@@ -57,16 +58,6 @@ DEMOS = {
         "top": 15.351,
         "width": 69.894,
         "height": 75.132,
-    },
-    43: {
-        "url": "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html?embed=canvas",
-        "label": "Activate interactive IRF4 network",
-        "mode": "canvas",
-        "scale": 1,
-        "left": 23.436,
-        "top": 15.450,
-        "width": 53.145,
-        "height": 75.547,
     },
 }
 
@@ -305,7 +296,7 @@ def generate_site(
     presentation: Presentation,
     source: Path,
     output: Path,
-    expected_slide_count: int = 59,
+    expected_slide_count: int = EXPECTED_SLIDE_COUNT,
     renderer_provenance: dict[str, str] | None = None,
 ) -> None:
     if len(presentation.slides) != expected_slide_count:
@@ -407,17 +398,14 @@ RUNTIME_JS = """(() => {
 """
 
 
-def write_runtime_assets(output: Path, local_demo: Path) -> None:
+def write_runtime_assets(output: Path) -> None:
     assets = output / "assets"
     demos = output / "demos"
     assets.mkdir(parents=True, exist_ok=True)
-    demos.mkdir(parents=True, exist_ok=True)
     (assets / "presentation.css").write_text(RUNTIME_CSS, encoding="ascii")
     (assets / "presentation.js").write_text(RUNTIME_JS, encoding="ascii")
-    shutil.copyfile(
-        local_demo,
-        demos / "IRF4_Fibroblast_top100_log2fc0p5_network.html",
-    )
+    if demos.exists():
+        shutil.rmtree(demos)
 
 
 def _png_dimensions(path: Path) -> tuple[int, int]:
@@ -428,7 +416,7 @@ def _png_dimensions(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", header[16:24])
 
 
-def validate_rendered_slides(slides: Path, expected_count: int = 59) -> None:
+def validate_rendered_slides(slides: Path, expected_count: int = EXPECTED_SLIDE_COUNT) -> None:
     rendered = sorted(slides.glob("slide-*.png"))
     if len(rendered) != expected_count:
         raise ValueError(f"Expected {expected_count} rendered slides, found {len(rendered)}")
@@ -470,7 +458,7 @@ def copy_reveal_vendor(reveal_root: Path, output: Path) -> None:
 def render_slides(
     source: Path,
     destination: Path,
-    expected_count: int = 59,
+    expected_count: int = EXPECTED_SLIDE_COUNT,
     soffice: str = "soffice",
     pdftoppm: str = "pdftoppm",
 ) -> None:
@@ -582,7 +570,7 @@ def _publish_rendered_slides(temporary: Path, destination: Path, expected_count:
 def render_slides_docker(
     source: Path,
     destination: Path,
-    expected_count: int = 59,
+    expected_count: int = EXPECTED_SLIDE_COUNT,
     docker: str = "docker",
     image: str = RENDERER_IMAGE,
 ) -> None:
@@ -619,9 +607,8 @@ def render_slides_docker(
 def build_deck(
     source: Path,
     output: Path,
-    local_demo: Path,
     reveal_root: Path,
-    expected_slide_count: int = 59,
+    expected_slide_count: int = EXPECTED_SLIDE_COUNT,
     expected_source_sha256: str | None = None,
     render: bool = True,
     use_docker: bool = True,
@@ -653,7 +640,7 @@ def build_deck(
         expected_slide_count=expected_slide_count,
         renderer_provenance=renderer_provenance,
     )
-    write_runtime_assets(output, local_demo)
+    write_runtime_assets(output)
     copy_reveal_vendor(reveal_root, output)
 
 
@@ -671,11 +658,6 @@ def main() -> None:
         default=presentation_root / "reveal",
     )
     parser.add_argument(
-        "--local-demo",
-        type=Path,
-        default=presentation_root / "IRF4_Fibroblast_top100_log2fc0p5_network.html",
-    )
-    parser.add_argument(
         "--reveal-root",
         type=Path,
         default=presentation_root / "node_modules" / "reveal.js",
@@ -686,7 +668,6 @@ def main() -> None:
     build_deck(
         args.source,
         args.output,
-        args.local_demo,
         args.reveal_root,
         expected_source_sha256=EXPECTED_SOURCE_SHA256,
         render=not args.skip_render,

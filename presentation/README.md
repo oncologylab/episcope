@@ -1,8 +1,7 @@
 # Thesis presentation
 
 This directory contains the generated Reveal.js version of the 2026 thesis
-presentation. The PowerPoint source and the source copy of the IRF4 network
-demo remain local and are ignored by Git.
+presentation. The PowerPoint source remains local and is ignored by Git.
 
 ## Build
 
@@ -15,7 +14,7 @@ npm run build
 ```
 
 The build validates the approved PowerPoint SHA-256 checksum, extracts all
-speaker notes, renders 59 slides at 3840x2160, and writes the public site to
+speaker notes, renders 68 slides at 3840x2160, and writes the public site to
 `reveal/`. Use `npm run build:site` to regenerate HTML and runtime assets from
 an existing validated slide render.
 
@@ -38,5 +37,6 @@ python3 -m http.server 8000 --directory ..
 npm run test:e2e
 ```
 
-In the presentation, press `S` to open Reveal.js speaker view. Slides 14, 20,
-and 43 expose click-to-activate interactive demonstrations.
+In the presentation, press `S` to open Reveal.js speaker view. Slides 14 and 22
+expose click-to-activate interactive demonstrations; every other slide is a
+static 3840x2160 image.
