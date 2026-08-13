@@ -116,11 +116,27 @@ test("loads the GUI and local IRF4 network in their requested slides", async ({ 
   await goToSlide(page, 43);
   const networkSlide = page.locator("#slide-43");
   await networkSlide.locator(".demo-activate").click();
+  await expect(networkSlide.locator("iframe")).toHaveAttribute("src", /embed=canvas$/);
   const network = networkSlide.locator("iframe").contentFrame();
-  await expect(network.locator("#cond1Select")).toBeVisible();
+  await expect(network.locator(".top")).toBeHidden();
+  await expect(network.locator("#stats")).toBeHidden();
   await expect(network.locator("#canvas svg")).toBeVisible();
-  await network.locator("#layout").selectOption("circle");
-  await expect(network.locator("#stats")).toContainText("nodes");
+  const canvasLayout = await network.locator("#canvas").evaluate((canvas) => {
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+      height: bounds.height,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(canvasLayout.left).toBeCloseTo(0, 0);
+  expect(canvasLayout.top).toBeCloseTo(0, 0);
+  expect(canvasLayout.width).toBeCloseTo(canvasLayout.viewportWidth, 0);
+  expect(canvasLayout.height).toBeCloseTo(canvasLayout.viewportHeight, 0);
+  await expect(network.locator("#nodeLayer > *").first()).toBeVisible();
   await networkSlide.locator(".demo-exit").click();
   await page.keyboard.press("ArrowRight");
   await expect(page.locator("#slide-44")).toHaveClass(/present/);

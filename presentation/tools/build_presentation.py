@@ -59,7 +59,7 @@ DEMOS = {
         "height": 75.132,
     },
     43: {
-        "url": "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html",
+        "url": "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html?embed=canvas",
         "label": "Activate interactive IRF4 network",
         "mode": "canvas",
         "scale": 1,

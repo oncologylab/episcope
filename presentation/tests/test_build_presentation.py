@@ -153,7 +153,10 @@ class SiteGenerationTests(unittest.TestCase):
             builder.DEMOS[20]["url"],
             "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home",
         )
-        self.assertEqual(builder.DEMOS[43]["url"], "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html")
+        self.assertEqual(
+            builder.DEMOS[43]["url"],
+            "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html?embed=canvas",
+        )
 
     def test_writes_runtime_assets_and_copies_local_demo_byte_for_byte(self):
         builder = load_builder()
