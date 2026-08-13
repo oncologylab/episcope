@@ -110,7 +110,7 @@ class SiteGenerationTests(unittest.TestCase):
         self.assertEqual(builder.EXPECTED_SLIDE_COUNT, 68)
         self.assertEqual(
             builder.EXPECTED_SOURCE_SHA256,
-            "18f9afa2f7b8d9720888934baae21c01069c737296507e13902a655803eba4c0",
+            "290e92bb5796e039cbcc25bcf6b63fea8da9e2f4fcfab39089b9e9d411510e1f",
         )
         self.assertEqual(set(builder.DEMOS), {14, 22})
         self.assertEqual(

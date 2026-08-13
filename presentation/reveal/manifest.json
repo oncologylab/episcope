@@ -1,6 +1,6 @@
 {
   "source_filename": "20260813_thesis_presentation.pptx",
-  "source_sha256": "18f9afa2f7b8d9720888934baae21c01069c737296507e13902a655803eba4c0",
+  "source_sha256": "290e92bb5796e039cbcc25bcf6b63fea8da9e2f4fcfab39089b9e9d411510e1f",
   "slide_count": 68,
   "slide_size_emu": [
     12192000,
@@ -45,7 +45,7 @@
       "source_number": 4,
       "title": "TF motifs cluster into related families",
       "notes_text": "On the other hand, many different TFs can recognize very similar motifs as shown in from the JASPAR collection. I highlighted some of the large TF families, which can contain dozens of members.",
-      "image_sha256": "8197231359b2d59dcb154d5e616c20dceaa5caaa0a4544e213503da91420d713"
+      "image_sha256": "32f4fb4a1bebc9234698d8c8336d6637b6fb4a847cdde07f86e0d910ea16b89a"
     },
     {
       "number": 5,
@@ -72,15 +72,15 @@
       "number": 8,
       "source_number": 8,
       "title": "ATAC-seq maps open chromatin",
-      "notes_text": "So we need a more scalable way to study TF binding. \nThat brings us to ATAC-seq.\nATAC-seq take advantage of the simple fact that transcription happens at open chromatin where DNA is not protected by the nucleosomes. \nIt uses Tn5 transposes to cut and insert specific primers into these easily accessible genomic regions\nThen it uses PCR to amply out these open chromatin regions.\nThese ampllied fragments are subjected to HTS, mapped back to the reference genome, allowing us to identify highly accessible regions represented as peaks. ",
+      "notes_text": "So we need a more scalable way to study TF binding.  That brings us to ATAC-seq. ATAC-seq take advantage of the simple fact that transcription happens at open chromatin where DNA is not protected by the nucleosomes. \nIt uses Tn5 transposes to cut and insert specific primers into these easily accessible genomic regions Then it uses PCR to amply out these open chromatin regions.\nThese amplified fragments are subjected to HTS, mapped back to the reference genome, allowing us to identify highly accessible regions represented as peaks. ",
       "image_sha256": "1b4b6a987daf163bb61f08da4b0b6ec7cb2d59cf1d26146046b3dcc120f538ff"
     },
     {
       "number": 9,
       "source_number": 9,
       "title": "ATAC-seq footprinting reveals protected TF-binding sites",
-      "notes_text": "But there is a twist. Within the open chromatin region, if a TF is bound, it protects the exact site where it binds from Tn5 cutting, causing a dip in the middle of the Peak, almost look like a footprint.\nHere is an actual example of the aggregated footprints around  JUN? motifs across the genomic from ATAC analysis of HPAFII? Cells . \nYou can appreciate the high signal on either side of the motif, but a clear drop in signal in the motif center, indicating strong binding at these sites. \nIn contrast, no dips are detected at the ## motif sites, suggesting little binding by this TF in this cell line. \nYou can actually compute a footprint by dividing the flank signals to the depth of the footprints, which reflect the relative binding strength of each TFs.\nAs a result, from a single ATAC experiment, you can predict global TF binding across the genome, making it a very simple yet powerful technique that is widely used by many labs. ",
-      "image_sha256": "5d3c9f083480073ee9d6209c50fcdf916ad868456704054a41b29745db5db238"
+      "notes_text": "But there is a twist. Within the open chromatin region, if a TF is bound, it protects the exact site where it binds from Tn5 cutting, causing a dip in the middle of the Peak, almost look like a footprint.\nHere is an actual example of the aggregated footprints around FOS motifs across the genomic from ATAC analysis of HepG2 human liver cancer cells . You can appreciate the high signal on either side of the motif, but a clear drop in signal in the motif center, indicating strong binding at these sites. In contrast, no dips are detected at the ## motif sites, suggesting little binding by this TF in this cell line. You can actually compute a footprint by dividing the flank signals to the depth of the footprints, which reflect the relative binding strength of each TFs. As a result, from a single ATAC experiment, you can predict global TF binding across the genome, making it a very simple yet powerful technique that is widely used by many labs. ",
+      "image_sha256": "2ce10f0d37b3c1d1d8f2e562d6637a42b21ff00606fa1cf974a2608c8a5f6702"
     },
     {
       "number": 10,
