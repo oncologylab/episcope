@@ -25,6 +25,7 @@ $run_dev.*
 ^tmp$
 ^output/doc$
 ^output$
+^presentation$
 ^inst/extdata/GeneHancer_v5[.]24_full[.]csv$
 ^\.agents$
 ^\.codex$

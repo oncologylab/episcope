@@ -79,6 +79,12 @@ jobs:
           }
         shell: Rscript {0}
 
+      - name: Publish thesis presentation
+        run: |
+          test -f presentation/reveal/index.html
+          mkdir -p docs/presentation
+          cp -R presentation/reveal/. docs/presentation/
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

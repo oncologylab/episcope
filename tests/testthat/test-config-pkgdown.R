@@ -32,6 +32,21 @@ test_that("pkgdown workflow fixes generated favicon markup and cleans stale page
   expect_match(workflow, "clean: true", fixed = TRUE)
 })
 
+test_that("pkgdown Pages artifact includes the static thesis presentation", {
+  workflow_path <- source_file(".github", "workflows", "pkgdown.yaml")
+  buildignore_path <- source_file(".Rbuildignore")
+  testthat::skip_if_not(file.exists(workflow_path))
+  testthat::skip_if_not(file.exists(buildignore_path))
+
+  workflow <- paste(readLines(workflow_path, warn = FALSE), collapse = "\n")
+  buildignore <- readLines(buildignore_path, warn = FALSE)
+
+  expect_match(workflow, "Publish thesis presentation", fixed = TRUE)
+  expect_match(workflow, "presentation/reveal/index.html", fixed = TRUE)
+  expect_match(workflow, "docs/presentation", fixed = TRUE)
+  expect_true("^presentation$" %in% buildignore)
+})
+
 test_that("pkgdown footer omits redundant developed-by line", {
   path <- source_file("_pkgdown.yml")
   testthat::skip_if_not(file.exists(path))

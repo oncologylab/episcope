@@ -1,0 +1,36 @@
+FROM ubuntu@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e82f5c538ea
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG UBUNTU_SNAPSHOT=20260813T001500Z
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --allow-downgrades \
+        ca-certificates=20240203 \
+        libssl3t64=3.0.13-0ubuntu3 \
+        openssl=3.0.13-0ubuntu3 \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete \
+    && sed -i "/^Signed-By:/a Snapshot: ${UBUNTU_SNAPSHOT}" /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        fonts-crosextra-caladea=20200211-2 \
+        fonts-crosextra-carlito=20230309-2 \
+        fonts-dejavu-core=2.37-8 \
+        fonts-freefont-ttf=20211204+svn4273-2 \
+        fonts-liberation2=1:2.1.5-3 \
+        fonts-noto-core=20201225-2 \
+        libreoffice-core=4:24.2.7-0ubuntu0.24.04.6 \
+        libreoffice-impress=4:24.2.7-0ubuntu0.24.04.6 \
+        poppler-utils=24.02.0-1ubuntu9.9 \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
+
+COPY renderer-fonts.conf /etc/fonts/conf.d/99-craftgrn-renderer.conf
+COPY renderer-entrypoint.sh /usr/local/bin/render-slides
+
+RUN mkdir -p /source /output \
+    && chmod 0755 /usr/local/bin/render-slides \
+    && fc-cache -f
+
+ENTRYPOINT ["/usr/local/bin/render-slides"]
