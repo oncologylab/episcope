@@ -142,7 +142,7 @@ class SiteGenerationTests(unittest.TestCase):
         self.assertNotIn("allow-same-origin", builder._demo_markup(14))
         self.assertIn('class="demo demo-seamless demo-scaled-dashboard"', builder._demo_markup(14))
         self.assertIn('data-demo-mode="scaled-dashboard"', builder._demo_markup(14))
-        self.assertIn("--demo-scale:0.5", builder._demo_markup(14))
+        self.assertIn("--demo-scale:0.9", builder._demo_markup(14))
         self.assertIn('data-demo-mode="standard"', builder._demo_markup(20))
         self.assertNotIn("demo-seamless", builder._demo_markup(20))
         self.assertEqual(

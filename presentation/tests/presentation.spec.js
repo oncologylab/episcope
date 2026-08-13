@@ -49,7 +49,7 @@ test("keeps remote reports lazy and provides exit and fallback controls", async 
       frameBoxShadow: frameStyle.boxShadow,
     };
   });
-  expect(seamlessLayout.iframeLayoutWidth).toBeCloseTo(seamlessLayout.frameWidth * 2, -1);
+  expect(seamlessLayout.iframeLayoutWidth).toBeCloseTo(seamlessLayout.frameWidth / 0.9, -1);
   expect(seamlessLayout.toolbarPosition).toBe("absolute");
   expect(seamlessLayout.frameBorderWidth).toBe("0px");
   expect(seamlessLayout.frameBoxShadow).toBe("none");

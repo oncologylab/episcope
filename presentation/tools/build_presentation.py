@@ -42,7 +42,7 @@ DEMOS = {
         "url": "https://oncologylab.github.io/fp-tools/demos/reports/diff_footprints_K562_HepG2.html",
         "label": "Activate differential footprint report",
         "mode": "scaled-dashboard",
-        "scale": 0.5,
+        "scale": 0.9,
         "left": 4.747,
         "top": 9.494,
         "width": 90.506,
