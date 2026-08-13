@@ -41,6 +41,8 @@ DEMOS = {
     14: {
         "url": "https://oncologylab.github.io/fp-tools/demos/reports/diff_footprints_K562_HepG2.html",
         "label": "Activate differential footprint report",
+        "mode": "scaled-dashboard",
+        "scale": 0.5,
         "left": 4.747,
         "top": 9.494,
         "width": 90.506,
@@ -49,6 +51,8 @@ DEMOS = {
     20: {
         "url": "https://oncologylab.github.io/fp-tools/demos/gui/fp-tools-gui-static-demo.html#home",
         "label": "Activate fp-tools GUI demo",
+        "mode": "standard",
+        "scale": 1,
         "left": 14.611,
         "top": 15.351,
         "width": 69.894,
@@ -57,6 +61,8 @@ DEMOS = {
     43: {
         "url": "demos/IRF4_Fibroblast_top100_log2fc0p5_network.html",
         "label": "Activate interactive IRF4 network",
+        "mode": "canvas",
+        "scale": 1,
         "left": 23.436,
         "top": 15.450,
         "width": 53.145,
@@ -217,14 +223,21 @@ def _demo_markup(slide_number: int) -> str:
     demo = DEMOS.get(slide_number)
     if demo is None:
         return ""
+    mode = str(demo.get("mode", "standard"))
+    scale = demo.get("scale", 1)
+    classes = ["demo"]
+    if mode != "standard":
+        classes.extend(("demo-seamless", f"demo-{mode}"))
     style = (
         f"--demo-left:{demo['left']}%;--demo-top:{demo['top']}%;"
-        f"--demo-width:{demo['width']}%;--demo-height:{demo['height']}%"
+        f"--demo-width:{demo['width']}%;--demo-height:{demo['height']}%;"
+        f"--demo-scale:{scale}"
     )
     url = _ascii_html(str(demo["url"]))
     label = _ascii_html(str(demo["label"]))
     return (
-        f'<div class="demo" style="{style}" data-demo-url="{url}">'
+        f'<div class="{" ".join(classes)}" style="{style}" '
+        f'data-demo-mode="{_ascii_html(mode)}" data-demo-url="{url}">'
         f'<button class="demo-activate" type="button">{label}</button>'
         f'<a class="demo-fallback" href="{url}" target="_blank" rel="noopener">Open demo in new tab</a>'
         '<div class="demo-frame" hidden>'
@@ -342,6 +355,12 @@ RUNTIME_CSS = """html,body{margin:0;width:100%;height:100%;background:#000}
 .demo-new-tab,.demo-exit{border:1px solid #fff;border-radius:4px;padding:5px 9px;background:#fff;color:#17365d;font:700 13px Arial,sans-serif;text-decoration:none;white-space:nowrap}
 .demo-exit{cursor:pointer}
 .demo iframe{display:block;box-sizing:border-box;width:100%;height:calc(100% - 44px);border:0;background:#fff}
+.demo-seamless .demo-frame{overflow:hidden;border:0;box-shadow:none}
+.demo-seamless .demo-toolbar{position:absolute;z-index:2;top:8px;right:8px;height:auto;padding:0;gap:6px;background:transparent;color:#17365d;opacity:.28;transition:opacity .15s ease}
+.demo-seamless .demo-frame:hover .demo-toolbar,.demo-seamless .demo-toolbar:focus-within{opacity:1}
+.demo-seamless .demo-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.demo-seamless .demo-new-tab,.demo-seamless .demo-exit{border:1px solid rgba(23,54,93,.55);padding:5px 8px;background:rgba(255,255,255,.9);color:#17365d;font-size:12px;box-shadow:0 1px 5px rgba(0,0,0,.18)}
+.demo-seamless iframe{width:calc(100% / var(--demo-scale));height:calc(100% / var(--demo-scale));transform:scale(var(--demo-scale));transform-origin:top left}
 @media (max-width:900px){.demo-toolbar{height:38px}.demo iframe{height:calc(100% - 38px)}.demo-status{display:none}}
 """
 
@@ -351,19 +370,23 @@ RUNTIME_JS = """(() => {
     if (!demo) return;
     const frame = demo.querySelector(".demo-frame");
     const activate = demo.querySelector(".demo-activate");
+    const fallback = demo.querySelector(".demo-fallback");
     frame.hidden = true;
     activate.hidden = false;
+    fallback.hidden = false;
     activate.focus({ preventScroll: true });
     if (window.Reveal) Reveal.focus();
   }
 
   document.querySelectorAll(".demo").forEach((demo) => {
     const activate = demo.querySelector(".demo-activate");
+    const fallback = demo.querySelector(".demo-fallback");
     const frame = demo.querySelector(".demo-frame");
     const iframe = demo.querySelector("iframe");
     const status = demo.querySelector(".demo-status");
     activate.addEventListener("click", () => {
       activate.hidden = true;
+      fallback.hidden = true;
       frame.hidden = false;
       status.textContent = "Loading interactive demo...";
       if (!iframe.hasAttribute("src")) iframe.src = demo.dataset.demoUrl;

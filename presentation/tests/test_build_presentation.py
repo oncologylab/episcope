@@ -140,6 +140,11 @@ class SiteGenerationTests(unittest.TestCase):
             builder._demo_markup(14),
         )
         self.assertNotIn("allow-same-origin", builder._demo_markup(14))
+        self.assertIn('class="demo demo-seamless demo-scaled-dashboard"', builder._demo_markup(14))
+        self.assertIn('data-demo-mode="scaled-dashboard"', builder._demo_markup(14))
+        self.assertIn("--demo-scale:0.5", builder._demo_markup(14))
+        self.assertIn('data-demo-mode="standard"', builder._demo_markup(20))
+        self.assertNotIn("demo-seamless", builder._demo_markup(20))
         self.assertEqual(
             builder.DEMOS[14]["url"],
             "https://oncologylab.github.io/fp-tools/demos/reports/diff_footprints_K562_HepG2.html",

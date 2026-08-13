@@ -36,11 +36,29 @@ test("keeps remote reports lazy and provides exit and fallback controls", async 
   );
   await slide.locator(".demo-activate").click();
   await expect(slide.locator(".demo-frame")).toBeVisible();
+  await expect(slide.locator(".demo-fallback")).toBeHidden();
+  const seamlessLayout = await slide.locator(".demo-frame").evaluate((frame) => {
+    const iframe = frame.querySelector("iframe");
+    const toolbar = frame.querySelector(".demo-toolbar");
+    const frameStyle = getComputedStyle(frame);
+    return {
+      frameWidth: frame.clientWidth,
+      iframeLayoutWidth: iframe.offsetWidth,
+      toolbarPosition: getComputedStyle(toolbar).position,
+      frameBorderWidth: frameStyle.borderTopWidth,
+      frameBoxShadow: frameStyle.boxShadow,
+    };
+  });
+  expect(seamlessLayout.iframeLayoutWidth).toBeCloseTo(seamlessLayout.frameWidth * 2, -1);
+  expect(seamlessLayout.toolbarPosition).toBe("absolute");
+  expect(seamlessLayout.frameBorderWidth).toBe("0px");
+  expect(seamlessLayout.frameBoxShadow).toBe("none");
   await expect(slide.locator(".demo-new-tab")).toHaveAttribute("href", reportUrl);
   await expect(slide.locator("iframe").contentFrame().locator("#dashboard")).toHaveText("Report ready");
   expect(reportRequests).toBe(1);
   await slide.locator(".demo-exit").click();
   await expect(slide.locator(".demo-frame")).toBeHidden();
+  await expect(slide.locator(".demo-fallback")).toBeVisible();
   await page.keyboard.press("ArrowRight");
   await expect(page.locator("#slide-15")).toHaveClass(/present/);
 });
