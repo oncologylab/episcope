@@ -85,6 +85,12 @@ jobs:
           mkdir -p docs/presentation
           cp -R presentation/reveal/. docs/presentation/
 
+      - name: Publish Module 3 interactive example
+        run: |
+          test -f presentation/examples/module3-topic-model/index.html
+          mkdir -p docs/examples/module3-topic-model
+          cp -R presentation/examples/module3-topic-model/. docs/examples/module3-topic-model/
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

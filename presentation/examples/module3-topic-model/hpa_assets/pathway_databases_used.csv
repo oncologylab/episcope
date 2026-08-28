@@ -1,0 +1,8 @@
+species,backend,enrichly_version,enrichly_sha,database
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,GO_Biological_Process_2023
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,GO_Cellular_Component_2023
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,GO_Molecular_Function_2023
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,Reactome_2022
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,WikiPathways_2024_Human
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,MSigDB_Hallmark_2020
+human,enrichly,0.0.0.9001,1890de0079365dba9347414cd647f40c436ea47d,KEGG_2021_Human
