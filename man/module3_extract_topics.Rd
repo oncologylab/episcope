@@ -69,8 +69,9 @@ at or above which two topics are merged.}
 preserve target assignments and prefer mappings that reduce TF terms
 without a matching condition::TF theta membership.}
 
-\item{run_topic_assignment_qc}{Whether to write the standard per-K topic
-assignment QC PDF and optimization audit tables.}
+\item{run_topic_assignment_qc}{Whether to write the standardized compact
+per-K input-design QC PDF and optimization audit tables. The PDF ends with
+the full-universe topic-assignment retention funnels.}
 
 \item{topic_qc_umap_links_per_condition}{Maximum deterministic UMAP sample
 size per condition. Full-universe counts are never sampled.}

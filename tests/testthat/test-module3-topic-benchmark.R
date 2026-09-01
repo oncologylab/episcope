@@ -2011,6 +2011,11 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(html, 'id="networkPhiPreset"', fixed = TRUE)
   expect_match(
     html,
+    'id="networkPrimaryOnly" type="checkbox"',
+    fixed = TRUE
+  )
+  expect_no_match(
+    html,
     'id="networkPrimaryOnly" type="checkbox" checked',
     fixed = TRUE
   )
@@ -2268,6 +2273,12 @@ test_that("Module 3 condition-pair report uses schema 10 pathway and GRN modes",
   expect_match(index_html, "metric:conditionTopicMetric.value", fixed = TRUE)
   expect_match(index_html, "sendState('metric')", fixed = TRUE)
   expect_match(index_html, "label:'Overall pathways'", fixed = TRUE)
+  expect_match(index_html, "alphabetic=id!=='topic'", fixed = TRUE)
+  expect_match(
+    index_html,
+    "localeCompare(String(b.label),undefined,{sensitivity:'base'})",
+    fixed = TRUE
+  )
   expect_match(index_html, "id==='cond2'&&!state.cond1", fixed = TRUE)
   expect_match(
     index_html,
@@ -3295,6 +3306,9 @@ test_that("Module 3 production wrapper exposes compact defaults and QC report", 
   expect_true("condition_gene_weighting" %in% names(formals(train_topic_models)))
   expect_true("condition_peak_weighting" %in% names(formals(run_topic_modeling)))
   expect_true("condition_peak_weighting" %in% names(formals(train_topic_models)))
+  expect_true("final_peak_gene_token_ratio" %in% names(formals(run_topic_modeling)))
+  expect_true("condition_term_idf" %in% names(formals(run_topic_modeling)))
+  expect_true("final_peak_gene_token_ratio" %in% names(formals(train_topic_models)))
   expect_true("vae_device" %in% names(formals(run_topic_modeling)))
   expect_true("vae_device" %in% names(formals(train_topic_models)))
   expect_true("vae_batch_size" %in% names(formals(train_topic_models)))
@@ -3328,6 +3342,9 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
     topic_condition_specificity_temperature = 0.5,
     topic_condition_specificity_floor = 0.1,
     topic_condition_specificity_expression_min = 10,
+    topic_final_peak_gene_token_ratio = 0.5,
+    topic_condition_term_idf = TRUE,
+    topic_condition_term_idf_floor = 0.1,
     topic_vae_device = "cuda",
     topic_vae_batch_size = 512L,
     pathway_databases = c("Reactome_2022", "KEGG_2021_Human"),
@@ -3353,6 +3370,9 @@ test_that("Module 3 topic wrapper resolves standard run settings from project co
   expect_equal(resolved$de_gene_union_scope, "global")
   expect_equal(resolved$condition_gene_weighting, "specificity")
   expect_equal(resolved$condition_peak_weighting, "tf_expression")
+  expect_equal(resolved$final_peak_gene_token_ratio, 0.5)
+  expect_true(resolved$condition_term_idf)
+  expect_equal(resolved$condition_term_idf_floor, 0.1)
   expect_equal(resolved$condition_gene_expression_file, "condition_expression.csv")
   expect_equal(resolved$condition_specificity_temperature, 0.5)
   expect_equal(resolved$condition_specificity_floor, 0.1)
@@ -3425,6 +3445,14 @@ test_that("Module 3 topic link defaults do not apply gene_prob max filtering", {
     method = "condition_aggr_multivi"
   )
   expect_equal(resolved_multivi$extraction_args$thrP, 0.50)
+  expect_equal(resolved_multivi$vae_paired_term_regularization, NULL)
+  expect_equal(resolved_multivi$vae_topic_diversity_regularization, 10)
+  expect_equal(
+    resolved_multivi$vae_document_topic_separation_regularization,
+    5
+  )
+  expect_equal(resolved_multivi$vae_topic_initialization, "document_anchor")
+  expect_equal(resolved_multivi$vae_topic_word_temperature, 0.35)
 
   resolved_weighted <- .module3_resolve_topic_run_config(
     project_config = list(),
@@ -3473,6 +3501,15 @@ test_that("Module 3 VAE device supports explicit auto mode", {
   expect_match(py, "def _resolve_device", fixed = TRUE)
   expect_match(py, "requested_device", fixed = TRUE)
   expect_match(py, "resolved_device", fixed = TRUE)
+  expect_match(py, "early_stopping_relative_min_delta", fixed = TRUE)
+  expect_match(py, "rooted @ selected.T", fixed = TRUE)
+  expect_match(py, "--warm-start-model", fixed = TRUE)
+  expect_match(py, "def _load_warm_start_model", fixed = TRUE)
+  expect_match(py, "Warm-start model is incompatible", fixed = TRUE)
+  expect_match(py, "warm_start_baseline=true", fixed = TRUE)
+  expect_match(py, "Warm-start model uses a different ordered vocabulary", fixed = TRUE)
+  expect_match(py, "total_epochs_completed", fixed = TRUE)
+  expect_false(grepl("counts = X.toarray", py, fixed = TRUE))
 })
 
 test_that("Module 3 topic run config resolves pathway species", {

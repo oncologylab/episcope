@@ -62,6 +62,7 @@ HOCOMOCO
 HOCOMOCOv
 HPAFII
 HPC
+IDF
 jaccard
 jaspar
 JASPAR
@@ -102,6 +103,7 @@ raincloud
 rds
 README
 reclustering
+regulon
 regulons
 Reactome
 recomputation
@@ -139,6 +141,7 @@ AnnotationDbi
 cobinding
 dotplots
 downweights
+downweight
 de
 ENSEMBL
 ENTREZ
@@ -157,8 +160,10 @@ MultiVI
 multivi
 normtop
 preflight
+precompute
 pseudocount
 rowmax
+softmax
 subnetworks
 thrP
 titlecase

@@ -50,6 +50,33 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// topic_snn_edges_cpp
+DataFrame topic_snn_edges_cpp(const IntegerMatrix& neighbor_index);
+RcppExport SEXP _craftgrn_topic_snn_edges_cpp(SEXP neighbor_indexSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const IntegerMatrix& >::type neighbor_index(neighbor_indexSEXP);
+    rcpp_result_gen = Rcpp::wrap(topic_snn_edges_cpp(neighbor_index));
+    return rcpp_result_gen;
+END_RCPP
+}
+// topic_finalize_sparse_counts_cpp
+List topic_finalize_sparse_counts_cpp(const IntegerVector& row_pointer, const IntegerVector& column_index, const NumericVector& source_count, const LogicalVector& gene_term, const NumericVector& idf_multiplier, const double peak_gene_ratio);
+RcppExport SEXP _craftgrn_topic_finalize_sparse_counts_cpp(SEXP row_pointerSEXP, SEXP column_indexSEXP, SEXP source_countSEXP, SEXP gene_termSEXP, SEXP idf_multiplierSEXP, SEXP peak_gene_ratioSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const IntegerVector& >::type row_pointer(row_pointerSEXP);
+    Rcpp::traits::input_parameter< const IntegerVector& >::type column_index(column_indexSEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type source_count(source_countSEXP);
+    Rcpp::traits::input_parameter< const LogicalVector& >::type gene_term(gene_termSEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type idf_multiplier(idf_multiplierSEXP);
+    Rcpp::traits::input_parameter< const double >::type peak_gene_ratio(peak_gene_ratioSEXP);
+    rcpp_result_gen = Rcpp::wrap(topic_finalize_sparse_counts_cpp(row_pointer, column_index, source_count, gene_term, idf_multiplier, peak_gene_ratio));
+    return rcpp_result_gen;
+END_RCPP
+}
 // craftgrn_warplda_fit_cpp
 List craftgrn_warplda_fit_cpp(const S4& dtm, int K, int iterations, double alpha, double beta, int seed, double convergence_tol, int n_check_convergence, int n_iter_inference, int n_threads, std::string sampler, Nullable<IntegerVector> ref_topic, Nullable<IntegerVector> ref_proposal, Nullable<IntegerVector> ref_seeds);
 RcppExport SEXP _craftgrn_craftgrn_warplda_fit_cpp(SEXP dtmSEXP, SEXP KSEXP, SEXP iterationsSEXP, SEXP alphaSEXP, SEXP betaSEXP, SEXP seedSEXP, SEXP convergence_tolSEXP, SEXP n_check_convergenceSEXP, SEXP n_iter_inferenceSEXP, SEXP n_threadsSEXP, SEXP samplerSEXP, SEXP ref_topicSEXP, SEXP ref_proposalSEXP, SEXP ref_seedsSEXP) {
@@ -78,6 +105,8 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_craftgrn_sparse_pair_correlations_cpp", (DL_FUNC) &_craftgrn_sparse_pair_correlations_cpp, 7},
     {"_craftgrn_dense_prediction_stats_cpp", (DL_FUNC) &_craftgrn_dense_prediction_stats_cpp, 13},
+    {"_craftgrn_topic_snn_edges_cpp", (DL_FUNC) &_craftgrn_topic_snn_edges_cpp, 1},
+    {"_craftgrn_topic_finalize_sparse_counts_cpp", (DL_FUNC) &_craftgrn_topic_finalize_sparse_counts_cpp, 6},
     {"_craftgrn_craftgrn_warplda_fit_cpp", (DL_FUNC) &_craftgrn_craftgrn_warplda_fit_cpp, 14},
     {NULL, NULL, 0}
 };

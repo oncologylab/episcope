@@ -4,7 +4,24 @@
 \alias{report_top_tf_targets}
 \title{Export an interactive HTML browser of individual TF regulons}
 \usage{
-report_top_tf_targets(module2, output_dir, tfs, top_n = 100L, verbose = TRUE)
+report_top_tf_targets(
+  module2,
+  output_dir,
+  tfs,
+  top_n = 100L,
+  default_top_n = NULL,
+  verbose = TRUE,
+  multiomic_data = NULL,
+  conditions = NULL,
+  combine_tfs = FALSE,
+  default_condition = NULL,
+  max_linked_tfs = 50L,
+  max_linked_tfs_per_target = 2L,
+  supporting_module2 = NULL,
+  default_fp_r_cutoff = 0.5,
+  expression_pseudocount = 1,
+  target_genes = NULL
+)
 }
 \arguments{
 \item{module2}{Module 2 result list, loaded output list, or output directory.}
@@ -15,7 +32,37 @@ report_top_tf_targets(module2, output_dir, tfs, top_n = 100L, verbose = TRUE)
 
 \item{top_n}{Number of top targets per TF.}
 
+\item{default_top_n}{Initial number of targets displayed in the browser.
+The default displays the complete embedded target set.}
+
 \item{verbose}{Emit concise progress messages.}
+
+\item{multiomic_data}{Optional CraftGRN multiomic object used to precompute
+condition activity and expression for the browser.}
+
+\item{conditions}{Optional conditions to include. The default includes all
+conditions available in `multiomic_data`.}
+
+\item{combine_tfs}{Combine all requested TFs into one global target-union
+browser. The default writes one browser per TF.}
+
+\item{default_condition}{Initial condition shown by the browser.}
+
+\item{max_linked_tfs}{Maximum number of non-seed supporting TFs.}
+
+\item{max_linked_tfs_per_target}{Maximum supporting TFs retained per target.}
+
+\item{supporting_module2}{Optional full Module 2 result or output directory
+used only to add non-seed TFs regulating the selected seed-TF targets.}
+
+\item{default_fp_r_cutoff}{Initial strict FP R cutoff shown by the browser.}
+
+\item{expression_pseudocount}{Pseudocount for differential node log2 fold
+changes.}
+
+\item{target_genes}{Optional target-gene subset embedded in each TF browser.
+The default ranks all predicted targets before applying `top_n`. Use
+`top_n = Inf` to retain the complete predicted or supplied target set.}
 }
 \value{
 A tibble report manifest.

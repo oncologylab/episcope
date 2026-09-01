@@ -12,6 +12,33 @@ test_that("Hellinger topic similarity averages Gene and Peak modalities", {
   expect_equal(observed[1, 2], expected)
 })
 
+test_that("coordinate Peak link universe counts repeated Peak support as one Gene", {
+  dtm <- Matrix::Matrix(
+    c(
+      2, 3, 4,
+      5, 6, 7
+    ),
+    nrow = 2L,
+    byrow = TRUE,
+    sparse = TRUE,
+    dimnames = list(
+      c("A::TF1", "B::TF1"),
+      c("GENE:G1", "PEAK:P1", "PEAK:P2")
+    )
+  )
+  pairs <- data.table::data.table(
+    target_gene = c("G1", "G1"),
+    gene_term_id = "GENE:G1",
+    peak_term_id = c("PEAK:P1", "PEAK:P2")
+  )
+
+  observed <- .m3_opt_link_universe(dtm, pairs)
+
+  expect_equal(observed$target_levels, "G1")
+  expect_equal(unique(observed$links$target_index), 1L)
+  expect_setequal(unique(observed$links$pair_index), 1:2)
+})
+
 test_that("small topics merge into the larger deterministic representative", {
   phi <- rbind(
     Topic1 = c(0.45, 0.05, 0.45, 0.05),
@@ -556,6 +583,332 @@ test_that("topic assignment retention labels distinguish links and genes", {
   )
 })
 
+test_that("Gene-term UMAP uses assigned Gene phi terms only", {
+  optimization <- list(
+    raw_phi = rbind(
+      Topic1 = c(0.8, 0.2, 0.6, 0.7),
+      Topic2 = c(0.2, 0.8, 0.4, 0.3)
+    ),
+    raw_pair_assignment = data.table::data.table(
+      target_gene = c("A", "B", "C"),
+      assigned_topic = c(1L, 2L, NA_integer_),
+      assigned = c(TRUE, TRUE, FALSE)
+    )
+  )
+  colnames(optimization$raw_phi) <- c(
+    "GENE:A", "GENE:B", "GENE:C", "PEAK:P1"
+  )
+  canonical_assignment <- data.table::data.table(
+    term_id = c("GENE:A", "GENE:B", "PEAK:P1"),
+    term_group = c("GENE", "GENE", "PEAK"),
+    assigned_topic = c(1L, 2L, 1L),
+    assigned = TRUE
+  )
+
+  observed <- .m3_qc_gene_term_umap_data(
+    optimization,
+    gene_term_assignment = canonical_assignment,
+    seed = 7L
+  )
+
+  expect_identical(observed$target_gene, c("A", "B", "C"))
+  expect_setequal(
+    stats::na.omit(as.character(observed$topic)),
+    c("Topic 1", "Topic 2")
+  )
+  expect_equal(nrow(observed), 3L)
+  expect_false(observed[target_gene == "C", assigned])
+  expect_true(all(is.finite(observed$UMAP1)))
+  expect_true(all(is.finite(observed$UMAP2)))
+  expect_identical(unique(observed$embedding_source), "phi")
+})
+
+test_that("Gene-term UMAP can use named condition-profile features", {
+  genes <- LETTERS[1:8]
+  phi <- rbind(
+    Topic1 = c(rep(1, 4), rep(0, 4)),
+    Topic2 = c(rep(0, 4), rep(1, 4))
+  )
+  colnames(phi) <- paste0("GENE:", genes)
+  features <- cbind(
+    Condition1 = seq(0.1, 0.8, length.out = 8),
+    Condition2 = rev(seq(0.1, 0.8, length.out = 8)),
+    Condition3 = rep(c(0.2, 0.8), 4)
+  )
+  rownames(features) <- genes
+  supplied_coordinates <- cbind(
+    UMAP1 = seq_along(genes),
+    UMAP2 = -seq_along(genes)
+  )
+  rownames(supplied_coordinates) <- genes
+  assignment <- data.table::data.table(
+    term_id = paste0("GENE:", genes),
+    term_group = "GENE",
+    assigned_topic = rep(1:2, each = 4),
+    assigned = TRUE
+  )
+  optimization <- list(
+    raw_phi = phi,
+    raw_topic_terms = assignment,
+    gene_umap_features = features,
+    gene_umap_coordinates = supplied_coordinates,
+    gene_umap_feature_label = "condition-expression graph features"
+  )
+
+  observed <- .m3_qc_gene_term_umap_data(optimization, seed = 17L)
+
+  expect_identical(observed$target_gene, genes)
+  expect_identical(
+    unique(observed$embedding_source),
+    "condition-expression graph features"
+  )
+  expect_true(all(is.finite(observed$UMAP1)))
+  expect_true(all(is.finite(observed$UMAP2)))
+  expect_equal(observed$UMAP1, unname(supplied_coordinates[, "UMAP1"]))
+  expect_equal(observed$UMAP2, unname(supplied_coordinates[, "UMAP2"]))
+})
+
+test_that("Peak-term UMAP keeps the strongest maximum-phi probabilities", {
+  phi <- rbind(
+    Topic1 = c(0.8, 0.2, 9, 0.2, 0.5, 1),
+    Topic2 = c(0.2, 0.8, 1, 0.8, 0.5, 9)
+  )
+  colnames(phi) <- c(
+    "GENE:A", "GENE:B",
+    "PEAK:chr1:1-2", "PEAK:chr1:3-4",
+    "PEAK:chr1:5-6", "PEAK:chr1:7-8"
+  )
+
+  observed <- .m3_qc_peak_term_umap_data(
+    list(raw_phi = phi),
+    peak_term_assignment = data.table::data.table(
+      term_id = c(
+        "PEAK:chr1:1-2", "PEAK:chr1:3-4",
+        "PEAK:chr1:5-6", "PEAK:chr1:7-8"
+      ),
+      term_group = "PEAK",
+      assigned_topic = c(1L, 2L, 1L, 2L),
+      assigned = TRUE
+    ),
+    top_n = 4L,
+    seed = 19L
+  )
+
+  expect_identical(
+    observed$peak_id,
+    c("chr1:1-2", "chr1:7-8", "chr1:3-4", "chr1:5-6")
+  )
+  expect_equal(observed$max_probability, c(0.9, 0.9, 0.8, 0.5))
+  expect_identical(observed$topic_num, c(1L, 2L, 2L, 1L))
+  expect_identical(observed$selection_rank, 1:4)
+  expect_true(all(is.finite(observed$UMAP1)))
+  expect_true(all(is.finite(observed$UMAP2)))
+})
+
+test_that("Peak-term UMAP colors only GammaFit max-probability assignments", {
+  phi <- rbind(
+    Topic1 = c(9, 1, 6, 2),
+    Topic2 = c(1, 9, 4, 8)
+  )
+  colnames(phi) <- paste0("PEAK:P", 1:4)
+  assignment <- data.table::data.table(
+    term_id = paste0("PEAK:P", 1:3),
+    term_group = "PEAK",
+    assigned_topic = c(2L, 1L, 2L),
+    assigned = c(TRUE, FALSE, TRUE)
+  )
+
+  observed <- .m3_qc_peak_term_umap_data(
+    list(raw_phi = phi),
+    peak_term_assignment = assignment,
+    top_n = 4L,
+    seed = 29L
+  )
+
+  expect_identical(observed$peak_id, c("P1", "P2", "P4", "P3"))
+  expect_identical(observed$assigned, c(TRUE, FALSE, FALSE, TRUE))
+  expect_identical(observed$topic_num, c(2L, NA_integer_, NA_integer_, 2L))
+  expect_identical(
+    as.character(observed$topic),
+    c("Topic 2", NA_character_, NA_character_, "Topic 2")
+  )
+})
+
+test_that("Peak-term UMAP retains all available Peaks below its cap", {
+  phi <- rbind(
+    Topic1 = c(0.7, 0.3, 0.6),
+    Topic2 = c(0.3, 0.7, 0.4)
+  )
+  colnames(phi) <- c("GENE:A", "PEAK:P1", "PEAK:P2")
+
+  observed <- .m3_qc_peak_term_umap_data(
+    list(
+      raw_phi = phi,
+      raw_topic_terms = data.table::data.table(
+        term_id = c("PEAK:P1", "PEAK:P2"),
+        term_group = "PEAK",
+        assigned_topic = c(2L, 1L),
+        assigned = c(TRUE, FALSE)
+      )
+    ),
+    top_n = 10000L,
+    seed = 23L
+  )
+
+  expect_identical(observed$peak_id, c("P1", "P2"))
+  expect_equal(nrow(observed), 2L)
+  expect_identical(observed$assigned, c(TRUE, FALSE))
+  expect_error(
+    .m3_qc_peak_term_umap_data(
+      list(raw_phi = phi[, "GENE:A", drop = FALSE]),
+      top_n = 10000L
+    ),
+    "No Peak terms"
+  )
+})
+
+test_that("Peak-term UMAP accepts an unlimited Peak universe", {
+  phi <- rbind(
+    Topic1 = c(0.9, 0.4),
+    Topic2 = c(0.1, 0.6)
+  )
+  colnames(phi) <- paste0("PEAK:P", 1:2)
+  assignment <- data.table::data.table(
+    term_id = rep(colnames(phi), each = 2L),
+    term_group = "PEAK",
+    topic_num = rep(1:2, times = 2L),
+    in_topic = c(TRUE, FALSE, FALSE, TRUE)
+  )
+
+  observed <- .m3_qc_peak_term_umap_data(
+    list(raw_phi = phi, raw_topic_terms = assignment),
+    top_n = Inf,
+    seed = 31L
+  )
+
+  expect_equal(nrow(observed), 2L)
+  expect_identical(observed$selection_rank, 1:2)
+  expect_setequal(observed$peak_id, c("P1", "P2"))
+  expect_error(
+    .m3_qc_peak_term_umap_data(
+      list(raw_phi = phi, raw_topic_terms = assignment),
+      top_n = 1.5
+    ),
+    "positive integer or Inf"
+  )
+  expect_error(
+    .m3_qc_peak_term_umap_data(
+      list(raw_phi = phi, raw_topic_terms = assignment),
+      top_n = .Machine$integer.max + 1
+    ),
+    "positive integer or Inf"
+  )
+})
+
+test_that("cross-K topic comparison detects a supported multimodal split", {
+  terms <- c(paste0("GENE:G", 1:5), paste0("PEAK:P", 1:5))
+  reference_phi <- rbind(
+    Topic1 = c(rep(9, 4), 1, rep(9, 4), 1),
+    Topic2 = c(rep(1, 4), 9, rep(1, 4), 9)
+  )
+  candidate_phi <- rbind(
+    Topic1 = c(9, 9, 1, 1, 1, 9, 9, 1, 1, 1),
+    Topic2 = c(1, 1, 9, 9, 1, 1, 1, 9, 9, 1),
+    Topic3 = c(rep(1, 4), 9, rep(1, 4), 9)
+  )
+  colnames(reference_phi) <- colnames(candidate_phi) <- terms
+  reference_assignment <- data.table::data.table(
+    term_id = terms,
+    term_group = rep(c("GENE", "PEAK"), each = 5L),
+    topic_num = c(rep(1L, 4L), 2L, rep(1L, 4L), 2L),
+    in_topic = TRUE
+  )
+  candidate_assignment <- data.table::data.table(
+    term_id = terms,
+    term_group = rep(c("GENE", "PEAK"), each = 5L),
+    topic_num = c(1L, 1L, 2L, 2L, 3L, 1L, 1L, 2L, 2L, 3L),
+    in_topic = TRUE
+  )
+
+  observed <- .m3_qc_compare_cross_k_topic_split(
+    reference_phi,
+    candidate_phi,
+    reference_assignment,
+    candidate_assignment
+  )
+
+  expect_identical(observed$summary$reference_topic, 1L)
+  expect_identical(observed$summary$classification, "supported_split")
+  expect_setequal(observed$summary$supported_children[[1L]], c(1L, 2L))
+  expect_equal(
+    observed$children[candidate_topic %in% 1:2, gene_fraction],
+    c(0.5, 0.5)
+  )
+  expect_equal(
+    observed$children[candidate_topic %in% 1:2, peak_fraction],
+    c(0.5, 0.5)
+  )
+  expect_equal(nrow(observed$affinity), 2L * 3L * 2L)
+})
+
+test_that("cross-K topic comparison distinguishes persistence and partial splits", {
+  terms <- c(paste0("GENE:G", 1:10), paste0("PEAK:P", 1:10))
+  reference_phi <- rbind(Topic1 = rep(9, 20), Topic2 = rep(1, 20))
+  candidate_phi <- rbind(
+    Topic1 = c(rep(9, 18), 1, 1),
+    Topic2 = c(rep(1, 18), 9, 9)
+  )
+  colnames(reference_phi) <- colnames(candidate_phi) <- terms
+  reference_assignment <- data.table::data.table(
+    term_id = terms,
+    term_group = rep(c("GENE", "PEAK"), each = 10L),
+    topic_num = 1L,
+    in_topic = TRUE
+  )
+  persistent_assignment <- data.table::copy(reference_assignment)
+  partial_assignment <- data.table::copy(reference_assignment)
+  partial_assignment[term_id %in% c("GENE:G10", "PEAK:P10"), topic_num := 2L]
+
+  persistent <- .m3_qc_compare_cross_k_topic_split(
+    reference_phi,
+    candidate_phi,
+    reference_assignment,
+    persistent_assignment
+  )
+  partial <- .m3_qc_compare_cross_k_topic_split(
+    reference_phi,
+    candidate_phi,
+    reference_assignment,
+    partial_assignment
+  )
+
+  expect_identical(persistent$summary$classification, "persistent_topic")
+  expect_identical(partial$summary$classification, "partial_split")
+})
+
+test_that("topic UMAP continuation pages use available panel columns", {
+  gene_umap <- data.table::data.table(
+    target_gene = paste0("G", 1:4),
+    topic_num = c(31L, 31L, 32L, 32L),
+    assigned = TRUE,
+    topic = factor(
+      c("Topic 31", "Topic 31", "Topic 32", "Topic 32"),
+      levels = c("Topic 31", "Topic 32")
+    ),
+    UMAP1 = c(-1, -0.5, 0.5, 1),
+    UMAP2 = c(-1, -0.5, 0.5, 1)
+  )
+  observed <- .m3_qc_gene_term_umap_plot(
+    optimization = list(),
+    topic_palette = c(`Topic 31` = "#3366AA", `Topic 32` = "#D95F02"),
+    gene_umap = gene_umap,
+    topic_ids = 31:32
+  )
+
+  expect_equal(observed$facet$params$ncol, 2L)
+  expect_equal(observed$facet$params$nrow, 1L)
+})
+
 test_that("topic retention counts links and genes uniquely across conditions", {
   links <- data.table::data.table(
     condition_id = c("A", "B", "A", "B", "A"),
@@ -894,6 +1247,71 @@ test_that("condition correlation combines normalized link and gene profiles", {
   expect_equal(plot$coordinates$ratio, 1)
 })
 
+test_that("condition-document correlation uses raw theta directly", {
+  theta <- rbind(
+    C2 = c(0.7, 0.2, 0.1),
+    C1 = c(0.1, 0.2, 0.7),
+    C3 = c(0.2, 0.6, 0.2)
+  )
+  colnames(theta) <- paste0("Topic", 1:3)
+  optimization <- list(
+    document_design = "condition",
+    theta = theta,
+    qc = list(assignments = data.table::data.table(
+      doc_index = c(1L, 2L),
+      condition_id = c("wrong_1", "wrong_2")
+    ))
+  )
+
+  observed_theta <- .m3_qc_condition_topic_theta(optimization)
+  expected_theta <- theta[c("C1", "C2", "C3"), , drop = FALSE]
+  colnames(expected_theta) <- paste0("Topic ", 1:3)
+  expect_equal(observed_theta, expected_theta)
+
+  observed <- .m3_qc_theta_condition_correlation(observed_theta)
+  expected <- stats::cor(t(expected_theta))
+  expect_equal(observed, expected)
+  expect_identical(rownames(observed), c("C1", "C2", "C3"))
+})
+
+test_that("condition::TF correlation uses TF documents shared by all conditions", {
+  theta <- rbind(
+    `C1::TF1` = c(0.8, 0.2),
+    `C1::TF2` = c(0.1, 0.9),
+    `C2::TF1` = c(0.7, 0.3),
+    `C2::TF3` = c(0.2, 0.8)
+  )
+  colnames(theta) <- paste0("Topic", 1:2)
+
+  observed <- .m3_qc_condition_tf_topic_theta(theta, matched_tfs = TRUE)
+
+  expect_equal(
+    unname(observed[, , drop = FALSE]),
+    structure(rbind(c(0.8, 0.2), c(0.7, 0.3)), dimnames = NULL),
+    ignore_attr = TRUE
+  )
+  expect_identical(rownames(observed), c("C1", "C2"))
+  expect_identical(colnames(observed), c("Topic 1", "Topic 2"))
+  expect_true(isTRUE(attr(observed, "matched_tfs")))
+  expect_identical(attr(observed, "tf_count"), 1L)
+})
+
+test_that("pathway Gene sets retain expressed genes unique to one pathway", {
+  sets <- data.table::data.table(
+    pathway = c("P1", "P1", "P2", "P2", "P3"),
+    gene = c("A", "B", "B", "C", "D")
+  )
+
+  observed <- .m3_qc_prepare_pathway_gene_sets(
+    sets,
+    expressed_genes = c("A", "B", "C")
+  )
+
+  expect_equal(observed$pathway, c("P1", "P2"))
+  expect_equal(observed$gene, c("A", "C"))
+  expect_identical(attr(observed, "pathway_order"), c("P1", "P2"))
+})
+
 test_that("dense heatmap counts use compact integer labels", {
   expect_equal(
     .m3_qc_heatmap_count(c(999, 1157, 29640, 1500000)),
@@ -954,4 +1372,393 @@ test_that("condition-document QC counts only confident primary TFs", {
     ],
     c(1L, 1L, 0L, 2L)
   )
+})
+
+test_that("TF-target Gene sets use supported positive Module 2 links", {
+  correlations <- data.table::data.table(
+    tf = c("TF1", "TF1", "TF1", "TF2", "TF3", "TF4"),
+    target_gene = c("A", "B", "C", "A", "B", "D"),
+    best_r = c(0.90, 0.80, -0.90, 0.70, 0.95, 0.60),
+    best_method = "pearson",
+    best_fdr = 0.01,
+    pass = c(TRUE, TRUE, TRUE, TRUE, FALSE, TRUE)
+  )
+  links <- data.table::data.table(
+    tf = c("TF1", "TF1", "TF1", "TF2", "TF4", "TF4"),
+    target_gene = c("A", "A", "B", "A", "D", "D"),
+    fp_id = c("P1", "P2", "P3", "P4", "P5", "P5"),
+    module2_link_pass = TRUE
+  )
+
+  observed <- .m3_qc_prepare_tf_target_gene_sets(
+    correlations,
+    links,
+    gene_universe = LETTERS[1:4],
+    min_r = 0.5,
+    top_n_tfs = 3L,
+    top_n_targets = 2L
+  )
+
+  expect_equal(unique(observed$tf), c("TF1", "TF2", "TF4"))
+  expect_equal(observed[tf == "TF1", target_gene], c("A", "B"))
+  expect_equal(
+    observed[tf == "TF1" & target_gene == "A", supporting_peak_count],
+    2L
+  )
+  expect_false(any(observed$target_gene == "C"))
+  expect_equal(observed, .m3_qc_prepare_tf_target_gene_sets(
+    correlations[sample(.N)],
+    links[sample(.N)],
+    gene_universe = LETTERS[1:4],
+    min_r = 0.5,
+    top_n_tfs = 3L,
+    top_n_targets = 2L
+  ))
+})
+
+test_that("TF-target QC selection covers topics with a curated TF panel", {
+  expect_identical(
+    formals(.m3_qc_select_topic_tf_target_gene_sets)$top_n_targets,
+    500L
+  )
+  eligible <- data.table::data.table(
+    tf = rep(c("TF_A", "TF_B", "TF_C"), each = 4L),
+    target_gene = rep(c("G1", "G2", "G3", "G4"), 3L),
+    best_r = c(
+      0.9, 0.8, 0.6, 0.5,
+      0.7, 0.6, 0.9, 0.8,
+      0.8, 0.7, 0.7, 0.6
+    ),
+    supporting_peak_count = 1L
+  )
+  assignment <- data.table::data.table(
+    target_gene = c("G1", "G2", "G3", "G4"),
+    assigned_topic = c(1L, 1L, 2L, 2L),
+    assigned = TRUE
+  )
+  panel <- data.table::data.table(
+    tf = c("TF_A", "TF_B", "TF_C"),
+    tf_function = c("Program A", "Program B", "Program C")
+  )
+
+  observed <- .m3_qc_select_topic_tf_target_gene_sets(
+    eligible,
+    assignment,
+    tf_panel = panel,
+    top_n_tfs = 3L,
+    top_n_targets = 1L
+  )
+
+  expect_equal(data.table::uniqueN(observed$tf), 3L)
+  expect_equal(sort(unique(observed$selected_topic)), 1:2)
+  expect_equal(observed[, .N, by = tf]$N, rep(1L, 3L))
+  expect_setequal(unique(observed$tf_function), panel$tf_function)
+})
+
+test_that("compact topic QC writes Gene, Peak, pathway, TF-target, and structure sections", {
+  phi <- rbind(
+    Topic1 = c(0.8, 0.2, 0.7, 0.3),
+    Topic2 = c(0.2, 0.8, 0.3, 0.7)
+  )
+  colnames(phi) <- c("GENE:A", "GENE:B", "PEAK:A", "PEAK:B")
+  optimization <- list(
+    document_design = "condition_tf",
+    assignment_mode = "gene_peak",
+    raw_phi = phi,
+    raw_to_optimized = stats::setNames(1:2, 1:2),
+    qc = list(
+      raw_topic_ids = 1:2,
+      optimized_topic_ids = 1:2,
+      raw_topic_similarity = .m3_opt_hellinger_similarity(
+        phi,
+        1:2,
+        3:4
+      ),
+      raw_counts = data.table::data.table(
+        raw_topic = 1:2,
+        peaks = c(1L, 1L),
+        genes = c(1L, 1L)
+      )
+    )
+  )
+  assignment <- data.table::data.table(
+    target_gene = c("A", "B"),
+    assigned_topic = 1:2,
+    assigned = TRUE
+  )
+  peak_assignment <- data.table::data.table(
+    term_id = c("PEAK:A", "PEAK:B"),
+    term_group = "PEAK",
+    assigned_topic = 1:2,
+    assigned = TRUE
+  )
+  pathway_gene_sets <- data.table::data.table(
+    pathway = c("Pathway A", "Pathway B"),
+    gene = c("A", "B")
+  )
+  tf_target_gene_sets <- data.table::data.table(
+    tf = c("TF1", "TF2"),
+    target_gene = c("A", "B"),
+    best_r = c(0.8, 0.7),
+    supporting_peak_count = 1L
+  )
+  output <- tempfile(fileext = ".pdf")
+
+  expect_silent(.write_module3_topic_assignment_qc(
+    optimization,
+    out_file = output,
+    gene_term_assignment = assignment,
+    peak_term_assignment = peak_assignment,
+    pathway_gene_sets = pathway_gene_sets,
+    tf_target_gene_sets = tf_target_gene_sets,
+    sections = c(
+      "gene_phi_umap",
+      "peak_phi_umap",
+      "pathway_gene_umap",
+      "tf_target_gene_umap",
+      "raw_structure"
+    ),
+    peak_umap_top_n = 2L,
+    sidebar_mode = "terms",
+    seed = 7L
+  ))
+  expect_true(file.exists(output))
+  expect_gt(file.info(output)$size, 1000)
+  qpdf <- Sys.which("qpdf")
+  if (nzchar(qpdf)) {
+    expect_identical(
+      system2(qpdf, c("--show-npages", output), stdout = TRUE),
+      "5"
+    )
+  }
+  expect_error(
+    .write_module3_topic_assignment_qc(
+      optimization,
+      out_file = output,
+      sections = "later_pages"
+    ),
+    "must be 'standard', 'all', or a subset"
+  )
+})
+
+test_that("standard topic QC is the default compact input-design report", {
+  phi <- rbind(
+    Topic1 = c(0.7, 0.6, 0.2, 0.1, 0.65, 0.55, 0.25, 0.15),
+    Topic2 = c(0.3, 0.4, 0.8, 0.9, 0.35, 0.45, 0.75, 0.85)
+  )
+  colnames(phi) <- c(
+    paste0("GENE:", LETTERS[1:4]),
+    paste0("PEAK:", LETTERS[1:4])
+  )
+  theta <- rbind(
+    `C1::TF1` = c(0.8, 0.2),
+    `C1::TF2` = c(0.6, 0.4),
+    `C2::TF1` = c(0.3, 0.7),
+    `C2::TF2` = c(0.1, 0.9)
+  )
+  pairs <- data.table::data.table(
+    target_gene = LETTERS[1:4],
+    gene_term_id = paste0("GENE:", LETTERS[1:4]),
+    peak_term_id = paste0("PEAK:", LETTERS[1:4]),
+    gene_gammafit_topics = c("1", "1", "2", "2"),
+    peak_gammafit_topics = c("1", "1", "2", "2"),
+    assigned_topic = c(1L, 1L, 2L, 2L),
+    assigned = TRUE
+  )
+  assignments <- data.table::data.table(
+    doc_index = rep(1:4, each = 4L),
+    pair_index = rep(1:4, times = 4L),
+    target_index = rep(1:4, times = 4L),
+    tf_index = rep(c(1L, 2L, 1L, 2L), each = 4L),
+    condition_id = rep(c("C1", "C1", "C2", "C2"), each = 4L),
+    raw_aligned = rep(c(TRUE, TRUE, FALSE, TRUE), times = 4L)
+  )
+  optimization <- list(
+    document_design = "condition_tf",
+    assignment_mode = "gene_peak",
+    theta = theta,
+    raw_phi = phi,
+    raw_pair_assignment = pairs,
+    raw_to_optimized = stats::setNames(1:2, 1:2),
+    qc = list(
+      raw_topic_ids = 1:2,
+      optimized_topic_ids = 1:2,
+      raw_topic_similarity = .m3_opt_hellinger_similarity(phi, 1:2, 5:8),
+      raw_counts = data.table::data.table(
+        raw_topic = 1:2,
+        peaks = c(2L, 2L),
+        genes = c(2L, 2L)
+      ),
+      assignments = assignments
+    )
+  )
+  gene_assignment <- data.table::data.table(
+    target_gene = LETTERS[1:4],
+    assigned_topic = c(1L, 1L, 2L, 2L),
+    assigned = TRUE
+  )
+  peak_assignment <- data.table::data.table(
+    term_id = paste0("PEAK:", LETTERS[1:4]),
+    term_group = "PEAK",
+    assigned_topic = c(1L, 1L, 2L, 2L),
+    assigned = TRUE
+  )
+  tf_target_gene_sets <- data.table::data.table(
+    tf = c("TF1", "TF1", "TF2", "TF2"),
+    target_gene = LETTERS[1:4],
+    best_r = c(0.9, 0.8, 0.7, 0.6),
+    supporting_peak_count = 1L
+  )
+  output_gene_peak <- tempfile(fileext = ".pdf")
+  output_gene_only <- tempfile(fileext = ".pdf")
+
+  expect_identical(formals(.write_module3_topic_assignment_qc)$sections,
+                   "standard")
+  expect_true(is.infinite(
+    eval(formals(.write_module3_topic_assignment_qc)$peak_umap_top_n)
+  ))
+  expect_silent(.write_module3_topic_assignment_qc(
+    optimization,
+    out_file = output_gene_peak,
+    gene_term_assignment = gene_assignment,
+    peak_term_assignment = peak_assignment,
+    tf_target_gene_sets = tf_target_gene_sets,
+    sidebar_mode = "terms",
+    seed = 13L
+  ))
+
+  gene_only <- optimization
+  gene_only$assignment_mode <- "gene_only"
+  gene_only$raw_phi <- phi[, 1:4, drop = FALSE]
+  gene_only$raw_pair_assignment[, peak_gammafit_topics := NULL]
+  gene_only$qc$raw_topic_similarity <- diag(2L)
+  gene_only$qc$raw_counts <- data.table::data.table(
+    raw_topic = 1:2,
+    genes = c(2L, 2L)
+  )
+  expect_silent(.write_module3_topic_assignment_qc(
+    gene_only,
+    out_file = output_gene_only,
+    gene_term_assignment = gene_assignment,
+    tf_target_gene_sets = tf_target_gene_sets,
+    sidebar_mode = "terms",
+    seed = 17L
+  ))
+
+  expect_gt(file.info(output_gene_peak)$size, 1000)
+  expect_gt(file.info(output_gene_only)$size, 1000)
+  qpdf <- Sys.which("qpdf")
+  if (nzchar(qpdf)) {
+    expect_identical(
+      system2(qpdf, c("--show-npages", output_gene_peak), stdout = TRUE),
+      "6"
+    )
+    expect_identical(
+      system2(qpdf, c("--show-npages", output_gene_only), stdout = TRUE),
+      "5"
+    )
+  }
+})
+
+test_that("compact condition::TF QC adds a matched-theta correlation page", {
+  phi <- rbind(
+    Topic1 = c(0.8, 0.2, 0.7, 0.3),
+    Topic2 = c(0.2, 0.8, 0.3, 0.7)
+  )
+  colnames(phi) <- c("GENE:A", "GENE:B", "PEAK:A", "PEAK:B")
+  theta <- rbind(
+    `C1::TF1` = c(0.8, 0.2),
+    `C1::TF2` = c(0.4, 0.6),
+    `C2::TF1` = c(0.2, 0.8),
+    `C2::TF3` = c(0.6, 0.4)
+  )
+  optimization <- list(
+    document_design = "condition_tf",
+    assignment_mode = "gene_peak",
+    theta = theta,
+    raw_phi = phi,
+    raw_to_optimized = stats::setNames(1:2, 1:2),
+    qc = list(
+      raw_topic_ids = 1:2,
+      optimized_topic_ids = 1:2,
+      raw_topic_similarity = .m3_opt_hellinger_similarity(phi, 1:2, 3:4),
+      raw_counts = data.table::data.table(
+        raw_topic = 1:2,
+        peaks = c(1L, 1L),
+        genes = c(1L, 1L)
+      )
+    )
+  )
+  assignment <- data.table::data.table(
+    target_gene = c("A", "B"),
+    assigned_topic = 1:2,
+    assigned = TRUE
+  )
+  pathway_gene_sets <- data.table::data.table(
+    pathway = c("Pathway A", "Pathway B"),
+    gene = c("A", "B")
+  )
+  output <- tempfile(fileext = ".pdf")
+
+  expect_silent(.write_module3_topic_assignment_qc(
+    optimization,
+    out_file = output,
+    gene_term_assignment = assignment,
+    pathway_gene_sets = pathway_gene_sets,
+    sections = c(
+      "gene_phi_umap",
+      "pathway_gene_umap",
+      "raw_structure",
+      "condition_correlation"
+    ),
+    sidebar_mode = "terms",
+    seed = 9L
+  ))
+  qpdf <- Sys.which("qpdf")
+  if (nzchar(qpdf)) {
+    expect_identical(
+      system2(qpdf, c("--show-npages", output), stdout = TRUE),
+      "4"
+    )
+  }
+})
+
+test_that("gene-only topic QC uses a target-gene-only structure sidebar", {
+  phi <- rbind(
+    Topic1 = c(0.8, 0.2),
+    Topic2 = c(0.2, 0.8)
+  )
+  colnames(phi) <- c("GENE:A", "GENE:B")
+  optimization <- list(
+    document_design = "condition",
+    assignment_mode = "gene",
+    raw_phi = phi,
+    raw_to_optimized = stats::setNames(1:2, 1:2),
+    qc = list(
+      raw_topic_ids = 1:2,
+      optimized_topic_ids = 1:2,
+      raw_topic_similarity = diag(2),
+      raw_counts = data.table::data.table(
+        raw_topic = 1:2,
+        genes = c(1L, 1L)
+      )
+    )
+  )
+  assignment <- data.table::data.table(
+    target_gene = c("A", "B"),
+    assigned_topic = 1:2,
+    assigned = TRUE
+  )
+  output <- tempfile(fileext = ".pdf")
+
+  expect_silent(.write_module3_topic_assignment_qc(
+    optimization,
+    out_file = output,
+    gene_term_assignment = assignment,
+    sections = c("gene_phi_umap", "raw_structure"),
+    sidebar_mode = "auto",
+    seed = 11L
+  ))
+  expect_true(file.exists(output))
+  expect_gt(file.info(output)$size, 1000)
 })

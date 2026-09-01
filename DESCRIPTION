@@ -47,6 +47,7 @@ Suggests:
     EnsDb.Hsapiens.v86,
     EnsDb.Mmusculus.v79,
     fgsea,
+    FNN,
     ggrastr,
     golem,
     ggraph,

@@ -217,8 +217,15 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
       topic_condition_specificity_temperature = 0.5,
       topic_condition_specificity_floor = 0.1,
       topic_condition_specificity_expression_min = 10,
+      topic_final_peak_gene_token_ratio = 0.5,
+      topic_condition_term_idf = TRUE,
+      topic_condition_term_idf_floor = 0.1,
       topic_vae_device = "cpu",
-      topic_vae_paired_term_regularization = 5,
+      topic_vae_paired_term_regularization = 1,
+      topic_vae_topic_diversity_regularization = 10,
+      topic_vae_document_topic_separation_regularization = 5,
+      topic_vae_topic_initialization = "document_anchor",
+      topic_vae_topic_word_temperature = 0.35,
       pathway_species = "human"
     )
   )
@@ -266,11 +273,27 @@ test_that("nested Module 2 and Module 3 configuration is validated", {
     fixed = TRUE
   )
 
+  bad_final_ratio <- cfg
+  bad_final_ratio$module3$topic_final_peak_gene_token_ratio <- 0
+  expect_error(validate(bad_final_ratio), "positive numbers", fixed = TRUE)
+
+  bad_idf_floor <- cfg
+  bad_idf_floor$module3$topic_condition_term_idf_floor <- 1.1
+  expect_error(validate(bad_idf_floor), "between 0 and 1", fixed = TRUE)
+
   bad_pair_regularization <- cfg
   bad_pair_regularization$module3$topic_vae_paired_term_regularization <- -1
   expect_error(
     validate(bad_pair_regularization),
     "non-negative numbers",
+    fixed = TRUE
+  )
+
+  bad_initialization <- cfg
+  bad_initialization$module3$topic_vae_topic_initialization <- "anchors"
+  expect_error(
+    validate(bad_initialization),
+    "random or document_anchor",
     fixed = TRUE
   )
 

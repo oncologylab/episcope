@@ -3977,6 +3977,8 @@
 #' @param reuse_if_exists Reuse existing model outputs where possible.
 #' @param local_threads Optional thread count for model training.
 #' @param warplda_iterations Number of native WarpLDA iterations.
+#' @param warplda_alpha_sum Total document-topic prior mass. Per-topic alpha is
+#'   this value divided by K.
 #' @param vae_python Optional Python executable for VAE training.
 #' @param vae_epochs Number of VAE training epochs.
 #' @param vae_batch_size VAE mini-batch size.
@@ -3986,8 +3988,15 @@
 #' @param vae_device VAE device, for example `"auto"`, `"cpu"`, or `"cuda"`.
 #'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
 #' @param vae_paired_term_regularization Non-negative strength for matching the
-#'   topic distributions of paired Gene and Peak terms. `NULL` uses `5` for
+#'   topic distributions of paired Gene and Peak terms. `NULL` uses `1` for
 #'   MultiVI and `0` for other VAE variants.
+#' @param vae_topic_diversity_regularization Non-negative penalty for similar
+#'   Gene and Peak topic distributions. `NULL` uses the model-specific default.
+#' @param vae_document_topic_separation_regularization Non-negative penalty
+#'   that encourages distinct document-topic mixtures and broad topic use.
+#' @param vae_topic_initialization Topic initialization. Use `"random"` or
+#'   `"document_anchor"`; `NULL` uses the model-specific default.
+#' @param vae_topic_word_temperature Positive topic-word softmax temperature.
 #' @param input_source Input source type passed to topic training. Use
 #'   `"differential_links"` for comparison links and `"condition_links"` for
 #'   condition-native links.
@@ -4050,6 +4059,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         warplda_iterations = 2000L,
                                         warplda_sampler = "warp_omp",
                                         warplda_beta = NULL,
+                                        warplda_alpha_sum = 50,
                                         warplda_seed = 123L,
                                         count_method = c("log", "bin"),
                                         count_scale = 50,
@@ -4061,6 +4071,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         condition_specificity_temperature = 0.5,
                                         condition_specificity_floor = 0.1,
                                         condition_specificity_expression_min = NULL,
+                                        final_peak_gene_token_ratio = NULL,
+                                        condition_term_idf = FALSE,
+                                        condition_term_idf_floor = 0.1,
                                         vae_python = NULL,
                                         vae_epochs = 200L,
                                         vae_batch_size = 64L,
@@ -4069,6 +4082,16 @@ run_module3_topic_benchmark <- function(filtered_dir,
                                         vae_seed = 123L,
                                         vae_device = "auto",
                                         vae_paired_term_regularization = NULL,
+                                        vae_topic_diversity_regularization = NULL,
+                                        vae_document_topic_separation_regularization = NULL,
+                                        vae_topic_initialization = NULL,
+                                        vae_topic_word_temperature = NULL,
+                                        vae_peak_gene_map = NULL,
+                                        vae_validation_fraction = 0,
+                                        vae_early_stopping_patience = 0L,
+                                        vae_weight_decay = 0,
+                                        vae_kl_warmup_epochs = 0L,
+                                        vae_dropout = 0,
                                         input_source = c("differential_links", "condition_links"),
                                         sample_subset = NULL,
                                         analysis_label = NULL,
@@ -4191,6 +4214,9 @@ run_module3_topic_benchmark <- function(filtered_dir,
         condition_specificity_temperature = condition_specificity_temperature,
         condition_specificity_floor = condition_specificity_floor,
         condition_specificity_expression_min = condition_specificity_expression_min,
+        final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+        condition_term_idf = condition_term_idf,
+        condition_term_idf_floor = condition_term_idf_floor,
         backend = row$backend[[1L]],
         vae_variant = row$vae_variant[[1L]],
         reuse_if_exists = reuse_if_exists,
@@ -4200,6 +4226,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
         warplda_iterations = warplda_iterations,
         warplda_sampler = warplda_sampler,
         warplda_beta = warplda_beta,
+        warplda_alpha_sum = warplda_alpha_sum,
         warplda_seed = warplda_seed,
         vae_python = vae_python,
         vae_epochs = vae_epochs,
@@ -4209,6 +4236,18 @@ run_module3_topic_benchmark <- function(filtered_dir,
         vae_seed = vae_seed,
         vae_device = vae_device,
         vae_paired_term_regularization = vae_paired_term_regularization,
+        vae_topic_diversity_regularization =
+          vae_topic_diversity_regularization,
+        vae_document_topic_separation_regularization =
+          vae_document_topic_separation_regularization,
+        vae_topic_initialization = vae_topic_initialization,
+        vae_topic_word_temperature = vae_topic_word_temperature,
+        vae_peak_gene_map = vae_peak_gene_map,
+        vae_validation_fraction = vae_validation_fraction,
+        vae_early_stopping_patience = vae_early_stopping_patience,
+        vae_weight_decay = vae_weight_decay,
+        vae_kl_warmup_epochs = vae_kl_warmup_epochs,
+        vae_dropout = vae_dropout,
         save_full_doc_term_csv = FALSE,
         flat_output = .m3tb_flat_output_for_layout(output_layout),
         topic_report_args = list()
@@ -4446,7 +4485,7 @@ run_module3_topic_benchmark <- function(filtered_dir,
 #' @param threshold_gene_expr Minimum condition-level target-gene expression.
 #' @param threshold_fp_score Minimum condition-level footprint score.
 #' @param threshold_tf_expr Minimum condition-level TF expression.
-#' @param condition_peak_weighting Optional condition-mode aggregated-Peak
+#' @param condition_peak_weighting Optional condition-mode Peak
 #'   weighting. `"tf_expression"` applies per-TF median-scaled log expression
 #'   before pseudo-count conversion.
 #' @param include_tf_terms Whether to include TF self-terms.
@@ -4490,6 +4529,9 @@ module3_prepare_topic_inputs <- function(filtered_dir,
                                          threshold_gene_expr = 0,
                                          threshold_fp_score = 0,
                                          threshold_tf_expr = -Inf,
+                                         condition_gene_weighting = c("none", "specificity"),
+                                         condition_gene_expression_file = NULL,
+                                         condition_specificity_expression_min = NULL,
                                          condition_peak_weighting = c("none", "tf_expression"),
                                          include_tf_terms = TRUE,
                                          top_terms_per_doc = Inf,
@@ -4517,14 +4559,70 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   gene_term_mode <- match.arg(gene_term_mode)
   count_method <- match.arg(count_method)
+  condition_gene_weighting <- match.arg(condition_gene_weighting)
   condition_peak_weighting <- match.arg(condition_peak_weighting)
   if (!identical(condition_peak_weighting, "none") &&
       (!identical(doc_design, "condition") ||
        !identical(doc_mode, "tf") ||
-       !fp_term_mode %in% c("aggregate", "tf_target"))) {
+       !fp_term_mode %in% c("aggregate", "unique", "tf_target"))) {
     .log_abort(
-      "TF-expression Peak weighting requires condition::TF documents with aggregate or tf_target terms."
+      "TF-expression Peak weighting requires condition::TF documents with aggregate, unique, or tf_target terms."
     )
+  }
+  condition_specificity_expression_min <- if (is.null(
+    condition_specificity_expression_min
+  )) {
+    threshold_gene_expr
+  } else {
+    suppressWarnings(as.numeric(condition_specificity_expression_min[[1L]]))
+  }
+  if (!is.finite(condition_specificity_expression_min) ||
+      condition_specificity_expression_min < 0) {
+    .log_abort("condition_specificity_expression_min must be non-negative.")
+  }
+  if (!identical(condition_gene_weighting, "none")) {
+    if (is.null(condition_gene_expression_file) ||
+        !length(condition_gene_expression_file) ||
+        !nzchar(as.character(condition_gene_expression_file[[1L]]))) {
+      condition_gene_expression_file <- file.path(
+        filtered_dir,
+        "condition_gene_expression.csv"
+      )
+    } else {
+      condition_gene_expression_file <- path.expand(
+        as.character(condition_gene_expression_file[[1L]])
+      )
+      if (!.path_is_absolute(condition_gene_expression_file)) {
+        condition_gene_expression_file <- file.path(
+          filtered_dir,
+          condition_gene_expression_file
+        )
+      }
+    }
+    if (!file.exists(condition_gene_expression_file)) {
+      .log_abort(
+        "Condition gene expression file not found: {condition_gene_expression_file}"
+      )
+    }
+    condition_gene_expression_file <- normalizePath(
+      condition_gene_expression_file,
+      winslash = "/",
+      mustWork = TRUE
+    )
+  }
+  prebalance_gene_specificity <- identical(
+    condition_gene_weighting,
+    "specificity"
+  ) && identical(fp_term_mode, "unique")
+  condition_gene_specificity <- if (isTRUE(prebalance_gene_specificity)) {
+    .module3_condition_gene_specificity_lookup(
+      expression_file = condition_gene_expression_file,
+      expression_min = condition_specificity_expression_min,
+      temperature = condition_specificity_temperature,
+      uniform_floor = condition_specificity_floor
+    )
+  } else {
+    NULL
   }
   count_input_requested <- if (is.null(count_input) || !length(count_input)) NA_character_ else as.character(count_input[[1L]])
   count_input_effective <- .resolve_topic_count_input(count_method = count_method, count_input = count_input)
@@ -4554,6 +4652,22 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       threshold_gene_expr = threshold_gene_expr,
       threshold_fp_score = threshold_fp_score,
       threshold_tf_expr = threshold_tf_expr,
+      condition_gene_weighting = condition_gene_weighting,
+      condition_gene_expression_file = if (!identical(
+        condition_gene_weighting,
+        "none"
+      )) {
+        info <- file.info(condition_gene_expression_file)
+        c(
+          path = condition_gene_expression_file,
+          size = as.numeric(info$size),
+          mtime = as.numeric(info$mtime)
+        )
+      } else {
+        NULL
+      },
+      condition_specificity_expression_min =
+        condition_specificity_expression_min,
       condition_peak_weighting = condition_peak_weighting,
       include_tf_terms = isTRUE(include_tf_terms),
       top_terms_per_doc = top_terms_per_doc,
@@ -4701,6 +4815,7 @@ module3_prepare_topic_inputs <- function(filtered_dir,
       require_tf_expr = identical(doc_mode, "tf"),
       fp_term_mode = fp_term_mode,
       condition_peak_weighting = condition_peak_weighting,
+      condition_gene_specificity = condition_gene_specificity,
       check_repeated_values = check_repeated_values
     )
   } else {
@@ -4729,6 +4844,29 @@ module3_prepare_topic_inputs <- function(filtered_dir,
   }
   if (!nrow(doc_term)) .log_abort("Module 3 document-term table is empty.")
   peak_weighting_audit <- attr(doc_term, "condition_peak_weighting_audit")
+  specificity_audit <- attr(
+    doc_term,
+    "condition_gene_specificity_weighting_audit"
+  )
+  if (identical(condition_gene_weighting, "specificity") &&
+      !isTRUE(prebalance_gene_specificity)) {
+    weighted <- .module3_apply_condition_gene_specificity(
+      doc_term = doc_term,
+      expression_file = condition_gene_expression_file,
+      count_column = count_input_effective,
+      expression_min = condition_specificity_expression_min,
+      temperature = condition_specificity_temperature,
+      uniform_floor = condition_specificity_floor
+    )
+    doc_term <- weighted$doc_term
+    specificity_audit <- weighted$audit
+  }
+  if (!is.null(specificity_audit)) {
+    data.table::fwrite(
+      specificity_audit,
+      file.path(output_dir, "condition_gene_specificity_weighting_audit.csv")
+    )
+  }
   if (!is.null(peak_weighting_audit)) {
     data.table::fwrite(
       peak_weighting_audit,
@@ -4761,6 +4899,16 @@ module3_prepare_topic_inputs <- function(filtered_dir,
     doc_design = doc_design,
     doc_mode = doc_mode,
     fp_term_mode = fp_term_mode,
+    condition_gene_weighting = condition_gene_weighting,
+    condition_gene_weighting_stage = if (isTRUE(
+      prebalance_gene_specificity
+    )) {
+      "gene_weight_before_modality_balance"
+    } else if (identical(condition_gene_weighting, "specificity")) {
+      "model_count_after_modality_balance"
+    } else {
+      "none"
+    },
     condition_peak_weighting = condition_peak_weighting,
     count_method = count_method,
     count_scale = as.numeric(count_scale),
@@ -5161,6 +5309,7 @@ run_regulatory_topics <- function(filtered_dir,
                                   warplda_iterations = 2000L,
                                   warplda_sampler = "warp_omp",
                                   warplda_beta = NULL,
+                                  warplda_alpha_sum = 50,
                                   warplda_seed = 123L,
                                   count_method = c("log", "bin"),
                                   count_scale = 50,
@@ -5172,6 +5321,9 @@ run_regulatory_topics <- function(filtered_dir,
                                   condition_specificity_temperature = 0.5,
                                   condition_specificity_floor = 0.1,
                                   condition_specificity_expression_min = NULL,
+                                  final_peak_gene_token_ratio = NULL,
+                                  condition_term_idf = FALSE,
+                                  condition_term_idf_floor = 0.1,
                                   vae_python = NULL,
                                   vae_epochs = 200L,
                                   vae_batch_size = 64L,
@@ -5180,6 +5332,16 @@ run_regulatory_topics <- function(filtered_dir,
                                   vae_seed = 123L,
                                   vae_device = "auto",
                                   vae_paired_term_regularization = NULL,
+                                  vae_topic_diversity_regularization = NULL,
+                                  vae_document_topic_separation_regularization = NULL,
+                                  vae_topic_initialization = NULL,
+                                  vae_topic_word_temperature = NULL,
+                                  vae_peak_gene_map = NULL,
+                                  vae_validation_fraction = 0,
+                                  vae_early_stopping_patience = 0L,
+                                  vae_weight_decay = 0,
+                                  vae_kl_warmup_epochs = 0L,
+                                  vae_dropout = 0,
                                   input_source = c("differential_links", "condition_links"),
                                   sample_subset = NULL,
                                   analysis_label = NULL,
@@ -5225,6 +5387,7 @@ run_regulatory_topics <- function(filtered_dir,
     warplda_iterations = warplda_iterations,
     warplda_sampler = warplda_sampler,
     warplda_beta = warplda_beta,
+    warplda_alpha_sum = warplda_alpha_sum,
     warplda_seed = warplda_seed,
     count_method = count_method,
     count_scale = count_scale,
@@ -5236,6 +5399,9 @@ run_regulatory_topics <- function(filtered_dir,
     condition_specificity_temperature = condition_specificity_temperature,
     condition_specificity_floor = condition_specificity_floor,
     condition_specificity_expression_min = condition_specificity_expression_min,
+    final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+    condition_term_idf = condition_term_idf,
+    condition_term_idf_floor = condition_term_idf_floor,
     vae_python = vae_python,
     vae_epochs = vae_epochs,
     vae_batch_size = vae_batch_size,
@@ -5244,6 +5410,18 @@ run_regulatory_topics <- function(filtered_dir,
     vae_seed = vae_seed,
     vae_device = vae_device,
     vae_paired_term_regularization = vae_paired_term_regularization,
+    vae_topic_diversity_regularization =
+      vae_topic_diversity_regularization,
+    vae_document_topic_separation_regularization =
+      vae_document_topic_separation_regularization,
+    vae_topic_initialization = vae_topic_initialization,
+    vae_topic_word_temperature = vae_topic_word_temperature,
+    vae_peak_gene_map = vae_peak_gene_map,
+    vae_validation_fraction = vae_validation_fraction,
+    vae_early_stopping_patience = vae_early_stopping_patience,
+    vae_weight_decay = vae_weight_decay,
+    vae_kl_warmup_epochs = vae_kl_warmup_epochs,
+    vae_dropout = vae_dropout,
     input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,
@@ -5428,6 +5606,7 @@ run_regulatory_topics <- function(filtered_dir,
                                              warplda_iterations = NULL,
                                              warplda_sampler = NULL,
                                              warplda_beta = NULL,
+                                             warplda_alpha_sum = NULL,
                                              warplda_seed = NULL,
                                              topic_link_output = NULL,
                                              count_method = NULL,
@@ -5440,11 +5619,18 @@ run_regulatory_topics <- function(filtered_dir,
                                              condition_specificity_temperature = NULL,
                                              condition_specificity_floor = NULL,
                                              condition_specificity_expression_min = NULL,
+                                             final_peak_gene_token_ratio = NULL,
+                                             condition_term_idf = NULL,
+                                             condition_term_idf_floor = NULL,
                                              topic_score_method = NULL,
                                              topic_term_assignment_method = NULL,
                                              vae_device = NULL,
                                              vae_batch_size = NULL,
                                              vae_paired_term_regularization = NULL,
+                                             vae_topic_diversity_regularization = NULL,
+                                             vae_document_topic_separation_regularization = NULL,
+                                             vae_topic_initialization = NULL,
+                                             vae_topic_word_temperature = NULL,
                                              pathway_backend = NULL,
                                              pathway_species = NULL,
                                              pathway_databases = NULL) {
@@ -5489,6 +5675,19 @@ run_regulatory_topics <- function(filtered_dir,
     if (!is.finite(warplda_beta) || warplda_beta <= 0) {
       .log_abort("topic_warplda_beta must be null or a positive number.")
     }
+  }
+  warplda_alpha_sum <- if (is.null(warplda_alpha_sum)) {
+    .module3_cfg_value(
+      cfg,
+      c("topic_warplda_alpha_sum", "module3_topic_warplda_alpha_sum"),
+      50
+    )
+  } else {
+    warplda_alpha_sum
+  }
+  warplda_alpha_sum <- suppressWarnings(as.numeric(warplda_alpha_sum[[1L]]))
+  if (!is.finite(warplda_alpha_sum) || warplda_alpha_sum <= 0) {
+    .log_abort("topic_warplda_alpha_sum must be one positive finite number.")
   }
   warplda_seed <- if (is.null(warplda_seed)) {
     .module3_cfg_value(cfg, c("topic_warplda_seed", "module3_topic_warplda_seed"), 123L)
@@ -5622,6 +5821,57 @@ run_regulatory_topics <- function(filtered_dir,
       .log_abort("topic_condition_specificity_expression_min must be non-negative.")
     }
   }
+  final_peak_gene_token_ratio <- if (is.null(
+    final_peak_gene_token_ratio
+  )) {
+    .module3_cfg_value(
+      cfg,
+      c(
+        "topic_final_peak_gene_token_ratio",
+        "module3_topic_final_peak_gene_token_ratio"
+      ),
+      NULL
+    )
+  } else {
+    final_peak_gene_token_ratio
+  }
+  if (!is.null(final_peak_gene_token_ratio)) {
+    final_peak_gene_token_ratio <- suppressWarnings(as.numeric(
+      final_peak_gene_token_ratio[[1L]]
+    ))
+    if (!is.finite(final_peak_gene_token_ratio) ||
+        final_peak_gene_token_ratio <= 0) {
+      .log_abort("topic_final_peak_gene_token_ratio must be NULL or positive.")
+    }
+  }
+  condition_term_idf <- if (is.null(condition_term_idf)) {
+    .as_logical_flag(.module3_cfg_value(
+      cfg,
+      c("topic_condition_term_idf", "module3_topic_condition_term_idf"),
+      FALSE
+    )[[1L]])
+  } else {
+    isTRUE(condition_term_idf)
+  }
+  condition_term_idf_floor <- if (is.null(condition_term_idf_floor)) {
+    .module3_cfg_value(
+      cfg,
+      c(
+        "topic_condition_term_idf_floor",
+        "module3_topic_condition_term_idf_floor"
+      ),
+      0.1
+    )
+  } else {
+    condition_term_idf_floor
+  }
+  condition_term_idf_floor <- suppressWarnings(as.numeric(
+    condition_term_idf_floor[[1L]]
+  ))
+  if (!is.finite(condition_term_idf_floor) ||
+      condition_term_idf_floor < 0 || condition_term_idf_floor > 1) {
+    .log_abort("topic_condition_term_idf_floor must be between 0 and 1.")
+  }
   vae_device <- if (is.null(vae_device)) {
     as.character(.module3_cfg_value(cfg, c("topic_vae_device", "module3_topic_vae_device"), "auto"))[[1L]]
   } else {
@@ -5654,6 +5904,65 @@ run_regulatory_topics <- function(filtered_dir,
       .log_abort("topic_vae_paired_term_regularization must be non-negative.")
     }
   }
+  separation <- .resolve_vae_topic_separation_settings(
+    vae_variant = if (grepl("multivi", method, fixed = TRUE)) {
+      "multivi_encoder"
+    } else {
+      "vae_mlp"
+    },
+    topic_diversity_regularization = if (is.null(
+      vae_topic_diversity_regularization
+    )) {
+      .module3_cfg_value(
+        cfg,
+        c(
+          "topic_vae_topic_diversity_regularization",
+          "module3_topic_vae_topic_diversity_regularization"
+        ),
+        NULL
+      )
+    } else {
+      vae_topic_diversity_regularization
+    },
+    document_topic_separation_regularization = if (is.null(
+      vae_document_topic_separation_regularization
+    )) {
+      .module3_cfg_value(
+        cfg,
+        c(
+          "topic_vae_document_topic_separation_regularization",
+          "module3_topic_vae_document_topic_separation_regularization"
+        ),
+        NULL
+      )
+    } else {
+      vae_document_topic_separation_regularization
+    },
+    topic_initialization = if (is.null(vae_topic_initialization)) {
+      .module3_cfg_value(
+        cfg,
+        c(
+          "topic_vae_topic_initialization",
+          "module3_topic_vae_topic_initialization"
+        ),
+        NULL
+      )
+    } else {
+      vae_topic_initialization
+    },
+    topic_word_temperature = if (is.null(vae_topic_word_temperature)) {
+      .module3_cfg_value(
+        cfg,
+        c(
+          "topic_vae_topic_word_temperature",
+          "module3_topic_vae_topic_word_temperature"
+        ),
+        NULL
+      )
+    } else {
+      vae_topic_word_temperature
+    }
+  )
   pathway_backend <- if (is.null(pathway_backend)) {
     as.character(.module3_cfg_value(cfg, c("pathway_backend", "module3_pathway_backend"), "enrichly"))[[1L]]
   } else {
@@ -5889,6 +6198,7 @@ run_regulatory_topics <- function(filtered_dir,
     warplda_iterations = iterations,
     warplda_sampler = warplda_sampler,
     warplda_beta = warplda_beta,
+    warplda_alpha_sum = warplda_alpha_sum,
     warplda_seed = warplda_seed,
     topic_link_output = link_output,
     count_method = count_method,
@@ -5901,9 +6211,18 @@ run_regulatory_topics <- function(filtered_dir,
     condition_specificity_temperature = condition_specificity_temperature,
     condition_specificity_floor = condition_specificity_floor,
     condition_specificity_expression_min = condition_specificity_expression_min,
+    final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+    condition_term_idf = condition_term_idf,
+    condition_term_idf_floor = condition_term_idf_floor,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
     vae_paired_term_regularization = vae_paired_term_regularization,
+    vae_topic_diversity_regularization =
+      separation$topic_diversity_regularization,
+    vae_document_topic_separation_regularization =
+      separation$document_topic_separation_regularization,
+    vae_topic_initialization = separation$topic_initialization,
+    vae_topic_word_temperature = separation$topic_word_temperature,
     pathway_backend = pathway_backend,
     report_state = .module3_report_state(cfg),
     extraction_args = list(
@@ -5984,6 +6303,8 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param warplda_sampler Native WarpLDA sampler. If `NULL`, read from project
 #'   config or use `"warp_omp"`.
 #' @param warplda_beta Topic-word prior. `NULL` uses `1/K`.
+#' @param warplda_alpha_sum Total document-topic prior mass. The per-topic
+#'   alpha is this value divided by K. If `NULL`, use project config or `50`.
 #' @param warplda_seed Integer random seed for native WarpLDA.
 #' @param topic_link_output Topic-link output mode. If `NULL`, read from
 #'   `project_config` or use `"pass"`.
@@ -6005,8 +6326,8 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param condition_gene_weighting Condition-mode target-gene weighting. Use
 #'   `"specificity"` to emphasize relative expression across conditions while
 #'   retaining every document term and conserving document token totals.
-#' @param condition_peak_weighting Condition-mode aggregated-Peak weighting.
-#'   Use `"tf_expression"` to multiply balanced Peak weights by the selected
+#' @param condition_peak_weighting Condition-mode Peak weighting. Use
+#'   `"tf_expression"` to multiply balanced aggregate or coordinate Peak weights by the selected
 #'   TF condition-specific log expression relative to its median across
 #'   included conditions before pseudo-count conversion.
 #' @param condition_gene_expression_file Long condition-gene expression CSV.
@@ -6021,6 +6342,13 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param condition_specificity_expression_min Minimum expression used to define
 #'   expressed condition-gene pairs. If `NULL`, training reuses
 #'   `threshold_gene_expr`.
+#' @param final_peak_gene_token_ratio Optional final Peak/Gene model-token
+#'   ratio for condition::TF documents after pseudo-count conversion. `NULL`
+#'   preserves legacy counts.
+#' @param condition_term_idf Whether to downweight terms present across many
+#'   conditions while preserving each document's total model tokens.
+#' @param condition_term_idf_floor Minimum multiplier for a term found in every
+#'   condition. Must be between zero and one.
 #' @param topic_score_method Topic-term score method for extraction. If `NULL`,
 #'   read from `project_config` or use `"normtop_specificity"`.
 #' @param topic_term_assignment_method Term-to-topic assignment method. If
@@ -6035,8 +6363,8 @@ run_regulatory_topics <- function(filtered_dir,
 #' @param optimize_topics Whether eligible condition-topic extractions merge
 #'   undersized or highly similar topics before downstream reports. If `NULL`,
 #'   use project config or the standard condition-mode default.
-#' @param run_topic_assignment_qc Whether to write the standard per-K topic
-#'   assignment QC PDF. If `NULL`, use project config.
+#' @param run_topic_assignment_qc Whether to write the standardized compact
+#'   per-K input-design QC PDF. If `NULL`, use project config.
 #' @param topic_merge_min_genes Minimum assigned genes required to retain a
 #'   topic without a size-based merge. If `NULL`, use project config.
 #' @param topic_merge_min_links Minimum aligned TF-target links required to
@@ -6062,8 +6390,26 @@ run_regulatory_topics <- function(filtered_dir,
 #'   `project_config` or use `64`.
 #' @param vae_paired_term_regularization Non-negative strength for matching the
 #'   topic distributions of paired Gene and Peak terms. If `NULL`, read from
-#'   project config and otherwise use `5` for MultiVI and `0` for other VAE
+#'   project config and otherwise use `1` for MultiVI and `0` for other VAE
 #'   variants.
+#' @param vae_topic_diversity_regularization Non-negative penalty for similar
+#'   Gene and Peak topic distributions. If `NULL`, read from project config or
+#'   use the model-specific default.
+#' @param vae_document_topic_separation_regularization Non-negative penalty
+#'   that encourages distinct document-topic mixtures and broad topic use.
+#' @param vae_topic_initialization Topic initialization. Use `"random"` or
+#'   `"document_anchor"`; `NULL` reads project config or uses the model default.
+#' @param vae_topic_word_temperature Positive topic-word softmax temperature.
+#' @param vae_peak_gene_map Optional CSV with `peak_id` and `gene_key` columns
+#'   used to regularize coordinate Peak and Gene topic distributions.
+#' @param vae_validation_fraction Fraction of each document's integer tokens
+#'   held out for validation. Zero preserves legacy full-data training.
+#' @param vae_early_stopping_patience Validation epochs without improvement
+#'   before stopping. Zero disables early stopping.
+#' @param vae_weight_decay Non-negative Adam weight decay.
+#' @param vae_kl_warmup_epochs Number of epochs used to increase the KL weight
+#'   from zero to one. Zero disables warmup.
+#' @param vae_dropout Encoder dropout in `[0, 1)`.
 #' @param pathway_backend Pathway enrichment backend. Use `"enrichly"` for
 #'   local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,
 #'   read from `project_config` or use `"enrichly"`.
@@ -6108,6 +6454,7 @@ run_topic_modeling <- function(filtered_dir,
                                warplda_iterations = NULL,
                                warplda_sampler = NULL,
                                warplda_beta = NULL,
+                               warplda_alpha_sum = NULL,
                                warplda_seed = NULL,
                                topic_link_output = NULL,
                                count_method = NULL,
@@ -6121,6 +6468,9 @@ run_topic_modeling <- function(filtered_dir,
                                condition_specificity_temperature = NULL,
                                condition_specificity_floor = NULL,
                                condition_specificity_expression_min = NULL,
+                               final_peak_gene_token_ratio = NULL,
+                               condition_term_idf = NULL,
+                               condition_term_idf_floor = NULL,
                                topic_score_method = NULL,
                                topic_term_assignment_method = NULL,
                                optimize_topics = NULL,
@@ -6137,6 +6487,16 @@ run_topic_modeling <- function(filtered_dir,
                                vae_device = NULL,
                                vae_batch_size = NULL,
                                vae_paired_term_regularization = NULL,
+                               vae_topic_diversity_regularization = NULL,
+                               vae_document_topic_separation_regularization = NULL,
+                               vae_topic_initialization = NULL,
+                               vae_topic_word_temperature = NULL,
+                               vae_peak_gene_map = NULL,
+                               vae_validation_fraction = 0,
+                               vae_early_stopping_patience = 0L,
+                               vae_weight_decay = 0,
+                               vae_kl_warmup_epochs = 0L,
+                               vae_dropout = 0,
                                pathway_backend = NULL,
                                pathway_species = NULL,
                                pathway_databases = NULL,
@@ -6159,6 +6519,7 @@ run_topic_modeling <- function(filtered_dir,
     warplda_iterations = warplda_iterations,
     warplda_sampler = warplda_sampler,
     warplda_beta = warplda_beta,
+    warplda_alpha_sum = warplda_alpha_sum,
     warplda_seed = warplda_seed,
     topic_link_output = topic_link_output,
     count_method = count_method,
@@ -6171,11 +6532,20 @@ run_topic_modeling <- function(filtered_dir,
     condition_specificity_temperature = condition_specificity_temperature,
     condition_specificity_floor = condition_specificity_floor,
     condition_specificity_expression_min = condition_specificity_expression_min,
+    final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+    condition_term_idf = condition_term_idf,
+    condition_term_idf_floor = condition_term_idf_floor,
     topic_score_method = topic_score_method,
     topic_term_assignment_method = topic_term_assignment_method,
     vae_device = vae_device,
     vae_batch_size = vae_batch_size,
     vae_paired_term_regularization = vae_paired_term_regularization,
+    vae_topic_diversity_regularization =
+      vae_topic_diversity_regularization,
+    vae_document_topic_separation_regularization =
+      vae_document_topic_separation_regularization,
+    vae_topic_initialization = vae_topic_initialization,
+    vae_topic_word_temperature = vae_topic_word_temperature,
     pathway_backend = pathway_backend,
     pathway_species = pathway_species,
     pathway_databases = pathway_databases
@@ -6220,6 +6590,7 @@ run_topic_modeling <- function(filtered_dir,
     warplda_iterations = resolved$warplda_iterations,
     warplda_sampler = resolved$warplda_sampler,
     warplda_beta = resolved$warplda_beta,
+    warplda_alpha_sum = resolved$warplda_alpha_sum,
     warplda_seed = resolved$warplda_seed,
     topic_link_output = resolved$topic_link_output,
     count_method = resolved$count_method,
@@ -6232,12 +6603,27 @@ run_topic_modeling <- function(filtered_dir,
     condition_specificity_temperature = resolved$condition_specificity_temperature,
     condition_specificity_floor = resolved$condition_specificity_floor,
     condition_specificity_expression_min = resolved$condition_specificity_expression_min,
+    final_peak_gene_token_ratio = resolved$final_peak_gene_token_ratio,
+    condition_term_idf = resolved$condition_term_idf,
+    condition_term_idf_floor = resolved$condition_term_idf_floor,
     pathway_backend = resolved$pathway_backend,
     report_state = resolved$report_state,
     extraction_topic_report_args = modifyList(resolved$extraction_args, extraction_topic_report_args),
     vae_device = resolved$vae_device,
     vae_batch_size = resolved$vae_batch_size,
     vae_paired_term_regularization = resolved$vae_paired_term_regularization,
+    vae_topic_diversity_regularization =
+      resolved$vae_topic_diversity_regularization,
+    vae_document_topic_separation_regularization =
+      resolved$vae_document_topic_separation_regularization,
+    vae_topic_initialization = resolved$vae_topic_initialization,
+    vae_topic_word_temperature = resolved$vae_topic_word_temperature,
+    vae_peak_gene_map = vae_peak_gene_map,
+    vae_validation_fraction = vae_validation_fraction,
+    vae_early_stopping_patience = vae_early_stopping_patience,
+    vae_weight_decay = vae_weight_decay,
+    vae_kl_warmup_epochs = vae_kl_warmup_epochs,
+    vae_dropout = vae_dropout,
     input_source = input_source,
     sample_subset = sample_subset,
     analysis_label = analysis_label,

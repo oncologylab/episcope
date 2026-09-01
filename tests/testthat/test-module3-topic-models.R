@@ -196,7 +196,11 @@ test_that("VAE training reuses complete K values and trains missing K values", {
       K = 2L,
       perplexity = 10,
       loglik = -10,
-      paired_term_regularization = 0
+      paired_term_regularization = 0,
+      topic_diversity_regularization = 2,
+      document_topic_separation_regularization = 3,
+      topic_initialization = "document_anchor",
+      topic_word_temperature = 0.5
     ),
     file.path(out_dir, "model_metrics.csv")
   )
@@ -219,8 +223,19 @@ test_that("VAE training reuses complete K values and trains missing K values", {
     "out_dir <- val('--out-dir')",
     "ks <- as.integer(strsplit(val('--k-grid'), ',', fixed = TRUE)[[1]])",
     "pair_reg <- as.numeric(val('--paired-term-regularization'))",
+    "div_reg <- as.numeric(val('--topic-diversity-regularization'))",
+    "sep_reg <- as.numeric(val('--document-topic-separation-regularization'))",
+    "topic_init <- val('--topic-initialization')",
+    "topic_temp <- as.numeric(val('--topic-word-temperature'))",
     "dir.create(file.path(out_dir, 'vae_models'), recursive = TRUE, showWarnings = FALSE)",
-    "metrics <- data.frame(K = ks, perplexity = 100 + ks, loglik = -100 - ks, paired_term_regularization = pair_reg)",
+    paste0(
+      "metrics <- data.frame(K = ks, perplexity = 100 + ks, ",
+      "loglik = -100 - ks, paired_term_regularization = pair_reg, ",
+      "topic_diversity_regularization = div_reg, ",
+      "document_topic_separation_regularization = sep_reg, ",
+      "topic_initialization = topic_init, ",
+      "topic_word_temperature = topic_temp)"
+    ),
     "write.csv(metrics, file.path(out_dir, 'model_metrics.csv'), row.names = FALSE)",
     "write.csv(data.frame(K = ks), file.path(out_dir, 'vae_model_manifest.csv'), row.names = FALSE)",
     "for (k in ks) {",
@@ -251,6 +266,10 @@ test_that("VAE training reuses complete K values and trains missing K values", {
     k_grid = c(2L, 3L),
     vae_python = file.path(R.home("bin"), "Rscript"),
     vae_paired_term_regularization = 0,
+    vae_topic_diversity_regularization = 2,
+    vae_document_topic_separation_regularization = 3,
+    vae_topic_initialization = "document_anchor",
+    vae_topic_word_temperature = 0.5,
     reuse_if_exists = TRUE,
     do_report = FALSE,
     count_input = "pseudo_count_bin"
@@ -265,12 +284,19 @@ test_that("VAE training reuses complete K values and trains missing K values", {
   expect_true(file.exists(file.path(models_dir, "theta_K3.csv")))
   expect_equal(metrics[K == 2L, perplexity], 10)
   expect_equal(metrics[K == 3L, perplexity], 103)
+  expect_equal(metrics[K == 3L, topic_diversity_regularization], 2)
+  expect_equal(
+    metrics[K == 3L, document_topic_separation_regularization],
+    3
+  )
+  expect_equal(metrics[K == 3L, topic_initialization], "document_anchor")
+  expect_equal(metrics[K == 3L, topic_word_temperature], 0.5)
 })
 
 test_that("paired-term regularization defaults are model-specific", {
   expect_equal(
     craftgrn:::.resolve_vae_paired_term_regularization("multivi_encoder"),
-    5
+    1
   )
   expect_equal(
     craftgrn:::.resolve_vae_paired_term_regularization("vae_mlp"),
@@ -291,6 +317,22 @@ test_that("paired-term regularization defaults are model-specific", {
     "non-negative",
     fixed = TRUE
   )
+})
+
+test_that("MultiVI topic-separation defaults prevent neutral initialization", {
+  multivi <- craftgrn:::.resolve_vae_topic_separation_settings(
+    "multivi_encoder"
+  )
+  expect_equal(multivi$topic_diversity_regularization, 10)
+  expect_equal(multivi$document_topic_separation_regularization, 5)
+  expect_equal(multivi$topic_initialization, "document_anchor")
+  expect_equal(multivi$topic_word_temperature, 0.35)
+
+  mlp <- craftgrn:::.resolve_vae_topic_separation_settings("vae_mlp")
+  expect_equal(mlp$topic_diversity_regularization, 0)
+  expect_equal(mlp$document_topic_separation_regularization, 0)
+  expect_equal(mlp$topic_initialization, "random")
+  expect_equal(mlp$topic_word_temperature, 1)
 })
 
 test_that("topic assignment quality uses absolute and relative coverage gates", {
@@ -3594,4 +3636,176 @@ test_that("single-condition TF expression leaves aggregate Peak weights unchange
   expect_equal(audit$n_single_condition_tfs, 1L)
   expect_equal(audit$multiplier_min, 1)
   expect_equal(audit$multiplier_max, 1)
+})
+
+test_that("unique Peaks preserve coordinates and receive run012 TF scaling", {
+  edges <- data.table::data.table(
+    condition_label = rep(c("A", "B"), each = 4L),
+    tf_doc = "TF1",
+    tf = "TF1",
+    gene_key = rep(c("G1", "G1", "G2", "G2"), 2L),
+    peak_id = rep(c("chr1:1-2", "chr1:3-4", "chr2:1-2", "chr2:3-4"), 2L),
+    fp_score_condition = rep(c(2, 3, 4, 5), 2L),
+    gene_expr_condition = rep(c(8, 8, 12, 12), 2L),
+    tf_expr_condition = rep(c(255, 3), each = 4L)
+  )
+  expression_file <- tempfile(fileext = ".csv")
+  data.table::fwrite(data.table::data.table(
+    condition_id = rep(c("A", "B"), each = 2L),
+    gene_key = rep(c("G1", "G2"), 2L),
+    expression = c(8, 12, 4, 16)
+  ), expression_file)
+  specificity <- .module3_condition_gene_specificity_lookup(
+    expression_file,
+    expression_min = 1,
+    temperature = 0.5,
+    uniform_floor = 0.1
+  )
+
+  observed <- build_doc_term_condition_union(
+    edges,
+    count_method = "log",
+    count_scale = 50,
+    fp_term_mode = "unique",
+    condition_peak_weighting = "tf_expression",
+    condition_gene_specificity = specificity
+  )
+
+  expect_setequal(
+    observed[startsWith(term_id, "PEAK:"), term_id],
+    paste0("PEAK:", unique(edges$peak_id))
+  )
+  expect_gt(
+    observed[doc_id == "A::TF1" & term_id == "PEAK:chr1:1-2", weight],
+    observed[doc_id == "B::TF1" & term_id == "PEAK:chr1:1-2", weight]
+  )
+  peak_audit <- attr(observed, "condition_peak_weighting_audit")
+  gene_audit <- attr(
+    observed,
+    "condition_gene_specificity_weighting_audit"
+  )
+  expect_equal(
+    peak_audit$weighting_order,
+    "modality_balance_then_tf_expression"
+  )
+  expect_equal(
+    gene_audit$application_stage,
+    "gene_weight_before_modality_balance"
+  )
+  expect_equal(gene_audit$n_expression_matched_rows, 4L)
+})
+
+test_that("unique Peak GammaFit MaxProb aligns only matching Peak-Gene topics", {
+  raw_phi <- cbind(
+    "GENE:G1" = c(0.8, 0.2),
+    "GENE:G2" = c(0.1, 0.9),
+    "PEAK:chr1:1-2" = c(0.7, 0.3),
+    "PEAK:chr1:3-4" = c(0.2, 0.8),
+    "PEAK:chr2:1-2" = c(0.6, 0.4)
+  )
+  rownames(raw_phi) <- c("Topic1", "Topic2")
+  candidates <- data.table::CJ(
+    topic = 1:2,
+    term_id = colnames(raw_phi),
+    sorted = TRUE
+  )
+  candidates[, score := raw_phi[cbind(
+    topic,
+    match(term_id, colnames(raw_phi))
+  )]]
+  candidates[, in_topic := TRUE]
+  terms <- .assign_topic_terms(
+    raw_phi,
+    raw_phi,
+    candidates,
+    method = "gammafit_maxprob",
+    independent_unique_peaks = TRUE
+  )
+  map <- data.table::data.table(
+    peak_id = c("chr1:1-2", "chr1:3-4", "chr2:1-2"),
+    gene_key = c("G1", "G1", "G2")
+  )
+  aligned <- .topic_unique_peak_gene_assignment_table(terms, map)
+
+  expect_true(aligned[peak_term_id == "PEAK:chr1:1-2", assigned])
+  expect_false(aligned[peak_term_id == "PEAK:chr1:3-4", assigned])
+  expect_false(aligned[peak_term_id == "PEAK:chr2:1-2", assigned])
+  expect_equal(
+    aligned[peak_term_id == "PEAK:chr1:3-4", assignment_status],
+    "maxprob_topic_disagreement"
+  )
+  expect_true(all(
+    terms[in_topic == TRUE & term_group %in% c("GENE", "PEAK"),
+      .N,
+      by = term_id
+    ]$N == 1L
+  ))
+})
+
+test_that("final condition TF token weighting preserves legacy counts", {
+  input <- data.table::data.table(
+    doc_id = rep(c("A::TF1", "B::TF1"), each = 4L),
+    term_id = rep(c("GENE:G1", "GENE:G2", "PEAK:P1", "PEAK:P2"), 2L),
+    pseudo_count_log = c(10L, 20L, 30L, 40L, 11L, 19L, 31L, 39L)
+  )
+  observed <- .topic_finalize_condition_tf_counts(
+    input,
+    count_column = "pseudo_count_log"
+  )
+  expect_identical(observed, input)
+})
+
+test_that("final condition TF token weighting allocates exact modality ratios", {
+  input <- data.table::data.table(
+    doc_id = rep(c("A::TF1", "B::TF1"), each = 4L),
+    term_id = rep(c("GENE:G1", "GENE:G2", "PEAK:P1", "PEAK:P2"), 2L),
+    pseudo_count_log = c(10L, 20L, 30L, 40L, 11L, 19L, 31L, 39L)
+  )
+  observed <- .topic_finalize_condition_tf_counts(
+    input,
+    count_column = "pseudo_count_log",
+    final_peak_gene_token_ratio = 1
+  )
+  observed[, modality := ifelse(startsWith(term_id, "GENE:"), "gene", "peak")]
+  totals <- observed[, .(tokens = sum(pseudo_count_log)), by = .(doc_id, modality)]
+  expect_equal(totals[modality == "gene", tokens], c(50, 50))
+  expect_equal(totals[modality == "peak", tokens], c(50, 50))
+  expect_equal(observed[, sum(pseudo_count_log), by = doc_id]$V1, c(100, 100))
+
+  gene_heavy <- .topic_finalize_condition_tf_counts(
+    input,
+    count_column = "pseudo_count_log",
+    final_peak_gene_token_ratio = 0.5
+  )
+  gene_heavy[, modality := ifelse(
+    startsWith(term_id, "GENE:"), "gene", "peak"
+  )]
+  ratios <- data.table::dcast(
+    gene_heavy[, .(tokens = sum(pseudo_count_log)), by = .(doc_id, modality)],
+    doc_id ~ modality,
+    value.var = "tokens"
+  )
+  expect_equal(ratios$peak / ratios$gene, rep(33 / 67, 2L))
+})
+
+test_that("condition IDF downweights ubiquitous terms without changing totals", {
+  input <- data.table::data.table(
+    doc_id = c("A::TF1", "A::TF1", "B::TF1", "B::TF1"),
+    term_id = c("GENE:COMMON", "GENE:A_ONLY", "GENE:COMMON", "GENE:B_ONLY"),
+    pseudo_count_log = rep(50L, 4L)
+  )
+  observed <- .topic_finalize_condition_tf_counts(
+    input,
+    count_column = "pseudo_count_log",
+    condition_term_idf = TRUE,
+    condition_term_idf_floor = 0.1
+  )
+  expect_equal(observed[, sum(pseudo_count_log), by = doc_id]$V1, c(100, 100))
+  expect_true(all(
+    observed[grepl("_ONLY$", term_id), pseudo_count_log] >
+      observed[term_id == "GENE:COMMON", pseudo_count_log]
+  ))
+  audit <- attr(observed, "final_condition_token_audit")
+  expect_true(all(audit$condition_term_idf))
+  expect_equal(unique(audit$condition_term_idf_floor), 0.1)
 })

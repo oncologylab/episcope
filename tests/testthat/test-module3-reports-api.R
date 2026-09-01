@@ -127,12 +127,25 @@ test_that("Module 3 pathway database defaults are species aware", {
   mouse <- craftgrn:::.default_pathway_databases("mm10")
   both <- craftgrn:::.default_pathway_databases("human_mouse_best")
 
-  expect_true("ImmuneSigDB" %in% human)
-  expect_true("ImmuneSigDB" %in% mouse)
-  expect_true("WikiPathways_2024_Human" %in% human)
-  expect_true("KEGG_2021_Human" %in% human)
-  expect_true("WikiPathways_2024_Mouse" %in% mouse)
-  expect_true("KEGG_2019_Mouse" %in% mouse)
+  expect_identical(human, c(
+    "GO_Biological_Process_2023",
+    "GO_Cellular_Component_2023",
+    "GO_Molecular_Function_2023",
+    "Reactome_2022",
+    "WikiPathways_2024_Human",
+    "MSigDB_Hallmark_2020",
+    "KEGG_2021_Human"
+  ))
+  expect_identical(mouse, c(
+    "GO_Biological_Process_2023",
+    "GO_Cellular_Component_2023",
+    "GO_Molecular_Function_2023",
+    "Reactome_2022",
+    "WikiPathways_2024_Mouse",
+    "MSigDB_Hallmark_2020",
+    "KEGG_2019_Mouse"
+  ))
+  expect_false("ImmuneSigDB" %in% both)
   expect_false("WikiPathways_2024_Human" %in% mouse)
   expect_false("KEGG_2021_Human" %in% mouse)
   expect_true(all(c("WikiPathways_2024_Human", "KEGG_2021_Human") %in% both))

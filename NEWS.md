@@ -22,9 +22,18 @@
   sticky navigation, accessible tabbed diagnostics, compact condition and
   correlation views, clearer candidate and final-link evidence, and a
   collapsed technical appendix that preserves all detailed checks.
+* Rebuilt the Module 2 top-TF report as a condition-aware regulon browser with
+  full or selected target sets, optional supporting TFs, correlation controls,
+  condition activity and expression views, and standalone SVG export.
 * Updated Module 3 topic optimization to merge small, similar topics while
   preserving Gene/Peak assignments and improving TF-term versus document-theta
   correspondence. Merged-topic theta QC uses the maximum member-topic value.
+* Added condition-specific Gene weighting, optional condition term-IDF and
+  final Peak/Gene token balancing, configurable WarpLDA alpha mass, and new VAE
+  initialization, validation, regularization, and paired-term controls.
+* Standardized Module 3 input-design QC as the default topic-assignment report,
+  with Gene and all-Peak UMAPs when available, condition-composition review,
+  optional Module 2 TF-target evidence, and full-universe retention funnels.
 * Updated DESCRIPTION references to include author-year text for the next CRAN
   update.
 * Fixed a CRAN macOS test failure by comparing config-resolved relative paths

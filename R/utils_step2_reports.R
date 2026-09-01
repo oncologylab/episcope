@@ -868,7 +868,9 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
       output_dir = output_dir,
       tfs = top_tfs,
       top_n = top_n,
-      verbose = verbose
+      verbose = verbose,
+      multiomic_data = multiomic_data,
+      conditions = conditions
     )
   }
   if (any(c("direct_tf_tf", "tf_tf_connectivity") %in% reports)) {
@@ -925,30 +927,104 @@ build_module2_reports <- function(module2, multiomic_data = NULL, output_dir = N
 #' @param output_dir Output directory.
 #' @param tfs TFs to report.
 #' @param top_n Number of top targets per TF.
+#' @param default_top_n Initial number of targets displayed in the browser.
+#'   The default displays the complete embedded target set.
+#' @param target_genes Optional target-gene subset embedded in each TF browser.
+#'   The default ranks all predicted targets before applying `top_n`. Use
+#'   `top_n = Inf` to retain the complete predicted or supplied target set.
+#' @param supporting_module2 Optional full Module 2 result used only to add
+#'   non-seed TFs regulating the selected seed-TF targets.
+#' @param default_fp_r_cutoff Initial strict FP R cutoff shown by the browser.
 #' @param verbose Emit concise progress messages.
 #' @return A tibble report manifest.
 #' @noRd
-export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbose = TRUE) {
+export_top_tf_targets <- function(module2,
+                                  output_dir,
+                                  tfs,
+                                  top_n = 100L,
+                                  default_top_n = NULL,
+                                  verbose = TRUE,
+                                  multiomic_data = NULL,
+                                  conditions = NULL,
+                                  combine_tfs = FALSE,
+                                  default_condition = NULL,
+                                  max_linked_tfs = 50L,
+                                  max_linked_tfs_per_target = 2L,
+                                  supporting_module2 = NULL,
+                                  default_fp_r_cutoff = 0.5,
+                                  expression_pseudocount = 1,
+                                  target_genes = NULL) {
   if (is.character(module2) && length(module2) == 1L) module2 <- load_module2_links(module2)
+  if (is.character(supporting_module2) && length(supporting_module2) == 1L) {
+    supporting_module2 <- load_module2_links(supporting_module2)
+  }
+  if (!length(tfs) || anyNA(tfs) || any(!nzchar(trimws(as.character(tfs))))) {
+    .log_abort("`tfs` must contain at least one non-empty TF name.")
+  }
+  if (!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) || top_n < 1) {
+    .log_abort("`top_n` must be one positive number or `Inf`.")
+  }
+  if (!is.null(default_top_n) && (!is.numeric(default_top_n) || length(default_top_n) != 1L || is.na(default_top_n) || default_top_n < 1)) {
+    .log_abort("`default_top_n` must be `NULL`, one positive number, or `Inf`.")
+  }
+  if (!is.null(target_genes) && (
+      !length(target_genes) || anyNA(target_genes) ||
+      any(!nzchar(trimws(as.character(target_genes)))))) {
+    .log_abort("`target_genes` must be `NULL` or contain non-empty gene names.")
+  }
+  if (!is.numeric(max_linked_tfs) || length(max_linked_tfs) != 1L || !is.finite(max_linked_tfs) || max_linked_tfs < 0) {
+    .log_abort("`max_linked_tfs` must be one non-negative number.")
+  }
+  if (!is.numeric(max_linked_tfs_per_target) || length(max_linked_tfs_per_target) != 1L || !is.finite(max_linked_tfs_per_target) || max_linked_tfs_per_target < 0) {
+    .log_abort("`max_linked_tfs_per_target` must be one non-negative number.")
+  }
+  if (!is.numeric(expression_pseudocount) || length(expression_pseudocount) != 1L || !is.finite(expression_pseudocount) || expression_pseudocount <= 0) {
+    .log_abort("`expression_pseudocount` must be one positive number.")
+  }
+  if (!is.numeric(default_fp_r_cutoff) || length(default_fp_r_cutoff) != 1L || !is.finite(default_fp_r_cutoff) || default_fp_r_cutoff < -1 || default_fp_r_cutoff > 1) {
+    .log_abort("`default_fp_r_cutoff` must be one finite number between -1 and 1.")
+  }
   dir.create(file.path(output_dir, "csv"), recursive = TRUE, showWarnings = FALSE)
   html_dir <- output_dir
   dir.create(html_dir, recursive = TRUE, showWarnings = FALSE)
-  link_dt <- .module2_report_join_links(module2, tf = tfs)
   tfs <- toupper(as.character(tfs))
-  rows <- lapply(tfs, function(tf) {
-    tables <- .module2_report_top_tables(link_dt, tf, top_n = top_n)
-    if (is.null(tables)) return(NULL)
-    html <- file.path(html_dir, sprintf("%s_Module2_top%d_log2fc1_network.html", tf, as.integer(top_n)))
-    .module2_report_write_network_html(
-      nodes = tables$nodes,
-      edges = tables$edges,
-      out_html = html,
-      title = sprintf("%s Module2 top-%d target network", tf, as.integer(top_n)),
-      subtitle = "Top target genes and supporting TF-to-target edges"
+  tf_groups <- if (isTRUE(combine_tfs)) list(sort(unique(tfs))) else as.list(tfs)
+  rows <- lapply(tf_groups, function(tf_group) {
+    tf_tag <- paste(tf_group, collapse = "_")
+    target_tag <- if (!is.null(target_genes)) {
+      sprintf("selected%d", length(unique(toupper(as.character(target_genes)))))
+    } else if (is.finite(top_n)) {
+      sprintf("top%d", as.integer(top_n))
+    } else {
+      "all"
+    }
+    title <- sprintf(
+      "%s Module2 %s target network",
+      paste(tf_group, collapse = "/"),
+      gsub("([A-Za-z]+)([0-9]+)$", "\\1-\\2", target_tag)
     )
-    data.table::fwrite(tables$nodes, file.path(output_dir, "csv", sprintf("%s_Module2_top%d_nodes.csv", tf, as.integer(top_n))))
-    data.table::fwrite(tables$edges, file.path(output_dir, "csv", sprintf("%s_Module2_top%d_edges.csv", tf, as.integer(top_n))))
-    data.table::data.table(report = "top_tf_targets", tf = tf, path = html)
+    payload <- .module2_regulon_build(
+      module2 = module2,
+      tfs = tf_group,
+      top_n = top_n,
+      default_top_n = default_top_n,
+      target_genes = target_genes,
+      multiomic_data = multiomic_data,
+      conditions = conditions,
+      default_condition = default_condition,
+      max_linked_tfs = max_linked_tfs,
+      max_linked_tfs_per_target = max_linked_tfs_per_target,
+      supporting_module2 = supporting_module2,
+      default_fp_r_cutoff = default_fp_r_cutoff,
+      expression_pseudocount = expression_pseudocount,
+      title = title
+    )
+    if (is.null(payload)) return(NULL)
+    html <- file.path(html_dir, sprintf("%s_Module2_%s_network.html", tf_tag, target_tag))
+    .module2_regulon_write_html(payload, html)
+    data.table::fwrite(payload$nodes, file.path(output_dir, "csv", sprintf("%s_Module2_%s_nodes.csv", tf_tag, target_tag)))
+    data.table::fwrite(payload$links, file.path(output_dir, "csv", sprintf("%s_Module2_%s_links.csv", tf_tag, target_tag)))
+    data.table::data.table(report = "top_tf_targets", tf = paste(tf_group, collapse = ","), path = html)
   })
   out <- data.table::rbindlist(rows, use.names = TRUE, fill = TRUE)
   if (isTRUE(verbose)) .log_inform("Module 2 reports: wrote {nrow(out)} top TF-target HTML file(s).")
@@ -961,11 +1037,62 @@ export_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbos
 #' @param output_dir Output directory.
 #' @param tfs TFs to report.
 #' @param top_n Number of top targets per TF.
+#' @param default_top_n Initial number of targets displayed in the browser.
+#'   The default displays the complete embedded target set.
+#' @param target_genes Optional target-gene subset embedded in each TF browser.
+#'   The default ranks all predicted targets before applying `top_n`. Use
+#'   `top_n = Inf` to retain the complete predicted or supplied target set.
 #' @param verbose Emit concise progress messages.
+#' @param multiomic_data Optional CraftGRN multiomic object used to precompute
+#'   condition activity and expression for the browser.
+#' @param conditions Optional conditions to include. The default includes all
+#'   conditions available in `multiomic_data`.
+#' @param combine_tfs Combine all requested TFs into one global target-union
+#'   browser. The default writes one browser per TF.
+#' @param default_condition Initial condition shown by the browser.
+#' @param max_linked_tfs Maximum number of non-seed supporting TFs.
+#' @param max_linked_tfs_per_target Maximum supporting TFs retained per target.
+#' @param supporting_module2 Optional full Module 2 result or output directory
+#'   used only to add non-seed TFs regulating the selected seed-TF targets.
+#' @param default_fp_r_cutoff Initial strict FP R cutoff shown by the browser.
+#' @param expression_pseudocount Pseudocount for differential node log2 fold
+#'   changes.
 #' @return A tibble report manifest.
 #' @export
-report_top_tf_targets <- function(module2, output_dir, tfs, top_n = 100L, verbose = TRUE) {
-  export_top_tf_targets(module2 = module2, output_dir = output_dir, tfs = tfs, top_n = top_n, verbose = verbose)
+report_top_tf_targets <- function(module2,
+                                  output_dir,
+                                  tfs,
+                                  top_n = 100L,
+                                  default_top_n = NULL,
+                                  verbose = TRUE,
+                                  multiomic_data = NULL,
+                                  conditions = NULL,
+                                  combine_tfs = FALSE,
+                                  default_condition = NULL,
+                                  max_linked_tfs = 50L,
+                                  max_linked_tfs_per_target = 2L,
+                                  supporting_module2 = NULL,
+                                  default_fp_r_cutoff = 0.5,
+                                  expression_pseudocount = 1,
+                                  target_genes = NULL) {
+  export_top_tf_targets(
+    module2 = module2,
+    output_dir = output_dir,
+    tfs = tfs,
+    top_n = top_n,
+    default_top_n = default_top_n,
+    target_genes = target_genes,
+    verbose = verbose,
+    multiomic_data = multiomic_data,
+    conditions = conditions,
+    combine_tfs = combine_tfs,
+    default_condition = default_condition,
+    max_linked_tfs = max_linked_tfs,
+    max_linked_tfs_per_target = max_linked_tfs_per_target,
+    supporting_module2 = supporting_module2,
+    default_fp_r_cutoff = default_fp_r_cutoff,
+    expression_pseudocount = expression_pseudocount
+  )
 }
 
 #' Export direct TF-TF browser reports

@@ -16,6 +16,7 @@ run_topic_modeling(
   warplda_iterations = NULL,
   warplda_sampler = NULL,
   warplda_beta = NULL,
+  warplda_alpha_sum = NULL,
   warplda_seed = NULL,
   topic_link_output = NULL,
   count_method = NULL,
@@ -29,6 +30,9 @@ run_topic_modeling(
   condition_specificity_temperature = NULL,
   condition_specificity_floor = NULL,
   condition_specificity_expression_min = NULL,
+  final_peak_gene_token_ratio = NULL,
+  condition_term_idf = NULL,
+  condition_term_idf_floor = NULL,
   topic_score_method = NULL,
   topic_term_assignment_method = NULL,
   optimize_topics = NULL,
@@ -45,6 +49,16 @@ run_topic_modeling(
   vae_device = NULL,
   vae_batch_size = NULL,
   vae_paired_term_regularization = NULL,
+  vae_topic_diversity_regularization = NULL,
+  vae_document_topic_separation_regularization = NULL,
+  vae_topic_initialization = NULL,
+  vae_topic_word_temperature = NULL,
+  vae_peak_gene_map = NULL,
+  vae_validation_fraction = 0,
+  vae_early_stopping_patience = 0L,
+  vae_weight_decay = 0,
+  vae_kl_warmup_epochs = 0L,
+  vae_dropout = 0,
   pathway_backend = NULL,
   pathway_species = NULL,
   pathway_databases = NULL,
@@ -106,6 +120,9 @@ config or use `"warp_omp"`.}
 
 \item{warplda_beta}{Topic-word prior. `NULL` uses `1/K`.}
 
+\item{warplda_alpha_sum}{Total document-topic prior mass. The per-topic
+alpha is this value divided by K. If `NULL`, use project config or `50`.}
+
 \item{warplda_seed}{Integer random seed for native WarpLDA.}
 
 \item{topic_link_output}{Topic-link output mode. If `NULL`, read from
@@ -135,8 +152,8 @@ If `NULL`, read `topic_de_gene_union_scope` from project config or use
 `"specificity"` to emphasize relative expression across conditions while
 retaining every document term and conserving document token totals.}
 
-\item{condition_peak_weighting}{Condition-mode aggregated-Peak weighting.
-Use `"tf_expression"` to multiply balanced Peak weights by the selected
+\item{condition_peak_weighting}{Condition-mode Peak weighting. Use
+`"tf_expression"` to multiply balanced aggregate or coordinate Peak weights by the selected
 TF condition-specific log expression relative to its median across
 included conditions before pseudo-count conversion.}
 
@@ -156,6 +173,16 @@ during specificity weighting. If `NULL`, read from project config or use
 expressed condition-gene pairs. If `NULL`, training reuses
 `threshold_gene_expr`.}
 
+\item{final_peak_gene_token_ratio}{Optional final Peak/Gene model-token
+ratio for condition::TF documents after pseudo-count conversion. `NULL`
+preserves legacy counts.}
+
+\item{condition_term_idf}{Whether to downweight terms present across many
+conditions while preserving each document's total model tokens.}
+
+\item{condition_term_idf_floor}{Minimum multiplier for a term found in every
+condition. Must be between zero and one.}
+
 \item{topic_score_method}{Topic-term score method for extraction. If `NULL`,
 read from `project_config` or use `"normtop_specificity"`.}
 
@@ -173,8 +200,8 @@ default.}
 undersized or highly similar topics before downstream reports. If `NULL`,
 use project config or the standard condition-mode default.}
 
-\item{run_topic_assignment_qc}{Whether to write the standard per-K topic
-assignment QC PDF. If `NULL`, use project config.}
+\item{run_topic_assignment_qc}{Whether to write the standardized compact
+per-K input-design QC PDF. If `NULL`, use project config.}
 
 \item{topic_merge_min_genes}{Minimum assigned genes required to retain a
 topic without a size-based merge. If `NULL`, use project config.}
@@ -212,8 +239,36 @@ If `NULL`, read from `project_config` or use `"auto"`.}
 
 \item{vae_paired_term_regularization}{Non-negative strength for matching the
 topic distributions of paired Gene and Peak terms. If `NULL`, read from
-project config and otherwise use `5` for MultiVI and `0` for other VAE
+project config and otherwise use `1` for MultiVI and `0` for other VAE
 variants.}
+
+\item{vae_topic_diversity_regularization}{Non-negative penalty for similar
+Gene and Peak topic distributions. If `NULL`, read from project config or
+use the model-specific default.}
+
+\item{vae_document_topic_separation_regularization}{Non-negative penalty
+that encourages distinct document-topic mixtures and broad topic use.}
+
+\item{vae_topic_initialization}{Topic initialization. Use `"random"` or
+`"document_anchor"`; `NULL` reads project config or uses the model default.}
+
+\item{vae_topic_word_temperature}{Positive topic-word softmax temperature.}
+
+\item{vae_peak_gene_map}{Optional CSV with `peak_id` and `gene_key` columns
+used to regularize coordinate Peak and Gene topic distributions.}
+
+\item{vae_validation_fraction}{Fraction of each document's integer tokens
+held out for validation. Zero preserves legacy full-data training.}
+
+\item{vae_early_stopping_patience}{Validation epochs without improvement
+before stopping. Zero disables early stopping.}
+
+\item{vae_weight_decay}{Non-negative Adam weight decay.}
+
+\item{vae_kl_warmup_epochs}{Number of epochs used to increase the KL weight
+from zero to one. Zero disables warmup.}
+
+\item{vae_dropout}{Encoder dropout in `[0, 1)`.}
 
 \item{pathway_backend}{Pathway enrichment backend. Use `"enrichly"` for
 local cached enrichment or `"enrichr"` for the Enrichr web API. If `NULL`,

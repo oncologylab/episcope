@@ -484,21 +484,11 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
   )
 }
 
-.module3_apply_condition_gene_specificity <- function(doc_term,
-                                                      expression_file,
-                                                      count_column,
-                                                      expression_min,
-                                                      temperature = 0.5,
-                                                      uniform_floor = 0.1) {
+.module3_condition_gene_specificity_lookup <- function(expression_file,
+                                                        expression_min,
+                                                        temperature = 0.5,
+                                                        uniform_floor = 0.1) {
   .assert_pkg("data.table")
-  dt <- data.table::as.data.table(doc_term)
-  required <- c("doc_id", "term_id", count_column)
-  missing <- setdiff(required, names(dt))
-  if (length(missing)) {
-    .log_abort(
-      "Condition gene-specificity weighting requires doc-term columns: {paste(missing, collapse = ', ')}."
-    )
-  }
   if (!file.exists(expression_file)) {
     .log_abort("Condition gene expression file not found: {expression_file}")
   }
@@ -563,6 +553,45 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
       (1 - uniform_floor) *
       specificity_mass / specificity_total * expressed_conditions]
 
+  list(
+    lookup = expression[, .(condition_id, gene_key, multiplier)],
+    settings = data.table::data.table(
+      weighting = "gene_specificity",
+      expression_file = normalizePath(
+        expression_file,
+        winslash = "/",
+        mustWork = TRUE
+      ),
+      expression_min = expression_min,
+      temperature = temperature,
+      uniform_floor = uniform_floor
+    )
+  )
+}
+
+.module3_apply_condition_gene_specificity <- function(doc_term,
+                                                      expression_file,
+                                                      count_column,
+                                                      expression_min,
+                                                      temperature = 0.5,
+                                                      uniform_floor = 0.1) {
+  .assert_pkg("data.table")
+  dt <- data.table::as.data.table(doc_term)
+  required <- c("doc_id", "term_id", count_column)
+  missing <- setdiff(required, names(dt))
+  if (length(missing)) {
+    .log_abort(
+      "Condition gene-specificity weighting requires doc-term columns: {paste(missing, collapse = ', ')}."
+    )
+  }
+  specificity <- .module3_condition_gene_specificity_lookup(
+    expression_file = expression_file,
+    expression_min = expression_min,
+    temperature = temperature,
+    uniform_floor = uniform_floor
+  )
+  lookup <- specificity$lookup
+
   doc_id <- as.character(dt$doc_id)
   term_id <- as.character(dt$term_id)
   doc_condition <- sub("::[^:]+$", "", doc_id)
@@ -586,7 +615,6 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
     "",
     term_id[tf_target_term]
   )
-  lookup <- expression[, .(condition_id, gene_key, multiplier)]
   data.table::setkey(lookup, condition_id, gene_key)
   matched_multiplier <- lookup[
     data.table::data.table(condition_id = doc_condition, gene_key = term_gene),
@@ -643,12 +671,9 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
   }
   dt[, (count_column) := weighted]
 
-  audit <- data.table::data.table(
-    weighting = "gene_specificity",
-    expression_file = normalizePath(expression_file, winslash = "/", mustWork = TRUE),
-    expression_min = expression_min,
-    temperature = temperature,
-    uniform_floor = uniform_floor,
+  audit <- cbind(
+    specificity$settings,
+    data.table::data.table(
     n_documents = length(document_levels),
     n_doc_term_rows = nrow(dt),
     n_target_term_rows = sum(target_term),
@@ -661,7 +686,8 @@ load_delta_links_many <- function(files, keep_original = TRUE, n_max_files = Inf
     multiplier_max = max(multiplier[target_term]),
     original_tokens = sum(round(original_mass)),
     weighted_tokens = sum(final_mass),
-    max_document_token_difference = max(abs(final_mass - round(original_mass)))
+      max_document_token_difference = max(abs(final_mass - round(original_mass)))
+    )
   )
   list(doc_term = dt, audit = audit)
 }
@@ -1200,6 +1226,7 @@ fit_warplda_one <- function(dtm,
                                           iterations = NULL,
                                           alpha_by_topic = NULL,
                                           alpha = NULL,
+                                          alpha_sum = 50,
                                           beta = NULL,
                                           seed = NULL,
                                           sampler = NULL) {
@@ -1217,7 +1244,11 @@ fit_warplda_one <- function(dtm,
       ))
     }
     if (!is.null(alpha_by_topic)) {
-      expected_alpha <- if (isTRUE(alpha_by_topic)) 50 / as.numeric(K) else as.numeric(alpha)
+      expected_alpha <- if (isTRUE(alpha_by_topic)) {
+        as.numeric(alpha_sum) / as.numeric(K)
+      } else {
+        as.numeric(alpha)
+      }
       settings_match <- settings_match && isTRUE(all.equal(as.numeric(fit$alpha), expected_alpha))
       expected_beta <- if (is.null(beta)) 1 / as.numeric(K) else as.numeric(beta)
       settings_match <- settings_match && isTRUE(all.equal(as.numeric(fit$beta), expected_beta))
@@ -1270,6 +1301,7 @@ run_warplda_models <- function(dtm,
                                iterations = 2000L,
                                alpha_by_topic = TRUE,
                                alpha = NULL,
+                               alpha_sum = 50,
                                beta = 0.1,
                                seed = 123,
                                save_tmp_dir = NULL,
@@ -1285,6 +1317,10 @@ run_warplda_models <- function(dtm,
   .assert_pkg("Matrix")
 
   sampler <- match.arg(sampler)
+  alpha_sum <- suppressWarnings(as.numeric(alpha_sum[[1L]]))
+  if (!is.finite(alpha_sum) || alpha_sum <= 0) {
+    .log_abort("`alpha_sum` must be one positive finite number.")
+  }
   K_grid <- as.integer(K_grid)
   K_grid <- sort(unique(K_grid[is.finite(K_grid) & K_grid > 1L]))
   if (!length(K_grid)) .log_abort("K_grid must include integers > 1.")
@@ -1327,6 +1363,7 @@ run_warplda_models <- function(dtm,
       n_tokens = as.numeric(fit$metrics$n_tokens),
       sampler = fit_sampler,
       alpha = as.numeric(fit$alpha),
+      alpha_sum = as.numeric(fit$alpha) * as.integer(fit$K),
       beta = as.numeric(fit$beta),
       seed = as.integer(fit$seed),
       threads = as.integer(metric_value("threads", fit$model$threads)),
@@ -1343,7 +1380,7 @@ run_warplda_models <- function(dtm,
   }
 
   fit_one_k <- function(K) {
-    a <- if (isTRUE(alpha_by_topic)) 50 / as.numeric(K) else alpha
+    a <- if (isTRUE(alpha_by_topic)) alpha_sum / as.numeric(K) else alpha
     beta_display <- if (is.null(beta)) "1/K" else signif(as.numeric(beta), 4)
     fit_file <- fit_file_for_k(K)
     if (!is.na(fit_file) && file.exists(fit_file)) {
@@ -1396,6 +1433,7 @@ run_warplda_models <- function(dtm,
       n_tokens = as.numeric(fit$metrics$n_tokens),
       sampler = sampler,
       alpha = as.numeric(fit$alpha),
+      alpha_sum = as.numeric(fit$alpha) * as.integer(fit$K),
       beta = as.numeric(fit$beta),
       seed = as.integer(fit$seed),
       threads = as.integer(fit$metrics$threads),
@@ -1419,6 +1457,7 @@ run_warplda_models <- function(dtm,
     iterations = iterations,
     alpha_by_topic = alpha_by_topic,
     alpha = alpha,
+    alpha_sum = alpha_sum,
     beta = beta,
     seed = seed,
     sampler = sampler
@@ -1472,7 +1511,7 @@ run_warplda_models <- function(dtm,
         metric_columns <- intersect(
           c(
             "K", "perplexity", "loglik", "n_tokens", "sampler",
-            "alpha", "beta", "seed", "threads",
+            "alpha", "alpha_sum", "beta", "seed", "threads",
             "iterations_requested", "iterations_completed",
             "convergence_tolerance", "final_check_relative_change",
             "converged", "fit_file"
@@ -1518,7 +1557,7 @@ run_warplda_models <- function(dtm,
   public_metric_columns <- intersect(
     c(
       "K", "perplexity", "loglik", "n_tokens", "sampler",
-      "alpha", "beta", "seed", "threads",
+      "alpha", "alpha_sum", "beta", "seed", "threads",
       "iterations_requested", "iterations_completed",
       "convergence_tolerance", "final_check_relative_change", "converged"
     ),
@@ -2078,7 +2117,8 @@ binarize_topics <- function(score_mat,
 .assign_topic_terms <- function(raw_phi,
                                 score_mat,
                                 candidate_terms,
-                                method = c("gammafit_maxprob", "max_phi", "gammafit")) {
+                                method = c("gammafit_maxprob", "max_phi", "gammafit"),
+                                independent_unique_peaks = FALSE) {
   method <- match.arg(method)
   raw_phi <- as.matrix(raw_phi)
   score_mat <- as.matrix(score_mat)
@@ -2197,6 +2237,44 @@ binarize_topics <- function(score_mat,
 
     gene_only_idx <- which(grepl("^GENE:", term_ids))
     gene_only_mode <- length(gene_only_idx) && !any(grepl("^PEAK:", term_ids))
+
+    if (isTRUE(independent_unique_peaks)) {
+      independent_idx <- which(
+        grepl("^GENE:", term_ids) | grepl("^PEAK:", term_ids)
+      )
+      if (!length(independent_idx)) {
+        .log_abort(
+          "Unique-Peak GammaFit-MaxProb requires GENE: or PEAK: terms."
+        )
+      }
+      independent_max <- select_candidate_max(independent_idx)
+      independent_rows <- valid & out$term_group %in% c("GENE", "PEAK")
+      independent_position <- match(
+        term_index[independent_rows],
+        independent_idx
+      )
+      row_topic <- topic_index[independent_rows]
+      selected_topic <- independent_max$topic[independent_position]
+      selected <- !is.na(selected_topic) & row_topic == selected_topic
+      out[independent_rows, `:=`(
+        in_topic = selected,
+        term_pair_key = sub("^(GENE|PEAK):", "", term_id),
+        common_candidate_count = colSums(
+          independent_max$candidate
+        )[independent_position],
+        term_maxprob_selected = selected,
+        term_maxprob_topic = selected_topic,
+        term_maxprob_probability =
+          independent_max$probability[independent_position],
+        term_maxprob_margin = independent_max$margin[independent_position],
+        assignment_status = ifelse(
+          independent_max$has_candidate[independent_position],
+          "assigned_gammafit_maxprob",
+          "no_gammafit_candidate"
+        )
+      )]
+      return(out[])
+    }
 
     term_pair_index <- rep(NA_integer_, length(term_ids))
     if (length(pair_keys)) {
@@ -2738,6 +2816,147 @@ binarize_topics <- function(score_mat,
   out[]
 }
 
+.topic_unique_peak_gene_assignment_table <- function(topic_terms,
+                                                      peak_gene_map) {
+  tt <- data.table::as.data.table(data.table::copy(topic_terms))
+  map <- data.table::as.data.table(data.table::copy(peak_gene_map))
+  required_terms <- c(
+    "topic_num", "term_id", "term_group", "phi", "in_topic",
+    "gammafit_candidate", "term_maxprob_topic",
+    "term_maxprob_probability", "term_maxprob_margin"
+  )
+  missing_terms <- setdiff(required_terms, names(tt))
+  if (length(missing_terms)) {
+    .log_abort(
+      "Unique Peak assignment is missing topic-term columns: {paste(missing_terms, collapse = ', ')}."
+    )
+  }
+  peak_column <- intersect(c("peak_id", "peak_term_id"), names(map))[1L]
+  gene_column <- intersect(
+    c("gene_key", "target_gene", "gene_term_id"),
+    names(map)
+  )[1L]
+  if (is.na(peak_column) || is.na(gene_column)) {
+    .log_abort(
+      "Unique Peak assignment requires a Peak-to-Gene map with Peak and Gene identifiers."
+    )
+  }
+  map <- unique(map[, .(
+    peak_term_id = paste0(
+      "PEAK:",
+      sub("^PEAK:", "", as.character(get(peak_column)))
+    ),
+    gene_term_id = paste0(
+      "GENE:",
+      sub("^GENE:", "", as.character(get(gene_column)))
+    )
+  )])
+  map <- map[
+    !is.na(peak_term_id) & nzchar(sub("^PEAK:", "", peak_term_id)) &
+      !is.na(gene_term_id) & nzchar(sub("^GENE:", "", gene_term_id))
+  ]
+  if (!nrow(map)) {
+    .log_abort("Unique Peak assignment received an empty Peak-to-Gene map.")
+  }
+
+  collapse_topics <- function(x) {
+    x <- sort(unique(as.integer(x[is.finite(x)])))
+    if (length(x)) paste(x, collapse = ";") else ""
+  }
+  summarize_terms <- function(group, prefix) {
+    x <- tt[term_group == group]
+    if (!nrow(x)) return(data.table::data.table())
+    out <- x[, .(
+      gammafit_topic_count = sum(.as_logical_flag(gammafit_candidate)),
+      gammafit_topics = collapse_topics(
+        topic_num[.as_logical_flag(gammafit_candidate)]
+      ),
+      maxprob_topic = {
+        value <- unique(term_maxprob_topic[is.finite(term_maxprob_topic)])
+        if (length(value)) as.integer(value[[1L]]) else NA_integer_
+      },
+      maxprob_probability = {
+        value <- unique(
+          term_maxprob_probability[is.finite(term_maxprob_probability)]
+        )
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      },
+      maxprob_margin = {
+        value <- unique(term_maxprob_margin[is.finite(term_maxprob_margin)])
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      },
+      assigned_topic = {
+        value <- topic_num[.as_logical_flag(in_topic)]
+        if (length(value)) as.integer(value[[1L]]) else NA_integer_
+      },
+      assigned_phi = {
+        value <- phi[.as_logical_flag(in_topic)]
+        if (length(value)) as.numeric(value[[1L]]) else NA_real_
+      }
+    ), by = term_id]
+    data.table::setnames(
+      out,
+      setdiff(names(out), "term_id"),
+      paste0(prefix, "_", setdiff(names(out), "term_id"))
+    )
+    data.table::setnames(out, "term_id", paste0(prefix, "_term_id"))
+    out
+  }
+  gene <- summarize_terms("GENE", "gene")
+  peak <- summarize_terms("PEAK", "peak")
+  if (!nrow(gene) || !nrow(peak)) {
+    .log_abort("Unique Peak assignment requires both Gene and Peak terms.")
+  }
+  out <- merge(map, gene, by = "gene_term_id", all.x = TRUE, sort = FALSE)
+  out <- merge(out, peak, by = "peak_term_id", all.x = TRUE, sort = FALSE)
+  out[, target_gene := sub("^GENE:", "", gene_term_id)]
+  shared_topics <- Map(function(gene_topics, peak_topics) {
+    parse <- function(value) {
+      value <- suppressWarnings(as.integer(strsplit(value %||% "", ";", fixed = TRUE)[[1L]]))
+      sort(unique(value[is.finite(value)]))
+    }
+    shared <- intersect(parse(gene_topics), parse(peak_topics))
+    if (length(shared)) paste(shared, collapse = ";") else ""
+  }, out$gene_gammafit_topics, out$peak_gammafit_topics)
+  out[, `:=`(
+    shared_gammafit_topics = unlist(shared_topics, use.names = FALSE),
+    common_candidate_count = lengths(strsplit(
+      unlist(shared_topics, use.names = FALSE),
+      ";",
+      fixed = TRUE
+    ))
+  )]
+  out[shared_gammafit_topics == "", common_candidate_count := 0L]
+  out[, assigned := is.finite(gene_assigned_topic) &
+    is.finite(peak_assigned_topic) &
+    gene_assigned_topic == peak_assigned_topic]
+  out[, assigned_topic := data.table::fifelse(
+    assigned,
+    as.integer(gene_assigned_topic),
+    NA_integer_
+  )]
+  out[, assignment_status := data.table::fcase(
+    !is.finite(gene_assigned_topic), "gene_no_gammafit_candidate",
+    !is.finite(peak_assigned_topic), "peak_no_gammafit_candidate",
+    assigned, "assigned_gammafit_maxprob_agreement",
+    default = "maxprob_topic_disagreement"
+  )]
+  out[, `:=`(
+    min_maxprob_probability = pmin(
+      gene_maxprob_probability,
+      peak_maxprob_probability,
+      na.rm = FALSE
+    ),
+    min_maxprob_margin = pmin(
+      gene_maxprob_margin,
+      peak_maxprob_margin,
+      na.rm = FALSE
+    )
+  )]
+  data.table::setorder(out, -assigned, target_gene, peak_term_id)
+  out[]
+}
+
 .topic_gene_assignment_table <- function(topic_terms) {
   tt <- data.table::as.data.table(topic_terms)
   required <- c(
@@ -3123,6 +3342,20 @@ binarize_topics <- function(score_mat,
   x <- data.table::as.data.table(pair_assignment)
   matched <- x[!is.na(gene_term_id) & !is.na(peak_term_id)]
   assigned <- matched[.as_logical_flag(assigned)]
+  unique_gene_count <- function(value) {
+    key <- intersect(c("target_gene", "gene_term_id"), names(value))[1L]
+    if (is.na(key)) return(nrow(value))
+    data.table::uniqueN(value[[key]])
+  }
+  assigned_gene_topics <- function(value) {
+    if (!"assigned_topic" %in% names(value)) return(integer())
+    key <- intersect(c("target_gene", "gene_term_id"), names(value))[1L]
+    if (is.na(key)) return(as.integer(value$assigned_topic))
+    unique(value[, .(
+      gene_key = as.character(get(key)),
+      assigned_topic = as.integer(assigned_topic)
+    )])$assigned_topic
+  }
   reason_status <- if ("raw_assignment_status" %in% names(matched)) {
     as.character(matched$raw_assignment_status)
   } else {
@@ -3134,19 +3367,25 @@ binarize_topics <- function(score_mat,
     as.numeric(stats::quantile(value, probability, names = FALSE, type = 7L))
   }
   quality <- .topic_assignment_quality_fields(
-    assigned_topics = assigned$assigned_topic,
-    total_genes = nrow(matched),
+    assigned_topics = assigned_gene_topics(assigned),
+    total_genes = unique_gene_count(matched),
     expected_topic_count = expected_topic_count
   )
   cbind(data.table::data.table(
     assignment_method = as.character(assignment_method),
     model_family = as.character(model_family),
     gammafit_thrP = as.numeric(thrP),
-    gene_term_count = sum(!is.na(x$gene_term_id)),
-    peak_term_count = sum(!is.na(x$peak_term_id)),
-    matched_target_count = nrow(matched),
-    assigned_target_count = nrow(assigned),
-    assigned_target_percent = if (nrow(matched)) 100 * nrow(assigned) / nrow(matched) else NA_real_,
+    gene_term_count = data.table::uniqueN(x$gene_term_id[!is.na(x$gene_term_id)]),
+    peak_term_count = data.table::uniqueN(x$peak_term_id[!is.na(x$peak_term_id)]),
+    matched_target_count = unique_gene_count(matched),
+    assigned_target_count = unique_gene_count(assigned),
+    assigned_target_percent = if (unique_gene_count(matched)) {
+      100 * unique_gene_count(assigned) / unique_gene_count(matched)
+    } else {
+      NA_real_
+    },
+    matched_peak_gene_pair_count = nrow(matched),
+    assigned_peak_gene_pair_count = nrow(assigned),
     no_gene_gammafit_candidate_count = sum(
       reason_status %in% c("no_gammafit_candidate", "gene_no_gammafit_candidate"),
       na.rm = TRUE
@@ -10632,9 +10871,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
   if (!is.finite(pathway_topic_term_theta_min)) pathway_topic_term_theta_min <- 0.3
   fp_term_mode <- .resolve_fp_term_mode(fp_term_mode)
   if (identical(topic_term_assignment_method, "gammafit_maxprob") &&
-      !fp_term_mode %in% c("aggregate", "gene_expression", "tf_target")) {
+      !fp_term_mode %in% c(
+        "aggregate", "unique", "gene_expression", "tf_target"
+      )) {
     .log_abort(
-      "gammafit_maxprob requires aggregate, gene_expression, or tf_target terms."
+      "gammafit_maxprob requires aggregate, unique, gene_expression, or tf_target terms."
     )
   }
   allowed_gate_modes <- c("none", "peak_in_set", "gene_in_set", "peak_and_gene_in_set")
@@ -10778,7 +11019,8 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
         raw_phi = phi,
         score_mat = score_mat,
         candidate_terms = candidate_topic_terms,
-        method = topic_term_assignment_method
+        method = topic_term_assignment_method,
+        independent_unique_peaks = identical(fp_term_mode, "unique")
       )
     )
   }
@@ -10800,6 +11042,11 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
       tf_target_assignment$link_assignment
     } else if (gene_only_assignment) {
       .topic_gene_assignment_table(topic_terms)
+    } else if (identical(fp_term_mode, "unique")) {
+      .topic_unique_peak_gene_assignment_table(
+        topic_terms,
+        peak_gene_map = edges_docs
+      )
     } else {
       .topic_gene_peak_assignment_table(topic_terms)
     }
@@ -10858,7 +11105,7 @@ run_tfdocs_report_from_topic_base <- function(topic_base,
     }
     if (!is.finite(matched_pair_count) || matched_pair_count < 1L) {
       .log_abort(
-        "gammafit_maxprob requires matched aggregate GENE:<gene> and PEAK:<gene> terms."
+        "gammafit_maxprob requires matched Gene and Peak terms."
       )
     }
     data.table::fwrite(
@@ -12269,13 +12516,64 @@ build_tf_cluster_map_from_motif <- function(motif_path) {
                                                     value = NULL) {
   variant <- .normalize_vae_python_variant(vae_variant)
   if (is.null(value) || !length(value)) {
-    return(if (identical(variant, "multivi_encoder")) 5 else 0)
+    return(if (identical(variant, "multivi_encoder")) 1 else 0)
   }
   value <- suppressWarnings(as.numeric(value[[1L]]))
   if (!is.finite(value) || value < 0) {
     .log_abort("`vae_paired_term_regularization` must be a finite non-negative number.")
   }
   value
+}
+
+.resolve_vae_topic_separation_settings <- function(
+    vae_variant,
+    topic_diversity_regularization = NULL,
+    document_topic_separation_regularization = NULL,
+    topic_initialization = NULL,
+    topic_word_temperature = NULL) {
+  variant <- .normalize_vae_python_variant(vae_variant)
+  is_multivi <- identical(variant, "multivi_encoder")
+  resolve_nonnegative <- function(value, fallback, label) {
+    if (is.null(value) || !length(value)) value <- fallback
+    value <- suppressWarnings(as.numeric(value[[1L]]))
+    if (!is.finite(value) || value < 0) {
+      .log_abort("`{label}` must be a finite non-negative number.")
+    }
+    value
+  }
+  topic_diversity_regularization <- resolve_nonnegative(
+    topic_diversity_regularization,
+    if (is_multivi) 10 else 0,
+    "vae_topic_diversity_regularization"
+  )
+  document_topic_separation_regularization <- resolve_nonnegative(
+    document_topic_separation_regularization,
+    if (is_multivi) 5 else 0,
+    "vae_document_topic_separation_regularization"
+  )
+  if (is.null(topic_initialization) || !length(topic_initialization)) {
+    topic_initialization <- if (is_multivi) "document_anchor" else "random"
+  }
+  topic_initialization <- match.arg(
+    as.character(topic_initialization[[1L]]),
+    c("random", "document_anchor")
+  )
+  if (is.null(topic_word_temperature) || !length(topic_word_temperature)) {
+    topic_word_temperature <- if (is_multivi) 0.35 else 1
+  }
+  topic_word_temperature <- suppressWarnings(as.numeric(
+    topic_word_temperature[[1L]]
+  ))
+  if (!is.finite(topic_word_temperature) || topic_word_temperature <= 0) {
+    .log_abort("`vae_topic_word_temperature` must be finite and positive.")
+  }
+  list(
+    topic_diversity_regularization = topic_diversity_regularization,
+    document_topic_separation_regularization =
+      document_topic_separation_regularization,
+    topic_initialization = topic_initialization,
+    topic_word_temperature = topic_word_temperature
+  )
 }
 
 .reset_topic_model_artifacts <- function(out_dir, backend, reuse_if_exists) {
@@ -12328,6 +12626,19 @@ run_vae_topic_report_py <- function(doc_term,
                                     vae_seed = 123L,
                                     vae_device = "auto",
                                     vae_paired_term_regularization = NULL,
+                                    vae_topic_diversity_regularization = 0,
+                                    vae_document_topic_separation_regularization = 0,
+                                    vae_topic_initialization = c(
+                                      "random",
+                                      "document_anchor"
+                                    ),
+                                    vae_topic_word_temperature = 1,
+                                    vae_peak_gene_map = NULL,
+                                    vae_validation_fraction = 0,
+                                    vae_early_stopping_patience = 0L,
+                                    vae_weight_decay = 0,
+                                    vae_kl_warmup_epochs = 0L,
+                                    vae_dropout = 0,
                                     reuse_if_exists = TRUE,
                                     do_report = TRUE,
                                     chosen_K = NULL,
@@ -12335,6 +12646,7 @@ run_vae_topic_report_py <- function(doc_term,
                                     save_full_doc_term_csv = FALSE,
                                     topic_report_args = list()) {
   count_input <- match.arg(count_input)
+  vae_topic_initialization <- match.arg(vae_topic_initialization)
   .assert_pkg("cli")
   .assert_pkg("data.table")
   .assert_pkg("readr")
@@ -12397,6 +12709,74 @@ run_vae_topic_report_py <- function(doc_term,
     vae_python_variant,
     vae_paired_term_regularization
   )
+  vae_topic_diversity_regularization <- suppressWarnings(as.numeric(
+    vae_topic_diversity_regularization[[1L]]
+  ))
+  vae_document_topic_separation_regularization <- suppressWarnings(as.numeric(
+    vae_document_topic_separation_regularization[[1L]]
+  ))
+  vae_topic_word_temperature <- suppressWarnings(as.numeric(
+    vae_topic_word_temperature[[1L]]
+  ))
+  vae_validation_fraction <- suppressWarnings(as.numeric(
+    vae_validation_fraction[[1L]]
+  ))
+  vae_early_stopping_patience <- suppressWarnings(as.integer(
+    vae_early_stopping_patience[[1L]]
+  ))
+  vae_weight_decay <- suppressWarnings(as.numeric(vae_weight_decay[[1L]]))
+  vae_kl_warmup_epochs <- suppressWarnings(as.integer(
+    vae_kl_warmup_epochs[[1L]]
+  ))
+  vae_dropout <- suppressWarnings(as.numeric(vae_dropout[[1L]]))
+  if (!is.finite(vae_validation_fraction) ||
+      vae_validation_fraction < 0 || vae_validation_fraction >= 1) {
+    .log_abort("`vae_validation_fraction` must be in [0, 1).")
+  }
+  if (!is.finite(vae_topic_diversity_regularization) ||
+      vae_topic_diversity_regularization < 0) {
+    .log_abort(
+      "`vae_topic_diversity_regularization` must be non-negative."
+    )
+  }
+  if (!is.finite(vae_document_topic_separation_regularization) ||
+      vae_document_topic_separation_regularization < 0) {
+    .log_abort(
+      paste0(
+        "`vae_document_topic_separation_regularization` must be ",
+        "non-negative."
+      )
+    )
+  }
+  if (!is.finite(vae_topic_word_temperature) ||
+      vae_topic_word_temperature <= 0) {
+    .log_abort("`vae_topic_word_temperature` must be finite and positive.")
+  }
+  if (!is.finite(vae_early_stopping_patience) ||
+      vae_early_stopping_patience < 0L) {
+    .log_abort("`vae_early_stopping_patience` must be non-negative.")
+  }
+  if (!is.finite(vae_weight_decay) || vae_weight_decay < 0) {
+    .log_abort("`vae_weight_decay` must be non-negative.")
+  }
+  if (!is.finite(vae_kl_warmup_epochs) || vae_kl_warmup_epochs < 0L) {
+    .log_abort("`vae_kl_warmup_epochs` must be non-negative.")
+  }
+  if (!is.finite(vae_dropout) || vae_dropout < 0 || vae_dropout >= 1) {
+    .log_abort("`vae_dropout` must be in [0, 1).")
+  }
+  if (!is.null(vae_peak_gene_map)) {
+    vae_peak_gene_map <- normalizePath(
+      path.expand(as.character(vae_peak_gene_map[[1L]])),
+      winslash = "/",
+      mustWork = TRUE
+    )
+  }
+  peak_gene_map_signature <- if (is.null(vae_peak_gene_map)) {
+    "none"
+  } else {
+    digest::digest(file = vae_peak_gene_map, algo = "xxhash64")
+  }
 
   metrics_path <- file.path(out_dir, "model_metrics.csv")
   manifest_path <- file.path(out_dir, "vae_model_manifest.csv")
@@ -12410,6 +12790,18 @@ run_vae_topic_report_py <- function(doc_term,
   if (file.exists(manifest_path)) {
     old_manifest <- tryCatch(data.table::fread(manifest_path, showProgress = FALSE), error = function(e) data.table::data.table())
   }
+  optional_numeric_match <- function(column, expected, legacy_default) {
+    if (!column %in% names(old_metrics)) {
+      return(isTRUE(all.equal(as.numeric(expected), as.numeric(legacy_default))))
+    }
+    all(as.numeric(old_metrics[[column]]) == as.numeric(expected), na.rm = FALSE)
+  }
+  optional_character_match <- function(column, expected, legacy_default) {
+    if (!column %in% names(old_metrics)) {
+      return(identical(as.character(expected), as.character(legacy_default)))
+    }
+    all(as.character(old_metrics[[column]]) == as.character(expected), na.rm = FALSE)
+  }
   pair_metadata_ok <- nrow(old_metrics) &&
     all(c("K", "paired_term_regularization") %in% names(old_metrics)) &&
     all(
@@ -12418,7 +12810,33 @@ run_vae_topic_report_py <- function(doc_term,
           vae_paired_term_regularization
       ) < sqrt(.Machine$double.eps),
       na.rm = FALSE
-    )
+    ) &&
+    optional_numeric_match(
+      "topic_diversity_regularization",
+      vae_topic_diversity_regularization,
+      0
+    ) &&
+    optional_numeric_match(
+      "document_topic_separation_regularization",
+      vae_document_topic_separation_regularization,
+      0
+    ) &&
+    optional_character_match(
+      "topic_initialization",
+      vae_topic_initialization,
+      "random"
+    ) &&
+    optional_numeric_match(
+      "topic_word_temperature",
+      vae_topic_word_temperature,
+      1
+    ) &&
+    optional_numeric_match("validation_fraction", vae_validation_fraction, 0) &&
+    optional_numeric_match("early_stopping_patience", vae_early_stopping_patience, 0) &&
+    optional_numeric_match("weight_decay", vae_weight_decay, 0) &&
+    optional_numeric_match("kl_warmup_epochs", vae_kl_warmup_epochs, 0) &&
+    optional_numeric_match("dropout", vae_dropout, 0) &&
+    optional_character_match("peak_gene_map_signature", peak_gene_map_signature, "none")
   if (isTRUE(pair_metadata_ok) && dir.exists(models_dir)) {
     metrics_k <- unique(as.integer(old_metrics$K))
     file_k <- k_grid[
@@ -12452,8 +12870,22 @@ run_vae_topic_report_py <- function(doc_term,
       "--device", vae_device,
       "--variant", vae_python_variant,
       "--paired-term-regularization", as.character(vae_paired_term_regularization),
+      "--topic-diversity-regularization",
+      as.character(vae_topic_diversity_regularization),
+      "--document-topic-separation-regularization",
+      as.character(vae_document_topic_separation_regularization),
+      "--topic-initialization", vae_topic_initialization,
+      "--topic-word-temperature", as.character(vae_topic_word_temperature),
+      "--validation-fraction", as.character(vae_validation_fraction),
+      "--early-stopping-patience", as.character(vae_early_stopping_patience),
+      "--weight-decay", as.character(vae_weight_decay),
+      "--kl-warmup-epochs", as.character(vae_kl_warmup_epochs),
+      "--dropout", as.character(vae_dropout),
       "--progress-log", file.path(out_dir, "vae_progress.tsv")
     )
+    if (!is.null(vae_peak_gene_map)) {
+      py_args <- c(py_args, "--peak-gene-map", vae_peak_gene_map)
+    }
     .log_inform("Running VAE Python with doc-term input {basename(doc_term_input)}; K grid: {k_grid_txt}.")
     t_py <- proc.time()[["elapsed"]]
     py_out <- tryCatch(
@@ -12498,7 +12930,18 @@ run_vae_topic_report_py <- function(doc_term,
   metrics_tbl <- data.table::as.data.table(readr::read_csv(metrics_path, show_col_types = FALSE))
   metrics_tbl[, `:=`(
     count_input_effective = count_input,
-    n_model_tokens = as.double(sum(.safe_num(doc_term[[count_col]]), na.rm = TRUE))
+    n_model_tokens = as.double(sum(.safe_num(doc_term[[count_col]]), na.rm = TRUE)),
+    topic_diversity_regularization = vae_topic_diversity_regularization,
+    document_topic_separation_regularization =
+      vae_document_topic_separation_regularization,
+    topic_initialization = vae_topic_initialization,
+    topic_word_temperature = vae_topic_word_temperature,
+    validation_fraction = vae_validation_fraction,
+    early_stopping_patience = vae_early_stopping_patience,
+    weight_decay = vae_weight_decay,
+    kl_warmup_epochs = vae_kl_warmup_epochs,
+    dropout = vae_dropout,
+    peak_gene_map_signature = peak_gene_map_signature
   )]
   data.table::fwrite(metrics_tbl, metrics_path)
   .save_all(out_dir, "model_metrics", metrics_tbl)
@@ -13297,7 +13740,7 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #'   weighting. `"none"` retains the constructed document counts;
 #'   `"specificity"` emphasizes genes that are relatively more expressed in a
 #'   condition while preserving every document's token total.
-#' @param condition_peak_weighting Optional condition-mode aggregated-Peak
+#' @param condition_peak_weighting Optional condition-mode Peak
 #'   weighting. `"tf_expression"` multiplies balanced Peak weights by
 #'   `log2(TF expression + 1)` relative to the same TF's median across included
 #'   conditions before pseudo-count conversion.
@@ -13311,6 +13754,14 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #' @param condition_specificity_expression_min Minimum expression used to
 #'   define the conditions in which a target gene is expressed. NULL reuses
 #'   `threshold_gene_expr`.
+#' @param final_peak_gene_token_ratio Optional final Peak/Gene model-token
+#'   ratio applied after count conversion for condition::TF documents. `NULL`
+#'   preserves legacy counts. For example, `1` gives equal Peak and Gene token
+#'   totals and `0.5` gives two Gene tokens per Peak token in each document.
+#' @param condition_term_idf Whether to downweight terms observed across many
+#'   conditions after count conversion. Document token totals are preserved.
+#' @param condition_term_idf_floor Minimum multiplier retained for terms found
+#'   in every condition.
 #' @param gene_term_mode Gene term mode.
 #' @param fp_term_mode Footprint term mode.
 #' @param include_tf_terms Whether to include TF self-terms.
@@ -13328,7 +13779,17 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #'   `"auto"` uses CUDA when PyTorch can access it and otherwise uses CPU.
 #' @param vae_paired_term_regularization Non-negative strength for matching the
 #'   topic distributions of paired `GENE:<gene>` and `PEAK:<gene>` terms.
-#'   `NULL` uses `5` for MultiVI and `0` for other VAE variants.
+#'   `NULL` uses `1` for MultiVI and `0` for other VAE variants.
+#' @param vae_topic_diversity_regularization Non-negative penalty for similar
+#'   Gene and Peak topic distributions. `NULL` uses `10` for MultiVI and `0`
+#'   for other VAE variants.
+#' @param vae_document_topic_separation_regularization Non-negative penalty
+#'   that encourages distinct document-topic mixtures while retaining broad
+#'   topic use. `NULL` uses `5` for MultiVI and `0` otherwise.
+#' @param vae_topic_initialization Topic initialization. `NULL` uses
+#'   `"document_anchor"` for MultiVI and `"random"` otherwise.
+#' @param vae_topic_word_temperature Positive topic-word softmax temperature.
+#'   `NULL` uses `0.35` for MultiVI and `1` otherwise.
 #' @param warplda_iterations Number of native WarpLDA iterations.
 #' @param warplda_sampler Native WarpLDA sampler. `"warp_omp"` is the default
 #'   OpenMP-accelerated doc/word Metropolis-Hastings sampler, `"warp_ref"` is
@@ -13337,6 +13798,8 @@ run_vae_topic_delta_network_pathway <- function(topic_root,
 #'   the faster deterministic collapsed sampler.
 #' @param warplda_beta Topic-word prior for native WarpLDA. NULL uses `1/K`,
 #'   matching the legacy WarpLDA default.
+#' @param warplda_alpha_sum Total document-topic prior mass. The per-topic
+#'   alpha is `warplda_alpha_sum / K`. The legacy default is `50`.
 #' @param warplda_seed Integer random seed for native WarpLDA.
 #' @param reuse_if_exists Reuse existing model outputs when all requested K
 #'   values are present.
@@ -13389,6 +13852,9 @@ train_topic_models <- function(Kgrid,
                                condition_specificity_temperature = 0.5,
                                condition_specificity_floor = 0.1,
                                condition_specificity_expression_min = NULL,
+                               final_peak_gene_token_ratio = NULL,
+                               condition_term_idf = FALSE,
+                               condition_term_idf_floor = 0.1,
                                gene_term_mode = c("aggregate", "unique"),
                                fp_term_mode = c("aggregate", "unique", "aggregate_weight", "gene_expression", "tf_target"),
                                include_tf_terms = FALSE,
@@ -13403,9 +13869,20 @@ train_topic_models <- function(Kgrid,
                                vae_seed = 123L,
                                vae_device = "auto",
                                vae_paired_term_regularization = NULL,
+                               vae_topic_diversity_regularization = NULL,
+                               vae_document_topic_separation_regularization = NULL,
+                               vae_topic_initialization = NULL,
+                               vae_topic_word_temperature = NULL,
+                               vae_peak_gene_map = NULL,
+                               vae_validation_fraction = 0,
+                               vae_early_stopping_patience = 0L,
+                               vae_weight_decay = 0,
+                               vae_kl_warmup_epochs = 0L,
+                               vae_dropout = 0,
                                warplda_iterations = 2000L,
                                warplda_sampler = c("warp_omp", "warp_ref", "warp_mh", "gibbs_sync"),
                                warplda_beta = NULL,
+                               warplda_alpha_sum = 50,
                                warplda_seed = 123L,
                                reuse_if_exists = TRUE,
                                save_full_doc_term_csv = FALSE,
@@ -13441,6 +13918,10 @@ train_topic_models <- function(Kgrid,
   warplda_iterations <- as.integer(warplda_iterations[[1L]])
   if (!is.finite(warplda_iterations) || warplda_iterations < 1L) .log_abort("`warplda_iterations` must be a positive integer.")
   warplda_sampler <- match.arg(warplda_sampler)
+  warplda_alpha_sum <- suppressWarnings(as.numeric(warplda_alpha_sum[[1L]]))
+  if (!is.finite(warplda_alpha_sum) || warplda_alpha_sum <= 0) {
+    .log_abort("`warplda_alpha_sum` must be one positive finite number.")
+  }
   warplda_seed <- suppressWarnings(as.integer(warplda_seed[[1L]]))
   if (!is.finite(warplda_seed)) .log_abort("`warplda_seed` must be one finite integer.")
   doc_mode <- match.arg(doc_mode)
@@ -13448,6 +13929,23 @@ train_topic_models <- function(Kgrid,
   input_source <- match.arg(input_source)
   condition_gene_weighting <- match.arg(condition_gene_weighting)
   condition_peak_weighting <- match.arg(condition_peak_weighting)
+  if (!is.null(final_peak_gene_token_ratio)) {
+    final_peak_gene_token_ratio <- suppressWarnings(as.numeric(
+      final_peak_gene_token_ratio[[1L]]
+    ))
+    if (!is.finite(final_peak_gene_token_ratio) ||
+        final_peak_gene_token_ratio <= 0) {
+      .log_abort("`final_peak_gene_token_ratio` must be NULL or positive.")
+    }
+  }
+  condition_term_idf <- isTRUE(condition_term_idf)
+  condition_term_idf_floor <- suppressWarnings(as.numeric(
+    condition_term_idf_floor[[1L]]
+  ))
+  if (!is.finite(condition_term_idf_floor) ||
+      condition_term_idf_floor < 0 || condition_term_idf_floor > 1) {
+    .log_abort("`condition_term_idf_floor` must be between 0 and 1.")
+  }
   vae_paired_term_regularization <- if (identical(backend, "vae")) {
     .resolve_vae_paired_term_regularization(
       vae_variant,
@@ -13456,6 +13954,30 @@ train_topic_models <- function(Kgrid,
   } else {
     0
   }
+  vae_separation <- if (identical(backend, "vae")) {
+    .resolve_vae_topic_separation_settings(
+      vae_variant = vae_variant,
+      topic_diversity_regularization =
+        vae_topic_diversity_regularization,
+      document_topic_separation_regularization =
+        vae_document_topic_separation_regularization,
+      topic_initialization = vae_topic_initialization,
+      topic_word_temperature = vae_topic_word_temperature
+    )
+  } else {
+    list(
+      topic_diversity_regularization = 0,
+      document_topic_separation_regularization = 0,
+      topic_initialization = "random",
+      topic_word_temperature = 1
+    )
+  }
+  vae_topic_diversity_regularization <-
+    vae_separation$topic_diversity_regularization
+  vae_document_topic_separation_regularization <-
+    vae_separation$document_topic_separation_regularization
+  vae_topic_initialization <- vae_separation$topic_initialization
+  vae_topic_word_temperature <- vae_separation$topic_word_temperature
   if (identical(input_source, "condition_links") && !identical(doc_design, "condition")) {
     .log_abort("input_source = 'condition_links' requires doc_design = 'condition'.")
   }
@@ -13466,9 +13988,9 @@ train_topic_models <- function(Kgrid,
   if (!identical(condition_peak_weighting, "none") &&
       (!identical(doc_design, "condition") ||
        !identical(doc_mode, "tf") ||
-       !fp_term_mode %in% c("aggregate", "tf_target"))) {
+       !fp_term_mode %in% c("aggregate", "unique", "tf_target"))) {
     .log_abort(
-      "TF-expression Peak weighting requires condition::TF documents with aggregate or tf_target terms."
+      "TF-expression Peak weighting requires condition::TF documents with aggregate, unique, or tf_target terms."
     )
   }
   condition_specificity_expression_min <- if (is.null(condition_specificity_expression_min)) {
@@ -13499,6 +14021,20 @@ train_topic_models <- function(Kgrid,
       winslash = "/",
       mustWork = TRUE
     )
+  }
+  prebalance_gene_specificity <- identical(
+    condition_gene_weighting,
+    "specificity"
+  ) && identical(fp_term_mode, "unique")
+  condition_gene_specificity <- if (isTRUE(prebalance_gene_specificity)) {
+    .module3_condition_gene_specificity_lookup(
+      expression_file = condition_gene_expression_file,
+      expression_min = condition_specificity_expression_min,
+      temperature = condition_specificity_temperature,
+      uniform_floor = condition_specificity_floor
+    )
+  } else {
+    NULL
   }
   doc_tag <- if (identical(doc_mode, "tf")) "tf" else "ctf"
   weight_label <- if (identical(doc_design, "condition")) "peak_score_gene_expr" else "peak_log2fc_fp_gene_fc_expr"
@@ -13536,6 +14072,9 @@ train_topic_models <- function(Kgrid,
       condition_specificity_temperature = as.numeric(condition_specificity_temperature),
       condition_specificity_floor = as.numeric(condition_specificity_floor),
       condition_specificity_expression_min = condition_specificity_expression_min,
+      final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+      condition_term_idf = condition_term_idf,
+      condition_term_idf_floor = condition_term_idf_floor,
       include_tf_terms = isTRUE(include_tf_terms),
       top_terms_per_doc = top_terms_per_doc,
       min_df = min_df,
@@ -13552,13 +14091,27 @@ train_topic_models <- function(Kgrid,
       warplda_sampler = warplda_sampler,
       warplda_iterations = warplda_iterations,
       warplda_beta = warplda_beta,
+      warplda_alpha_sum = warplda_alpha_sum,
       warplda_seed = warplda_seed,
       vae_variant = vae_variant,
       vae_epochs = vae_epochs,
       vae_batch_size = vae_batch_size,
       vae_hidden = vae_hidden,
       vae_lr = vae_lr,
-      vae_seed = vae_seed
+      vae_seed = vae_seed,
+      vae_validation_fraction = vae_validation_fraction,
+      vae_early_stopping_patience = vae_early_stopping_patience,
+      vae_weight_decay = vae_weight_decay,
+      vae_kl_warmup_epochs = vae_kl_warmup_epochs,
+      vae_dropout = vae_dropout,
+      vae_paired_term_regularization = vae_paired_term_regularization,
+      vae_topic_diversity_regularization =
+        vae_topic_diversity_regularization,
+      vae_document_topic_separation_regularization =
+        vae_document_topic_separation_regularization,
+      vae_topic_initialization = vae_topic_initialization,
+      vae_topic_word_temperature = vae_topic_word_temperature,
+      vae_peak_gene_map = vae_peak_gene_map
     )
   )
   if (identical(input_source, "condition_links")) {
@@ -13670,6 +14223,7 @@ train_topic_models <- function(Kgrid,
         require_tf_expr = identical(doc_mode, "tf"),
         fp_term_mode = fp_term_mode,
         condition_peak_weighting = condition_peak_weighting,
+        condition_gene_specificity = condition_gene_specificity,
         check_repeated_values = check_repeated_values
       )
       .log_inform("{analysis_id}: condition-level doc_term build finished in {round(proc.time()[['elapsed']] - t_doc_term, 1)} sec.")
@@ -13713,8 +14267,12 @@ train_topic_models <- function(Kgrid,
       next
     }
     peak_weighting_audit <- attr(doc_term, "condition_peak_weighting_audit")
-    specificity_audit <- NULL
-    if (identical(condition_gene_weighting, "specificity")) {
+    specificity_audit <- attr(
+      doc_term,
+      "condition_gene_specificity_weighting_audit"
+    )
+    if (identical(condition_gene_weighting, "specificity") &&
+        !isTRUE(prebalance_gene_specificity)) {
       .log_inform("{analysis_id}: applying condition target-gene specificity weighting.")
       weighted <- .module3_apply_condition_gene_specificity(
         doc_term = doc_term,
@@ -13728,6 +14286,28 @@ train_topic_models <- function(Kgrid,
       specificity_audit <- weighted$audit
       rm(weighted)
       invisible(gc())
+    }
+    final_token_audit <- NULL
+    if (identical(doc_design, "condition") && identical(doc_mode, "tf") &&
+        (!is.null(final_peak_gene_token_ratio) || condition_term_idf)) {
+      .log_inform(
+        "{analysis_id}: applying final condition::TF model-token weighting."
+      )
+      doc_term <- .topic_finalize_condition_tf_counts(
+        doc_term = doc_term,
+        count_column = count_input_effective,
+        final_peak_gene_token_ratio = final_peak_gene_token_ratio,
+        condition_term_idf = condition_term_idf,
+        condition_term_idf_floor = condition_term_idf_floor
+      )
+      final_token_audit <- attr(doc_term, "final_condition_token_audit")
+      if (identical(count_input_effective, "pseudo_count_log") &&
+          identical(count_method, "log")) {
+        doc_term[, pseudo_count := pseudo_count_log]
+      } else if (identical(count_input_effective, "pseudo_count_bin") &&
+                 identical(count_method, "bin")) {
+        doc_term[, pseudo_count := pseudo_count_bin]
+      }
     }
     .log_inform("{analysis_id}: doc_term has {nrow(doc_term)} row(s), {data.table::uniqueN(doc_term$doc_id)} document(s), and {data.table::uniqueN(doc_term$term_id)} term(s).")
 
@@ -13782,6 +14362,12 @@ train_topic_models <- function(Kgrid,
         file.path(out_dir, "condition_peak_tf_expression_weighting_audit.csv")
       )
     }
+    if (!is.null(final_token_audit)) {
+      data.table::fwrite(
+        final_token_audit,
+        file.path(out_dir, "condition_final_token_weighting_audit.csv")
+      )
+    }
     if (identical(doc_design, "condition")) {
       .write_module3_document_term_qc(
         doc_term = doc_term,
@@ -13799,12 +14385,30 @@ train_topic_models <- function(Kgrid,
       doc_mode = doc_mode,
       fp_term_mode = fp_term_mode,
       condition_gene_weighting = condition_gene_weighting,
+      condition_gene_weighting_stage = if (isTRUE(
+        prebalance_gene_specificity
+      )) {
+        "gene_weight_before_modality_balance"
+      } else if (identical(condition_gene_weighting, "specificity")) {
+        "model_count_after_modality_balance"
+      } else {
+        "none"
+      },
       condition_peak_weighting = condition_peak_weighting,
       condition_peak_scaling = if (identical(condition_peak_weighting, "tf_expression")) {
         "per_tf_log2p1_median"
       } else {
         "none"
       },
+      final_peak_gene_token_ratio = if (is.null(
+        final_peak_gene_token_ratio
+      )) {
+        NA_real_
+      } else {
+        final_peak_gene_token_ratio
+      },
+      condition_term_idf = condition_term_idf,
+      condition_term_idf_floor = condition_term_idf_floor,
       count_method = count_method,
       count_scale = as.numeric(count_scale),
       count_input_requested = count_input_requested,
@@ -13822,7 +14426,13 @@ train_topic_models <- function(Kgrid,
         vae_paired_term_regularization
       } else {
         0
-      }
+      },
+      vae_topic_diversity_regularization =
+        vae_topic_diversity_regularization,
+      vae_document_topic_separation_regularization =
+        vae_document_topic_separation_regularization,
+      vae_topic_initialization = vae_topic_initialization,
+      vae_topic_word_temperature = vae_topic_word_temperature
     )
     data.table::fwrite(topic_input_summary, file.path(out_dir, "topic_input_summary.csv"))
     metrics_path <- file.path(out_dir, "model_metrics.csv")
@@ -13843,15 +14453,26 @@ train_topic_models <- function(Kgrid,
           all(as.character(old_metrics$count_input_effective) == count_input_effective) &&
           all(as.character(old_metrics$input_signature) == input_signature)
         if (identical(backend, "vae")) {
+          numeric_settings <- c(
+            paired_term_regularization = vae_paired_term_regularization,
+            topic_diversity_regularization =
+              vae_topic_diversity_regularization,
+            document_topic_separation_regularization =
+              vae_document_topic_separation_regularization,
+            topic_word_temperature = vae_topic_word_temperature
+          )
           model_metadata_ok <- model_metadata_ok &&
-            "paired_term_regularization" %in% names(old_metrics) &&
-            all(
-              abs(
-                suppressWarnings(as.numeric(old_metrics$paired_term_regularization)) -
-                  vae_paired_term_regularization
-              ) < sqrt(.Machine$double.eps),
-              na.rm = FALSE
-            )
+            all(names(numeric_settings) %in% names(old_metrics)) &&
+            all(vapply(names(numeric_settings), function(setting) {
+              all(
+                abs(suppressWarnings(as.numeric(old_metrics[[setting]])) -
+                      numeric_settings[[setting]]) < sqrt(.Machine$double.eps),
+                na.rm = FALSE
+              )
+            }, logical(1L))) &&
+            "topic_initialization" %in% names(old_metrics) &&
+            all(as.character(old_metrics$topic_initialization) ==
+                  vae_topic_initialization)
         }
         if (identical(backend, "warplda")) {
           model_metadata_ok <- model_metadata_ok &&
@@ -13918,6 +14539,18 @@ train_topic_models <- function(Kgrid,
         vae_seed = vae_seed,
         vae_device = vae_device,
         vae_paired_term_regularization = vae_paired_term_regularization,
+        vae_topic_diversity_regularization =
+          vae_topic_diversity_regularization,
+        vae_document_topic_separation_regularization =
+          vae_document_topic_separation_regularization,
+        vae_topic_initialization = vae_topic_initialization,
+        vae_topic_word_temperature = vae_topic_word_temperature,
+        vae_peak_gene_map = vae_peak_gene_map,
+        vae_validation_fraction = vae_validation_fraction,
+        vae_early_stopping_patience = vae_early_stopping_patience,
+        vae_weight_decay = vae_weight_decay,
+        vae_kl_warmup_epochs = vae_kl_warmup_epochs,
+        vae_dropout = vae_dropout,
         do_report = FALSE,
         reuse_if_exists = reuse_if_exists,
         count_input = count_input_effective,
@@ -13932,7 +14565,13 @@ train_topic_models <- function(Kgrid,
           count_scale = as.numeric(count_scale),
           count_input_requested = count_input_requested,
           count_input_effective = count_input_effective,
-          paired_term_regularization = vae_paired_term_regularization
+          paired_term_regularization = vae_paired_term_regularization,
+          topic_diversity_regularization =
+            vae_topic_diversity_regularization,
+          document_topic_separation_regularization =
+            vae_document_topic_separation_regularization,
+          topic_initialization = vae_topic_initialization,
+          topic_word_temperature = vae_topic_word_temperature
         )]
         data.table::fwrite(metrics_tbl, metrics_path)
         .save_all(out_dir, "model_metrics", metrics_tbl)
@@ -13972,6 +14611,7 @@ train_topic_models <- function(Kgrid,
         iterations = warplda_iterations,
         alpha_by_topic = TRUE,
         alpha = NULL,
+        alpha_sum = warplda_alpha_sum,
         beta = warplda_beta,
         seed = warplda_seed,
         save_tmp_dir = file.path(out_dir, "tmp_models"),
@@ -14527,8 +15167,9 @@ extract_regulatory_topics <- function(k,
 #' @param topic_merge_tf_theta_preference Whether eligible topic merges must
 #'   preserve target assignments and prefer mappings that reduce TF terms
 #'   without a matching condition::TF theta membership.
-#' @param run_topic_assignment_qc Whether to write the standard per-K topic
-#'   assignment QC PDF and optimization audit tables.
+#' @param run_topic_assignment_qc Whether to write the standardized compact
+#'   per-K input-design QC PDF and optimization audit tables. The PDF ends with
+#'   the full-universe topic-assignment retention funnels.
 #' @param topic_qc_umap_links_per_condition Maximum deterministic UMAP sample
 #'   size per condition. Full-universe counts are never sampled.
 #' @param topic_qc_top_tfs Number of globally ranked TFs shown in the pooled
@@ -15268,6 +15909,179 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   dt[pseudo_count > 0]
 }
 
+.topic_finalize_condition_tf_counts <- function(doc_term,
+                                                count_column,
+                                                final_peak_gene_token_ratio = NULL,
+                                                condition_term_idf = FALSE,
+                                                condition_term_idf_floor = 0.1) {
+  .assert_pkg("data.table")
+  x <- data.table::as.data.table(data.table::copy(doc_term))
+  .topic_assert_has_cols(
+    x,
+    c("doc_id", "term_id", count_column),
+    context = "condition::TF final model-count weighting"
+  )
+  condition_term_idf <- isTRUE(condition_term_idf)
+  ratio <- if (is.null(final_peak_gene_token_ratio)) {
+    NULL
+  } else {
+    suppressWarnings(as.numeric(final_peak_gene_token_ratio[[1L]]))
+  }
+  if (!is.null(ratio) && (!is.finite(ratio) || ratio <= 0)) {
+    .log_abort("`final_peak_gene_token_ratio` must be NULL or positive.")
+  }
+  idf_floor <- suppressWarnings(as.numeric(condition_term_idf_floor[[1L]]))
+  if (!is.finite(idf_floor) || idf_floor < 0 || idf_floor > 1) {
+    .log_abort("`condition_term_idf_floor` must be between 0 and 1.")
+  }
+  if (is.null(ratio) && !condition_term_idf) {
+    return(x[])
+  }
+
+  x[, `:=`(
+    condition_id__ = sub("::[^:]+$", "", as.character(doc_id)),
+    modality__ = data.table::fifelse(
+      startsWith(as.character(term_id), "GENE:"),
+      "gene",
+      data.table::fifelse(
+        startsWith(as.character(term_id), "PEAK:"),
+        "peak",
+        "other"
+      )
+    ),
+    source_count__ = suppressWarnings(as.numeric(get(count_column)))
+  )]
+  if (any(!is.finite(x$source_count__) | x$source_count__ <= 0)) {
+    .log_abort("Final model-count weighting requires positive finite counts.")
+  }
+  if (!is.null(ratio) && any(x$modality__ == "other")) {
+    .log_abort(
+      "Final Gene/Peak token balancing supports only GENE: and PEAK: terms."
+    )
+  }
+
+  x[, idf_multiplier__ := 1]
+  if (condition_term_idf) {
+    condition_count <- data.table::uniqueN(x$condition_id__)
+    if (condition_count > 1L) {
+      condition_frequency <- unique(
+        x[, .(condition_id__, term_id)]
+      )[, .(condition_frequency__ = .N), by = term_id]
+      maximum_idf <- log((condition_count + 1) / 2)
+      condition_frequency[, idf_specificity__ :=
+        log((condition_count + 1) / (condition_frequency__ + 1)) /
+        maximum_idf]
+      condition_frequency[, idf_multiplier__ := idf_floor +
+        (1 - idf_floor) * pmin(1, pmax(0, idf_specificity__))]
+      x[
+        condition_frequency,
+        idf_multiplier__ := i.idf_multiplier__,
+        on = "term_id"
+      ]
+    }
+  }
+  x[, allocation_score__ := source_count__ * idf_multiplier__]
+  x[, original_order__ := .I]
+
+  if (is.null(ratio)) {
+    x[, target_total__ := as.integer(round(sum(source_count__))), by = doc_id]
+    group_columns <- "doc_id"
+  } else {
+    document_totals <- x[, .(
+      total_tokens__ = as.integer(round(sum(source_count__))),
+      n_gene__ = sum(modality__ == "gene"),
+      n_peak__ = sum(modality__ == "peak")
+    ), by = doc_id]
+    if (document_totals[, any(n_gene__ == 0L | n_peak__ == 0L)]) {
+      .log_abort(
+        "Final Gene/Peak token balancing requires both modalities in every document."
+      )
+    }
+    document_totals[, target_peak__ := as.integer(round(
+      total_tokens__ * ratio / (1 + ratio)
+    ))]
+    document_totals[, target_peak__ := pmax(
+      n_peak__,
+      pmin(total_tokens__ - n_gene__, target_peak__)
+    )]
+    document_totals[, target_gene__ := total_tokens__ - target_peak__]
+    targets <- data.table::rbindlist(list(
+      document_totals[, .(
+        doc_id,
+        modality__ = "gene",
+        target_total__ = target_gene__
+      )],
+      document_totals[, .(
+        doc_id,
+        modality__ = "peak",
+        target_total__ = target_peak__
+      )]
+    ))
+    x[targets, target_total__ := i.target_total__, on = c("doc_id", "modality__")]
+    group_columns <- c("doc_id", "modality__")
+  }
+
+  x[, `:=`(
+    group_size__ = .N,
+    group_score__ = sum(allocation_score__)
+  ), by = group_columns]
+  x[, extra_quota__ := (target_total__ - group_size__) *
+    data.table::fifelse(
+      group_score__ > 0,
+      allocation_score__ / group_score__,
+      1 / group_size__
+    )]
+  x[, final_count__ := 1L + as.integer(floor(extra_quota__))]
+  x[, fractional_cumulative__ := cumsum(
+    extra_quota__ - floor(extra_quota__)
+  ), by = group_columns]
+  x[, residual_add__ := as.integer(
+    floor(fractional_cumulative__ + 1e-8) -
+      data.table::shift(
+        floor(fractional_cumulative__ + 1e-8),
+        fill = 0
+      )
+  ), by = group_columns]
+  x[, final_count__ := final_count__ + residual_add__]
+  x[, correction__ := target_total__ - sum(final_count__), by = group_columns]
+  x[, correction_row__ := seq_len(.N) == which.max(final_count__),
+    by = group_columns]
+  x[correction_row__ == TRUE, final_count__ := final_count__ + correction__]
+  allocation_check <- x[, .(
+    valid = sum(final_count__) == unique(target_total__)
+  ), by = group_columns]
+  if (any(!allocation_check$valid)) {
+    .log_abort("Final condition::TF token allocation did not conserve tokens.")
+  }
+  x[, (count_column) := final_count__]
+
+  audit <- x[, .(
+    n_terms = .N,
+    source_tokens = sum(source_count__),
+    final_tokens = sum(final_count__),
+    idf_multiplier_min = min(idf_multiplier__),
+    idf_multiplier_median = stats::median(idf_multiplier__),
+    idf_multiplier_max = max(idf_multiplier__)
+  ), by = .(doc_id, modality = modality__)]
+  audit[, `:=`(
+    final_peak_gene_token_ratio_requested = if (is.null(ratio)) NA_real_ else ratio,
+    condition_term_idf = condition_term_idf,
+    condition_term_idf_floor = idf_floor,
+    count_column = count_column
+  )]
+  x[, c(
+    "condition_id__", "modality__", "source_count__",
+    "idf_multiplier__", "allocation_score__", "target_total__",
+    "group_size__", "group_score__", "extra_quota__", "final_count__",
+    "fractional_cumulative__", "residual_add__", "correction__",
+    "correction_row__"
+  ) := NULL]
+  data.table::setorder(x, original_order__)
+  x[, original_order__ := NULL]
+  data.table::setattr(x, "final_condition_token_audit", audit)
+  x[]
+}
+
 .topic_balance_modalities <- function(dt, balance_mode) {
   if (!identical(balance_mode, "min") || !nrow(dt)) {
     dt[, weight := weight_raw]
@@ -15379,6 +16193,72 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   )
 }
 
+.topic_apply_gene_specificity_to_terms <- function(gene_terms,
+                                                   specificity = NULL) {
+  if (is.null(specificity) || !nrow(gene_terms)) {
+    return(list(terms = gene_terms, audit = NULL))
+  }
+  if (!is.list(specificity) ||
+      !all(c("lookup", "settings") %in% names(specificity))) {
+    .log_abort("Condition Gene specificity must contain lookup and settings tables.")
+  }
+  lookup <- data.table::as.data.table(data.table::copy(specificity$lookup))
+  .topic_assert_has_cols(
+    lookup,
+    c("condition_id", "gene_key", "multiplier"),
+    context = "condition Gene specificity lookup"
+  )
+  floor_value <- suppressWarnings(as.numeric(
+    specificity$settings$uniform_floor[[1L]]
+  ))
+  if (!is.finite(floor_value) || floor_value <= 0) {
+    .log_abort("Condition Gene specificity has an invalid uniform floor.")
+  }
+
+  out <- data.table::copy(gene_terms)
+  out[, `:=`(
+    condition_id__ = sub("::[^:]+$", "", as.character(doc_id)),
+    gene_key__ = sub("^GENE:", "", as.character(term_id))
+  )]
+  lookup[, `:=`(
+    condition_id = as.character(condition_id),
+    gene_key = as.character(gene_key),
+    multiplier = suppressWarnings(as.numeric(multiplier))
+  )]
+  out[
+    lookup,
+    specificity_multiplier__ := i.multiplier,
+    on = c("condition_id__" = "condition_id", "gene_key__" = "gene_key")
+  ]
+  matched <- is.finite(out$specificity_multiplier__) &
+    out$specificity_multiplier__ > 0
+  out[!matched, specificity_multiplier__ := floor_value]
+  original_mass <- sum(out$weight_raw, na.rm = TRUE)
+  out[, weight_raw := weight_raw * specificity_multiplier__]
+  weighted_mass <- sum(out$weight_raw, na.rm = TRUE)
+  multipliers <- out$specificity_multiplier__
+  audit <- cbind(
+    specificity$settings,
+    data.table::data.table(
+      application_stage = "gene_weight_before_modality_balance",
+      n_gene_term_rows = nrow(out),
+      n_expression_matched_rows = sum(matched),
+      expression_matched_fraction = sum(matched) / max(1, nrow(out)),
+      multiplier_min = min(multipliers),
+      multiplier_p01 = unname(stats::quantile(multipliers, 0.01)),
+      multiplier_median = stats::median(multipliers),
+      multiplier_p99 = unname(stats::quantile(multipliers, 0.99)),
+      multiplier_max = max(multipliers),
+      gene_weight_before = original_mass,
+      gene_weight_after = weighted_mass
+    )
+  )
+  out[, c(
+    "condition_id__", "gene_key__", "specificity_multiplier__"
+  ) := NULL]
+  list(terms = out, audit = audit)
+}
+
 .topic_modality_mass_audit <- function(dt, value_col, prefix) {
   mass <- dt[, .(mass = sum(get(value_col), na.rm = TRUE)), by = .(doc_id, modality)]
   mass <- data.table::dcast(mass, doc_id ~ modality, value.var = "mass", fill = 0)
@@ -15425,6 +16305,7 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
                                           weight_type_tf = NULL,
                                           fp_term_mode = c("aggregate", "unique", "aggregate_weight", "gene_expression", "tf_target"),
                                           condition_peak_weighting = c("none", "tf_expression"),
+                                          condition_gene_specificity = NULL,
                                           include_tf_terms = FALSE,
                                           count_method = c("bin", "log"),
                                           count_scale = 50,
@@ -15439,8 +16320,10 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   fp_term_mode <- .topic_term_mode(fp_term_mode)
   condition_peak_weighting <- match.arg(condition_peak_weighting)
   if (!identical(condition_peak_weighting, "none") &&
-      !fp_term_mode %in% c("aggregate", "tf_target")) {
-    .log_abort("TF-expression Peak weighting requires fp_term_mode = 'aggregate' or 'tf_target'.")
+      !fp_term_mode %in% c("aggregate", "unique", "tf_target")) {
+    .log_abort(
+      "TF-expression Peak weighting requires fp_term_mode = 'aggregate', 'unique', or 'tf_target'."
+    )
   }
 
   dt <- data.table::as.data.table(edges_docs)
@@ -15486,6 +16369,11 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   } else {
     gene_obs <- data.table::data.table(doc_id = character(), term_id = character(), weight_raw = numeric(), modality = character())
   }
+  gene_specificity_result <- .topic_apply_gene_specificity_to_terms(
+    gene_obs,
+    specificity = condition_gene_specificity
+  )
+  gene_obs <- gene_specificity_result$terms
 
   if (identical(fp_term_mode, "gene_expression")) {
     peak_obs <- data.table::data.table(
@@ -15611,6 +16499,42 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
     return(data.table::data.table())
   }
   out <- out[is.finite(weight_raw) & weight_raw > 0]
+  peak_weighting_before_balance <- FALSE
+  peak_weighting_audit <- NULL
+  if (isTRUE(peak_weighting_before_balance)) {
+    before_mass <- .topic_modality_mass_audit(
+      out,
+      value_col = "weight_raw",
+      prefix = "raw_before_tf_weighting"
+    )
+    out[
+      peak_factor_result$factors,
+      peak_multiplier := i.peak_multiplier,
+      on = "doc_id"
+    ]
+    unmatched <- out[modality == "peak" &
+      (!is.finite(peak_multiplier) | peak_multiplier <= 0)]
+    if (nrow(unmatched)) {
+      .log_abort(
+        "TF-expression Peak weighting could not match {data.table::uniqueN(unmatched$doc_id)} Peak document(s) to a multiplier."
+      )
+    }
+    out[modality == "peak", weight_raw := weight_raw * peak_multiplier]
+    out[, peak_multiplier := NULL]
+    after_mass <- .topic_modality_mass_audit(
+      out,
+      value_col = "weight_raw",
+      prefix = "raw_after_tf_weighting"
+    )
+    peak_weighting_audit <- cbind(
+      peak_factor_result$audit,
+      data.table::data.table(
+        weighting_order = "tf_expression_then_modality_balance"
+      ),
+      before_mass,
+      after_mass
+    )
+  }
   out <- .topic_trim_terms(out, top_terms_per_doc)
   out <- .topic_filter_term_df(out, min_df)
   if (!nrow(out)) {
@@ -15621,8 +16545,14 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   if (!nrow(out)) {
     return(data.table::data.table())
   }
-  peak_weighting_audit <- NULL
-  if (!is.null(peak_factor_result)) {
+  if (isTRUE(peak_weighting_before_balance)) {
+    balanced_mass <- .topic_modality_mass_audit(
+      out,
+      value_col = "weight",
+      prefix = "balanced_after_tf_weighting"
+    )
+    peak_weighting_audit <- cbind(peak_weighting_audit, balanced_mass)
+  } else if (!is.null(peak_factor_result)) {
     before_mass <- .topic_modality_mass_audit(
       out,
       value_col = "weight",
@@ -15649,6 +16579,9 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
     )
     peak_weighting_audit <- cbind(
       peak_factor_result$audit,
+      data.table::data.table(
+        weighting_order = "modality_balance_then_tf_expression"
+      ),
       before_mass,
       after_mass
     )
@@ -15671,6 +16604,10 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
   if (!is.null(peak_weighting_audit)) {
     attr(result, "condition_peak_weighting_audit") <- peak_weighting_audit
   }
+  if (!is.null(gene_specificity_result$audit)) {
+    attr(result, "condition_gene_specificity_weighting_audit") <-
+      gene_specificity_result$audit
+  }
   result
 }
 
@@ -15691,8 +16628,8 @@ build_doc_term_opt3_gene_fc_expr <- function(edges_docs, ...) {
 #' @param fp_term_mode Term mode: unique peaks, target-gene aggregated peaks,
 #'   experimental TF-target terms, gene-only aggregate weights, or
 #'   gene-expression-only terms.
-#' @param condition_peak_weighting Optional condition-mode aggregated-Peak
-#'   weighting. `"tf_expression"` multiplies balanced Peak weights by the
+#' @param condition_peak_weighting Optional condition-mode Peak weighting.
+#'   `"tf_expression"` multiplies balanced aggregate or coordinate Peak weights by the
 #'   condition-specific log TF expression relative to that TF's median across
 #'   conditions before count conversion.
 #' @param balance_mode Modality balancing mode, either `"min"` or `"none"`.
@@ -15800,6 +16737,7 @@ build_doc_term_condition_union <- function(edges_condition,
                                            require_tf_expr = FALSE,
                                            fp_term_mode = c("unique", "aggregate", "aggregate_weight", "gene_expression", "tf_target"),
                                            condition_peak_weighting = c("none", "tf_expression"),
+                                           condition_gene_specificity = NULL,
                                            balance_mode = c("min", "none"),
                                            check_repeated_values = TRUE) {
   .assert_pkg("data.table")
@@ -15852,6 +16790,7 @@ build_doc_term_condition_union <- function(edges_condition,
     weight_type_tf = "tf_expr_condition",
     fp_term_mode = fp_term_mode,
     condition_peak_weighting = condition_peak_weighting,
+    condition_gene_specificity = condition_gene_specificity,
     include_tf_terms = include_tf_terms,
     count_method = count_method,
     count_scale = count_scale,

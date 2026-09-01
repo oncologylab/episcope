@@ -125,6 +125,8 @@
     "topic_qc_top_tfs", "topic_qc_reference_condition",
     "topic_condition_gene_weighting", "topic_condition_gene_expression_file",
     "topic_condition_peak_weighting",
+    "topic_final_peak_gene_token_ratio", "topic_condition_term_idf",
+    "topic_condition_term_idf_floor",
     "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
     "topic_condition_specificity_expression_min",
     "topic_condition_gene_expression_min",
@@ -134,8 +136,13 @@
     "topic_raw_theta_document_heatmap", "run_raw_theta_document_heatmap",
     "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
     "topic_vae_batch_size", "topic_vae_device",
-    "topic_vae_paired_term_regularization", "warplda_iterations",
-    "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed",
+    "topic_vae_paired_term_regularization",
+    "topic_vae_topic_diversity_regularization",
+    "topic_vae_document_topic_separation_regularization",
+    "topic_vae_topic_initialization", "topic_vae_topic_word_temperature",
+    "warplda_iterations",
+    "topic_warplda_sampler", "topic_warplda_beta",
+    "topic_warplda_alpha_sum", "topic_warplda_seed",
     "waterfall_min_abs_net",
     paste0("module3_", c(
       "pathway_backend", "pathway_databases", "pathway_organism",
@@ -154,6 +161,8 @@
       "topic_qc_top_tfs", "topic_qc_reference_condition",
       "topic_condition_gene_weighting", "topic_condition_gene_expression_file",
       "topic_condition_peak_weighting",
+      "topic_final_peak_gene_token_ratio", "topic_condition_term_idf",
+      "topic_condition_term_idf_floor",
       "topic_condition_specificity_temperature", "topic_condition_specificity_floor",
       "topic_condition_specificity_expression_min",
       "topic_condition_gene_expression_min",
@@ -163,8 +172,13 @@
       "topic_raw_theta_document_heatmap",
       "topic_tf_membership_cutoff", "topic_tf_primary_margin_cutoff",
       "topic_vae_batch_size", "topic_vae_device",
-      "topic_vae_paired_term_regularization", "warplda_iterations",
-      "topic_warplda_sampler", "topic_warplda_beta", "topic_warplda_seed"
+      "topic_vae_paired_term_regularization",
+      "topic_vae_topic_diversity_regularization",
+      "topic_vae_document_topic_separation_regularization",
+      "topic_vae_topic_initialization", "topic_vae_topic_word_temperature",
+      "warplda_iterations",
+      "topic_warplda_sampler", "topic_warplda_beta",
+      "topic_warplda_alpha_sum", "topic_warplda_seed"
     )),
     "topic_warplda_iterations",
     paste0("module3_", c(
@@ -465,6 +479,7 @@
     "topic_raw_theta_document_heatmap",
     "module3_topic_raw_theta_document_heatmap",
     "run_raw_theta_document_heatmap",
+    "topic_condition_term_idf", "module3_topic_condition_term_idf",
     "module3_optimize_topics", "module3_run_topic_assignment_qc"
   ), names(cfg))
   bad_logical <- logical_keys[!vapply(cfg[logical_keys], .project_config_scalar, logical(1L), type = "logical")]
@@ -498,8 +513,13 @@
   positive_numeric_keys <- intersect(c(
     "topic_count_scale", "module3_topic_count_scale",
     "topic_warplda_beta", "module3_topic_warplda_beta",
+    "topic_warplda_alpha_sum", "module3_topic_warplda_alpha_sum",
     "topic_condition_specificity_temperature",
-    "module3_topic_condition_specificity_temperature"
+    "module3_topic_condition_specificity_temperature",
+    "topic_final_peak_gene_token_ratio",
+    "module3_topic_final_peak_gene_token_ratio",
+    "topic_vae_topic_word_temperature",
+    "module3_topic_vae_topic_word_temperature"
   ), names(cfg))
   bad_numeric <- positive_numeric_keys[!vapply(cfg[positive_numeric_keys], function(x) {
     is.null(x) || (.project_config_scalar(x, "numeric") && x > 0)
@@ -508,9 +528,28 @@
     cli::cli_abort("Project config entries must be null or positive numbers: {paste(bad_numeric, collapse = ', ')}.")
   }
 
+  unit_interval_keys <- intersect(c(
+    "topic_condition_term_idf_floor",
+    "module3_topic_condition_term_idf_floor"
+  ), names(cfg))
+  bad_unit_interval <- unit_interval_keys[!vapply(
+    cfg[unit_interval_keys],
+    function(x) .project_config_scalar(x, "numeric") && x >= 0 && x <= 1,
+    logical(1L)
+  )]
+  if (length(bad_unit_interval)) {
+    cli::cli_abort(
+      "Condition term-IDF floors must be between 0 and 1: {paste(bad_unit_interval, collapse = ', ')}."
+    )
+  }
+
   nonnegative_numeric_keys <- intersect(c(
     "topic_vae_paired_term_regularization",
-    "module3_topic_vae_paired_term_regularization"
+    "module3_topic_vae_paired_term_regularization",
+    "topic_vae_topic_diversity_regularization",
+    "module3_topic_vae_topic_diversity_regularization",
+    "topic_vae_document_topic_separation_regularization",
+    "module3_topic_vae_document_topic_separation_regularization"
   ), names(cfg))
   bad_nonnegative_numeric <- nonnegative_numeric_keys[
     !vapply(cfg[nonnegative_numeric_keys], function(x) {
@@ -520,6 +559,25 @@
   if (length(bad_nonnegative_numeric)) {
     cli::cli_abort(
       "Project config entries must be null or non-negative numbers: {paste(bad_nonnegative_numeric, collapse = ', ')}."
+    )
+  }
+
+  initialization_keys <- intersect(c(
+    "topic_vae_topic_initialization",
+    "module3_topic_vae_topic_initialization"
+  ), names(cfg))
+  allowed_initializations <- c("random", "document_anchor")
+  bad_initialization <- initialization_keys[!vapply(
+    cfg[initialization_keys],
+    function(x) {
+      is.null(x) || (.project_config_scalar(x, "character") &&
+        x %in% allowed_initializations)
+    },
+    logical(1L)
+  )]
+  if (length(bad_initialization)) {
+    cli::cli_abort(
+      "Project config topic initialization must be random or document_anchor: {paste(bad_initialization, collapse = ', ')}."
     )
   }
 

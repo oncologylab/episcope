@@ -73,6 +73,9 @@
   }
   gene_columns <- match(pairs$gene_term_id, terms)
   peak_columns <- match(pairs$peak_term_id, terms)
+  pairs[, pair_index := seq_len(.N)]
+  target_levels <- sort(unique(as.character(pairs$target_gene)))
+  pair_target_index <- match(pairs$target_gene, target_levels)
   gene_matrix <- dtm[, gene_columns, drop = FALSE]
   entries <- Matrix::summary(gene_matrix)
   if (!nrow(entries)) {
@@ -89,13 +92,15 @@
     links = data.table::data.table(
       link_index = seq_len(nrow(entries)),
       doc_index = as.integer(entries$i),
-      target_index = as.integer(entries$j),
+      pair_index = as.integer(entries$j),
+      target_index = as.integer(pair_target_index[entries$j]),
       gene_token_count = as.numeric(entries$x),
       peak_token_count = peak_count,
       condition_id = doc_meta$condition_id[entries$i]
     ),
     docs = doc_meta,
     pairs = pairs,
+    target_levels = target_levels,
     gene_columns = gene_columns,
     peak_columns = peak_columns
   )
@@ -1225,6 +1230,7 @@
     optimized_topic_ids = optimized_topic_ids
   )
   list(
+    document_design = "condition_tf",
     theta = optimized_theta,
     phi = optimized_phi,
     score = optimized_score,
@@ -1465,6 +1471,32 @@
   out
 }
 
+.m3_qc_theta_condition_correlation <- function(theta) {
+  theta <- as.matrix(theta)
+  if (!nrow(theta) || !ncol(theta)) {
+    .log_abort("Condition theta must contain at least one row and one topic.")
+  }
+  if (is.null(rownames(theta)) || anyNA(rownames(theta)) ||
+      any(!nzchar(rownames(theta))) || anyDuplicated(rownames(theta))) {
+    .log_abort("Condition theta must have unique, non-empty condition row names.")
+  }
+  theta <- .m3_opt_row_normalize(theta)
+  if (nrow(theta) == 1L) {
+    return(matrix(
+      1,
+      nrow = 1L,
+      dimnames = list(rownames(theta), rownames(theta))
+    ))
+  }
+  out <- suppressWarnings(stats::cor(
+    t(theta),
+    use = "pairwise.complete.obs"
+  ))
+  out[!is.finite(out)] <- 0
+  diag(out) <- 1
+  out
+}
+
 .m3_qc_correlation_plot <- function(x,
                                     title,
                                     subtitle = NULL,
@@ -1678,7 +1710,22 @@
                                         topic_order,
                                         title,
                                         subtitle,
-                                        tf_title = "TFs") {
+                                        tf_title = "TFs",
+                                        sidebar_columns = c(
+                                          "links",
+                                          "genes",
+                                          "tfs"
+                                        ),
+                                        sidebar_labels = c(
+                                          "Links",
+                                          "Target genes",
+                                          tf_title
+                                        ),
+                                        sidebar_colors = c(
+                                          "#007C78",
+                                          "#D97824",
+                                          "#6A5ACD"
+                                        )) {
   similarity <- as.matrix(similarity)
   topic_ids <- suppressWarnings(as.integer(sub(
     "^Topic ",
@@ -1697,37 +1744,43 @@
     y = k - match(as.character(row_label), source_labels) + 1L,
     similarity = as.numeric(similarity)
   )]
+  heatmap[, similarity := pmin(1, pmax(0, similarity))]
 
   count_data <- data.table::copy(counts)
   data.table::setnames(count_data, topic_column, "topic")
   count_data[, y := k - match(as.integer(topic), ordered_ids) + 1L]
   count_data <- count_data[is.finite(y)]
+  if (!length(sidebar_columns) ||
+      length(sidebar_columns) != length(sidebar_labels) ||
+      length(sidebar_columns) != length(sidebar_colors)) {
+    .log_abort("Topic QC sidebar columns, labels, and colors must align.")
+  }
+  missing_sidebar <- setdiff(sidebar_columns, names(count_data))
+  for (column in missing_sidebar) count_data[, (column) := 0]
   bar_width <- max(3.5, min(6, k * 0.20))
   gap <- max(1, k * 0.04)
-  link_start <- k + gap
-  gene_start <- link_start + bar_width + gap
-  tf_start <- gene_start + bar_width + gap
-  link_max <- max(count_data$links, na.rm = TRUE)
-  gene_max <- max(count_data$genes, na.rm = TRUE)
-  tf_max <- max(count_data$tfs, na.rm = TRUE)
-  if (!is.finite(link_max) || link_max <= 0) link_max <- 1
-  if (!is.finite(gene_max) || gene_max <= 0) gene_max <- 1
-  if (!is.finite(tf_max) || tf_max <= 0) tf_max <- 1
-  count_data[, `:=`(
-    link_xmax = link_start + links / link_max * bar_width,
-    gene_xmax = gene_start + genes / gene_max * bar_width,
-    tf_xmax = tf_start + tfs / tf_max * bar_width,
-    link_label = .m3_qc_compact_count(links),
-    gene_label = .m3_qc_compact_count(genes),
-    tf_label = .m3_qc_compact_count(tfs),
-    link_inside = links / link_max >= 0.28,
-    gene_inside = genes / gene_max >= 0.28,
-    tf_inside = tfs / tf_max >= 0.28
-  )]
-  right_edge <- tf_start + bar_width + 1.1
+  sidebar_starts <- k + gap +
+    (seq_along(sidebar_columns) - 1L) * (bar_width + gap)
+  sidebar_data <- lapply(seq_along(sidebar_columns), function(i) {
+    values <- suppressWarnings(as.numeric(count_data[[sidebar_columns[[i]]]]))
+    values[!is.finite(values) | values < 0] <- 0
+    value_max <- max(values, na.rm = TRUE)
+    if (!is.finite(value_max) || value_max <= 0) value_max <- 1
+    data.table::data.table(
+      y = count_data$y,
+      value = values,
+      start = sidebar_starts[[i]],
+      xmax = sidebar_starts[[i]] + values / value_max * bar_width,
+      label = .m3_qc_compact_count(values),
+      inside = values / value_max >= 0.28,
+      color = sidebar_colors[[i]],
+      panel = i
+    )
+  })
+  right_edge <- utils::tail(sidebar_starts, 1L) + bar_width + 1.1
   title_y <- k + 1.15
 
-  ggplot2::ggplot() +
+  plot <- ggplot2::ggplot() +
     ggplot2::geom_tile(
       data = heatmap,
       ggplot2::aes(x, y, fill = similarity),
@@ -1735,124 +1788,51 @@
       linewidth = 0.2,
       width = 1,
       height = 1
-    ) +
-    ggplot2::geom_rect(
-      data = count_data,
-      ggplot2::aes(
-        xmin = link_start,
-        xmax = link_xmax,
-        ymin = y - 0.40,
-        ymax = y + 0.40
-      ),
-      fill = "#007C78",
-      colour = "#30383F",
-      linewidth = 0.2
-    ) +
-    ggplot2::geom_rect(
-      data = count_data,
-      ggplot2::aes(
-        xmin = gene_start,
-        xmax = gene_xmax,
-        ymin = y - 0.40,
-        ymax = y + 0.40
-      ),
-      fill = "#D97824",
-      colour = "#30383F",
-      linewidth = 0.2
-    ) +
-    ggplot2::geom_rect(
-      data = count_data,
-      ggplot2::aes(
-        xmin = tf_start,
-        xmax = tf_xmax,
-        ymin = y - 0.40,
-        ymax = y + 0.40
-      ),
-      fill = "#6A5ACD",
-      colour = "#30383F",
-      linewidth = 0.2
-    ) +
-    ggplot2::geom_text(
-      data = count_data[link_inside == TRUE],
-      ggplot2::aes(link_xmax - 0.12, y, label = link_label),
-      hjust = 1,
-      colour = "white",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::geom_text(
-      data = count_data[link_inside == FALSE],
-      ggplot2::aes(link_xmax + 0.12, y, label = link_label),
-      hjust = 0,
-      colour = "#20272E",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::geom_text(
-      data = count_data[gene_inside == TRUE],
-      ggplot2::aes(gene_xmax - 0.12, y, label = gene_label),
-      hjust = 1,
-      colour = "white",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::geom_text(
-      data = count_data[gene_inside == FALSE],
-      ggplot2::aes(gene_xmax + 0.12, y, label = gene_label),
-      hjust = 0,
-      colour = "#20272E",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::geom_text(
-      data = count_data[tf_inside == TRUE],
-      ggplot2::aes(tf_xmax - 0.12, y, label = tf_label),
-      hjust = 1,
-      colour = "white",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::geom_text(
-      data = count_data[tf_inside == FALSE],
-      ggplot2::aes(tf_xmax + 0.12, y, label = tf_label),
-      hjust = 0,
-      colour = "#20272E",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.0
-    ) +
-    ggplot2::annotate(
-      "text",
-      x = link_start + bar_width / 2,
-      y = title_y,
-      label = "Links",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.5
-    ) +
-    ggplot2::annotate(
-      "text",
-      x = gene_start + bar_width / 2,
-      y = title_y,
-      label = "Target genes",
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.5
-    ) +
-    ggplot2::annotate(
-      "text",
-      x = tf_start + bar_width / 2,
-      y = title_y,
-      label = tf_title,
-      family = "Helvetica",
-      fontface = "bold",
-      size = 3.5
-    ) +
+    )
+  for (i in seq_along(sidebar_data)) {
+    panel_data <- sidebar_data[[i]]
+    plot <- plot +
+      ggplot2::geom_rect(
+        data = panel_data,
+        ggplot2::aes(
+          xmin = start,
+          xmax = xmax,
+          ymin = y - 0.40,
+          ymax = y + 0.40
+        ),
+        fill = sidebar_colors[[i]],
+        colour = "#30383F",
+        linewidth = 0.2
+      ) +
+      ggplot2::geom_text(
+        data = panel_data[inside == TRUE],
+        ggplot2::aes(xmax - 0.12, y, label = label),
+        hjust = 1,
+        colour = "white",
+        family = "Helvetica",
+        fontface = "bold",
+        size = 3.0
+      ) +
+      ggplot2::geom_text(
+        data = panel_data[inside == FALSE],
+        ggplot2::aes(xmax + 0.12, y, label = label),
+        hjust = 0,
+        colour = "#20272E",
+        family = "Helvetica",
+        fontface = "bold",
+        size = 3.0
+      ) +
+      ggplot2::annotate(
+        "text",
+        x = sidebar_starts[[i]] + bar_width / 2,
+        y = title_y,
+        label = sidebar_labels[[i]],
+        family = "Helvetica",
+        fontface = "bold",
+        size = 3.5
+      )
+  }
+  plot +
     ggplot2::scale_fill_gradient2(
       low = "#2166AC",
       mid = "#F7F7F7",
@@ -1913,6 +1893,28 @@
   )
 }
 
+.m3_qc_feature_umap_coordinates <- function(features, seed = 20260716L) {
+  features <- as.matrix(features)
+  storage.mode(features) <- "double"
+  features[!is.finite(features)] <- 0
+  n <- nrow(features)
+  if (n < 3L) return(cbind(UMAP1 = seq_len(n), UMAP2 = 0))
+  physical <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  if (!is.finite(physical) || physical < 1L) physical <- 1L
+  uwot::umap(
+    features,
+    metric = "euclidean",
+    n_neighbors = min(30L, n - 1L),
+    min_dist = 0.15,
+    n_components = 2L,
+    n_threads = min(20L, as.integer(physical)),
+    n_sgd_threads = 1L,
+    seed = as.integer(seed),
+    verbose = FALSE,
+    ret_model = FALSE
+  )
+}
+
 .m3_qc_jitter_umap <- function(data,
                                seed = 20260718L,
                                fraction = 0.005) {
@@ -1928,6 +1930,1400 @@
     UMAP2 = UMAP2 + stats::runif(.N, -y_span * fraction, y_span * fraction)
   )]
   out[]
+}
+
+.m3_qc_gene_term_umap_data <- function(optimization,
+                                       gene_term_assignment = NULL,
+                                       gene_universe = NULL,
+                                       seed = 20260716L) {
+  phi <- optimization$raw_phi
+  if (is.null(phi) || !is.matrix(phi) || !nrow(phi) || !ncol(phi)) {
+    .log_abort("Raw phi is required for the Gene-term assignment UMAP.")
+  }
+  assignment <- gene_term_assignment
+  if (is.null(assignment) || !nrow(assignment)) {
+    assignment <- optimization$raw_topic_terms
+  }
+  if (is.null(assignment) || !nrow(assignment)) {
+    assignment <- optimization$raw_correspondence_assignment
+  }
+  if (is.null(assignment) || !nrow(assignment)) {
+    assignment <- optimization$raw_pair_assignment
+  }
+  assignment <- data.table::as.data.table(assignment)
+  if ("term_group" %in% names(assignment)) {
+    assignment <- assignment[term_group == "GENE"]
+  }
+  if (!"target_gene" %in% names(assignment) &&
+      "term_id" %in% names(assignment)) {
+    assignment[, target_gene := sub("^GENE:", "", as.character(term_id))]
+  }
+  if (!"assigned_topic" %in% names(assignment)) {
+    topic_column <- intersect(c("topic_num", "topic"), names(assignment))
+    if (length(topic_column)) {
+      assignment[, assigned_topic := get(topic_column[[1L]])]
+    }
+  }
+  if (!"assigned" %in% names(assignment)) {
+    if ("in_topic" %in% names(assignment)) {
+      assignment[, assigned := .as_logical_flag(in_topic)]
+    } else {
+      assignment[, assigned := TRUE]
+    }
+  }
+  .assert_has_cols(
+    assignment,
+    c("target_gene", "assigned_topic", "assigned"),
+    context = "Gene-term assignment UMAP"
+  )
+  assignment[, assigned_topic := suppressWarnings(
+    as.integer(as.character(assigned_topic))
+  )]
+  assignment <- unique(assignment[
+    .as_logical_flag(assigned) & is.finite(assigned_topic),
+    .(
+      target_gene = as.character(target_gene),
+      topic_num = as.integer(assigned_topic)
+    )
+  ])
+  conflicting <- assignment[, .(n_topics = data.table::uniqueN(topic_num)),
+                            by = target_gene][n_topics > 1L]
+  if (nrow(conflicting)) {
+    .log_abort(
+      "{nrow(conflicting)} assigned Gene terms have multiple primary topics."
+    )
+  }
+  assignment <- unique(assignment, by = "target_gene")
+  raw_gene_term_ids <- colnames(phi)[startsWith(colnames(phi), "GENE:")]
+  raw_gene_names <- sub("^GENE:", "", raw_gene_term_ids)
+  if (!length(raw_gene_names) || anyDuplicated(raw_gene_names)) {
+    .log_abort("Raw phi must contain unique Gene terms for the UMAP.")
+  }
+  if (is.null(gene_universe)) {
+    gene_names <- raw_gene_names
+  } else {
+    gene_names <- unique(sub(
+      "^GENE:",
+      "",
+      trimws(as.character(gene_universe))
+    ))
+    gene_names <- gene_names[!is.na(gene_names) & nzchar(gene_names)]
+    missing_universe <- setdiff(gene_names, raw_gene_names)
+    if (length(missing_universe)) {
+      .log_warn(
+        "Ignoring {length(missing_universe)} requested Gene terms absent from raw phi."
+      )
+    }
+    gene_names <- gene_names[gene_names %in% raw_gene_names]
+  }
+  if (!length(gene_names)) {
+    .log_abort("No Gene terms remain in the requested UMAP universe.")
+  }
+  gene_indices <- match(gene_names, raw_gene_names)
+  phi_gene_indices <- match(raw_gene_term_ids[gene_indices], colnames(phi))
+  missing_terms <- !assignment$target_gene %in% raw_gene_names
+  if (any(missing_terms)) {
+    .log_warn(
+      "Ignoring {sum(missing_terms)} assigned Gene terms absent from raw phi."
+    )
+    assignment <- assignment[!missing_terms]
+  }
+  gene_data <- data.table::data.table(target_gene = gene_names)
+  gene_data <- assignment[gene_data, on = "target_gene"]
+  gene_data[, assigned := is.finite(topic_num)]
+  embedding_source <- "phi"
+  gene_features <- optimization$gene_umap_features
+  if (!is.null(gene_features)) {
+    gene_features <- as.matrix(gene_features)
+    if (!nrow(gene_features) || !ncol(gene_features) ||
+        is.null(rownames(gene_features)) ||
+        anyNA(rownames(gene_features)) ||
+        any(!nzchar(rownames(gene_features))) ||
+        anyDuplicated(rownames(gene_features))) {
+      .log_abort(
+        "Gene UMAP features must have unique, non-empty Gene row names."
+      )
+    }
+    feature_names <- sub("^GENE:", "", rownames(gene_features))
+    if (anyDuplicated(feature_names)) {
+      .log_abort("Gene UMAP feature names must remain unique after normalization.")
+    }
+    feature_indices <- match(gene_data$target_gene, feature_names)
+    missing_features <- is.na(feature_indices)
+    if (any(missing_features)) {
+      .log_warn(
+        "Ignoring {sum(missing_features)} Gene terms absent from Gene UMAP features."
+      )
+      gene_data <- gene_data[!missing_features]
+      phi_gene_indices <- phi_gene_indices[!missing_features]
+      feature_indices <- feature_indices[!missing_features]
+    }
+    if (!nrow(gene_data)) {
+      .log_abort("No Gene terms match the Gene UMAP features.")
+    }
+    supplied_coordinates <- optimization$gene_umap_coordinates
+    if (!is.null(supplied_coordinates)) {
+      supplied_coordinates <- as.matrix(supplied_coordinates)
+      if (ncol(supplied_coordinates) < 2L ||
+          is.null(rownames(supplied_coordinates)) ||
+          anyNA(rownames(supplied_coordinates)) ||
+          any(!nzchar(rownames(supplied_coordinates))) ||
+          anyDuplicated(rownames(supplied_coordinates))) {
+        .log_abort(
+          "Gene UMAP coordinates must have two columns and unique Gene row names."
+        )
+      }
+      coordinate_names <- sub("^GENE:", "", rownames(supplied_coordinates))
+      if (anyDuplicated(coordinate_names)) {
+        .log_abort(
+          "Gene UMAP coordinate names must remain unique after normalization."
+        )
+      }
+      coordinate_indices <- match(gene_data$target_gene, coordinate_names)
+      if (anyNA(coordinate_indices)) {
+        .log_abort(
+          "Gene UMAP coordinates are missing requested Gene terms."
+        )
+      }
+      coordinates <- supplied_coordinates[
+        coordinate_indices,
+        seq_len(2L),
+        drop = FALSE
+      ]
+      storage.mode(coordinates) <- "double"
+      if (any(!is.finite(coordinates))) {
+        .log_abort("Gene UMAP coordinates must be finite.")
+      }
+    } else {
+      coordinates <- .m3_qc_feature_umap_coordinates(
+        gene_features[feature_indices, , drop = FALSE],
+        seed = seed
+      )
+    }
+    embedding_source <- as.character(
+      optimization$gene_umap_feature_label %||% "condition profiles"
+    )[[1L]]
+  } else {
+    probability <- t(phi[, phi_gene_indices, drop = FALSE])
+    probability <- .m3_opt_row_normalize(probability)
+    coordinates <- .m3_qc_umap_coordinates(probability, seed = seed)
+  }
+  topic_levels <- paste0(
+    "Topic ",
+    as.integer(sub("^Topic", "", rownames(phi)))
+  )
+  data.table::data.table(
+    target_gene = gene_data$target_gene,
+    topic_num = gene_data$topic_num,
+    assigned = gene_data$assigned,
+    topic = factor(
+      data.table::fifelse(
+        gene_data$assigned,
+        paste0("Topic ", gene_data$topic_num),
+        NA_character_
+      ),
+      levels = topic_levels
+    ),
+    embedding_source = embedding_source,
+    UMAP1 = as.numeric(coordinates[, 1L]),
+    UMAP2 = as.numeric(coordinates[, 2L])
+  )
+}
+
+.m3_qc_peak_term_umap_data <- function(optimization,
+                                       peak_term_assignment = NULL,
+                                       top_n = 10000L,
+                                       seed = 20260716L) {
+  phi <- optimization$raw_phi
+  if (is.null(phi) || !is.matrix(phi) || !nrow(phi) || !ncol(phi)) {
+    .log_abort("Raw phi is required for the Peak-term assignment UMAP.")
+  }
+  top_n <- suppressWarnings(as.numeric(top_n[[1L]]))
+  unlimited <- is.infinite(top_n) && top_n > 0
+  finite_integer <- is.finite(top_n) &&
+    top_n >= 1 &&
+    top_n <= .Machine$integer.max &&
+    top_n == floor(top_n)
+  if (!unlimited && !finite_integer) {
+    .log_abort("Peak-term UMAP top_n must be a positive integer or Inf.")
+  }
+  top_n <- if (unlimited) .Machine$integer.max else as.integer(top_n)
+  peak_term_ids <- colnames(phi)[startsWith(colnames(phi), "PEAK:")]
+  peak_ids <- sub("^PEAK:", "", peak_term_ids)
+  if (!length(peak_ids)) {
+    .log_abort("No Peak terms are available in raw phi for the UMAP.")
+  }
+  if (anyNA(peak_ids) || any(!nzchar(peak_ids)) || anyDuplicated(peak_ids)) {
+    .log_abort("Raw phi must contain unique, non-empty Peak terms for the UMAP.")
+  }
+  assignment <- peak_term_assignment
+  if (is.null(assignment) || !nrow(assignment)) {
+    assignment <- optimization$raw_topic_terms
+  }
+  if (is.null(assignment) || !nrow(assignment)) {
+    assignment <- optimization$raw_pair_assignment
+  }
+  assignment <- data.table::as.data.table(assignment)
+  if ("term_group" %in% names(assignment)) {
+    assignment <- assignment[term_group == "PEAK"]
+  }
+  if (!"peak_id" %in% names(assignment)) {
+    peak_column <- intersect(c("peak_term_id", "term_id"), names(assignment))
+    if (length(peak_column)) {
+      assignment[, peak_id := sub(
+        "^PEAK:",
+        "",
+        as.character(get(peak_column[[1L]]))
+      )]
+    }
+  }
+  if (!"assigned_topic" %in% names(assignment)) {
+    topic_column <- intersect(c("topic_num", "topic"), names(assignment))
+    if (length(topic_column)) {
+      assignment[, assigned_topic := get(topic_column[[1L]])]
+    }
+  }
+  if (!"assigned" %in% names(assignment)) {
+    if ("in_topic" %in% names(assignment)) {
+      assignment[, assigned := .as_logical_flag(in_topic)]
+    } else {
+      assignment[, assigned := TRUE]
+    }
+  }
+  .assert_has_cols(
+    assignment,
+    c("peak_id", "assigned_topic", "assigned"),
+    context = "Peak-term assignment UMAP"
+  )
+  assignment[, assigned_topic := suppressWarnings(
+    as.integer(as.character(assigned_topic))
+  )]
+  assignment <- unique(assignment[
+    .as_logical_flag(assigned) & is.finite(assigned_topic),
+    .(
+      peak_id = as.character(peak_id),
+      topic_num = as.integer(assigned_topic)
+    )
+  ])
+  conflicting <- assignment[, .(n_topics = data.table::uniqueN(topic_num)),
+                            by = peak_id][n_topics > 1L]
+  if (nrow(conflicting)) {
+    .log_abort(
+      "{nrow(conflicting)} assigned Peak terms have multiple primary topics."
+    )
+  }
+  assignment <- unique(assignment, by = "peak_id")
+  peak_columns <- match(peak_term_ids, colnames(phi))
+  probability <- phi[, peak_columns, drop = FALSE]
+  probability[!is.finite(probability) | probability < 0] <- 0
+  totals <- colSums(probability)
+  totals[!is.finite(totals) | totals <= 0] <- 1
+  probability <- sweep(probability, 2L, totals, "/")
+  probability[!is.finite(probability) | probability < 0] <- 0
+  topic_ids <- .m3_opt_topic_ids(phi, "row")
+  topic_position <- max.col(t(probability), ties.method = "first")
+  peak_data <- data.table::data.table(
+    peak_id = peak_ids,
+    peak_term_id = peak_term_ids,
+    max_phi_topic = as.integer(topic_ids[topic_position]),
+    max_probability = as.numeric(probability[cbind(
+      topic_position,
+      seq_along(topic_position)
+    )])
+  )
+  data.table::setorder(peak_data, -max_probability, peak_id)
+  peak_data <- peak_data[seq_len(min(top_n, .N))]
+  peak_data[, selection_rank := seq_len(.N)]
+  selected_columns <- match(peak_data$peak_term_id, peak_term_ids)
+  coordinates <- .m3_qc_umap_coordinates(
+    t(probability[, selected_columns, drop = FALSE]),
+    seed = seed
+  )
+  peak_data <- assignment[peak_data, on = "peak_id"]
+  topic_levels <- paste0("Topic ", topic_ids)
+  peak_data[, `:=`(
+    assigned = is.finite(topic_num),
+    topic = factor(
+      data.table::fifelse(
+        is.finite(topic_num),
+        paste0("Topic ", topic_num),
+        NA_character_
+      ),
+      levels = topic_levels
+    ),
+    UMAP1 = as.numeric(coordinates[, 1L]),
+    UMAP2 = as.numeric(coordinates[, 2L])
+  )]
+  peak_data[]
+}
+
+.m3_qc_primary_term_assignments <- function(assignment,
+                                             context = "topic assignment") {
+  assignment <- data.table::as.data.table(data.table::copy(assignment))
+  if (!nrow(assignment)) {
+    .log_abort("{context} must contain assigned Gene and Peak terms.")
+  }
+  if (!"term_id" %in% names(assignment)) {
+    .log_abort("{context} must contain term_id.")
+  }
+  if (!"term_group" %in% names(assignment)) {
+    assignment[, term_group := data.table::fcase(
+      startsWith(term_id, "GENE:"), "GENE",
+      startsWith(term_id, "PEAK:"), "PEAK",
+      default = NA_character_
+    )]
+  }
+  topic_column <- intersect(c("assigned_topic", "topic_num", "topic"), names(assignment))
+  if (!length(topic_column)) {
+    .log_abort("{context} must contain an assigned topic column.")
+  }
+  assignment[, primary_topic := suppressWarnings(as.integer(
+    as.character(get(topic_column[[1L]]))
+  ))]
+  assigned_column <- intersect(c("assigned", "in_topic"), names(assignment))
+  if (length(assigned_column)) {
+    assignment[, primary_assigned := .as_logical_flag(get(assigned_column[[1L]]))]
+  } else {
+    assignment[, primary_assigned := TRUE]
+  }
+  output <- unique(assignment[
+    primary_assigned &
+      term_group %in% c("GENE", "PEAK") &
+      !is.na(term_id) & nzchar(term_id) &
+      is.finite(primary_topic),
+    .(
+      term_id = as.character(term_id),
+      term_group = as.character(term_group),
+      primary_topic = as.integer(primary_topic)
+    )
+  ])
+  conflicting <- output[, .(topics = data.table::uniqueN(primary_topic)),
+                        by = .(term_group, term_id)][topics > 1L]
+  if (nrow(conflicting)) {
+    .log_abort(
+      "{context} contains {nrow(conflicting)} terms with multiple primary topics."
+    )
+  }
+  unique(output, by = c("term_group", "term_id"))
+}
+
+.m3_qc_compare_cross_k_topic_split <- function(reference_phi,
+                                                candidate_phi,
+                                                reference_assignment,
+                                                candidate_assignment,
+                                                supported_fraction = 0.20,
+                                                dominant_fraction = 0.70,
+                                                partial_fraction = 0.10) {
+  reference_phi <- as.matrix(reference_phi)
+  candidate_phi <- as.matrix(candidate_phi)
+  if (!nrow(reference_phi) || !nrow(candidate_phi) ||
+      !ncol(reference_phi) || !ncol(candidate_phi) ||
+      is.null(colnames(reference_phi)) || is.null(colnames(candidate_phi)) ||
+      !identical(colnames(reference_phi), colnames(candidate_phi))) {
+    .log_abort("Cross-K phi matrices must contain the same ordered terms.")
+  }
+  cutoffs <- c(supported_fraction, dominant_fraction, partial_fraction)
+  if (any(!is.finite(cutoffs)) ||
+      supported_fraction <= 0 || supported_fraction >= dominant_fraction ||
+      dominant_fraction >= 1 ||
+      partial_fraction <= 0 || partial_fraction > supported_fraction) {
+    .log_abort("Cross-K split fractions are invalid or inconsistent.")
+  }
+  reference_topics <- .m3_opt_topic_ids(reference_phi, "row")
+  candidate_topics <- .m3_opt_topic_ids(candidate_phi, "row")
+  reference <- .m3_qc_primary_term_assignments(
+    reference_assignment,
+    context = "reference topic assignment"
+  )
+  candidate <- .m3_qc_primary_term_assignments(
+    candidate_assignment,
+    context = "candidate topic assignment"
+  )
+  reference_counts <- reference[, .(terms = .N),
+                                by = .(term_group, primary_topic)]
+  reference_counts[, modality_total := sum(terms), by = term_group]
+  reference_counts[, modality_fraction := terms / modality_total]
+  dominant_score <- reference_counts[, .(
+    dominance_score = sum(modality_fraction),
+    assigned_terms = sum(terms)
+  ), by = primary_topic]
+  data.table::setorder(
+    dominant_score,
+    -dominance_score,
+    -assigned_terms,
+    primary_topic
+  )
+  reference_topic <- dominant_score$primary_topic[[1L]]
+
+  affinity <- data.table::rbindlist(lapply(c("GENE", "PEAK"), function(group) {
+    term_index <- startsWith(colnames(reference_phi), paste0(group, ":"))
+    if (!any(term_index)) return(NULL)
+    reference_probability <- reference_phi[, term_index, drop = FALSE]
+    candidate_probability <- candidate_phi[, term_index, drop = FALSE]
+    reference_probability[!is.finite(reference_probability) |
+                            reference_probability < 0] <- 0
+    candidate_probability[!is.finite(candidate_probability) |
+                            candidate_probability < 0] <- 0
+    reference_probability <- reference_probability / pmax(
+      rowSums(reference_probability),
+      .Machine$double.eps
+    )
+    candidate_probability <- candidate_probability / pmax(
+      rowSums(candidate_probability),
+      .Machine$double.eps
+    )
+    similarity <- sqrt(reference_probability) %*%
+      t(sqrt(candidate_probability))
+    output <- data.table::as.data.table(as.table(similarity))
+    data.table::setnames(
+      output,
+      c("reference_position", "candidate_position", "hellinger_affinity")
+    )
+    output[, `:=`(
+      term_group = group,
+      reference_topic = reference_topics[match(
+        as.character(reference_position),
+        rownames(reference_phi)
+      )],
+      candidate_topic = candidate_topics[match(
+        as.character(candidate_position),
+        rownames(candidate_phi)
+      )]
+    )]
+    output[, .(
+      term_group,
+      reference_topic,
+      candidate_topic,
+      hellinger_affinity = as.numeric(hellinger_affinity)
+    )]
+  }), use.names = TRUE)
+
+  source_terms <- reference[primary_topic == reference_topic, .(
+    term_group,
+    term_id,
+    reference_topic = primary_topic
+  )]
+  candidate_terms <- candidate[, .(
+    term_group,
+    term_id,
+    candidate_topic = primary_topic
+  )]
+  mapped <- merge(
+    source_terms,
+    candidate_terms,
+    by = c("term_group", "term_id"),
+    all.x = TRUE,
+    sort = FALSE
+  )
+  redistribution <- mapped[, .(terms = .N),
+                           by = .(term_group, reference_topic, candidate_topic)]
+  source_totals <- source_terms[, .(source_terms = .N), by = term_group]
+  redistribution <- source_totals[redistribution, on = "term_group"]
+  redistribution[, fraction := terms / source_terms]
+  data.table::setorder(redistribution, term_group, -fraction, candidate_topic)
+
+  children <- data.table::dcast(
+    redistribution[!is.na(candidate_topic)],
+    candidate_topic ~ term_group,
+    value.var = "fraction",
+    fill = 0
+  )
+  for (column in c("GENE", "PEAK")) {
+    if (!column %in% names(children)) children[, (column) := 0]
+  }
+  data.table::setnames(
+    children,
+    c("GENE", "PEAK"),
+    c("gene_fraction", "peak_fraction")
+  )
+  children[, joint_fraction := pmin(gene_fraction, peak_fraction)]
+  data.table::setorder(
+    children,
+    -joint_fraction,
+    -gene_fraction,
+    -peak_fraction,
+    candidate_topic
+  )
+  supported_children <- children[
+    gene_fraction >= supported_fraction & peak_fraction >= supported_fraction,
+    candidate_topic
+  ]
+  partial_children <- children[
+    gene_fraction >= partial_fraction & peak_fraction >= partial_fraction,
+    candidate_topic
+  ]
+  dominant_retained <- any(
+    children$gene_fraction > dominant_fraction &
+      children$peak_fraction > dominant_fraction
+  )
+  gene_top <- children[order(-gene_fraction, candidate_topic), candidate_topic][1L]
+  peak_top <- children[order(-peak_fraction, candidate_topic), candidate_topic][1L]
+  modality_disagreement <- !identical(gene_top, peak_top)
+  classification <- if (
+    length(supported_children) >= 2L && !dominant_retained
+  ) {
+    "supported_split"
+  } else if (length(partial_children) >= 2L || modality_disagreement) {
+    "partial_split"
+  } else {
+    "persistent_topic"
+  }
+  summary <- data.table::data.table(
+    reference_topic = as.integer(reference_topic),
+    classification = classification,
+    dominant_retained = dominant_retained,
+    modality_disagreement = modality_disagreement,
+    supported_children = list(as.integer(supported_children)),
+    partial_children = list(as.integer(partial_children))
+  )
+  list(
+    summary = summary,
+    children = children[],
+    redistribution = redistribution[],
+    affinity = affinity[]
+  )
+}
+
+.m3_qc_gene_term_umap_plot <- function(optimization,
+                                       topic_palette,
+                                       gene_term_assignment = NULL,
+                                       gene_umap = NULL,
+                                       topic_ids = NULL,
+                                       seed = 20260716L) {
+  if (is.null(gene_umap)) {
+    gene_umap <- .m3_qc_gene_term_umap_data(
+      optimization,
+      gene_term_assignment = gene_term_assignment,
+      seed = seed
+    )
+  }
+  background <- gene_umap[, .(UMAP1, UMAP2)]
+  display_umap <- gene_umap[
+    .as_logical_flag(assigned) & is.finite(topic_num)
+  ]
+  if (!is.null(topic_ids)) {
+    topic_ids <- sort(unique(suppressWarnings(as.integer(topic_ids))))
+    topic_ids <- topic_ids[is.finite(topic_ids)]
+    topic_levels <- paste0("Topic ", topic_ids)
+    display_umap <- gene_umap[topic_num %in% topic_ids]
+    display_umap[, topic := factor(as.character(topic), levels = topic_levels)]
+  }
+  point_layer <- function(data, mapping, ...) {
+    args <- c(list(data = data, mapping = mapping), list(...))
+    if (requireNamespace("ggrastr", quietly = TRUE)) {
+      args$raster.dpi <- 320
+      return(do.call(ggrastr::geom_point_rast, args))
+    }
+    do.call(ggplot2::geom_point, args)
+  }
+  colors <- topic_palette[levels(display_umap$topic)]
+  x_range <- range(gene_umap$UMAP1, finite = TRUE)
+  y_range <- range(gene_umap$UMAP2, finite = TRUE)
+  shared_span <- max(diff(x_range), diff(y_range)) * 1.04
+  x_mid <- mean(x_range)
+  y_mid <- mean(y_range)
+  x_limits <- x_mid + c(-0.5, 0.5) * shared_span
+  y_limits <- y_mid + c(-0.5, 0.5) * shared_span
+  topic_levels <- levels(display_umap$topic)
+  panel_labels <- stats::setNames(
+    sub("^Topic ", "T", topic_levels),
+    topic_levels
+  )
+  panel_columns <- max(1L, min(5L, length(topic_levels)))
+  panel_rows <- max(1L, min(
+    6L,
+    ceiling(length(topic_levels) / panel_columns)
+  ))
+  ggplot2::ggplot() +
+    point_layer(
+      background,
+      ggplot2::aes(UMAP1, UMAP2),
+      color = "#CBD2D7",
+      alpha = 0.22,
+      size = 0.08
+    ) +
+    point_layer(
+      display_umap,
+      ggplot2::aes(UMAP1, UMAP2, color = topic),
+      alpha = 0.72,
+      size = 0.16
+    ) +
+    ggplot2::scale_color_manual(values = colors, guide = "none") +
+    ggplot2::facet_wrap(
+      ggplot2::vars(topic),
+      ncol = panel_columns,
+      nrow = panel_rows,
+      drop = FALSE,
+      labeller = ggplot2::as_labeller(panel_labels)
+    ) +
+    ggplot2::coord_fixed(
+      xlim = x_limits,
+      ylim = y_limits,
+      ratio = 1,
+      expand = FALSE
+    ) +
+    ggplot2::labs(
+      x = "UMAP1",
+      y = "UMAP2"
+    ) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_rect(
+        color = "#B9C2C9",
+        fill = NA,
+        linewidth = 0.45
+      ),
+      strip.text = ggplot2::element_text(size = 9, face = "bold"),
+      aspect.ratio = 1,
+      panel.spacing = grid::unit(0.08, "in")
+    )
+}
+
+.m3_qc_prepare_pathway_gene_sets <- function(pathway_gene_sets,
+                                             expressed_genes = NULL,
+                                             drop_shared = TRUE) {
+  x <- data.table::as.data.table(data.table::copy(pathway_gene_sets))
+  .assert_has_cols(
+    x,
+    c("pathway", "gene"),
+    context = "pathway Gene-term UMAP"
+  )
+  x[, `:=`(
+    pathway = trimws(as.character(pathway)),
+    gene = toupper(trimws(as.character(gene)))
+  )]
+  x <- unique(x[
+    !is.na(pathway) & nzchar(pathway) & !is.na(gene) & nzchar(gene),
+    .(pathway, gene)
+  ])
+  if (!nrow(x)) {
+    .log_abort("No valid pathway genes are available for the Gene-term UMAP.")
+  }
+  pathway_order <- unique(x$pathway)
+  if (!is.null(expressed_genes)) {
+    expressed_genes <- unique(toupper(trimws(as.character(expressed_genes))))
+    expressed_genes <- expressed_genes[
+      !is.na(expressed_genes) & nzchar(expressed_genes)
+    ]
+    x <- x[gene %in% expressed_genes]
+  }
+  if (isTRUE(drop_shared) && nrow(x)) {
+    memberships <- x[, .(pathways = data.table::uniqueN(pathway)), by = gene]
+    x <- x[memberships[pathways == 1L], on = "gene", nomatch = 0L]
+  }
+  if (!nrow(x)) {
+    .log_abort("No expressed pathway-unique genes remain for the Gene-term UMAP.")
+  }
+  pathway_order <- pathway_order[pathway_order %in% x$pathway]
+  data.table::setattr(x, "pathway_order", pathway_order)
+  x[]
+}
+
+.m3_qc_pathway_gene_sets_from_enrichly <- function(
+    pathways,
+    expressed_genes,
+    database = "MSigDB_Hallmark_2020",
+    pathway_species = "human",
+    cache_dir = NULL) {
+  .assert_pkg("enrichly")
+  pathways <- unique(trimws(as.character(pathways)))
+  pathways <- pathways[!is.na(pathways) & nzchar(pathways)]
+  if (!length(pathways)) {
+    .log_abort("At least one pathway name is required.")
+  }
+  manifest <- enrichly::enrichly_download(
+    databases = database,
+    species = pathway_species,
+    cache_dir = .enrichly_db_cache_dir(cache_dir),
+    overwrite = FALSE,
+    verbose = FALSE
+  )
+  pathway_db <- enrichly::enrichly_load(
+    manifest$path,
+    databases = database
+  )$sets
+  pathway_db <- data.table::as.data.table(pathway_db)
+  missing <- setdiff(pathways, unique(as.character(pathway_db$term)))
+  if (length(missing)) {
+    .log_abort(
+      "Pathway database {database} is missing: {paste(missing, collapse = ', ')}."
+    )
+  }
+  rows <- lapply(pathways, function(pathway) {
+    genes <- .canonicalize_pathway_genes(
+      pathway_db[term == pathway, gene],
+      pathway_species = pathway_species
+    )
+    data.table::data.table(pathway = pathway, gene = genes)
+  })
+  .m3_qc_prepare_pathway_gene_sets(
+    data.table::rbindlist(rows, use.names = TRUE),
+    expressed_genes = expressed_genes,
+    drop_shared = TRUE
+  )
+}
+
+.m3_qc_peak_term_umap_plot <- function(optimization,
+                                       topic_palette,
+                                       peak_term_assignment = NULL,
+                                       peak_umap = NULL,
+                                       topic_ids = NULL,
+                                       top_n = 10000L,
+                                       seed = 20260716L) {
+  if (is.null(peak_umap)) {
+    peak_umap <- .m3_qc_peak_term_umap_data(
+      optimization,
+      peak_term_assignment = peak_term_assignment,
+      top_n = top_n,
+      seed = seed
+    )
+  }
+  display_umap <- data.table::copy(peak_umap)
+  display_umap[, target_gene := peak_id]
+  .m3_qc_gene_term_umap_plot(
+    optimization,
+    topic_palette = topic_palette,
+    gene_umap = display_umap,
+    topic_ids = topic_ids,
+    seed = seed
+  )
+}
+
+.m3_qc_pathway_gene_umap_plot <- function(gene_umap,
+                                           pathway_gene_sets,
+                                           pathway_colors = NULL) {
+  gene_umap <- data.table::as.data.table(data.table::copy(gene_umap))
+  .assert_has_cols(
+    gene_umap,
+    c("target_gene", "UMAP1", "UMAP2"),
+    context = "pathway Gene-term UMAP coordinates"
+  )
+  pathway_order <- attr(pathway_gene_sets, "pathway_order")
+  pathway_gene_sets <- .m3_qc_prepare_pathway_gene_sets(
+    pathway_gene_sets,
+    drop_shared = TRUE
+  )
+  if (is.null(pathway_order)) {
+    pathway_order <- attr(pathway_gene_sets, "pathway_order")
+  }
+  gene_umap[, gene := toupper(trimws(as.character(target_gene)))]
+  highlighted <- merge(
+    pathway_gene_sets,
+    gene_umap,
+    by = "gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  available_pathways <- unique(as.character(highlighted$pathway))
+  omitted <- setdiff(pathway_order, available_pathways)
+  if (length(omitted)) {
+    .log_warn(
+      "Omitting pathway UMAP panels without matching Gene terms: {paste(omitted, collapse = ', ')}."
+    )
+  }
+  pathway_order <- pathway_order[pathway_order %in% available_pathways]
+  if (!length(pathway_order)) {
+    .log_abort("No pathway genes match the assigned Gene-term UMAP universe.")
+  }
+  highlighted[, pathway := factor(pathway, levels = pathway_order)]
+  counts <- highlighted[, .(genes = data.table::uniqueN(gene)), by = pathway]
+  compact_pathway <- c(
+    `Apical Junction` = "Apical junction",
+    `Cholesterol Homeostasis` = "Cholesterol",
+    `Unfolded Protein Response` = "UPR",
+    `Oxidative Phosphorylation` = "OXPHOS",
+    `Epithelial Mesenchymal Transition` = "EMT"
+  )
+  display_pathway <- as.character(counts$pathway)
+  matched_labels <- compact_pathway[display_pathway]
+  display_pathway[!is.na(matched_labels)] <- matched_labels[!is.na(matched_labels)]
+  panel_labels <- stats::setNames(
+    sprintf("%s (n=%s)", display_pathway, scales::comma(counts$genes)),
+    as.character(counts$pathway)
+  )
+  default_colors <- c(
+    "#0072B2", "#E69F00", "#CC79A7", "#009E73", "#D55E00"
+  )
+  if (is.null(pathway_colors)) {
+    pathway_colors <- stats::setNames(
+      rep(default_colors, length.out = length(pathway_order)),
+      pathway_order
+    )
+  } else {
+    pathway_colors <- as.character(pathway_colors)
+    if (is.null(names(pathway_colors))) {
+      names(pathway_colors) <- pathway_order[seq_along(pathway_colors)]
+    }
+    missing_colors <- setdiff(pathway_order, names(pathway_colors))
+    if (length(missing_colors)) {
+      pathway_colors <- c(
+        pathway_colors,
+        stats::setNames(
+          rep(default_colors, length.out = length(missing_colors)),
+          missing_colors
+        )
+      )
+    }
+  }
+  point_layer <- function(data, mapping, ...) {
+    args <- c(list(data = data, mapping = mapping), list(...))
+    if (requireNamespace("ggrastr", quietly = TRUE)) {
+      args$raster.dpi <- 320
+      return(do.call(ggrastr::geom_point_rast, args))
+    }
+    do.call(ggplot2::geom_point, args)
+  }
+  x_range <- range(gene_umap$UMAP1, finite = TRUE)
+  y_range <- range(gene_umap$UMAP2, finite = TRUE)
+  shared_span <- max(diff(x_range), diff(y_range)) * 1.04
+  if (!is.finite(shared_span) || shared_span <= 0) shared_span <- 1
+  x_mid <- mean(x_range)
+  y_mid <- mean(y_range)
+  ggplot2::ggplot() +
+    point_layer(
+      gene_umap[, .(UMAP1, UMAP2)],
+      ggplot2::aes(UMAP1, UMAP2),
+      color = "#CBD2D7",
+      alpha = 0.24,
+      size = 0.10
+    ) +
+    point_layer(
+      highlighted,
+      ggplot2::aes(UMAP1, UMAP2, color = pathway),
+      alpha = 0.88,
+      size = 0.32
+    ) +
+    ggplot2::scale_color_manual(
+      values = pathway_colors[pathway_order],
+      guide = "none"
+    ) +
+    ggplot2::facet_wrap(
+      ggplot2::vars(pathway),
+      ncol = 5L,
+      drop = FALSE,
+      labeller = ggplot2::as_labeller(panel_labels)
+    ) +
+    ggplot2::coord_fixed(
+      xlim = x_mid + c(-0.5, 0.5) * shared_span,
+      ylim = y_mid + c(-0.5, 0.5) * shared_span,
+      ratio = 1,
+      expand = FALSE
+    ) +
+    ggplot2::labs(
+      x = "UMAP1",
+      y = "UMAP2"
+    ) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_rect(
+        color = "#B9C2C9",
+        fill = NA,
+        linewidth = 0.45
+      ),
+      strip.text = ggplot2::element_text(size = 9, face = "bold"),
+      aspect.ratio = 1,
+      panel.spacing = grid::unit(0.10, "in")
+    )
+}
+
+.m3_qc_prepare_tf_target_gene_sets <- function(tf_target_corr,
+                                                module2_links,
+                                                gene_universe,
+                                                min_r = 0.5,
+                                                top_n_tfs = 30L,
+                                                top_n_targets = 250L) {
+  tf_target_corr <- data.table::as.data.table(data.table::copy(tf_target_corr))
+  module2_links <- data.table::as.data.table(data.table::copy(module2_links))
+  .assert_has_cols(
+    tf_target_corr,
+    c("tf", "target_gene", "best_r", "pass"),
+    context = "Module 2 TF-target correlations"
+  )
+  .assert_has_cols(
+    module2_links,
+    c("tf", "target_gene", "fp_id", "module2_link_pass"),
+    context = "Module 2 TF-Peak-target links"
+  )
+  min_r <- as.numeric(min_r)[1L]
+  top_n_tfs <- as.integer(top_n_tfs)[1L]
+  top_n_targets <- as.integer(top_n_targets)[1L]
+  if (!is.finite(min_r) || min_r < -1 || min_r > 1) {
+    .log_abort("`min_r` must be between -1 and 1.")
+  }
+  if (!is.finite(top_n_tfs) || top_n_tfs < 1L ||
+      !is.finite(top_n_targets) || top_n_targets < 1L) {
+    .log_abort("`top_n_tfs` and `top_n_targets` must be positive integers.")
+  }
+  genes <- unique(toupper(trimws(as.character(gene_universe))))
+  genes <- genes[nzchar(genes) & !is.na(genes)]
+  if (!length(genes)) {
+    .log_abort("`gene_universe` must contain at least one Gene.")
+  }
+
+  tf_target_corr[, `:=`(
+    tf = trimws(as.character(tf)),
+    tf_key = toupper(trimws(as.character(tf))),
+    target_gene = toupper(trimws(as.character(target_gene))),
+    best_r = as.numeric(best_r),
+    pass = as.logical(pass)
+  )]
+  tf_target_corr <- tf_target_corr[
+    pass %in% TRUE & is.finite(best_r) & best_r >= min_r &
+      nzchar(tf_key) & target_gene %in% genes
+  ]
+  if (!nrow(tf_target_corr)) {
+    .log_abort("No Module 2 TF-target correlations pass the requested filters.")
+  }
+  data.table::setorderv(
+    tf_target_corr,
+    c("tf_key", "target_gene", "best_r", "tf"),
+    c(1L, 1L, -1L, 1L),
+    na.last = TRUE
+  )
+  tf_target_corr <- unique(
+    tf_target_corr,
+    by = c("tf_key", "target_gene")
+  )
+
+  module2_links[, `:=`(
+    tf_key = toupper(trimws(as.character(tf))),
+    target_gene = toupper(trimws(as.character(target_gene))),
+    fp_id = trimws(as.character(fp_id)),
+    module2_link_pass = as.logical(module2_link_pass)
+  )]
+  eligible_keys <- tf_target_corr[, .(tf_key, target_gene)]
+  module2_links <- module2_links[
+    module2_link_pass %in% TRUE & nzchar(fp_id) & target_gene %in% genes
+  ][eligible_keys, on = c("tf_key", "target_gene"), nomatch = 0L]
+  if (!nrow(module2_links)) {
+    .log_abort("No passing Module 2 TF-Peak-target links support the TF-target correlations.")
+  }
+  support <- unique(module2_links[, .(tf_key, target_gene, fp_id)])[
+    , .(supporting_peak_count = data.table::uniqueN(fp_id)),
+    by = .(tf_key, target_gene)
+  ]
+  eligible <- merge(
+    tf_target_corr,
+    support,
+    by = c("tf_key", "target_gene"),
+    all = FALSE,
+    sort = FALSE
+  )
+  if (!nrow(eligible)) {
+    .log_abort("No supported TF-target pairs remain after Module 2 link matching.")
+  }
+
+  tf_summary <- eligible[, .(
+    eligible_target_count = data.table::uniqueN(target_gene),
+    median_best_r = stats::median(best_r, na.rm = TRUE),
+    tf = sort(unique(tf))[1L]
+  ), by = tf_key]
+  data.table::setorderv(
+    tf_summary,
+    c("eligible_target_count", "median_best_r", "tf"),
+    c(-1L, -1L, 1L),
+    na.last = TRUE
+  )
+  tf_summary <- tf_summary[seq_len(min(top_n_tfs, .N))]
+  tf_summary[, tf_rank := seq_len(.N)]
+  eligible <- merge(
+    eligible,
+    tf_summary[, .(
+      tf_key,
+      tf,
+      tf_rank,
+      eligible_target_count,
+      median_best_r
+    )],
+    by = "tf_key",
+    all = FALSE,
+    sort = FALSE,
+    suffixes = c("_source", "")
+  )
+  data.table::setorderv(
+    eligible,
+    c("tf_rank", "best_r", "supporting_peak_count", "target_gene"),
+    c(1L, -1L, -1L, 1L),
+    na.last = TRUE
+  )
+  eligible[, target_rank := seq_len(.N), by = tf_rank]
+  eligible <- eligible[target_rank <= top_n_targets]
+  optional <- intersect(c("best_method", "best_fdr"), names(eligible))
+  result <- eligible[, c(
+    list(
+      tf_rank = as.integer(tf_rank),
+      tf = as.character(tf),
+      target_rank = as.integer(target_rank),
+      target_gene = as.character(target_gene),
+      best_r = as.numeric(best_r),
+      supporting_peak_count = as.integer(supporting_peak_count),
+      eligible_target_count = as.integer(eligible_target_count),
+      median_best_r = as.numeric(median_best_r)
+    ),
+    lapply(.SD, identity)
+  ), .SDcols = optional]
+  data.table::setorderv(result, c("tf_rank", "target_rank"))
+  attr(result, "min_r") <- min_r
+  attr(result, "top_n_tfs") <- top_n_tfs
+  attr(result, "top_n_targets") <- top_n_targets
+  result[]
+}
+
+.m3_qc_select_topic_tf_target_gene_sets <- function(tf_target_gene_sets,
+                                                     gene_term_assignment,
+                                                     tf_panel = NULL,
+                                                     top_n_tfs = 30L,
+                                                     top_n_targets = 500L) {
+  tf_target_gene_sets <- data.table::as.data.table(
+    data.table::copy(tf_target_gene_sets)
+  )
+  assignment <- data.table::as.data.table(
+    data.table::copy(gene_term_assignment)
+  )
+  .assert_has_cols(
+    tf_target_gene_sets,
+    c("tf", "target_gene", "best_r", "supporting_peak_count"),
+    context = "eligible high-confidence TF-target Gene sets"
+  )
+  topic_column <- intersect(
+    c("assigned_topic", "topic_num", "topic"),
+    names(assignment)
+  )[1L]
+  if (is.na(topic_column)) {
+    .log_abort("Gene-term assignment must contain an assigned topic column.")
+  }
+  if (!"target_gene" %in% names(assignment)) {
+    if (!"term_id" %in% names(assignment)) {
+      .log_abort("Gene-term assignment must contain `target_gene` or `term_id`.")
+    }
+    assignment[, target_gene := sub("^GENE:", "", as.character(term_id))]
+  }
+  if ("term_group" %in% names(assignment)) {
+    assignment <- assignment[term_group == "GENE"]
+  }
+  if ("assigned" %in% names(assignment)) {
+    assignment <- assignment[as.logical(assigned) %in% TRUE]
+  }
+  assignment[, `:=`(
+    target_gene = toupper(trimws(as.character(target_gene))),
+    selected_topic = suppressWarnings(as.integer(get(topic_column)))
+  )]
+  assignment <- unique(assignment[
+    nzchar(target_gene) & is.finite(selected_topic),
+    .(target_gene, selected_topic)
+  ])
+  duplicated_genes <- assignment[, .N, by = target_gene][N > 1L, target_gene]
+  if (length(duplicated_genes)) {
+    .log_abort("Gene-term assignment maps a target Gene to multiple topics.")
+  }
+  tf_target_gene_sets[, target_gene := toupper(trimws(as.character(target_gene)))]
+  eligible <- merge(
+    tf_target_gene_sets,
+    assignment,
+    by = "target_gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  if (!nrow(eligible)) {
+    .log_abort("No eligible TF targets match assigned Gene terms.")
+  }
+  top_n_tfs <- as.integer(top_n_tfs)[1L]
+  top_n_targets <- as.integer(top_n_targets)[1L]
+  if (!is.finite(top_n_tfs) || top_n_tfs < 1L ||
+      !is.finite(top_n_targets) || top_n_targets < 1L) {
+    .log_abort("`top_n_tfs` and `top_n_targets` must be positive integers.")
+  }
+  tf_topic <- eligible[, .(
+    topic_target_count = data.table::uniqueN(target_gene),
+    topic_median_r = stats::median(best_r, na.rm = TRUE)
+  ), by = .(tf, selected_topic)]
+  topic_size <- assignment[, .(
+    assigned_topic_genes = data.table::uniqueN(target_gene)
+  ), by = selected_topic]
+  tf_topic <- merge(
+    tf_topic,
+    topic_size,
+    by = "selected_topic",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  tf_topic[, tf_target_total := sum(topic_target_count), by = tf]
+  total_assigned_genes <- sum(topic_size$assigned_topic_genes)
+  tf_topic[, `:=`(
+    topic_target_share = topic_target_count / pmax(tf_target_total, 1),
+    topic_prevalence = assigned_topic_genes / pmax(total_assigned_genes, 1)
+  )]
+  tf_topic[, topic_selection_score :=
+    log1p(topic_target_count) * topic_median_r *
+      topic_target_share / pmax(topic_prevalence, 1e-8)]
+  if (!is.null(tf_panel)) {
+    tf_panel <- data.table::as.data.table(data.table::copy(tf_panel))
+    .assert_has_cols(tf_panel, "tf", context = "TF-target QC panel")
+    if (!"tf_function" %in% names(tf_panel)) {
+      tf_panel[, tf_function := NA_character_]
+    }
+    tf_panel[, `:=`(
+      tf = toupper(trimws(as.character(tf))),
+      tf_function = as.character(tf_function),
+      panel_rank = seq_len(.N)
+    )]
+    tf_panel <- unique(tf_panel[nzchar(tf)], by = "tf")
+    tf_topic[, tf := toupper(trimws(as.character(tf)))]
+    tf_topic <- tf_topic[
+      tf_panel[, .(tf, tf_function, panel_rank)],
+      on = "tf",
+      nomatch = 0L
+    ]
+    if (!nrow(tf_topic)) {
+      .log_abort("None of the requested TF panel has eligible assigned targets.")
+    }
+    candidate_tfs <- unique(
+      tf_topic[order(panel_rank), .(tf, panel_rank, tf_function)]
+    )[seq_len(min(top_n_tfs, .N))]
+  } else {
+    tf_topic[, `:=`(
+      tf_function = NA_character_,
+      panel_rank = NA_integer_
+    )]
+    candidate_tfs <- unique(tf_topic[, .(
+      tf,
+      tf_target_total,
+      mean_r = stats::median(topic_median_r, na.rm = TRUE)
+    )])
+    data.table::setorderv(
+      candidate_tfs,
+      c("tf_target_total", "mean_r", "tf"),
+      c(-1L, -1L, 1L),
+      na.last = TRUE
+    )
+    candidate_tfs <- candidate_tfs[seq_len(min(top_n_tfs, .N))]
+    candidate_tfs[, `:=`(
+      panel_rank = seq_len(.N),
+      tf_function = NA_character_
+    )]
+  }
+  tf_topic <- tf_topic[candidate_tfs, on = "tf", nomatch = 0L]
+  topic_priority <- unique(tf_topic[, .(
+    selected_topic,
+    assigned_topic_genes
+  )])
+  data.table::setorderv(
+    topic_priority,
+    c("assigned_topic_genes", "selected_topic"),
+    c(-1L, 1L),
+    na.last = TRUE
+  )
+  topic_priority[, topic_priority := seq_len(.N)]
+  coverage_topics <- topic_priority[
+    seq_len(min(top_n_tfs, .N)),
+    selected_topic
+  ]
+  remaining_tfs <- as.character(candidate_tfs$tf)
+  remaining_topics <- as.integer(coverage_topics)
+  coverage_rows <- list()
+  while (length(remaining_tfs) && length(remaining_topics)) {
+    candidates <- tf_topic[
+      tf %in% remaining_tfs & selected_topic %in% remaining_topics
+    ]
+    if (!nrow(candidates)) break
+    data.table::setorderv(
+      candidates,
+      c(
+        "topic_selection_score", "topic_target_count", "topic_median_r",
+        "panel_rank", "tf", "selected_topic"
+      ),
+      c(-1L, -1L, -1L, 1L, 1L, 1L),
+      na.last = TRUE
+    )
+    chosen <- candidates[1L]
+    coverage_rows[[length(coverage_rows) + 1L]] <- chosen
+    remaining_tfs <- setdiff(remaining_tfs, chosen$tf)
+    remaining_topics <- setdiff(remaining_topics, chosen$selected_topic)
+  }
+  selected_tfs <- data.table::rbindlist(coverage_rows, fill = TRUE)
+  remaining_tfs <- setdiff(candidate_tfs$tf, selected_tfs$tf)
+  if (length(remaining_tfs)) {
+    additional <- tf_topic[tf %in% remaining_tfs]
+    data.table::setorderv(
+      additional,
+      c(
+        "tf", "topic_selection_score", "topic_target_count",
+        "topic_median_r", "selected_topic"
+      ),
+      c(1L, -1L, -1L, -1L, 1L),
+      na.last = TRUE
+    )
+    additional <- unique(additional, by = "tf")
+    selected_tfs <- data.table::rbindlist(
+      list(selected_tfs, additional),
+      fill = TRUE
+    )
+  }
+  selected_tfs <- merge(
+    selected_tfs,
+    topic_priority[, .(selected_topic, topic_priority)],
+    by = "selected_topic",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  data.table::setorderv(
+    selected_tfs,
+    c(
+      "topic_priority", "topic_selection_score", "panel_rank", "tf"
+    ),
+    c(1L, -1L, 1L, 1L),
+    na.last = TRUE
+  )
+  selected_tfs[, topic_tf_rank := seq_len(.N), by = selected_topic]
+  selected_tfs[, display_rank := seq_len(.N)]
+  selected <- merge(
+    eligible,
+    selected_tfs[, .(
+      tf,
+      selected_topic,
+      display_rank,
+      topic_tf_rank,
+      topic_target_count,
+      assigned_topic_genes,
+      tf_function,
+      topic_selection_score
+    )],
+    by = c("tf", "selected_topic"),
+    all = FALSE,
+    sort = FALSE
+  )
+  data.table::setorderv(
+    selected,
+    c("display_rank", "best_r", "supporting_peak_count", "target_gene"),
+    c(1L, -1L, -1L, 1L),
+    na.last = TRUE
+  )
+  selected[, target_rank := seq_len(.N), by = display_rank]
+  selected <- selected[target_rank <= top_n_targets]
+  data.table::setorderv(selected, c("display_rank", "target_rank"))
+  attr(selected, "min_r") <- attr(tf_target_gene_sets, "min_r") %||% 0.5
+  attr(selected, "top_n_tfs") <- top_n_tfs
+  attr(selected, "top_n_targets") <- top_n_targets
+  selected[]
+}
+
+.m3_qc_tf_target_gene_umap_plot <- function(gene_umap,
+                                             tf_target_gene_sets,
+                                             min_r = NULL) {
+  gene_umap <- data.table::as.data.table(data.table::copy(gene_umap))
+  tf_target_gene_sets <- data.table::as.data.table(
+    data.table::copy(tf_target_gene_sets)
+  )
+  .assert_has_cols(
+    gene_umap,
+    c("target_gene", "UMAP1", "UMAP2"),
+    context = "TF-target Gene-term UMAP coordinates"
+  )
+  .assert_has_cols(
+    tf_target_gene_sets,
+    c("display_rank", "tf", "selected_topic", "target_gene", "best_r"),
+    context = "high-confidence TF-target Gene sets"
+  )
+  gene_umap[, gene := toupper(trimws(as.character(target_gene)))]
+  tf_target_gene_sets[, target_gene := toupper(trimws(as.character(target_gene)))]
+  highlighted <- merge(
+    tf_target_gene_sets,
+    gene_umap,
+    by.x = "target_gene",
+    by.y = "gene",
+    all = FALSE,
+    sort = FALSE
+  )
+  if (!nrow(highlighted)) {
+    .log_abort("No high-confidence TF targets match the Gene-term UMAP universe.")
+  }
+  tf_order <- unique(
+    tf_target_gene_sets[order(display_rank), .(display_rank, tf)]
+  )$tf
+  tf_order <- tf_order[tf_order %in% unique(highlighted$tf)]
+  highlighted[, tf := factor(tf, levels = tf_order)]
+  counts <- highlighted[, .(targets = data.table::uniqueN(target_gene)), by = tf]
+  topic_lookup <- unique(tf_target_gene_sets[, .(tf, selected_topic)])
+  counts <- merge(counts, topic_lookup, by = "tf", all.x = TRUE, sort = FALSE)
+  panel_labels <- stats::setNames(
+    sprintf(
+      "%s | T%d (n=%s)",
+      as.character(counts$tf),
+      as.integer(counts$selected_topic),
+      scales::comma(counts$targets)
+    ),
+    as.character(counts$tf)
+  )
+  if (is.null(min_r)) min_r <- attr(tf_target_gene_sets, "min_r") %||% 0.5
+  min_r <- as.numeric(min_r)[1L]
+  if (!is.finite(min_r)) min_r <- 0.5
+  max_r <- max(1, max(highlighted$best_r, na.rm = TRUE))
+  point_layer <- function(data, mapping, ...) {
+    args <- c(list(data = data, mapping = mapping), list(...))
+    if (requireNamespace("ggrastr", quietly = TRUE)) {
+      args$raster.dpi <- 320
+      return(do.call(ggrastr::geom_point_rast, args))
+    }
+    do.call(ggplot2::geom_point, args)
+  }
+  x_range <- range(gene_umap$UMAP1, finite = TRUE)
+  y_range <- range(gene_umap$UMAP2, finite = TRUE)
+  shared_span <- max(diff(x_range), diff(y_range)) * 1.04
+  if (!is.finite(shared_span) || shared_span <= 0) shared_span <- 1
+  x_mid <- mean(x_range)
+  y_mid <- mean(y_range)
+  ggplot2::ggplot() +
+    point_layer(
+      gene_umap[, .(UMAP1, UMAP2)],
+      ggplot2::aes(UMAP1, UMAP2),
+      color = "#CDD3D8",
+      alpha = 0.20,
+      size = 0.08
+    ) +
+    point_layer(
+      highlighted,
+      ggplot2::aes(UMAP1, UMAP2, color = best_r),
+      alpha = 0.90,
+      size = 0.24
+    ) +
+    ggplot2::scale_color_gradientn(
+      colors = c("#F4D35E", "#E66B2E", "#7A1F5C", "#183153"),
+      limits = c(min_r, max_r),
+      oob = scales::squish,
+      name = "Module 2 R"
+    ) +
+    ggplot2::facet_wrap(
+      ggplot2::vars(tf),
+      ncol = 5L,
+      nrow = 6L,
+      drop = FALSE,
+      labeller = ggplot2::as_labeller(panel_labels)
+    ) +
+    ggplot2::coord_fixed(
+      xlim = x_mid + c(-0.5, 0.5) * shared_span,
+      ylim = y_mid + c(-0.5, 0.5) * shared_span,
+      ratio = 1,
+      expand = FALSE
+    ) +
+    ggplot2::labs(x = "UMAP1", y = "UMAP2") +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_rect(
+        color = "#B9C2C9",
+        fill = NA,
+        linewidth = 0.40
+      ),
+      axis.text = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(),
+      strip.text = ggplot2::element_text(size = 9, face = "bold"),
+      aspect.ratio = 1,
+      panel.spacing = grid::unit(0.04, "in"),
+      legend.position = "bottom",
+      legend.key.width = grid::unit(0.65, "in")
+    )
 }
 
 .m3_qc_umap_plot <- function(data,
@@ -2586,6 +3982,22 @@
 
 .m3_qc_condition_topic_theta <- function(optimization) {
   theta <- as.matrix(optimization$theta)
+  if (identical(optimization$document_design %||% "condition_tf", "condition")) {
+    if (!nrow(theta) || !ncol(theta)) {
+      .log_abort("Condition-document theta must contain conditions and topics.")
+    }
+    if (is.null(rownames(theta)) || anyNA(rownames(theta)) ||
+        any(!nzchar(rownames(theta))) || anyDuplicated(rownames(theta))) {
+      .log_abort(
+        "Condition-document theta must have one uniquely named row per condition."
+      )
+    }
+    topic_ids <- .m3_opt_topic_ids(theta, "column")
+    theta <- .m3_opt_row_normalize(theta)
+    theta <- theta[order(rownames(theta)), , drop = FALSE]
+    colnames(theta) <- paste0("Topic ", topic_ids)
+    return(theta)
+  }
   assignments <- optimization$qc$assignments
   if (!nrow(theta) || !nrow(assignments)) {
     return(matrix(numeric(), 0L, 0L))
@@ -2609,6 +4021,54 @@
   out <- t(out)
   rownames(out) <- conditions
   colnames(out) <- paste0("Topic ", topic_ids)
+  out
+}
+
+.m3_qc_condition_tf_topic_theta <- function(theta, matched_tfs = TRUE) {
+  theta <- as.matrix(theta)
+  if (!nrow(theta) || !ncol(theta)) {
+    .log_abort("Condition::TF theta must contain documents and topics.")
+  }
+  document_ids <- rownames(theta)
+  if (is.null(document_ids) || anyNA(document_ids) ||
+      any(!nzchar(document_ids)) || anyDuplicated(document_ids) ||
+      any(!grepl("::[^:]+$", document_ids))) {
+    .log_abort(
+      "Condition::TF theta must have unique '<condition>::<TF>' row names."
+    )
+  }
+  document_index <- data.table::data.table(
+    row_id = seq_len(nrow(theta)),
+    condition_id = sub("::[^:]+$", "", document_ids),
+    tf = sub("^.*::", "", document_ids)
+  )
+  if (document_index[, anyDuplicated(paste(condition_id, tf))] > 0L) {
+    .log_abort("Condition::TF theta contains duplicated condition/TF documents.")
+  }
+  conditions <- sort(unique(document_index$condition_id))
+  shared_tfs <- if (isTRUE(matched_tfs)) {
+    Reduce(intersect, split(document_index$tf, document_index$condition_id))
+  } else {
+    character()
+  }
+  use_matched <- isTRUE(matched_tfs) && length(shared_tfs) > 0L
+  if (use_matched) {
+    document_index <- document_index[tf %in% shared_tfs]
+  }
+  theta <- .m3_opt_row_normalize(theta)
+  out <- vapply(conditions, function(condition) {
+    rows <- document_index[condition_id == condition, row_id]
+    colMeans(theta[rows, , drop = FALSE])
+  }, numeric(ncol(theta)))
+  out <- t(out)
+  rownames(out) <- conditions
+  colnames(out) <- paste0("Topic ", .m3_opt_topic_ids(theta, "column"))
+  attr(out, "matched_tfs") <- use_matched
+  attr(out, "tf_count") <- if (use_matched) {
+    length(shared_tfs)
+  } else {
+    length(unique(document_index$tf))
+  }
   out
 }
 
@@ -2726,6 +4186,127 @@
   values <- values[!is.na(values)]
   if (is.character(values)) values <- values[nzchar(values)]
   data.table::uniqueN(values)
+}
+
+.m3_qc_retention_page <- function(optimization,
+                                  title_prefix = NULL,
+                                  standardized = FALSE) {
+  qc <- optimization$qc
+  assignments <- data.table::as.data.table(qc$assignments)
+  pairs <- data.table::as.data.table(optimization$raw_pair_assignment)
+  gene_only_assignment <- (
+    optimization$assignment_mode %||% "gene_peak"
+  ) %in% c("gene", "gene_only")
+  .assert_has_cols(
+    assignments,
+    c("tf_index", "target_index", "raw_aligned"),
+    context = "topic-assignment QC retention links"
+  )
+  .assert_has_cols(
+    pairs,
+    c(
+      "target_gene", "gene_gammafit_topics", "assigned_topic"
+    ),
+    context = "topic-assignment QC retention targets"
+  )
+  if (!gene_only_assignment) {
+    .assert_has_cols(
+      pairs,
+      "peak_gammafit_topics",
+      context = "topic-assignment QC retention targets"
+    )
+  }
+  pair_candidates <- .m3_opt_parse_topics(
+    pairs$gene_gammafit_topics,
+    qc$raw_topic_ids
+  )
+  peak_candidates <- if (gene_only_assignment) {
+    pair_candidates
+  } else {
+    .m3_opt_parse_topics(
+      pairs$peak_gammafit_topics,
+      qc$raw_topic_ids
+    )
+  }
+  target_gamma <- lengths(pair_candidates) > 0L &
+    lengths(peak_candidates) > 0L
+  target_max <- is.finite(suppressWarnings(as.integer(pairs$assigned_topic)))
+  assignment_pair_index <- if ("pair_index" %in% names(assignments)) {
+    assignments$pair_index
+  } else {
+    assignments$target_index
+  }
+  link_max <- target_max[assignment_pair_index]
+  retention_labels <- .m3_qc_retention_labels()
+  retention_links <- c(
+    .m3_qc_unique_link_count(assignments),
+    .m3_qc_unique_link_count(
+      assignments[target_gamma[assignment_pair_index] %in% TRUE]
+    ),
+    .m3_qc_unique_link_count(assignments[link_max %in% TRUE]),
+    .m3_qc_unique_link_count(assignments[raw_aligned == TRUE])
+  )
+  retention_genes <- if (
+    identical(optimization$assignment_mode, "tf_target") &&
+      !is.null(optimization$raw_correspondence_assignment)
+  ) {
+    gene_rows <- data.table::as.data.table(
+      optimization$raw_correspondence_assignment
+    )
+    gene_gamma <- lengths(.m3_opt_parse_topics(
+      gene_rows$gene_gammafit_topics,
+      qc$raw_topic_ids
+    )) > 0L
+    gene_max <- .as_logical_flag(gene_rows$assigned)
+    c(
+      .m3_qc_unique_target_count(gene_rows$target_gene),
+      .m3_qc_unique_target_count(gene_rows[gene_gamma, target_gene]),
+      .m3_qc_unique_target_count(gene_rows[gene_max, target_gene]),
+      .m3_qc_unique_target_count(
+        assignments[raw_aligned == TRUE, target_index]
+      )
+    )
+  } else {
+    c(
+      .m3_qc_unique_target_count(pairs$target_gene),
+      .m3_qc_unique_target_count(pairs[target_gamma %in% TRUE, target_gene]),
+      .m3_qc_unique_target_count(pairs[target_max %in% TRUE, target_gene]),
+      .m3_qc_unique_target_count(
+        assignments[raw_aligned == TRUE, target_index]
+      )
+    )
+  }
+  link_title <- if (isTRUE(standardized)) {
+    "Unique TF-target pairs"
+  } else {
+    "TF-target links"
+  }
+  gene_title <- if (isTRUE(standardized)) {
+    "Unique target genes"
+  } else {
+    "Target genes"
+  }
+  page_title <- if (isTRUE(standardized) && !is.null(title_prefix)) {
+    paste0(title_prefix, ": Topic assignment retention")
+  } else {
+    "Topic assignment retention"
+  }
+  .m3_qc_arrange(
+    .m3_qc_retention_plot(
+      retention_labels$links,
+      retention_links,
+      link_title,
+      fill = "#007C78"
+    ),
+    .m3_qc_retention_plot(
+      retention_labels$genes,
+      retention_genes,
+      gene_title,
+      fill = "#D97824"
+    ),
+    ncol = 1L,
+    title = page_title
+  )
 }
 
 .m3_qc_style_heatmap_grob <- function(grob) {
@@ -2881,12 +4462,101 @@
                                                title_prefix = NULL,
                                                condition_colors = NULL,
                                                tf_topic_evidence = NULL,
+                                               gene_term_assignment = NULL,
+                                               gene_umap_genes = NULL,
+                                               peak_term_assignment = NULL,
+                                               peak_umap_top_n = Inf,
+                                               pathway_gene_sets = NULL,
+                                               pathway_colors = NULL,
+                                               tf_target_gene_sets = NULL,
+                                               tf_target_panel = NULL,
                                                top_n_tfs = 150L,
-                                               seed = 20260716L) {
+                                               seed = 20260716L,
+                                               sections = "standard",
+                                               report_scope = c(
+                                                 "auto",
+                                                 "full",
+                                                 "condition_correlation"
+                                               ),
+                                               sidebar_mode = c(
+                                                 "auto",
+                                                 "terms",
+                                                 "links"
+                                               )) {
   .assert_pkg("ggplot2")
   .assert_pkg("gridExtra")
   .assert_pkg("scales")
-  .assert_pkg("uwot")
+  gene_only_assignment <- (
+    optimization$assignment_mode %||% "gene_peak"
+  ) %in% c("gene", "gene_only")
+  has_peak_terms <- !isTRUE(gene_only_assignment) &&
+    any(startsWith(colnames(optimization$raw_phi), "PEAK:"))
+  sections <- unique(as.character(sections))
+  allowed_sections <- c(
+    "gene_phi_umap",
+    "peak_phi_umap",
+    "pathway_gene_umap",
+    "tf_target_gene_umap",
+    "raw_structure",
+    "condition_correlation"
+  )
+  standard_report <- identical(sections, "standard")
+  full_report <- identical(sections, "all")
+  if (!length(sections) ||
+      (any(c("standard", "all") %in% sections) &&
+       !standard_report && !full_report) ||
+      any(!sections %in% c("standard", "all", allowed_sections))) {
+    .log_abort(paste0(
+      "Topic-assignment QC sections must be 'standard', 'all', or a subset of: ",
+      paste(allowed_sections, collapse = ", "),
+      "."
+    ))
+  }
+  if (standard_report) {
+    sections <- c(
+      "gene_phi_umap",
+      if (has_peak_terms) "peak_phi_umap",
+      if (!is.null(tf_target_gene_sets)) "tf_target_gene_umap",
+      "raw_structure",
+      "condition_correlation"
+    )
+  }
+  report_scope <- match.arg(report_scope)
+  gene_clustering <- identical(
+    optimization$qc_mode %||% "topic_model",
+    "gene_clustering"
+  )
+  multimodal_clustering <- identical(
+    optimization$qc_mode %||% "topic_model",
+    "multimodal_clustering"
+  )
+  cluster_qc <- gene_clustering || multimodal_clustering
+  if (identical(report_scope, "auto")) {
+    report_scope <- if (identical(
+      optimization$document_design %||% "condition_tf",
+      "condition"
+    )) {
+      "condition_correlation"
+    } else {
+      "full"
+    }
+  }
+  if ("pathway_gene_umap" %in% sections && is.null(pathway_gene_sets)) {
+    .log_abort("pathway_gene_umap requires pathway_gene_sets.")
+  }
+  if ("tf_target_gene_umap" %in% sections && is.null(tf_target_gene_sets)) {
+    .log_abort("tf_target_gene_umap requires tf_target_gene_sets.")
+  }
+  needs_gene_umap <- full_report || any(c(
+    "gene_phi_umap",
+    "pathway_gene_umap",
+    "tf_target_gene_umap"
+  ) %in% sections)
+  needs_peak_umap <- "peak_phi_umap" %in% sections
+  if (needs_gene_umap || needs_peak_umap) {
+    .assert_pkg("uwot")
+  }
+  sidebar_mode <- match.arg(sidebar_mode)
   if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
     optimization <- .m3_qc_apply_primary_tf_counts(
       optimization,
@@ -2894,144 +4564,384 @@
     )
   }
   qc <- optimization$qc
-  assignments <- qc$assignments
-  sample_rows <- optimization$sample_rows
-  sample_assignments <- assignments[sample_rows]
-  raw_coordinates <- optimization$raw_sample_coordinates %||%
-    .m3_qc_umap_coordinates(
-      optimization$raw_sample_probability,
-      seed = seed
-    )
-  identity_map <- identical(
-    as.integer(optimization$raw_to_optimized),
-    as.integer(names(optimization$raw_to_optimized))
-  )
-  optimized_coordinates <- if (identity_map) {
-    raw_coordinates
-  } else if (!is.null(optimization$optimized_sample_coordinates)) {
-    optimization$optimized_sample_coordinates
-  } else {
-    .m3_qc_umap_coordinates(
-      optimization$optimized_sample_probability,
-      seed = seed
-    )
-  }
-  raw_sample <- data.table::data.table(
-    UMAP1 = raw_coordinates[, 1L],
-    UMAP2 = raw_coordinates[, 2L],
-    condition_id = sample_assignments$condition_id,
-    tf = qc$tf_levels[sample_assignments$tf_index],
-    target_gene = qc$target_levels[sample_assignments$target_index],
-    topic = data.table::fifelse(
-      sample_assignments$raw_aligned,
-      paste0("Topic ", sample_assignments$raw_target_topic),
-      NA_character_
-    )
-  )
-  raw_sample[, topic_short := sub("^Topic ", "T", topic)]
-  optimized_sample <- data.table::data.table(
-    UMAP1 = optimized_coordinates[, 1L],
-    UMAP2 = optimized_coordinates[, 2L],
-    condition_id = sample_assignments$condition_id,
-    tf = qc$tf_levels[sample_assignments$tf_index],
-    target_gene = qc$target_levels[sample_assignments$target_index],
-    topic = data.table::fifelse(
-      sample_assignments$optimized_aligned,
-      paste0("Topic ", sample_assignments$optimized_topic),
-      NA_character_
-    )
-  )
-  optimized_sample[, topic_short := sub("^Topic ", "T", topic)]
-  raw_sample <- .m3_qc_jitter_umap(raw_sample, seed = seed + 20L)
-  optimized_sample <- .m3_qc_jitter_umap(
-    optimized_sample,
-    seed = seed + 21L
-  )
-  condition_values <- sort(unique(assignments$condition_id))
-  if (is.null(condition_colors) || !length(condition_colors)) {
-    condition_colors <- .module3_bright_topic_palette(condition_values)
-  } else {
-    missing <- setdiff(condition_values, names(condition_colors))
-    condition_colors <- c(
-      condition_colors[intersect(names(condition_colors), condition_values)],
-      .module3_bright_topic_palette(missing)
-    )
-  }
   title_prefix <- title_prefix %||% basename(dirname(out_file))
-  raw_aligned_sample <- raw_sample[!is.na(topic)]
-  optimized_aligned_sample <- optimized_sample[!is.na(topic)]
-
-  raw_aligned_sample[, condition_label := .m3_qc_short_condition_labels(
-    condition_id
-  )]
-  condition_labels <- .m3_qc_short_condition_labels(condition_values)
-  condition_palette <- stats::setNames(
-    condition_colors[condition_values],
-    condition_labels
-  )
   topic_values <- sort(unique(c(
     as.integer(qc$raw_topic_ids),
-    as.integer(qc$optimized_topic_ids)
+    as.integer(qc$optimized_topic_ids %||% qc$raw_topic_ids)
   )))
   topic_labels <- paste0("Topic ", topic_values)
   topic_palette <- stats::setNames(
     .module3_bright_topic_palette(topic_labels),
     topic_labels
   )
-  page1 <- .m3_qc_arrange(
-    .m3_qc_umap_plot(
-      raw_aligned_sample,
-      "topic",
-      "Topic assignment",
-      paste0(
-        scales::comma(nrow(raw_aligned_sample)),
-        " sampled links with posterior primary topic = assigned target topic"
-      ),
-      colors = topic_palette,
-      label_column = "topic_short",
-      seed = seed
-    ),
-    .m3_qc_umap_plot(
-      raw_aligned_sample,
-      "condition_label",
-      "Condition",
-      "The same aligned links and UMAP coordinates",
-      colors = condition_palette,
-      label_column = "condition_label",
+  gene_umap_pages <- list()
+  peak_umap_pages <- list()
+  pathway_umap_pages <- list()
+  tf_target_umap_pages <- list()
+  gene_umap <- NULL
+  if (needs_gene_umap) {
+    gene_umap <- .m3_qc_gene_term_umap_data(
+      optimization,
+      gene_term_assignment = gene_term_assignment,
+      gene_universe = gene_umap_genes,
       seed = seed + 1L
-    ),
-    ncol = 1L,
-    heights = if (length(condition_values) > 18L) c(0.72, 1.28) else c(1, 1),
-    title = paste0(title_prefix, ": filtered aligned-link UMAP")
-  )
-
-  raw_topic_similarity <- qc$raw_topic_similarity
-  rownames(raw_topic_similarity) <- colnames(raw_topic_similarity) <-
-    paste0("Topic ", qc$raw_topic_ids)
-  raw_topic_order <- .m3_qc_cluster_order(raw_topic_similarity, "row")
-  raw_topic_structure_plot <- .m3_qc_topic_structure_plot(
-    similarity = raw_topic_similarity,
-    counts = qc$raw_counts,
-    topic_column = "raw_topic",
-    topic_order = raw_topic_order,
-    title = "Raw topic assignment structure",
-    subtitle = paste0(
-      "Mean Hellinger similarity across separately normalized ",
-      if (identical(optimization$assignment_mode, "tf_target")) {
-        "Gene and TF-target phi"
-      } else if (identical(optimization$assignment_mode, "gene_only")) {
-        "Gene phi"
-      } else {
-        "Gene and Peak phi"
-      },
-      "; bars show full-universe assigned counts"
-    ),
-    tf_title = if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
-      "Confident primary TFs"
+    )
+  }
+  if (full_report || "gene_phi_umap" %in% sections) {
+    gene_umap_topic_chunks <- if (length(qc$raw_topic_ids) > 30L) {
+      split(
+        qc$raw_topic_ids,
+        ceiling(seq_along(qc$raw_topic_ids) / 30L)
+      )
     } else {
-      "TFs"
+      list(qc$raw_topic_ids)
     }
+    gene_umap_pages <- lapply(
+      seq_along(gene_umap_topic_chunks),
+      function(i) {
+        page_title <- paste0(
+          title_prefix,
+          if (cluster_qc) ": Gene clusters" else ": Gene topics"
+        )
+        if (length(gene_umap_topic_chunks) > 1L) {
+          page_title <- sprintf(
+            "%s (%d/%d)",
+            page_title,
+            i,
+            length(gene_umap_topic_chunks)
+          )
+        }
+        .m3_qc_arrange(
+          .m3_qc_gene_term_umap_plot(
+            optimization,
+            topic_palette = topic_palette,
+            gene_term_assignment = gene_term_assignment,
+            gene_umap = gene_umap,
+            topic_ids = gene_umap_topic_chunks[[i]],
+            seed = seed + 1L
+          ),
+          ncol = 1L,
+          title = page_title
+        )
+      }
+    )
+  }
+  if (needs_peak_umap) {
+    peak_umap <- .m3_qc_peak_term_umap_data(
+      optimization,
+      peak_term_assignment = peak_term_assignment,
+      top_n = peak_umap_top_n,
+      seed = seed + 2L
+    )
+    peak_umap_topic_chunks <- if (length(qc$raw_topic_ids) > 30L) {
+      split(
+        qc$raw_topic_ids,
+        ceiling(seq_along(qc$raw_topic_ids) / 30L)
+      )
+    } else {
+      list(qc$raw_topic_ids)
+    }
+    peak_umap_pages <- lapply(
+      seq_along(peak_umap_topic_chunks),
+      function(i) {
+        peak_scope <- if (is.infinite(peak_umap_top_n)) {
+          NULL
+        } else {
+          sprintf(
+            "top %s by maximum phi probability",
+            scales::comma(nrow(peak_umap))
+          )
+        }
+        page_title <- if (is.null(peak_scope)) {
+          sprintf(
+            "%s: Peak topics (GammaFit + max-phi colors)",
+            title_prefix
+          )
+        } else {
+          sprintf(
+            "%s: Peak topics (%s; GammaFit + max-phi colors)",
+            title_prefix,
+            peak_scope
+          )
+        }
+        if (length(peak_umap_topic_chunks) > 1L) {
+          page_title <- sprintf(
+            "%s (%d/%d)",
+            page_title,
+            i,
+            length(peak_umap_topic_chunks)
+          )
+        }
+        .m3_qc_arrange(
+          .m3_qc_peak_term_umap_plot(
+            optimization,
+            topic_palette = topic_palette,
+            peak_umap = peak_umap,
+            topic_ids = peak_umap_topic_chunks[[i]],
+            top_n = peak_umap_top_n,
+            seed = seed + 2L
+          ),
+          ncol = 1L,
+          title = page_title
+        )
+      }
+    )
+  }
+  if (!is.null(pathway_gene_sets) &&
+      (full_report || "pathway_gene_umap" %in% sections)) {
+    pathway_umap_pages <- list(.m3_qc_arrange(
+      .m3_qc_pathway_gene_umap_plot(
+        gene_umap = gene_umap,
+        pathway_gene_sets = pathway_gene_sets,
+        pathway_colors = pathway_colors
+      ),
+      ncol = 1L,
+      title = paste0(title_prefix, ": Pathway genes")
+    ))
+  }
+  if (!is.null(tf_target_gene_sets) &&
+      (full_report || "tf_target_gene_umap" %in% sections)) {
+    displayed_tf_target_gene_sets <- if (all(c(
+      "display_rank", "selected_topic"
+    ) %in% names(tf_target_gene_sets))) {
+      tf_target_gene_sets
+    } else {
+      .m3_qc_select_topic_tf_target_gene_sets(
+        tf_target_gene_sets = tf_target_gene_sets,
+        gene_term_assignment = gene_term_assignment,
+        tf_panel = tf_target_panel,
+        top_n_tfs = 30L,
+        top_n_targets = 500L
+      )
+    }
+    tf_target_umap_pages <- list(.m3_qc_arrange(
+      .m3_qc_tf_target_gene_umap_plot(
+        gene_umap = gene_umap,
+        tf_target_gene_sets = displayed_tf_target_gene_sets
+      ),
+      ncol = 1L,
+      title = paste0(title_prefix, ": High-confidence TF targets")
+    ))
+  }
+
+  term_sidebar <- identical(sidebar_mode, "terms") ||
+    (identical(sidebar_mode, "auto") && identical(
+      optimization$document_design %||% "condition_tf",
+      "condition"
+    ))
+  sidebar_columns <- if (gene_only_assignment) {
+    "genes"
+  } else if (term_sidebar) {
+    c("peaks", "genes")
+  } else {
+    c("links", "genes", "tfs")
+  }
+  sidebar_labels <- if (gene_only_assignment) {
+    "Target genes"
+  } else if (term_sidebar) {
+    c("Peaks", "Target genes")
+  } else {
+    c(
+      "Links",
+      "Target genes",
+      if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
+        "Confident primary TFs"
+      } else {
+        "TFs"
+      }
+    )
+  }
+  sidebar_colors <- if (gene_only_assignment) {
+    "#D97824"
+  } else if (term_sidebar) {
+    c("#007C78", "#D97824")
+  } else {
+    c("#007C78", "#D97824", "#6A5ACD")
+  }
+  raw_topic_structure_plot <- NULL
+  if (full_report || "raw_structure" %in% sections) {
+    raw_topic_similarity <- qc$raw_topic_similarity
+    rownames(raw_topic_similarity) <- colnames(raw_topic_similarity) <-
+      paste0("Topic ", qc$raw_topic_ids)
+    raw_topic_order <- .m3_qc_cluster_order(raw_topic_similarity, "row")
+    structure_title <- if (gene_clustering) {
+      "Gene-cluster expression structure"
+    } else if (multimodal_clustering) {
+      "Multimodal cluster activity structure"
+    } else {
+      "Raw topic assignment structure"
+    }
+    structure_subtitle <- if (gene_clustering) {
+      paste0(
+        "Hellinger similarity of cluster-level expression profiles across ",
+        "conditions; bars show assigned target genes"
+      )
+    } else if (multimodal_clustering) {
+      paste0(
+        "Hellinger similarity of cluster-level Gene and Peak activity ",
+        "profiles across conditions; bars show assigned terms"
+      )
+    } else {
+      paste0(
+        "Mean Hellinger similarity across separately normalized ",
+        if (identical(optimization$assignment_mode, "tf_target")) {
+          "Gene and TF-target phi"
+        } else if (gene_only_assignment) {
+          "Gene phi"
+        } else {
+          "Gene and Peak phi"
+        },
+        "; bars show full-universe assigned counts"
+      )
+    }
+    raw_topic_structure_plot <- .m3_qc_topic_structure_plot(
+      similarity = raw_topic_similarity,
+      counts = qc$raw_counts,
+      topic_column = "raw_topic",
+      topic_order = raw_topic_order,
+      title = structure_title,
+      subtitle = structure_subtitle,
+      sidebar_columns = sidebar_columns,
+      sidebar_labels = sidebar_labels,
+      sidebar_colors = sidebar_colors
+    )
+  }
+
+  compact_condition_correlation_plot <- NULL
+  compact_condition_correlation_title <- "Condition correlation by topic composition"
+  if (!full_report && "condition_correlation" %in% sections) {
+    condition_document <- identical(
+      optimization$document_design %||% "condition_tf",
+      "condition"
+    )
+    condition_theta <- if (condition_document) {
+      .m3_qc_condition_topic_theta(optimization)
+    } else {
+      .m3_qc_condition_tf_topic_theta(
+        optimization$theta,
+        matched_tfs = TRUE
+      )
+    }
+    condition_correlation <- .m3_qc_theta_condition_correlation(
+      condition_theta
+    )
+    display_conditions <- .m3_qc_short_condition_labels(
+      rownames(condition_correlation)
+    )
+    rownames(condition_correlation) <- colnames(condition_correlation) <-
+      display_conditions
+    condition_correlation_order <- .m3_qc_cluster_order(
+      condition_correlation,
+      "row"
+    )
+    condition_subtitle <- if (condition_document) {
+      "Pearson correlation of raw condition-document theta profiles"
+    } else if (isTRUE(attr(condition_theta, "matched_tfs"))) {
+      sprintf(
+        "Pearson correlation of mean raw theta across %d TF documents shared by all conditions",
+        as.integer(attr(condition_theta, "tf_count"))
+      )
+    } else {
+      "Pearson correlation of mean raw theta across available TF documents"
+    }
+    compact_condition_correlation_plot <- .m3_qc_correlation_plot(
+      condition_correlation,
+      compact_condition_correlation_title,
+      condition_subtitle,
+      order = condition_correlation_order
+    )
+  }
+
+  if (!full_report) {
+    pages <- c(
+      gene_umap_pages,
+      peak_umap_pages,
+      pathway_umap_pages,
+      tf_target_umap_pages
+    )
+    if ("raw_structure" %in% sections) {
+      pages[[length(pages) + 1L]] <- .m3_qc_arrange(
+        raw_topic_structure_plot,
+        ncol = 1L,
+        title = structure_title
+      )
+    }
+    if ("condition_correlation" %in% sections) {
+      pages[[length(pages) + 1L]] <- .m3_qc_arrange(
+        compact_condition_correlation_plot,
+        ncol = 1L,
+        title = compact_condition_correlation_title
+      )
+    }
+    if (standard_report) {
+      pages[[length(pages) + 1L]] <- .m3_qc_retention_page(
+        optimization,
+        title_prefix = title_prefix,
+        standardized = TRUE
+      )
+    }
+    dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+    grDevices::cairo_pdf(
+      out_file,
+      width = 8.5,
+      height = 11,
+      family = "Helvetica",
+      onefile = TRUE
+    )
+    on.exit(grDevices::dev.off(), add = TRUE)
+    for (page in pages) {
+      grid::grid.newpage()
+      grid::grid.draw(page)
+    }
+    return(invisible(out_file))
+  }
+
+  assignments <- qc$assignments
+  identity_map <- identical(
+    as.integer(optimization$raw_to_optimized),
+    as.integer(names(optimization$raw_to_optimized))
   )
+  optimized_aligned_sample <- NULL
+  if (!identity_map) {
+    sample_assignments <- assignments[optimization$sample_rows]
+    optimized_coordinates <- optimization$optimized_sample_coordinates %||%
+      .m3_qc_umap_coordinates(
+        optimization$optimized_sample_probability,
+        seed = seed
+      )
+    optimized_sample <- data.table::data.table(
+      UMAP1 = optimized_coordinates[, 1L],
+      UMAP2 = optimized_coordinates[, 2L],
+      condition_id = sample_assignments$condition_id,
+      tf = qc$tf_levels[sample_assignments$tf_index],
+      target_gene = qc$target_levels[sample_assignments$target_index],
+      topic = data.table::fifelse(
+        sample_assignments$optimized_aligned,
+        paste0("Topic ", sample_assignments$optimized_topic),
+        NA_character_
+      )
+    )
+    optimized_sample[, topic_short := sub("^Topic ", "T", topic)]
+    optimized_sample <- .m3_qc_jitter_umap(
+      optimized_sample,
+      seed = seed + 21L
+    )
+    optimized_aligned_sample <- optimized_sample[!is.na(topic)]
+  }
+  condition_document <- identical(
+    optimization$document_design %||% "condition_tf",
+    "condition"
+  )
+  condition_theta_for_correlation <- if (condition_document) {
+    .m3_qc_condition_topic_theta(optimization)
+  } else {
+    NULL
+  }
+  condition_values <- if (condition_document) {
+    rownames(condition_theta_for_correlation)
+  } else {
+    sort(unique(assignments$condition_id))
+  }
 
   optimized_topic_similarity <- qc$optimized_topic_similarity
   rownames(optimized_topic_similarity) <- colnames(optimized_topic_similarity) <-
@@ -3040,36 +4950,38 @@
     optimized_topic_similarity,
     "row"
   )
-  page3 <- .m3_qc_arrange(
-    .m3_qc_umap_plot(
-      optimized_aligned_sample,
-      "topic",
-      "Optimized filtered aligned-link UMAP",
-      "Sampled links retained after topic merge and alignment",
-      colors = topic_palette,
-      label_column = "topic_short",
-      seed = seed + 4L
-    ),
-    .m3_qc_topic_structure_plot(
-      similarity = optimized_topic_similarity,
-      counts = qc$optimized_counts,
-      topic_column = "optimized_topic",
-      topic_order = optimized_topic_order,
-      title = "Optimized topic assignment structure",
-      subtitle = paste(
-        "Mean Hellinger similarity after deterministic topic merging;",
-        "bars show full-universe assigned counts"
+  page3 <- if (!identity_map) {
+    .m3_qc_arrange(
+      .m3_qc_umap_plot(
+        optimized_aligned_sample,
+        "topic",
+        "Optimized filtered aligned-link UMAP",
+        "Sampled links retained after topic merge and alignment",
+        colors = topic_palette,
+        label_column = "topic_short",
+        seed = seed + 4L
       ),
-      tf_title = if (!is.null(tf_topic_evidence) && nrow(tf_topic_evidence)) {
-        "Confident primary TFs"
-      } else {
-        "TFs"
-      }
-    ),
-    ncol = 1L,
-    heights = c(0.85, 1.15),
-    title = "Optimized topic assignments"
-  )
+      .m3_qc_topic_structure_plot(
+        similarity = optimized_topic_similarity,
+        counts = qc$optimized_counts,
+        topic_column = "optimized_topic",
+        topic_order = optimized_topic_order,
+        title = "Optimized topic assignment structure",
+        subtitle = paste(
+          "Mean Hellinger similarity after deterministic topic merging;",
+          "bars show full-universe assigned counts"
+        ),
+        sidebar_columns = sidebar_columns,
+        sidebar_labels = sidebar_labels,
+        sidebar_colors = sidebar_colors
+      ),
+      ncol = 1L,
+      heights = c(0.85, 1.15),
+      title = "Optimized topic assignments"
+    )
+  } else {
+    NULL
+  }
 
   link_matrix <- .m3_qc_condition_topic_matrix(
     qc$condition_topic,
@@ -3093,22 +5005,44 @@
   rownames(link_matrix) <- display_conditions
   rownames(gene_matrix) <- display_conditions
   rownames(tf_matrix) <- display_conditions
-  condition_correlation <- .m3_qc_condition_correlation(
-    link_matrix,
-    gene_matrix
-  )
+  condition_correlation <- if (condition_document) {
+    .m3_qc_theta_condition_correlation(condition_theta_for_correlation)
+  } else {
+    .m3_qc_condition_correlation(link_matrix, gene_matrix)
+  }
+  rownames(condition_correlation) <- colnames(condition_correlation) <-
+    display_conditions
   condition_correlation_order <- .m3_qc_cluster_order(
     condition_correlation,
     "row"
   )
-  condition_correlation_plot <- .m3_qc_correlation_plot(
-    condition_correlation,
-    "Condition correlation by topic composition",
+  condition_correlation_title <- if (gene_clustering) {
+    "Condition correlation by gene-cluster activity"
+  } else if (multimodal_clustering) {
+    "Condition correlation by multimodal-cluster activity"
+  } else {
+    "Condition correlation by topic composition"
+  }
+  condition_correlation_subtitle <- if (gene_clustering) {
+    "Pearson correlation of normalized expression mass across hard Gene clusters"
+  } else if (multimodal_clustering) {
+    paste0(
+      "Pearson correlation of normalized Gene and Peak activity across ",
+      "hard multimodal clusters"
+    )
+  } else if (condition_document) {
+    "Pearson correlation of raw condition-document theta profiles"
+  } else {
     paste(
       "Pearson correlation of separately normalized TF-target-link",
       "and target-gene topic profiles",
       sep = "\n"
-    ),
+    )
+  }
+  condition_correlation_plot <- .m3_qc_correlation_plot(
+    condition_correlation,
+    condition_correlation_title,
+    condition_correlation_subtitle,
     order = condition_correlation_order
   )
   structure_pages <- if (
@@ -3118,12 +5052,12 @@
       .m3_qc_arrange(
         raw_topic_structure_plot,
         ncol = 1L,
-        title = "Raw topic assignment structure"
+        title = structure_title
       ),
       .m3_qc_arrange(
         condition_correlation_plot,
         ncol = 1L,
-        title = "Condition correlation by topic composition"
+        title = condition_correlation_title
       )
     )
   } else {
@@ -3132,8 +5066,35 @@
       condition_correlation_plot,
       ncol = 1L,
       heights = c(1.1, 0.9),
-      title = "Topic and condition assignment structure"
+      title = if (cluster_qc) {
+        "Cluster and condition activity structure"
+      } else {
+        "Topic and condition assignment structure"
+      }
     ))
+  }
+  if (identical(report_scope, "condition_correlation")) {
+    pages <- c(
+      gene_umap_pages,
+      peak_umap_pages,
+      pathway_umap_pages,
+      tf_target_umap_pages,
+      structure_pages
+    )
+    dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
+    grDevices::cairo_pdf(
+      out_file,
+      width = 8.5,
+      height = 11,
+      family = "Helvetica",
+      onefile = TRUE
+    )
+    on.exit(grDevices::dev.off(), add = TRUE)
+    for (page in pages) {
+      grid::grid.newpage()
+      grid::grid.draw(page)
+    }
+    return(invisible(out_file))
   }
   clustering_matrix <- cbind(
     .m3_opt_row_normalize(link_matrix),
@@ -3148,7 +5109,6 @@
     paste0("Topic ", qc$optimized_topic_ids),
     drop = FALSE
   ]
-  condition_theta_ids <- condition_theta
   expression_matrix <- .m3_qc_document_expression_topic_share_matrix(
     optimization = optimization,
     conditions = condition_values,
@@ -3156,12 +5116,7 @@
   )
   rownames(condition_theta) <- display_conditions
   rownames(expression_matrix) <- display_conditions
-  page_link_matrix <- link_matrix
-  page_tf_matrix <- tf_matrix
-  page_condition_theta <- condition_theta
-  page_expression_matrix <- expression_matrix
-  page_column_order <- column_order
-  expression_values <- as.numeric(page_expression_matrix)
+  expression_values <- as.numeric(expression_matrix)
   expression_values <- expression_values[is.finite(expression_values)]
   expression_limits <- if (length(unique(expression_values)) > 1L) {
     as.numeric(stats::quantile(
@@ -3176,121 +5131,81 @@
   if (!is.null(expression_limits) && diff(expression_limits) <= 0) {
     expression_limits <- NULL
   }
-  page4_plots <- .m3_qc_align_plot_dimensions(list(
-    .m3_qc_count_heatmap(
-      page_link_matrix,
-      "Unique aligned TF-target links",
-      row_order = row_order,
-      column_order = page_column_order,
-      square_cells = FALSE,
-      show_labels = FALSE
-    ) + ggplot2::labs(x = "Topic"),
-    .m3_qc_count_heatmap(
-      page_tf_matrix,
-      "Unique TFs",
-      row_order = row_order,
-      column_order = page_column_order,
-      square_cells = FALSE,
-      show_labels = FALSE
-    ) + ggplot2::labs(x = "Topic"),
-    .m3_qc_value_heatmap(
-      page_condition_theta,
-      "Mean condition topic probability",
-      "Mean theta",
-      row_order = row_order,
-      column_order = page_column_order
-    ) + ggplot2::labs(x = "Topic"),
-    .m3_qc_value_heatmap(
-      page_expression_matrix,
-      "Mean expression of assigned target genes (topic share)",
-      "Mean expression share",
-      row_order = row_order,
-      column_order = page_column_order,
-      limits = expression_limits,
-      color_transform = "identity"
-    ) + ggplot2::labs(x = "Topic")
-  ))
-  profile_chunks <- if (length(condition_values) > 22L) {
-    as.list(seq_along(page4_plots))
+  profile_topic_chunks <- if (ncol(link_matrix) > 24L) {
+    split(column_order, ceiling(seq_along(column_order) / 20L))
+  } else {
+    list(column_order)
+  }
+  profile_plot_groups <- lapply(profile_topic_chunks, function(selected) {
+    selected_order <- seq_along(selected)
+    .m3_qc_align_plot_dimensions(list(
+      .m3_qc_count_heatmap(
+        link_matrix[, selected, drop = FALSE],
+        "Unique aligned TF-target links",
+        row_order = row_order,
+        column_order = selected_order,
+        square_cells = FALSE,
+        show_labels = FALSE
+      ) + ggplot2::labs(x = "Topic"),
+      .m3_qc_count_heatmap(
+        tf_matrix[, selected, drop = FALSE],
+        "Unique TFs",
+        row_order = row_order,
+        column_order = selected_order,
+        square_cells = FALSE,
+        show_labels = FALSE
+      ) + ggplot2::labs(x = "Topic"),
+      .m3_qc_value_heatmap(
+        condition_theta[, selected, drop = FALSE],
+        "Mean condition topic probability",
+        "Mean theta",
+        row_order = row_order,
+        column_order = selected_order
+      ) + ggplot2::labs(x = "Topic"),
+      .m3_qc_value_heatmap(
+        expression_matrix[, selected, drop = FALSE],
+        "Mean expression of assigned target genes (topic share)",
+        "Mean expression share",
+        row_order = row_order,
+        column_order = selected_order,
+        limits = expression_limits,
+        color_transform = "identity"
+      ) + ggplot2::labs(x = "Topic")
+    ))
+  })
+  plot_chunks <- if (length(condition_values) > 22L) {
+    as.list(seq_len(4L))
   } else if (length(condition_values) > 12L) {
     list(1:2, 3:4)
   } else {
-    list(seq_along(page4_plots))
+    list(seq_len(4L))
   }
-  profile_pages <- lapply(seq_along(profile_chunks), function(page_index) {
-    indices <- profile_chunks[[page_index]]
-    page_title <- if (length(profile_chunks) > 1L) {
+  profile_page_specs <- unlist(lapply(
+    seq_along(profile_plot_groups),
+    function(group_index) {
+      lapply(plot_chunks, function(indices) {
+        list(group = group_index, indices = indices)
+      })
+    }
+  ), recursive = FALSE)
+  profile_pages <- lapply(seq_along(profile_page_specs), function(page_index) {
+    spec <- profile_page_specs[[page_index]]
+    page_title <- if (length(profile_page_specs) > 1L) {
       sprintf(
         "Condition-topic assignment profiles (%d/%d)",
         page_index,
-        length(profile_chunks)
+        length(profile_page_specs)
       )
     } else {
       "Condition-topic assignment profiles"
     }
     do.call(.m3_qc_arrange, c(
-      page4_plots[indices],
+      profile_plot_groups[[spec$group]][spec$indices],
       list(ncol = 1L, title = page_title)
     ))
   })
 
   cross <- qc$condition_topic_similarity$mean
-  condition_top_topics <- .m3_qc_top_condition_topics(
-    condition_theta_ids,
-    cross,
-    top_n = 3L
-  )
-  ordered_conditions <- condition_values[order(
-    .m3_qc_short_condition_labels(condition_values),
-    condition_values
-  )]
-  pair_plot_groups <- lapply(seq_along(ordered_conditions), function(i) {
-    selected_condition_id <- ordered_conditions[[i]]
-    condition_label <- condition_labels[
-      match(selected_condition_id, condition_values)
-    ]
-    selected_topics <- condition_top_topics[
-      condition_id == selected_condition_id
-    ]
-    selected_labels <- selected_topics$topic_label
-    selected_short <- sub("^Topic ", "T", selected_labels)
-    selected_annotations <- stats::setNames(selected_short, selected_labels)
-    condition_highlight <- optimized_sample[
-      condition_id == selected_condition_id
-    ]
-    condition_highlight[, selected := condition_label]
-    topic_highlight <- optimized_sample[topic %in% selected_labels]
-    topic_highlight[, "topic_annotation" := selected_annotations[topic]]
-    list(
-      .m3_qc_umap_plot(
-        condition_highlight,
-        "selected",
-        paste0(condition_label, "\n(condition)"),
-        sprintf(
-          "Top mean-theta topic %s",
-          if (length(selected_short)) selected_short[[1L]] else "not available"
-        ),
-        colors = stats::setNames(
-          condition_colors[[selected_condition_id]],
-          condition_label
-        ),
-        background = optimized_sample,
-        compact = TRUE
-      ),
-      .m3_qc_umap_plot(
-        topic_highlight,
-        "topic",
-        "Top theta topics\n(topic)",
-        "Top mean-theta topics",
-        colors = topic_palette[selected_labels],
-        background = optimized_sample,
-        label_column = "topic_annotation",
-        label_style = "text",
-        seed = seed + 30L + i,
-        compact = TRUE
-      )
-    )
-  })
   cross_display <- cross
   rownames(cross_display) <- .m3_qc_short_condition_labels(rownames(cross_display))
   cross_plot <- .m3_qc_similarity_plot(
@@ -3304,108 +5219,7 @@
     ncol = 1L,
     title = "Condition-topic similarity"
   )
-  pairs_per_page <- if (length(ordered_conditions) > 18L) 4L else 6L
-  pair_chunks <- split(
-    seq_along(pair_plot_groups),
-    ceiling(seq_along(pair_plot_groups) / pairs_per_page)
-  )
-  pair_pages <- lapply(seq_along(pair_chunks), function(page_index) {
-    indices <- pair_chunks[[page_index]]
-    plots <- unlist(pair_plot_groups[indices], recursive = FALSE)
-    do.call(.m3_qc_arrange, c(
-      plots,
-      list(
-        ncol = 4L,
-        title = sprintf(
-          "Condition-topic UMAP pairs (%d/%d)",
-          page_index,
-          length(pair_chunks)
-        )
-      )
-    ))
-  })
-
-  pair_candidates <- .m3_opt_parse_topics(
-    optimization$raw_pair_assignment$gene_gammafit_topics,
-    qc$raw_topic_ids
-  )
-  peak_candidates <- .m3_opt_parse_topics(
-    optimization$raw_pair_assignment$peak_gammafit_topics,
-    qc$raw_topic_ids
-  )
-  target_gamma <- lengths(pair_candidates) > 0L & lengths(peak_candidates) > 0L
-  target_max <- is.finite(
-    suppressWarnings(as.integer(optimization$raw_pair_assignment$assigned_topic))
-  )
-  assignment_pair_index <- if ("pair_index" %in% names(assignments)) {
-    assignments$pair_index
-  } else {
-    assignments$target_index
-  }
-  link_max <- target_max[assignment_pair_index]
-  retention_labels <- .m3_qc_retention_labels()
-  retention_link_labels <- retention_labels$links
-  retention_gene_labels <- retention_labels$genes
-  retention_links <- c(
-    .m3_qc_unique_link_count(assignments),
-    .m3_qc_unique_link_count(
-      assignments[target_gamma[assignment_pair_index] %in% TRUE]
-    ),
-    .m3_qc_unique_link_count(assignments[link_max %in% TRUE]),
-    .m3_qc_unique_link_count(assignments[raw_aligned == TRUE])
-  )
-  retention_genes <- if (
-    identical(optimization$assignment_mode, "tf_target") &&
-      !is.null(optimization$raw_correspondence_assignment)
-  ) {
-    gene_rows <- data.table::as.data.table(
-      optimization$raw_correspondence_assignment
-    )
-    gene_gamma <- lengths(.m3_opt_parse_topics(
-      gene_rows$gene_gammafit_topics,
-      qc$raw_topic_ids
-    )) > 0L
-    gene_max <- .as_logical_flag(gene_rows$assigned)
-    c(
-      .m3_qc_unique_target_count(gene_rows$target_gene),
-      .m3_qc_unique_target_count(gene_rows[gene_gamma, target_gene]),
-      .m3_qc_unique_target_count(gene_rows[gene_max, target_gene]),
-      .m3_qc_unique_target_count(
-        assignments[raw_aligned == TRUE, target_index]
-      )
-    )
-  } else {
-    c(
-      .m3_qc_unique_target_count(
-        optimization$raw_pair_assignment$target_gene
-      ),
-      .m3_qc_unique_target_count(
-        optimization$raw_pair_assignment[target_gamma %in% TRUE, target_gene]
-      ),
-      .m3_qc_unique_target_count(
-        optimization$raw_pair_assignment[target_max %in% TRUE, target_gene]
-      ),
-      .m3_qc_unique_target_count(
-        assignments[raw_aligned == TRUE, target_index]
-      )
-    )
-  }
-  retention_page <- .m3_qc_arrange(
-    .m3_qc_retention_plot(
-      retention_link_labels,
-      retention_links,
-      "TF-target links",
-      fill = "#007C78"
-    ),
-    .m3_qc_retention_plot(
-      retention_gene_labels,
-      retention_genes,
-      "Target genes",
-      fill = "#D97824"
-    ),
-    ncol = 1L,
-    title = "Topic assignment retention"
-  )
+  retention_page <- .m3_qc_retention_page(optimization)
 
   tf_pages <- .m3_qc_tf_topic_pages(
     optimization,
@@ -3420,8 +5234,22 @@
     onefile = TRUE
   )
   on.exit(grDevices::dev.off(), add = TRUE)
-  grid::grid.newpage()
-  grid::grid.draw(page1)
+  for (page in gene_umap_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
+  for (page in peak_umap_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
+  for (page in pathway_umap_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
+  for (page in tf_target_umap_pages) {
+    grid::grid.newpage()
+    grid::grid.draw(page)
+  }
   for (page in structure_pages) {
     grid::grid.newpage()
     grid::grid.draw(page)
@@ -3436,10 +5264,6 @@
   }
   grid::grid.newpage()
   grid::grid.draw(page5)
-  for (page in pair_pages) {
-    grid::grid.newpage()
-    grid::grid.draw(page)
-  }
   for (page in tf_pages) {
     grid::grid.newpage()
     grid::grid.draw(page)
