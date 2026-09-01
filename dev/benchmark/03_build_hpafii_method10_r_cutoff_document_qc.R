@@ -93,12 +93,33 @@ output_root <- Sys.getenv(
 )
 output_root <- path.expand(output_root)
 dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
+work_root <- file.path(output_root, "hpa_r03_fp_score_sensitivity")
+dir.create(work_root, recursive = TRUE, showWarnings = FALSE)
 
 reuse <- parse_bool("CRAFTGRN_METHOD10_REUSE", default = TRUE)
-minimum_r <- 0.5
-module1_cutoffs <- c(0.5, 0.7)
-module2_cutoffs <- c(0.5, 0.7)
+minimum_r <- 0.3
 score_floor <- 2
+
+combination_table <- data.table::data.table(
+  module1_r = c(0.3, 0.3, 0.5, 0.5, 0.5, 0.7, 0.7, 0.3, 0.3),
+  module2_r = c(0.3, 0.5, 0.3, 0.5, 0.7, 0.5, 0.7, 0.3, 0.3),
+  fp_score_min = c(2, 2, 2, 2, 2, 2, 2, 3, 4)
+)
+combination_table[, `:=`(
+  combination_id = sprintf(
+    "M1R%s_M2R%s_FP%s",
+    gsub("[.]", "p", module1_r),
+    gsub("[.]", "p", module2_r),
+    fp_score_min
+  ),
+  combination_label = sprintf(
+    "M1 R >= %.1f / M2 R >= %.1f / FP >= %d",
+    module1_r,
+    module2_r,
+    fp_score_min
+  )
+)]
+baseline_combination_id <- "M1R0p3_M2R0p3_FP2"
 
 stats_manifest_path <- file.path(
   module1_root,
@@ -139,11 +160,31 @@ raw_score_path <- file.path(
   "fp_scores_JASPAR2024.csv"
 )
 project_config_path <- file.path(project_root, "project.yaml")
+baseline_model_root <- file.path(
+  analysis_root,
+  "topic_runs",
+  "run_021_lda_condition_tf_unique_fp_gene_K20_K30_tf_peak_scaled",
+  "topic_models"
+)
+baseline_input_summary_path <- file.path(
+  baseline_model_root,
+  "topic_input_summary.csv"
+)
+baseline_qc_summary_path <- file.path(
+  baseline_model_root,
+  "document_term_qc_summary.csv"
+)
+baseline_dtm_index_path <- file.path(
+  baseline_model_root,
+  "rds",
+  "dtm_index.rds"
+)
 
 required_inputs <- c(
   stats_manifest_path, link_manifest_path, condition_manifest_path,
   tf_corr_path, fp_corr_path, expression_path, multiomic_path,
-  raw_score_path, project_config_path
+  raw_score_path, project_config_path, baseline_input_summary_path,
+  baseline_qc_summary_path, baseline_dtm_index_path
 )
 missing_inputs <- required_inputs[!file.exists(required_inputs)]
 if (length(missing_inputs)) {
@@ -171,6 +212,7 @@ source_signature <- digest::digest(
     multiomic = file_identity(multiomic_path),
     raw_score = file_identity(raw_score_path),
     minimum_r = minimum_r,
+    combinations = combination_table,
     method10 = list(
       document = "condition::TF",
       gene_weight = "condition expression specificity",
@@ -181,7 +223,7 @@ source_signature <- digest::digest(
   ),
   algo = "xxhash64"
 )
-signature_path <- file.path(output_root, "input_signature.txt")
+signature_path <- file.path(work_root, "input_signature.txt")
 if (file.exists(signature_path)) {
   old_signature <- trimws(readLines(signature_path, warn = FALSE)[[1L]])
   if (!identical(old_signature, source_signature)) {
@@ -206,26 +248,6 @@ if (nrow(condition_manifest) != 17L) {
 }
 condition_order <- as.character(condition_manifest$condition_id)
 
-cell_line_specs <- data.table::data.table(
-  cell_line = c("HPAFII", "AsPC-1", "PANC-1"),
-  analysis_dir = file.path(
-    project_root,
-    c(
-      "regulatory_topics_hpafii_condition_models_de_gene_filtered",
-      "regulatory_topics_aspc1_condition_models_de_gene_filtered",
-      "regulatory_topics_panc1_condition_models_de_gene_filtered"
-    )
-  )
-)
-cell_line_specs[, condition_manifest_path := file.path(
-  analysis_dir,
-  "condition_links",
-  "condition_links_manifest.csv"
-)]
-if (any(!file.exists(cell_line_specs$condition_manifest_path))) {
-  stop("A cell-line condition manifest is missing.")
-}
-
 report_theme <- function(base_size = 11) {
   craftgrn:::.m3_qc_theme(base_size = base_size) +
     ggplot2::theme(
@@ -243,8 +265,8 @@ report_theme <- function(base_size = 11) {
     )
 }
 
-footprint_pdf <- file.path(output_root, "01_footprint_strength_diagnostic.pdf")
-footprint_audit_path <- file.path(output_root, "footprint_strength_audit.csv")
+footprint_pdf <- file.path(work_root, "01_footprint_strength_diagnostic.pdf")
+footprint_audit_path <- file.path(work_root, "footprint_strength_audit.csv")
 
 detect_density_modes <- function(values, adjust, upper) {
   density_fit <- stats::density(
@@ -342,7 +364,7 @@ build_footprint_diagnostic <- function() {
     )
   )
   retention[, retained_percent := 100 * retained / length(maximum_bound_score)]
-  selected_thresholds <- c(2, 3, 4, 5)
+  selected_thresholds <- c(2, 3, 4)
   selected_retention <- data.table::data.table(
     threshold = selected_thresholds,
     retained = vapply(
@@ -393,7 +415,7 @@ build_footprint_diagnostic <- function() {
       linewidth = 1.1
     ) +
     ggplot2::geom_vline(
-      xintercept = log1p(c(3, 4, 5)),
+      xintercept = log1p(c(3, 4)),
       color = "#777777",
       linewidth = 0.45,
       linetype = "dashed"
@@ -408,7 +430,7 @@ build_footprint_diagnostic <- function() {
       subtitle = NULL,
       x = "Highest footprint score in a bound condition (log scale)",
       y = "Relative frequency",
-      caption = "Red line: current cutoff of 2. Gray lines: 3, 4, and 5."
+      caption = "Red line: current cutoff of 2. Gray lines: 3 and 4."
     ) +
     report_theme(11) +
     ggplot2::theme(legend.position = "none")
@@ -469,8 +491,7 @@ build_footprint_diagnostic <- function() {
     "",
     paste0("Footprints checked: ", format(length(maximum_bound_score), big.mark = ",")),
     paste0("Cutoff 3 keeps ", sprintf("%.0f", selected_retention[threshold == 3, retained_percent]), "%"),
-    paste0("Cutoff 4 keeps ", sprintf("%.0f", selected_retention[threshold == 4, retained_percent]), "%"),
-    paste0("Cutoff 5 keeps ", sprintf("%.0f", selected_retention[threshold == 5, retained_percent]), "%")
+    paste0("Cutoff 4 keeps ", sprintf("%.0f", selected_retention[threshold == 4, retained_percent]), "%")
   )
   summary_plot <- ggplot2::ggplot() +
     ggplot2::annotate(
@@ -525,9 +546,9 @@ build_footprint_diagnostic <- function() {
   invisible(footprint_pdf)
 }
 
-eligibility_path <- file.path(output_root, "link_r_eligibility.parquet")
-eligibility_summary_path <- file.path(output_root, "link_r_eligibility_summary.csv")
-annotated_root <- file.path(output_root, "annotated_condition_links")
+eligibility_path <- file.path(work_root, "link_r_eligibility.parquet")
+eligibility_summary_path <- file.path(work_root, "link_r_eligibility_summary.csv")
+annotated_root <- file.path(work_root, "annotated_condition_links")
 annotated_manifest_path <- file.path(
   annotated_root,
   "annotated_condition_links_manifest.csv"
@@ -678,7 +699,8 @@ build_link_eligibility <- function() {
   data.table::fwrite(audit, eligibility_summary_path)
   log_info(
     "Retained ", format(nrow(eligibility), big.mark = ","),
-    " Module 2 links at Module 1 R >= 0.5 and both Module 2 R >= 0.5."
+    " Module 2 links at Module 1 R >= ", minimum_r,
+    " and both Module 2 R >= ", minimum_r, "."
   )
   eligibility
 }
@@ -754,197 +776,23 @@ load_annotated_condition_links <- function(manifest) {
   output
 }
 
-combination_table <- data.table::CJ(
-  module1_r = module1_cutoffs,
-  module2_r = module2_cutoffs,
-  sorted = TRUE
-)
-combination_table[, `:=`(
-  combination_id = sprintf(
-    "M1R%s_M2R%s",
-    gsub("[.]", "p", module1_r),
-    gsub("[.]", "p", module2_r)
-  ),
-  combination_label = sprintf(
-    "M1 R >= %.1f / M2 R >= %.1f",
-    module1_r,
-    module2_r
-  )
-)]
-
-document_summary_path <- file.path(output_root, "document_combination_summary.csv")
-target_count_path <- file.path(output_root, "target_gene_counts.csv")
-cell_line_target_count_path <- file.path(
-  output_root,
-  "cell_line_target_gene_counts.csv"
-)
-cell_line_target_signature_path <- file.path(
-  output_root,
-  "cell_line_target_gene_counts_signature.txt"
-)
-
-build_cell_line_target_counts <- function(eligibility = NULL) {
-  manifests <- lapply(
-    seq_len(nrow(cell_line_specs)),
-    function(i) {
-      value <- data.table::fread(
-        cell_line_specs$condition_manifest_path[[i]],
-        showProgress = FALSE
-      )
-      if (!all(c("condition_id", "path", "format") %in% names(value))) {
-        stop("A cell-line condition manifest is incomplete.")
-      }
-      if (any(!file.exists(value$path))) {
-        stop("A cell-line condition-link file is missing.")
-      }
-      value
-    }
-  )
-  names(manifests) <- cell_line_specs$cell_line
-  count_signature <- digest::digest(
-    list(
-      source_signature = source_signature,
-      cutoffs = combination_table,
-      manifests = lapply(
-        seq_along(manifests),
-        function(i) {
-          list(
-            manifest_md5 = unname(tools::md5sum(
-              cell_line_specs$condition_manifest_path[[i]]
-            )),
-            condition_files = lapply(manifests[[i]]$path, file_identity)
-          )
-        }
-      )
-    ),
-    algo = "xxhash64"
-  )
-  can_reuse <- isTRUE(reuse) &&
-    file.exists(cell_line_target_count_path) &&
-    file.exists(cell_line_target_signature_path) &&
-    identical(
-      trimws(readLines(cell_line_target_signature_path, warn = FALSE)[[1L]]),
-      count_signature
-    )
-  if (can_reuse) {
-    cached <- data.table::fread(
-      cell_line_target_count_path,
-      showProgress = FALSE
-    )
-    expected <- data.table::CJ(
-      cell_line = cell_line_specs$cell_line,
-      combination_id = combination_table$combination_id,
-      unique = TRUE
-    )
-    observed <- unique(cached[, .(cell_line, combination_id)])
-    if (!nrow(expected[!observed, on = c("cell_line", "combination_id")])) {
-      log_info("Reusing three-cell-line target-gene counts.")
-      return(cached)
-    }
-  }
-  if (is.null(eligibility)) {
-    eligibility <- read_parquet_dt(eligibility_path)
-  }
-  data.table::setkey(eligibility, link_id)
-
-  hpafii <- data.table::fread(target_count_path, showProgress = FALSE)
-  hpafii[, cell_line := "HPAFII"]
-  output <- list(hpafii)
-  for (cell_line in c("AsPC-1", "PANC-1")) {
-    manifest <- manifests[[cell_line]]
-    gene_unions <- stats::setNames(
-      vector("list", nrow(combination_table)),
-      combination_table$combination_id
-    )
-    rows <- vector("list", nrow(manifest) * nrow(combination_table))
-    row_index <- 0L
-    for (i in seq_len(nrow(manifest))) {
-      condition_id <- as.character(manifest$condition_id[[i]])
-      log_info(
-        "Counting eligible genes for ", cell_line, " condition ",
-        i, "/", nrow(manifest), "."
-      )
-      links <- read_parquet_dt(
-        as.character(manifest$path[[i]]),
-        c("link_id", "target_gene")
-      )
-      if (anyDuplicated(links$link_id)) {
-        stop("Condition link IDs are duplicated for ", condition_id, ".")
-      }
-      annotated <- eligibility[links, on = "link_id", nomatch = 0L]
-      for (j in seq_len(nrow(combination_table))) {
-        combo <- combination_table[j]
-        genes <- unique(annotated[
-          module1_best_r >= combo$module1_r &
-            tf_target_best_r >= combo$module2_r &
-            fp_target_best_r >= combo$module2_r,
-          as.character(target_gene)
-        ])
-        gene_unions[[combo$combination_id]] <- union(
-          gene_unions[[combo$combination_id]],
-          genes
-        )
-        row_index <- row_index + 1L
-        rows[[row_index]] <- data.table::data.table(
-          cell_line = cell_line,
-          condition_id = condition_id,
-          unique_target_genes = length(genes),
-          module1_r = combo$module1_r,
-          module2_r = combo$module2_r,
-          combination_id = combo$combination_id,
-          combination_label = combo$combination_label
-        )
-      }
-      rm(links, annotated)
-      invisible(gc())
-    }
-    cell_rows <- data.table::rbindlist(rows)
-    union_rows <- combination_table[, .(
-      cell_line = cell_line,
-      condition_id = "All conditions (union)",
-      unique_target_genes = lengths(gene_unions[combination_id]),
-      module1_r,
-      module2_r,
-      combination_id,
-      combination_label
-    )]
-    output[[length(output) + 1L]] <- data.table::rbindlist(
-      list(cell_rows, union_rows),
-      use.names = TRUE
-    )
-  }
-  output <- data.table::rbindlist(output, use.names = TRUE, fill = TRUE)
-  output[, source_signature := count_signature]
-  for (current_cell_line in cell_line_specs$cell_line) {
-    validate_target_count_monotonicity(
-      output[cell_line == current_cell_line]
-    )
-  }
-  data.table::setcolorder(
-    output,
-    c(
-      "cell_line", "condition_id", "unique_target_genes",
-      "module1_r", "module2_r", "combination_id", "combination_label",
-      "source_signature"
-    )
-  )
-  data.table::fwrite(output, cell_line_target_count_path)
-  writeLines(count_signature, cell_line_target_signature_path, useBytes = TRUE)
-  output
-}
+document_summary_path <- file.path(work_root, "document_combination_summary.csv")
+target_count_path <- file.path(work_root, "target_gene_counts.csv")
 
 build_one_document_qc <- function(edges, row, specificity_lookup) {
-  combo_dir <- file.path(output_root, "document_qc", row$combination_id)
+  combo_dir <- file.path(work_root, "document_qc", row$combination_id)
   dir.create(combo_dir, recursive = TRUE, showWarnings = FALSE)
   qc_path <- file.path(combo_dir, "document_term_qc.pdf")
+  qc_summary_path <- file.path(combo_dir, "document_term_qc_summary.csv")
   summary_path <- file.path(combo_dir, "combination_summary.csv")
   target_path <- file.path(combo_dir, "target_gene_counts.csv")
-  membership_path <- file.path(combo_dir, "term_membership.parquet")
+  compact_path <- file.path(combo_dir, "compact_qc_summary.csv")
   complete <- all(file.exists(c(
     qc_path,
+    qc_summary_path,
     summary_path,
     target_path,
-    membership_path
+    compact_path
   )))
   if (isTRUE(reuse) && complete) {
     log_info("Reusing document QC for ", row$combination_label, ".")
@@ -952,14 +800,16 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
       summary = data.table::fread(summary_path, showProgress = FALSE),
       target = data.table::fread(target_path, showProgress = FALSE),
       qc = qc_path,
-      membership = membership_path
+      compact = compact_path
     ))
   }
 
   filtered <- data.table::copy(edges[
     module1_best_r >= row$module1_r &
       tf_target_best_r >= row$module2_r &
-      fp_target_best_r >= row$module2_r
+      fp_target_best_r >= row$module2_r &
+      is.finite(fp_score_condition) &
+      fp_score_condition >= row$fp_score_min
   ])
   if (!nrow(filtered)) {
     stop("No condition links remain for ", row$combination_label, ".")
@@ -977,7 +827,7 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
     count_scale = 50,
     prefix_terms = TRUE,
     threshold_gene_expr = 10,
-    threshold_fp_score = 0,
+    threshold_fp_score = row$fp_score_min,
     threshold_tf_expr = -Inf,
     include_tf_terms = FALSE,
     require_tf_expr = TRUE,
@@ -1022,10 +872,12 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   }
 
   title <- paste0(
-    "HPAFII method 10 document-term QC - Module 1 R >= ",
+    "HPAFII document-term QC - Module 1 R >= ",
     row$module1_r,
     "; Module 2 TF-target and FP-target R >= ",
-    row$module2_r
+    row$module2_r,
+    "; footprint score >= ",
+    row$fp_score_min
   )
   craftgrn:::.write_module3_document_term_qc(
     doc_term = doc_term,
@@ -1060,6 +912,7 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   target_counts[, `:=`(
     module1_r = row$module1_r,
     module2_r = row$module2_r,
+    fp_score_min = row$fp_score_min,
     combination_id = row$combination_id,
     combination_label = row$combination_label
   )]
@@ -1072,6 +925,7 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   summary <- data.table::data.table(
     module1_r = row$module1_r,
     module2_r = row$module2_r,
+    fp_score_min = row$fp_score_min,
     combination_id = row$combination_id,
     combination_label = row$combination_label,
     condition_link_rows = nrow(filtered),
@@ -1088,116 +942,303 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
     observed_peak_gene_ratio = observed_ratio,
     source_signature = source_signature
   )
+  compact_source <- doc_term[, .(
+    condition_id = sub("::[^:]+$", "", doc_id),
+    doc_id = as.character(doc_id),
+    term_id = as.character(term_id),
+    term_type = term_type
+  )]
+  per_document <- compact_source[, .(
+    terms_in_document = .N
+  ), by = .(condition_id, doc_id, term_type)]
+  typical <- per_document[, .(
+    median_terms = as.numeric(stats::median(terms_in_document)),
+    lower_quartile = as.numeric(stats::quantile(
+      terms_in_document,
+      probs = 0.25,
+      names = FALSE
+    )),
+    upper_quartile = as.numeric(stats::quantile(
+      terms_in_document,
+      probs = 0.75,
+      names = FALSE
+    )),
+    tf_documents = data.table::uniqueN(doc_id)
+  ), by = .(condition_id, term_type)]
+  totals <- compact_source[, .(
+    unique_terms = data.table::uniqueN(term_id),
+    document_term_rows = .N
+  ), by = .(condition_id, term_type)]
+  compact <- merge(
+    typical,
+    totals,
+    by = c("condition_id", "term_type"),
+    all = TRUE,
+    sort = FALSE
+  )
+  compact[, `:=`(
+    module1_r = row$module1_r,
+    module2_r = row$module2_r,
+    fp_score_min = row$fp_score_min,
+    combination_id = row$combination_id,
+    combination_label = row$combination_label,
+    source_signature = source_signature
+  )]
   data.table::fwrite(summary, summary_path)
   data.table::fwrite(target_counts, target_path)
-  membership <- unique(doc_term[, .(
-    doc_id = as.character(doc_id),
-    term_id = as.character(term_id)
-  )])
-  write_parquet_dt(membership, membership_path)
-  rm(filtered, doc_term, gene_rows, membership, token_audit)
+  data.table::fwrite(compact, compact_path)
+  rm(
+    filtered, doc_term, gene_rows, compact_source, per_document,
+    typical, totals, compact, token_audit
+  )
   invisible(gc())
   list(
     summary = summary,
     target = target_counts,
     qc = qc_path,
-    membership = membership_path
+    compact = compact_path
   )
 }
 
-validate_nested_membership <- function(results) {
-  relationship <- data.table::data.table(
-    strict = c(
-      "M1R0p5_M2R0p7",
-      "M1R0p7_M2R0p5",
-      "M1R0p7_M2R0p7",
-      "M1R0p7_M2R0p7"
-    ),
-    loose = c(
-      "M1R0p5_M2R0p5",
-      "M1R0p5_M2R0p5",
-      "M1R0p5_M2R0p7",
-      "M1R0p7_M2R0p5"
-    )
+strictness_relationships <- data.table::data.table(
+  strict = c(
+    "M1R0p3_M2R0p5_FP2",
+    "M1R0p5_M2R0p3_FP2",
+    "M1R0p5_M2R0p5_FP2",
+    "M1R0p5_M2R0p5_FP2",
+    "M1R0p5_M2R0p7_FP2",
+    "M1R0p7_M2R0p5_FP2",
+    "M1R0p7_M2R0p7_FP2",
+    "M1R0p7_M2R0p7_FP2",
+    "M1R0p3_M2R0p3_FP3",
+    "M1R0p3_M2R0p3_FP4"
+  ),
+  loose = c(
+    baseline_combination_id,
+    baseline_combination_id,
+    "M1R0p3_M2R0p5_FP2",
+    "M1R0p5_M2R0p3_FP2",
+    "M1R0p5_M2R0p5_FP2",
+    "M1R0p5_M2R0p5_FP2",
+    "M1R0p5_M2R0p7_FP2",
+    "M1R0p7_M2R0p5_FP2",
+    baseline_combination_id,
+    "M1R0p3_M2R0p3_FP3"
   )
-  membership_cache <- new.env(parent = emptyenv())
-  fetch <- function(combination_id) {
-    if (!exists(combination_id, envir = membership_cache, inherits = FALSE)) {
-      path <- results[[combination_id]]$membership
-      value <- read_parquet_dt(path, c("doc_id", "term_id"))
-      data.table::setkey(value, doc_id, term_id)
-      assign(combination_id, value, envir = membership_cache)
-    }
-    get(combination_id, envir = membership_cache, inherits = FALSE)
-  }
-  audit <- lapply(seq_len(nrow(relationship)), function(i) {
-    strict <- fetch(relationship$strict[[i]])
-    loose <- fetch(relationship$loose[[i]])
-    unexpected <- strict[!loose, on = c("doc_id", "term_id")]
+)
+
+validate_summary_monotonicity <- function(document_summary) {
+  audit <- lapply(seq_len(nrow(strictness_relationships)), function(i) {
+    strict <- document_summary[
+      combination_id == strictness_relationships$strict[[i]]
+    ][1L]
+    loose <- document_summary[
+      combination_id == strictness_relationships$loose[[i]]
+    ][1L]
+    fields <- c(
+      "condition_link_rows", "documents", "document_term_rows",
+      "unique_gene_terms", "unique_peak_terms"
+    )
+    passed <- all(
+      vapply(fields, function(field) {
+        strict[[field]] <= loose[[field]]
+      }, logical(1L))
+    )
     data.table::data.table(
-      strict = relationship$strict[[i]],
-      loose = relationship$loose[[i]],
-      strict_rows = nrow(strict),
-      loose_rows = nrow(loose),
-      unexpected_rows = nrow(unexpected),
-      passed = nrow(unexpected) == 0L
+      strict = strictness_relationships$strict[[i]],
+      loose = strictness_relationships$loose[[i]],
+      passed = passed
     )
   })
   audit <- data.table::rbindlist(audit)
   if (any(!audit$passed)) {
-    stop("A stricter document-term result is not nested in its looser result.")
+    stop("A stricter setup increased a document summary count.")
   }
   audit[, source_signature := source_signature]
   data.table::fwrite(
     audit,
-    file.path(output_root, "document_nesting_audit.csv")
+    file.path(work_root, "document_monotonicity_audit.csv")
   )
   invisible(audit)
 }
 
 validate_target_count_monotonicity <- function(target_counts) {
-  wide <- data.table::dcast(
-    target_counts,
-    condition_id ~ combination_id,
-    value.var = "unique_target_genes"
-  )
-  required <- combination_table$combination_id
-  if (!all(required %in% names(wide))) {
+  observed <- unique(target_counts$combination_id)
+  if (!all(combination_table$combination_id %in% observed)) {
     stop("Target-gene comparison is missing a cutoff combination.")
   }
-  valid <- with(wide,
-    M1R0p5_M2R0p7 <= M1R0p5_M2R0p5 &
-      M1R0p7_M2R0p5 <= M1R0p5_M2R0p5 &
-      M1R0p7_M2R0p7 <= M1R0p5_M2R0p7 &
-      M1R0p7_M2R0p7 <= M1R0p7_M2R0p5
-  )
-  if (any(!valid)) {
+  audit <- lapply(seq_len(nrow(strictness_relationships)), function(i) {
+    strict <- target_counts[
+      combination_id == strictness_relationships$strict[[i]],
+      .(condition_id, strict_count = unique_target_genes)
+    ]
+    loose <- target_counts[
+      combination_id == strictness_relationships$loose[[i]],
+      .(condition_id, loose_count = unique_target_genes)
+    ]
+    merged <- merge(strict, loose, by = "condition_id", all = TRUE)
+    merged[, `:=`(
+      strict = strictness_relationships$strict[[i]],
+      loose = strictness_relationships$loose[[i]],
+      passed = !is.na(strict_count) & !is.na(loose_count) &
+        strict_count <= loose_count
+    )]
+    merged
+  })
+  audit <- data.table::rbindlist(audit)
+  if (any(!audit$passed)) {
     stop("Target-gene counts increased under a stricter cutoff.")
   }
+  audit[, source_signature := source_signature]
+  data.table::fwrite(
+    audit,
+    file.path(work_root, "target_gene_monotonicity_audit.csv")
+  )
+  invisible(TRUE)
+}
+
+validate_current_baseline <- function(document_summary) {
+  baseline_summary <- document_summary[
+    combination_id == baseline_combination_id
+  ][1L]
+  if (!nrow(baseline_summary)) stop("The current 0.3/0.3 baseline is missing.")
+  expected_input <- data.table::fread(
+    baseline_input_summary_path,
+    showProgress = FALSE
+  )[1L]
+  expected_index <- readRDS(baseline_dtm_index_path)
+  expected_terms <- names(expected_index$term_index)
+  expected <- c(
+    condition_link_rows = as.numeric(expected_input$n_link_rows_after_filter),
+    documents = length(expected_index$doc_index),
+    document_term_rows = as.numeric(expected_input$n_doc_term_rows),
+    unique_gene_terms = sum(startsWith(expected_terms, "GENE:")),
+    unique_peak_terms = sum(startsWith(expected_terms, "PEAK:")),
+    raw_model_tokens = as.numeric(expected_input$n_model_tokens_raw),
+    final_model_tokens = as.numeric(expected_input$n_model_tokens)
+  )
+  observed <- c(
+    condition_link_rows = as.numeric(baseline_summary$condition_link_rows),
+    documents = as.numeric(baseline_summary$documents),
+    document_term_rows = as.numeric(baseline_summary$document_term_rows),
+    unique_gene_terms = as.numeric(baseline_summary$unique_gene_terms),
+    unique_peak_terms = as.numeric(baseline_summary$unique_peak_terms),
+    raw_model_tokens = as.numeric(baseline_summary$raw_model_tokens),
+    final_model_tokens = as.numeric(
+      baseline_summary$final_gene_tokens + baseline_summary$final_peak_tokens
+    )
+  )
+  if (!identical(unname(observed), unname(expected))) {
+    mismatch <- names(expected)[observed != expected]
+    stop(
+      "The 0.3/0.3, footprint-score 2 setup does not match run 21: ",
+      paste(mismatch, collapse = ", "), "."
+    )
+  }
+  expected_qc <- data.table::fread(
+    baseline_qc_summary_path,
+    showProgress = FALSE
+  )
+  observed_qc_path <- file.path(
+    work_root,
+    "document_qc",
+    baseline_combination_id,
+    "document_term_qc_summary.csv"
+  )
+  observed_qc <- data.table::fread(observed_qc_path, showProgress = FALSE)
+  expected_condition_order <- unique(expected_qc$condition_id)
+  compare_columns <- c(
+    "condition_id", "doc_id", "term_type", "n_terms"
+  )
+  expected_qc <- expected_qc[, ..compare_columns]
+  observed_qc <- observed_qc[, ..compare_columns]
+  data.table::setorderv(expected_qc, compare_columns[1:3])
+  data.table::setorderv(observed_qc, compare_columns[1:3])
+  qc_equal <- isTRUE(all.equal(
+    as.data.frame(observed_qc),
+    as.data.frame(expected_qc),
+    check.attributes = FALSE
+  ))
+  if (!qc_equal) {
+    stop("The current baseline per-document Gene/Peak term counts do not match run 21.")
+  }
+  if (!setequal(condition_order, expected_condition_order)) {
+    stop("The current HPAFII conditions do not match run 21.")
+  }
+  audit <- data.table::data.table(
+    metric = names(expected),
+    expected = unname(expected),
+    observed = unname(observed),
+    passed = unname(expected) == unname(observed),
+    source_signature = source_signature
+  )
+  data.table::fwrite(
+    audit,
+    file.path(work_root, "current_baseline_audit.csv")
+  )
   invisible(TRUE)
 }
 
 build_documents <- function() {
-  eligibility <- build_link_eligibility()
-  annotated_manifest <- build_annotated_condition_links(eligibility)
-  rm(eligibility)
-  invisible(gc())
-  annotated <- load_annotated_condition_links(annotated_manifest)
-  specificity_lookup <- craftgrn:::.module3_condition_gene_specificity_lookup(
-    expression_file = expression_path,
-    expression_min = 10,
-    temperature = 0.5,
-    uniform_floor = 0.1
-  )
   results <- vector("list", nrow(combination_table))
   names(results) <- combination_table$combination_id
-  for (i in seq_len(nrow(combination_table))) {
-    row <- combination_table[i]
-    results[[row$combination_id]] <- build_one_document_qc(
-      edges = annotated,
-      row = row,
-      specificity_lookup = specificity_lookup
+  cached_complete <- isTRUE(reuse) && all(vapply(
+    combination_table$combination_id,
+    function(combination_id) {
+      combo_dir <- file.path(work_root, "document_qc", combination_id)
+      all(file.exists(file.path(
+        combo_dir,
+        c(
+          "document_term_qc.pdf",
+          "document_term_qc_summary.csv",
+          "combination_summary.csv",
+          "target_gene_counts.csv",
+          "compact_qc_summary.csv"
+        )
+      )))
+    },
+    logical(1L)
+  ))
+  if (cached_complete) {
+    log_info("Reusing all nine cached HPAFII document summaries.")
+    for (i in seq_len(nrow(combination_table))) {
+      row <- combination_table[i]
+      combo_dir <- file.path(work_root, "document_qc", row$combination_id)
+      results[[row$combination_id]] <- list(
+        summary = data.table::fread(
+          file.path(combo_dir, "combination_summary.csv"),
+          showProgress = FALSE
+        ),
+        target = data.table::fread(
+          file.path(combo_dir, "target_gene_counts.csv"),
+          showProgress = FALSE
+        ),
+        qc = file.path(combo_dir, "document_term_qc.pdf"),
+        compact = file.path(combo_dir, "compact_qc_summary.csv")
+      )
+    }
+  } else {
+    eligibility <- build_link_eligibility()
+    annotated_manifest <- build_annotated_condition_links(eligibility)
+    rm(eligibility)
+    invisible(gc())
+    annotated <- load_annotated_condition_links(annotated_manifest)
+    specificity_lookup <- craftgrn:::.module3_condition_gene_specificity_lookup(
+      expression_file = expression_path,
+      expression_min = 10,
+      temperature = 0.5,
+      uniform_floor = 0.1
     )
+    for (i in seq_len(nrow(combination_table))) {
+      row <- combination_table[i]
+      results[[row$combination_id]] <- build_one_document_qc(
+        edges = annotated,
+        row = row,
+        specificity_lookup = specificity_lookup
+      )
+    }
+    rm(annotated, specificity_lookup)
+    invisible(gc())
   }
   document_summary <- data.table::rbindlist(
     lapply(results, `[[`, "summary"),
@@ -1212,46 +1253,43 @@ build_documents <- function() {
   if (any(document_summary$conditions != length(condition_order))) {
     stop("A document combination does not cover all 17 conditions.")
   }
-  validate_nested_membership(results)
+  validate_current_baseline(document_summary)
+  validate_summary_monotonicity(document_summary)
   validate_target_count_monotonicity(target_counts)
   data.table::fwrite(document_summary, document_summary_path)
   data.table::fwrite(target_counts, target_count_path)
-  rm(annotated, specificity_lookup)
-  invisible(gc())
   results
 }
 
-comparison_pdf <- file.path(output_root, "02_target_gene_comparison.pdf")
+correlation_comparison_pdf <- file.path(
+  work_root,
+  "02_correlation_target_gene_comparison.pdf"
+)
+footprint_comparison_pdf <- file.path(
+  work_root,
+  "03_footprint_target_gene_comparison.pdf"
+)
 final_pdf <- file.path(
   output_root,
   "15_Method10_K30_RCutoff_and_FPStrength_DocumentTermQC.pdf"
 )
 
 compact_qc_summary_path <- file.path(
-  output_root,
+  work_root,
   "compact_document_qc_summary.csv"
 )
 compact_qc_paths <- file.path(
-  output_root,
+  work_root,
   paste0("compact_document_qc_", combination_table$combination_id, ".pdf")
 )
 
 simple_condition_label <- function(value) {
-  value <- sub("^(HPAFII|Aspc1|Panc1)_", "", value)
+  value <- sub("^HPAFII_", "", value)
   value <- sub("_Ctrl$", "", value)
   value <- gsub("Gln[.]Arg", "Gln + Arg", value)
   value <- gsub("Met[.]Cys", "Met + Cys", value)
   gsub("_", " ", value, fixed = TRUE)
 }
-
-cutoff_labels <- stats::setNames(
-  sprintf(
-    "%.1f / %.1f",
-    combination_table$module1_r,
-    combination_table$module2_r
-  ),
-  combination_table$combination_id
-)
 
 build_compact_qc_summary <- function() {
   if (isTRUE(reuse) && file.exists(compact_qc_summary_path)) {
@@ -1267,71 +1305,34 @@ build_compact_qc_summary <- function() {
   output <- vector("list", nrow(combination_table))
   for (i in seq_len(nrow(combination_table))) {
     combo <- combination_table[i]
-    membership_path <- file.path(
-      output_root,
+    compact_path <- file.path(
+      work_root,
       "document_qc",
       combo$combination_id,
-      "term_membership.parquet"
+      "compact_qc_summary.csv"
     )
-    membership <- read_parquet_dt(
-      membership_path,
-      c("doc_id", "term_id")
-    )
-    membership[, `:=`(
-      condition_id = sub("::[^:]+$", "", doc_id),
-      term_type = data.table::fifelse(
-        startsWith(term_id, "GENE:"),
-        "Gene",
-        "Peak"
-      )
-    )]
-    per_document <- membership[, .(
-      terms_in_document = .N
-    ), by = .(condition_id, doc_id, term_type)]
-    typical <- per_document[, .(
-      median_terms = as.numeric(stats::median(terms_in_document)),
-      lower_quartile = as.numeric(stats::quantile(
-        terms_in_document,
-        probs = 0.25,
-        names = FALSE
-      )),
-      upper_quartile = as.numeric(stats::quantile(
-        terms_in_document,
-        probs = 0.75,
-        names = FALSE
-      )),
-      tf_documents = data.table::uniqueN(doc_id)
-    ), by = .(condition_id, term_type)]
-    totals <- membership[, .(
-      unique_terms = data.table::uniqueN(term_id),
-      document_term_rows = .N
-    ), by = .(condition_id, term_type)]
-    result <- merge(
-      typical,
-      totals,
-      by = c("condition_id", "term_type"),
-      all = TRUE,
-      sort = FALSE
-    )
-    result[, `:=`(
-      module1_r = combo$module1_r,
-      module2_r = combo$module2_r,
-      combination_id = combo$combination_id,
-      combination_label = combo$combination_label,
-      source_signature = source_signature
-    )]
-    output[[i]] <- result
-    rm(membership, per_document, typical, totals, result)
-    invisible(gc())
+    if (!file.exists(compact_path)) {
+      stop("Missing compact document summary: ", compact_path)
+    }
+    output[[i]] <- data.table::fread(compact_path, showProgress = FALSE)
   }
   output <- data.table::rbindlist(output, use.names = TRUE)
   data.table::fwrite(output, compact_qc_summary_path)
   output
 }
 
-build_comparison_page <- function(target_counts) {
+build_comparison_page <- function(
+    target_counts,
+    combination_ids,
+    label_map,
+    colors,
+    output_path,
+    page_title,
+    page_subtitle,
+    legend_title) {
   plot_data <- target_counts[
-    cell_line == "HPAFII" & condition_id != "All conditions (union)"
+    combination_id %in% combination_ids &
+      condition_id != "All conditions (union)"
   ]
   plot_data[, condition_display := simple_condition_label(condition_id)]
   plot_data[, condition_display := factor(
@@ -1339,13 +1340,9 @@ build_comparison_page <- function(target_counts) {
     levels = rev(simple_condition_label(condition_order))
   )]
   plot_data[, cutoff := factor(
-    cutoff_labels[combination_id],
-    levels = cutoff_labels
+    label_map[combination_id],
+    levels = unname(label_map)
   )]
-  colors <- stats::setNames(
-    c("#2166AC", "#67A9CF", "#B2182B", "#EF8A62"),
-    cutoff_labels
-  )
   per_condition_plot <- ggplot2::ggplot(
     plot_data,
     ggplot2::aes(
@@ -1371,7 +1368,7 @@ build_comparison_page <- function(target_counts) {
       subtitle = "Unique target genes kept in each condition",
       x = NULL,
       y = "Unique target genes",
-      fill = "Module 1 / Module 2"
+      fill = legend_title
     ) +
     report_theme(10) +
     ggplot2::theme(
@@ -1380,10 +1377,13 @@ build_comparison_page <- function(target_counts) {
       legend.text = ggplot2::element_text(size = 8)
     )
 
-  union_data <- target_counts[condition_id == "All conditions (union)"]
-  union_data[, `:=`(
-    cell_line = factor(cell_line, levels = cell_line_specs$cell_line),
-    cutoff = factor(cutoff_labels[combination_id], levels = rev(cutoff_labels))
+  union_data <- target_counts[
+    combination_id %in% combination_ids &
+      condition_id == "All conditions (union)"
+  ]
+  union_data[, cutoff := factor(
+    label_map[combination_id],
+    levels = rev(unname(label_map))
   )]
   union_plot <- ggplot2::ggplot(
     union_data,
@@ -1400,7 +1400,6 @@ build_comparison_page <- function(target_counts) {
       size = 3.8
     ) +
     ggplot2::coord_flip() +
-    ggplot2::facet_grid(cell_line ~ .) +
     ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
     ggplot2::scale_y_continuous(
       labels = scales::label_number(big.mark = ","),
@@ -1408,7 +1407,7 @@ build_comparison_page <- function(target_counts) {
     ) +
     ggplot2::labs(
       title = "All conditions combined",
-      subtitle = "Rows show Module 1 / Module 2 cutoffs",
+      subtitle = "Unique target genes across all 17 conditions",
       x = NULL,
       y = "Unique target genes"
     ) +
@@ -1418,8 +1417,8 @@ build_comparison_page <- function(target_counts) {
   page <- (per_condition_plot | union_plot) +
     patchwork::plot_layout(widths = c(1.45, 1))
   page <- page + patchwork::plot_annotation(
-    title = "How stricter cutoffs reduce target-gene coverage",
-    subtitle = "A higher cutoff keeps only stronger links and fewer genes.",
+    title = page_title,
+    subtitle = page_subtitle,
     theme = ggplot2::theme(
       plot.title = ggplot2::element_text(
         family = "Helvetica", face = "bold", size = 18
@@ -1430,7 +1429,7 @@ build_comparison_page <- function(target_counts) {
     )
   )
   grDevices::cairo_pdf(
-    comparison_pdf,
+    output_path,
     width = 15,
     height = 10,
     family = "Helvetica",
@@ -1439,7 +1438,55 @@ build_comparison_page <- function(target_counts) {
   )
   print(page)
   grDevices::dev.off()
-  invisible(comparison_pdf)
+  invisible(output_path)
+}
+
+build_comparison_pages <- function(target_counts) {
+  correlation_rows <- combination_table[fp_score_min == score_floor]
+  correlation_labels <- stats::setNames(
+    sprintf("%.1f / %.1f", correlation_rows$module1_r, correlation_rows$module2_r),
+    correlation_rows$combination_id
+  )
+  correlation_colors <- stats::setNames(
+    c(
+      "#1B4F72", "#2874A6", "#5DADE2", "#117864",
+      "#73C6B6", "#B03A2E", "#E67E22"
+    ),
+    unname(correlation_labels)
+  )
+  build_comparison_page(
+    target_counts = target_counts,
+    combination_ids = correlation_rows$combination_id,
+    label_map = correlation_labels,
+    colors = correlation_colors,
+    output_path = correlation_comparison_pdf,
+    page_title = "How correlation cutoffs change target-gene coverage",
+    page_subtitle = "Footprint-score cutoff is 2 for every setup.",
+    legend_title = "Module 1 / Module 2"
+  )
+
+  footprint_rows <- combination_table[
+    module1_r == 0.3 & module2_r == 0.3
+  ]
+  footprint_labels <- stats::setNames(
+    paste0("Score >= ", footprint_rows$fp_score_min),
+    footprint_rows$combination_id
+  )
+  footprint_colors <- stats::setNames(
+    c("#2166AC", "#F4A261", "#B2182B"),
+    unname(footprint_labels)
+  )
+  build_comparison_page(
+    target_counts = target_counts,
+    combination_ids = footprint_rows$combination_id,
+    label_map = footprint_labels,
+    colors = footprint_colors,
+    output_path = footprint_comparison_pdf,
+    page_title = "How footprint-score cutoffs change target-gene coverage",
+    page_subtitle = "Module 1 and Module 2 correlation cutoffs are 0.3.",
+    legend_title = "Footprint cutoff"
+  )
+  invisible(c(correlation_comparison_pdf, footprint_comparison_pdf))
 }
 
 build_compact_qc_pages <- function(document_summary, compact_summary) {
@@ -1526,7 +1573,8 @@ build_compact_qc_pages <- function(document_summary, compact_summary) {
       patchwork::plot_annotation(
         title = paste0(
           "HPAFII documents: Module 1 cutoff ", combo$module1_r,
-          ", Module 2 cutoff ", combo$module2_r
+          ", Module 2 cutoff ", combo$module2_r,
+          ", footprint cutoff ", combo$fp_score_min
         ),
         subtitle = subtitle,
         theme = ggplot2::theme(
@@ -1565,13 +1613,21 @@ assemble_report <- function() {
     document_summary_path,
     showProgress = FALSE
   )
-  target_counts <- build_cell_line_target_counts()
-  build_comparison_page(target_counts)
+  target_counts <- data.table::fread(target_count_path, showProgress = FALSE)
+  validate_current_baseline(document_summary)
+  validate_summary_monotonicity(document_summary)
+  validate_target_count_monotonicity(target_counts)
+  build_comparison_pages(target_counts)
   compact_summary <- build_compact_qc_summary()
   build_compact_qc_pages(document_summary, compact_summary)
   qpdf <- Sys.which("qpdf")
   if (!nzchar(qpdf)) stop("qpdf is required to assemble the final report.")
-  source_pdfs <- c(footprint_pdf, comparison_pdf, compact_qc_paths)
+  source_pdfs <- c(
+    footprint_pdf,
+    correlation_comparison_pdf,
+    footprint_comparison_pdf,
+    compact_qc_paths
+  )
   qpdf_args <- c(
     "--empty",
     "--pages",
@@ -1588,8 +1644,8 @@ assemble_report <- function() {
     c("--show-npages", final_pdf),
     stdout = TRUE
   )[[1L]]))
-  if (!identical(page_count, 6L)) {
-    stop("Final report must contain 6 pages; found ", page_count, ".")
+  if (!identical(page_count, 12L)) {
+    stop("Final report must contain 12 pages; found ", page_count, ".")
   }
   check_status <- system2(qpdf, c("--check", final_pdf))
   if (!identical(check_status, 0L)) stop("qpdf integrity validation failed.")
@@ -1605,7 +1661,7 @@ assemble_report <- function() {
     report_manifest,
     file.path(output_root, "final_report_manifest.csv")
   )
-  log_info("Wrote final 6-page report: ", final_pdf)
+  log_info("Wrote final 12-page report: ", final_pdf)
   invisible(final_pdf)
 }
 
