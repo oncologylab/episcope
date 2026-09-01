@@ -206,6 +206,26 @@ if (nrow(condition_manifest) != 17L) {
 }
 condition_order <- as.character(condition_manifest$condition_id)
 
+cell_line_specs <- data.table::data.table(
+  cell_line = c("HPAFII", "AsPC-1", "PANC-1"),
+  analysis_dir = file.path(
+    project_root,
+    c(
+      "regulatory_topics_hpafii_condition_models_de_gene_filtered",
+      "regulatory_topics_aspc1_condition_models_de_gene_filtered",
+      "regulatory_topics_panc1_condition_models_de_gene_filtered"
+    )
+  )
+)
+cell_line_specs[, condition_manifest_path := file.path(
+  analysis_dir,
+  "condition_links",
+  "condition_links_manifest.csv"
+)]
+if (any(!file.exists(cell_line_specs$condition_manifest_path))) {
+  stop("A cell-line condition manifest is missing.")
+}
+
 report_theme <- function(base_size = 11) {
   craftgrn:::.m3_qc_theme(base_size = base_size) +
     ggplot2::theme(
@@ -363,10 +383,10 @@ build_footprint_diagnostic <- function() {
 
   score_breaks <- c(2, 3, 4, 5, 8, 12, 20)
   density_plot <- ggplot2::ggplot(
-    density_curves,
-    ggplot2::aes(score_log, density, color = bandwidth)
+    density_curves[bandwidth == "adjust = 1"],
+    ggplot2::aes(score_log, density)
   ) +
-    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::geom_line(color = "#D95F02", linewidth = 1.2) +
     ggplot2::geom_vline(
       xintercept = log1p(score_floor),
       color = "#B2182B",
@@ -383,32 +403,21 @@ build_footprint_diagnostic <- function() {
       labels = score_breaks,
       expand = ggplot2::expansion(mult = c(0.01, 0.02))
     ) +
-    ggplot2::scale_color_manual(
-      values = c(
-        "adjust = 0.75" = "#2166AC",
-        "adjust = 1" = "#1B7837",
-        "adjust = 1.5" = "#762A83",
-        "adjust = 2" = "#D95F02"
-      )
-    ) +
     ggplot2::labs(
-      title = "Maximum raw footprint score in a bound condition",
-      subtitle = "All smoothing bandwidths show one material mode; no stable high-score population is separated by a valley",
-      x = "Maximum bound raw footprint score (log1p spacing)",
-      y = "Smoothed density",
-      color = "Smoothing",
-      caption = paste0(
-        "Red line: current score floor = 2. Dashed lines: reference floors 3, 4, and 5. ",
-        "Density display ends at the 99.9th percentile; mode detection uses the same range."
-      )
+      title = "Footprint-score pattern",
+      subtitle = NULL,
+      x = "Highest footprint score in a bound condition (log scale)",
+      y = "Relative frequency",
+      caption = "Red line: current cutoff of 2. Gray lines: 3, 4, and 5."
     ) +
-    report_theme(11)
+    report_theme(11) +
+    ggplot2::theme(legend.position = "none")
 
   retention_labels <- selected_retention[, .(
     threshold,
     retained_percent,
     label = paste0(
-      "Score >= ", threshold, ": ",
+      "Cutoff ", threshold, ": ",
       format(retained, big.mark = ",", scientific = FALSE),
       " (", sprintf("%.1f", retained_percent), "%)"
     )
@@ -445,32 +454,23 @@ build_footprint_diagnostic <- function() {
       expand = ggplot2::expansion(mult = c(0, 0))
     ) +
     ggplot2::labs(
-      title = "Retention under stricter footprint-score floors",
-      subtitle = "A higher floor is possible, but it is a sensitivity choice rather than a density-derived cutoff",
-      x = "Maximum bound raw footprint-score floor",
+      title = "What remains at each cutoff",
+      subtitle = "Higher cutoffs remove many footprints.",
+      x = "Footprint-score cutoff",
       y = "Footprints retained",
-      caption = "Retention uses the complete 852,821-footprint input universe and the existing bound/ATAC requirements."
+      caption = NULL
     ) +
     report_theme(11) +
     ggplot2::theme(legend.position = "none")
 
   summary_lines <- c(
-    "Current Module 1 starting gate",
-    "TOBIAS bound + ATAC supported + raw footprint score >= 2",
-    "in at least one of 54 conditions",
+    "Recommendation",
+    "Keep the current cutoff of 2.",
     "",
-    paste0("Eligible footprints: ", format(length(maximum_bound_score), big.mark = ",")),
-    paste0("Median maximum score: ", sprintf("%.2f", stats::median(maximum_bound_score))),
-    paste0(
-      "Stable density mode range: ",
-      sprintf("%.2f", min(density_modes$mode_score)), "-",
-      sprintf("%.2f", max(density_modes$mode_score))
-    ),
-    paste0("Observed maximum: ", sprintf("%.2f", max(maximum_bound_score))),
-    "",
-    "Decision for this report",
-    "Keep the existing score floor of 2 for the four R-cutoff comparisons.",
-    "Do not claim a bimodal, data-derived higher footprint cutoff."
+    paste0("Footprints checked: ", format(length(maximum_bound_score), big.mark = ",")),
+    paste0("Cutoff 3 keeps ", sprintf("%.0f", selected_retention[threshold == 3, retained_percent]), "%"),
+    paste0("Cutoff 4 keeps ", sprintf("%.0f", selected_retention[threshold == 4, retained_percent]), "%"),
+    paste0("Cutoff 5 keeps ", sprintf("%.0f", selected_retention[threshold == 5, retained_percent]), "%")
   )
   summary_plot <- ggplot2::ggplot() +
     ggplot2::annotate(
@@ -495,8 +495,8 @@ build_footprint_diagnostic <- function() {
   page <- density_plot / (retention_plot | summary_plot) +
     patchwork::plot_layout(heights = c(1.08, 1)) +
     patchwork::plot_annotation(
-      title = "HPAFII Method 10: upstream footprint-strength diagnostic",
-      subtitle = "Diagnostic only; the four document-QC models retain the current footprint gate",
+      title = "Should we use a higher footprint-score cutoff?",
+      subtitle = "No clear split appears in the score pattern.",
       theme = ggplot2::theme(
         plot.title = ggplot2::element_text(
           family = "Helvetica", face = "bold", size = 18
@@ -774,6 +774,164 @@ combination_table[, `:=`(
 
 document_summary_path <- file.path(output_root, "document_combination_summary.csv")
 target_count_path <- file.path(output_root, "target_gene_counts.csv")
+cell_line_target_count_path <- file.path(
+  output_root,
+  "cell_line_target_gene_counts.csv"
+)
+cell_line_target_signature_path <- file.path(
+  output_root,
+  "cell_line_target_gene_counts_signature.txt"
+)
+
+build_cell_line_target_counts <- function(eligibility = NULL) {
+  manifests <- lapply(
+    seq_len(nrow(cell_line_specs)),
+    function(i) {
+      value <- data.table::fread(
+        cell_line_specs$condition_manifest_path[[i]],
+        showProgress = FALSE
+      )
+      if (!all(c("condition_id", "path", "format") %in% names(value))) {
+        stop("A cell-line condition manifest is incomplete.")
+      }
+      if (any(!file.exists(value$path))) {
+        stop("A cell-line condition-link file is missing.")
+      }
+      value
+    }
+  )
+  names(manifests) <- cell_line_specs$cell_line
+  count_signature <- digest::digest(
+    list(
+      source_signature = source_signature,
+      cutoffs = combination_table,
+      manifests = lapply(
+        seq_along(manifests),
+        function(i) {
+          list(
+            manifest_md5 = unname(tools::md5sum(
+              cell_line_specs$condition_manifest_path[[i]]
+            )),
+            condition_files = lapply(manifests[[i]]$path, file_identity)
+          )
+        }
+      )
+    ),
+    algo = "xxhash64"
+  )
+  can_reuse <- isTRUE(reuse) &&
+    file.exists(cell_line_target_count_path) &&
+    file.exists(cell_line_target_signature_path) &&
+    identical(
+      trimws(readLines(cell_line_target_signature_path, warn = FALSE)[[1L]]),
+      count_signature
+    )
+  if (can_reuse) {
+    cached <- data.table::fread(
+      cell_line_target_count_path,
+      showProgress = FALSE
+    )
+    expected <- data.table::CJ(
+      cell_line = cell_line_specs$cell_line,
+      combination_id = combination_table$combination_id,
+      unique = TRUE
+    )
+    observed <- unique(cached[, .(cell_line, combination_id)])
+    if (!nrow(expected[!observed, on = c("cell_line", "combination_id")])) {
+      log_info("Reusing three-cell-line target-gene counts.")
+      return(cached)
+    }
+  }
+  if (is.null(eligibility)) {
+    eligibility <- read_parquet_dt(eligibility_path)
+  }
+  data.table::setkey(eligibility, link_id)
+
+  hpafii <- data.table::fread(target_count_path, showProgress = FALSE)
+  hpafii[, cell_line := "HPAFII"]
+  output <- list(hpafii)
+  for (cell_line in c("AsPC-1", "PANC-1")) {
+    manifest <- manifests[[cell_line]]
+    gene_unions <- stats::setNames(
+      vector("list", nrow(combination_table)),
+      combination_table$combination_id
+    )
+    rows <- vector("list", nrow(manifest) * nrow(combination_table))
+    row_index <- 0L
+    for (i in seq_len(nrow(manifest))) {
+      condition_id <- as.character(manifest$condition_id[[i]])
+      log_info(
+        "Counting eligible genes for ", cell_line, " condition ",
+        i, "/", nrow(manifest), "."
+      )
+      links <- read_parquet_dt(
+        as.character(manifest$path[[i]]),
+        c("link_id", "target_gene")
+      )
+      if (anyDuplicated(links$link_id)) {
+        stop("Condition link IDs are duplicated for ", condition_id, ".")
+      }
+      annotated <- eligibility[links, on = "link_id", nomatch = 0L]
+      for (j in seq_len(nrow(combination_table))) {
+        combo <- combination_table[j]
+        genes <- unique(annotated[
+          module1_best_r >= combo$module1_r &
+            tf_target_best_r >= combo$module2_r &
+            fp_target_best_r >= combo$module2_r,
+          as.character(target_gene)
+        ])
+        gene_unions[[combo$combination_id]] <- union(
+          gene_unions[[combo$combination_id]],
+          genes
+        )
+        row_index <- row_index + 1L
+        rows[[row_index]] <- data.table::data.table(
+          cell_line = cell_line,
+          condition_id = condition_id,
+          unique_target_genes = length(genes),
+          module1_r = combo$module1_r,
+          module2_r = combo$module2_r,
+          combination_id = combo$combination_id,
+          combination_label = combo$combination_label
+        )
+      }
+      rm(links, annotated)
+      invisible(gc())
+    }
+    cell_rows <- data.table::rbindlist(rows)
+    union_rows <- combination_table[, .(
+      cell_line = cell_line,
+      condition_id = "All conditions (union)",
+      unique_target_genes = lengths(gene_unions[combination_id]),
+      module1_r,
+      module2_r,
+      combination_id,
+      combination_label
+    )]
+    output[[length(output) + 1L]] <- data.table::rbindlist(
+      list(cell_rows, union_rows),
+      use.names = TRUE
+    )
+  }
+  output <- data.table::rbindlist(output, use.names = TRUE, fill = TRUE)
+  output[, source_signature := count_signature]
+  for (current_cell_line in cell_line_specs$cell_line) {
+    validate_target_count_monotonicity(
+      output[cell_line == current_cell_line]
+    )
+  }
+  data.table::setcolorder(
+    output,
+    c(
+      "cell_line", "condition_id", "unique_target_genes",
+      "module1_r", "module2_r", "combination_id", "combination_label",
+      "source_signature"
+    )
+  )
+  data.table::fwrite(output, cell_line_target_count_path)
+  writeLines(count_signature, cell_line_target_signature_path, useBytes = TRUE)
+  output
+}
 
 build_one_document_qc <- function(edges, row, specificity_lookup) {
   combo_dir <- file.path(output_root, "document_qc", row$combination_id)
@@ -1069,27 +1227,131 @@ final_pdf <- file.path(
   "15_Method10_K30_RCutoff_and_FPStrength_DocumentTermQC.pdf"
 )
 
-build_comparison_page <- function(document_summary, target_counts) {
-  plot_data <- target_counts[condition_id != "All conditions (union)"]
-  plot_data[, condition_display := sub("^HPAFII_", "", condition_id)]
+compact_qc_summary_path <- file.path(
+  output_root,
+  "compact_document_qc_summary.csv"
+)
+compact_qc_paths <- file.path(
+  output_root,
+  paste0("compact_document_qc_", combination_table$combination_id, ".pdf")
+)
+
+simple_condition_label <- function(value) {
+  value <- sub("^(HPAFII|Aspc1|Panc1)_", "", value)
+  value <- sub("_Ctrl$", "", value)
+  value <- gsub("Gln[.]Arg", "Gln + Arg", value)
+  value <- gsub("Met[.]Cys", "Met + Cys", value)
+  gsub("_", " ", value, fixed = TRUE)
+}
+
+cutoff_labels <- stats::setNames(
+  sprintf(
+    "%.1f / %.1f",
+    combination_table$module1_r,
+    combination_table$module2_r
+  ),
+  combination_table$combination_id
+)
+
+build_compact_qc_summary <- function() {
+  if (isTRUE(reuse) && file.exists(compact_qc_summary_path)) {
+    cached <- data.table::fread(
+      compact_qc_summary_path,
+      showProgress = FALSE
+    )
+    if (nrow(cached) && all(cached$source_signature == source_signature)) {
+      log_info("Reusing compact document summaries.")
+      return(cached)
+    }
+  }
+  output <- vector("list", nrow(combination_table))
+  for (i in seq_len(nrow(combination_table))) {
+    combo <- combination_table[i]
+    membership_path <- file.path(
+      output_root,
+      "document_qc",
+      combo$combination_id,
+      "term_membership.parquet"
+    )
+    membership <- read_parquet_dt(
+      membership_path,
+      c("doc_id", "term_id")
+    )
+    membership[, `:=`(
+      condition_id = sub("::[^:]+$", "", doc_id),
+      term_type = data.table::fifelse(
+        startsWith(term_id, "GENE:"),
+        "Gene",
+        "Peak"
+      )
+    )]
+    per_document <- membership[, .(
+      terms_in_document = .N
+    ), by = .(condition_id, doc_id, term_type)]
+    typical <- per_document[, .(
+      median_terms = as.numeric(stats::median(terms_in_document)),
+      lower_quartile = as.numeric(stats::quantile(
+        terms_in_document,
+        probs = 0.25,
+        names = FALSE
+      )),
+      upper_quartile = as.numeric(stats::quantile(
+        terms_in_document,
+        probs = 0.75,
+        names = FALSE
+      )),
+      tf_documents = data.table::uniqueN(doc_id)
+    ), by = .(condition_id, term_type)]
+    totals <- membership[, .(
+      unique_terms = data.table::uniqueN(term_id),
+      document_term_rows = .N
+    ), by = .(condition_id, term_type)]
+    result <- merge(
+      typical,
+      totals,
+      by = c("condition_id", "term_type"),
+      all = TRUE,
+      sort = FALSE
+    )
+    result[, `:=`(
+      module1_r = combo$module1_r,
+      module2_r = combo$module2_r,
+      combination_id = combo$combination_id,
+      combination_label = combo$combination_label,
+      source_signature = source_signature
+    )]
+    output[[i]] <- result
+    rm(membership, per_document, typical, totals, result)
+    invisible(gc())
+  }
+  output <- data.table::rbindlist(output, use.names = TRUE)
+  data.table::fwrite(output, compact_qc_summary_path)
+  output
+}
+
+build_comparison_page <- function(target_counts) {
+  plot_data <- target_counts[
+    cell_line == "HPAFII" & condition_id != "All conditions (union)"
+  ]
+  plot_data[, condition_display := simple_condition_label(condition_id)]
   plot_data[, condition_display := factor(
     condition_display,
-    levels = rev(sub("^HPAFII_", "", condition_order))
+    levels = rev(simple_condition_label(condition_order))
   )]
-  plot_data[, combination_label := factor(
-    combination_label,
-    levels = combination_table$combination_label
+  plot_data[, cutoff := factor(
+    cutoff_labels[combination_id],
+    levels = cutoff_labels
   )]
   colors <- stats::setNames(
     c("#2166AC", "#67A9CF", "#B2182B", "#EF8A62"),
-    combination_table$combination_label
+    cutoff_labels
   )
   per_condition_plot <- ggplot2::ggplot(
     plot_data,
     ggplot2::aes(
       condition_display,
       unique_target_genes,
-      fill = combination_label
+      fill = cutoff
     )
   ) +
     ggplot2::geom_col(
@@ -1105,11 +1367,11 @@ build_comparison_page <- function(document_summary, target_counts) {
       expand = ggplot2::expansion(mult = c(0, 0.04))
     ) +
     ggplot2::labs(
-      title = "Distinct target genes represented in final documents",
-      subtitle = "Per-condition union across condition::TF documents after every link and document filter",
-      x = "HPAFII condition",
+      title = "HPAFII conditions",
+      subtitle = "Unique target genes kept in each condition",
+      x = NULL,
       y = "Unique target genes",
-      fill = "Correlation cutoffs"
+      fill = "Module 1 / Module 2"
     ) +
     report_theme(10) +
     ggplot2::theme(
@@ -1119,13 +1381,13 @@ build_comparison_page <- function(document_summary, target_counts) {
     )
 
   union_data <- target_counts[condition_id == "All conditions (union)"]
-  union_data[, combination_label := factor(
-    combination_label,
-    levels = rev(combination_table$combination_label)
+  union_data[, `:=`(
+    cell_line = factor(cell_line, levels = cell_line_specs$cell_line),
+    cutoff = factor(cutoff_labels[combination_id], levels = rev(cutoff_labels))
   )]
   union_plot <- ggplot2::ggplot(
     union_data,
-    ggplot2::aes(combination_label, unique_target_genes, fill = combination_label)
+    ggplot2::aes(cutoff, unique_target_genes, fill = cutoff)
   ) +
     ggplot2::geom_col(width = 0.68, color = "#222222", linewidth = 0.3) +
     ggplot2::geom_text(
@@ -1138,71 +1400,26 @@ build_comparison_page <- function(document_summary, target_counts) {
       size = 3.8
     ) +
     ggplot2::coord_flip() +
+    ggplot2::facet_grid(cell_line ~ .) +
     ggplot2::scale_fill_manual(values = colors, drop = FALSE) +
     ggplot2::scale_y_continuous(
       labels = scales::label_number(big.mark = ","),
       expand = ggplot2::expansion(mult = c(0, 0.18))
     ) +
     ggplot2::labs(
-      title = "All-condition target-gene union",
-      subtitle = "Union across conditions; not a sum of condition counts",
+      title = "All conditions combined",
+      subtitle = "Rows show Module 1 / Module 2 cutoffs",
       x = NULL,
       y = "Unique target genes"
     ) +
     report_theme(10) +
     ggplot2::theme(legend.position = "none")
 
-  summary_lines <- c(
-    "Fixed method-10 construction",
-    "Bound + ATAC + raw FP score >= 2 in >=1 condition",
-    "Condition::TF documents",
-    "Gene weight: condition-expression specificity",
-    "Peak terms: unique genomic coordinates",
-    "Peak weight: TF expression",
-    "Final Gene:Peak token ratio: 2:1",
-    "",
-    "Module 2 cutoff applies to both TF-target and FP-target R.",
-    "R is the positive max of Pearson and Spearman; no p/FDR gate.",
-    "",
-    "Documents retained by cutoff:",
-    paste0(
-      document_summary$combination_id[1:2],
-      " = ",
-      format(document_summary$documents[1:2], big.mark = ","),
-      collapse = " | "
-    ),
-    paste0(
-      document_summary$combination_id[3:4],
-      " = ",
-      format(document_summary$documents[3:4], big.mark = ","),
-      collapse = " | "
-    )
-  )
-  settings_plot <- ggplot2::ggplot() +
-    ggplot2::annotate(
-      "label",
-      x = 0,
-      y = 1,
-      label = paste(summary_lines, collapse = "\n"),
-      hjust = 0,
-      vjust = 1,
-      size = 3.6,
-      family = "Helvetica",
-      fontface = "bold",
-      linewidth = 0.4,
-      label.padding = grid::unit(0.55, "lines"),
-      fill = "#F7F4EC",
-      color = "#111111"
-    ) +
-    ggplot2::xlim(0, 1) +
-    ggplot2::ylim(0, 1) +
-    ggplot2::theme_void()
-
-  page <- per_condition_plot | (union_plot / settings_plot) +
-    patchwork::plot_layout(widths = c(1.65, 1), heights = c(0.9, 1.1))
+  page <- (per_condition_plot | union_plot) +
+    patchwork::plot_layout(widths = c(1.45, 1))
   page <- page + patchwork::plot_annotation(
-    title = "HPAFII Method 10: Module 1 and Module 2 correlation-cutoff sensitivity",
-    subtitle = "Four strict subsets of the same original R >= 0.3 evidence universe; no correlation or topic model was recomputed",
+    title = "How stricter cutoffs reduce target-gene coverage",
+    subtitle = "A higher cutoff keeps only stronger links and fewer genes.",
     theme = ggplot2::theme(
       plot.title = ggplot2::element_text(
         family = "Helvetica", face = "bold", size = 18
@@ -1225,6 +1442,116 @@ build_comparison_page <- function(document_summary, target_counts) {
   invisible(comparison_pdf)
 }
 
+build_compact_qc_pages <- function(document_summary, compact_summary) {
+  term_colors <- c(Gene = "#4C78A8", Peak = "#F58518")
+  for (i in seq_len(nrow(combination_table))) {
+    combo <- combination_table[i]
+    plot_data <- data.table::copy(
+      compact_summary[combination_id == combo$combination_id]
+    )
+    plot_data[, `:=`(
+      condition_display = factor(
+        simple_condition_label(condition_id),
+        levels = rev(simple_condition_label(condition_order))
+      ),
+      term_type = factor(term_type, levels = c("Gene", "Peak"))
+    )]
+    typical_plot <- ggplot2::ggplot(
+      plot_data,
+      ggplot2::aes(condition_display, median_terms, fill = term_type)
+    ) +
+      ggplot2::geom_col(
+        position = ggplot2::position_dodge2(width = 0.8, preserve = "single"),
+        width = 0.7,
+        color = "#222222",
+        linewidth = 0.2
+      ) +
+      ggplot2::coord_flip() +
+      ggplot2::scale_fill_manual(values = term_colors, drop = FALSE) +
+      ggplot2::scale_y_continuous(
+        labels = scales::label_number(big.mark = ","),
+        expand = ggplot2::expansion(mult = c(0, 0.05))
+      ) +
+      ggplot2::labs(
+        title = "Terms in a typical document",
+        subtitle = "Middle value across transcription factors",
+        x = NULL,
+        y = "Terms",
+        fill = NULL
+      ) +
+      report_theme(10) +
+      ggplot2::theme(
+        panel.grid.major.y = ggplot2::element_blank(),
+        legend.position = "bottom"
+      )
+    unique_plot <- ggplot2::ggplot(
+      plot_data,
+      ggplot2::aes(condition_display, unique_terms, fill = term_type)
+    ) +
+      ggplot2::geom_col(
+        position = ggplot2::position_dodge2(width = 0.8, preserve = "single"),
+        width = 0.7,
+        color = "#222222",
+        linewidth = 0.2
+      ) +
+      ggplot2::coord_flip() +
+      ggplot2::scale_fill_manual(values = term_colors, drop = FALSE) +
+      ggplot2::scale_y_continuous(
+        labels = scales::label_number(big.mark = ","),
+        expand = ggplot2::expansion(mult = c(0, 0.05))
+      ) +
+      ggplot2::labs(
+        title = "Unique terms in each condition",
+        subtitle = "Each term is counted once",
+        x = NULL,
+        y = "Unique terms",
+        fill = NULL
+      ) +
+      report_theme(10) +
+      ggplot2::theme(
+        panel.grid.major.y = ggplot2::element_blank(),
+        legend.position = "bottom"
+      )
+
+    summary_row <- document_summary[
+      combination_id == combo$combination_id
+    ][1L]
+    subtitle <- paste0(
+      format(summary_row$documents, big.mark = ","), " documents | ",
+      format(summary_row$unique_gene_terms, big.mark = ","), " genes | ",
+      format(summary_row$unique_peak_terms, big.mark = ","), " peaks"
+    )
+    page <- (typical_plot | unique_plot) +
+      patchwork::plot_layout(widths = c(1, 1)) +
+      patchwork::plot_annotation(
+        title = paste0(
+          "HPAFII documents: Module 1 cutoff ", combo$module1_r,
+          ", Module 2 cutoff ", combo$module2_r
+        ),
+        subtitle = subtitle,
+        theme = ggplot2::theme(
+          plot.title = ggplot2::element_text(
+            family = "Helvetica", face = "bold", size = 18
+          ),
+          plot.subtitle = ggplot2::element_text(
+            family = "Helvetica", face = "bold", size = 11
+          )
+        )
+      )
+    grDevices::cairo_pdf(
+      compact_qc_paths[[i]],
+      width = 15,
+      height = 10,
+      family = "Helvetica",
+      bg = "white",
+      onefile = TRUE
+    )
+    print(page)
+    grDevices::dev.off()
+  }
+  invisible(compact_qc_paths)
+}
+
 assemble_report <- function() {
   required <- c(
     footprint_pdf,
@@ -1238,23 +1565,13 @@ assemble_report <- function() {
     document_summary_path,
     showProgress = FALSE
   )
-  target_counts <- data.table::fread(
-    target_count_path,
-    showProgress = FALSE
-  )
-  build_comparison_page(document_summary, target_counts)
-  qc_paths <- file.path(
-    output_root,
-    "document_qc",
-    combination_table$combination_id,
-    "document_term_qc.pdf"
-  )
-  if (any(!file.exists(qc_paths))) {
-    stop("Document QC PDF(s) are missing.")
-  }
+  target_counts <- build_cell_line_target_counts()
+  build_comparison_page(target_counts)
+  compact_summary <- build_compact_qc_summary()
+  build_compact_qc_pages(document_summary, compact_summary)
   qpdf <- Sys.which("qpdf")
   if (!nzchar(qpdf)) stop("qpdf is required to assemble the final report.")
-  source_pdfs <- c(footprint_pdf, comparison_pdf, qc_paths)
+  source_pdfs <- c(footprint_pdf, comparison_pdf, compact_qc_paths)
   qpdf_args <- c(
     "--empty",
     "--pages",
@@ -1271,8 +1588,8 @@ assemble_report <- function() {
     c("--show-npages", final_pdf),
     stdout = TRUE
   )[[1L]]))
-  if (!identical(page_count, 10L)) {
-    stop("Final report must contain 10 pages; found ", page_count, ".")
+  if (!identical(page_count, 6L)) {
+    stop("Final report must contain 6 pages; found ", page_count, ".")
   }
   check_status <- system2(qpdf, c("--check", final_pdf))
   if (!identical(check_status, 0L)) stop("qpdf integrity validation failed.")
@@ -1288,7 +1605,7 @@ assemble_report <- function() {
     report_manifest,
     file.path(output_root, "final_report_manifest.csv")
   )
-  log_info("Wrote final 10-page report: ", final_pdf)
+  log_info("Wrote final 6-page report: ", final_pdf)
   invisible(final_pdf)
 }
 
