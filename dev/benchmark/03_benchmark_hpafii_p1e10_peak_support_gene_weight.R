@@ -2,14 +2,16 @@
 
 args <- commandArgs(trailingOnly = TRUE)
 stage <- if (length(args)) tolower(args[[1L]]) else "all"
-allowed_stages <- c("all", "documents", "train", "qc", "compare", "deliver")
+allowed_stages <- c(
+  "all", "documents", "train", "qc", "compare", "deliver", "r0p7"
+)
 if (!stage %in% allowed_stages) {
   stop("Stage must be one of: ", paste(allowed_stages, collapse = ", "))
 }
 
 required_packages <- c(
   "arrow", "craftgrn", "data.table", "digest", "ggplot2", "Matrix",
-  "patchwork", "scales", "yaml"
+  "patchwork", "scales", "tidyselect", "yaml"
 )
 missing_packages <- required_packages[!vapply(
   required_packages,
@@ -139,6 +141,86 @@ box_plan_names <- c(
     plan_date,
     "_HPAFII_Method10_P1e10_TFUnionPeaks.yaml"
   )
+)
+
+strict_cutoff <- 0.7
+strict_benchmark_root <- file.path(
+  topic_runs,
+  "review",
+  "method10_p1e10_r0p7_sensitivity"
+)
+strict_delivery_root <- file.path(strict_benchmark_root, "delivery")
+strict_box_root <- paste0(
+  box_parent,
+  "/17_Method10_P1e10_R0p7_K30_Sensitivity"
+)
+strict_box_plan_name <- paste0(
+  plan_date,
+  "_HPAFII_Method10_P1e10_R0p7_K30.yaml"
+)
+strict_module1_root <- file.path(strict_root, "module1_r0p7_p1e10")
+strict_module2_root <- file.path(
+  strict_root,
+  "module2_m1r0p7_tfr0p7_fpr0p7_p1e10"
+)
+strict_module2_manifest_path <- file.path(
+  strict_module2_root,
+  "data",
+  "links",
+  "module2_links_manifest.csv"
+)
+strict_run_root <- file.path(
+  topic_runs,
+  "run_039_lda_condition_tf_unique_fp_p1e10_r0p7_K30_g2p1"
+)
+strict_model_root <- file.path(strict_run_root, "topic_models")
+strict_extraction_root <- file.path(
+  strict_run_root,
+  "topic_extraction",
+  "K30"
+)
+strict_qc_name <- paste0(
+  "LDA_K30_RCutoff-0p7-0p7-0p7_PeakSupport-ConditionSpecific_",
+  "Ratio-Gene2-Peak1_QC.pdf"
+)
+strict_run_row <- data.table::data.table(
+  run_number = 39L,
+  support = "condition_specific_r0p7",
+  support_label = "R 0.7 / 0.7 / 0.7",
+  gene_to_peak = 2L,
+  run_id = basename(strict_run_root),
+  run_root = strict_run_root,
+  model_root = strict_model_root,
+  extraction_root = strict_extraction_root,
+  qc_name = strict_qc_name,
+  qc_title = paste0(
+    "HPAFII | K30 | R 0.7 / 0.7 / 0.7 | ",
+    "p = 1e-10 | Gene:Peak 2:1"
+  )
+)
+strict_support_path <- file.path(strict_benchmark_root, "strict_support.parquet")
+strict_peak_gene_map_path <- file.path(
+  strict_benchmark_root,
+  "strict_peak_gene_map.csv"
+)
+strict_condition_audit_path <- file.path(
+  strict_benchmark_root,
+  "strict_condition_counts.csv"
+)
+strict_signature_path <- file.path(strict_benchmark_root, "input_signature.txt")
+strict_plan_path <- file.path(strict_benchmark_root, "run_config.yaml")
+strict_comparison_metrics_path <- file.path(
+  strict_benchmark_root,
+  "sensitivity_metrics.csv"
+)
+strict_comparison_pdf <- file.path(
+  strict_benchmark_root,
+  "HPAFII_K30_R0p7_Sensitivity_Comparison.pdf"
+)
+strict_expression_path <- file.path(
+  analysis_root,
+  "condition_links",
+  "condition_gene_expression.csv"
 )
 
 raw_doc_root <- file.path(strict_root, "document_terms_raw", "p1e10")
@@ -1043,14 +1125,20 @@ write_document_qc <- function(dtm, row, overwrite = FALSE) {
     term_id = colnames(dtm)[entries$j],
     pseudo_count_log = as.numeric(entries$x)
   )
+  report_title <- if ("qc_title" %in% names(row) &&
+      nzchar(as.character(row$qc_title[[1L]]))) {
+    as.character(row$qc_title[[1L]])
+  } else {
+    paste0(
+      "HPAFII p = 1e-10 | ", row$support_label[[1L]],
+      " | Gene:Peak ", row$gene_to_peak[[1L]], ":1"
+    )
+  }
   craftgrn:::.write_module3_document_term_qc(
     doc_term = doc_term,
     output_dir = model_root,
     count_column = "pseudo_count_log",
-    title = paste0(
-      "HPAFII p = 1e-10 | ", row$support_label[[1L]],
-      " | Gene:Peak ", row$gene_to_peak[[1L]], ":1"
-    ),
+    title = report_title,
     document_unit = "tf",
     verbose = TRUE
   )
@@ -1382,10 +1470,13 @@ mean_off_diagonal <- function(value) {
   if (length(entries)) mean(entries) else NA_real_
 }
 
-write_qc_one <- function(row) {
+write_qc_one <- function(row,
+                         peak_map_file = peak_gene_map_path,
+                         config_writer = write_run_config,
+                         qc_root = benchmark_root) {
   model_root <- as.character(row$model_root[[1L]])
   extraction_root <- as.character(row$extraction_root[[1L]])
-  qc_dir <- file.path(benchmark_root, "qc")
+  qc_dir <- file.path(qc_root, "qc")
   qc_path <- file.path(qc_dir, as.character(row$qc_name[[1L]]))
   metrics_path <- file.path(extraction_root, "benchmark_metrics.csv")
   existing_pages <- if (file.exists(qc_path)) {
@@ -1433,7 +1524,7 @@ write_qc_one <- function(row) {
     method = "gammafit_maxprob",
     independent_unique_peaks = TRUE
   )
-  peak_map <- data.table::fread(peak_gene_map_path, showProgress = FALSE)
+  peak_map <- data.table::fread(peak_map_file, showProgress = FALSE)
   pairs <- craftgrn:::.topic_unique_peak_gene_assignment_table(
     terms,
     peak_map[, .(peak_id, gene_key)]
@@ -1493,10 +1584,15 @@ write_qc_one <- function(row) {
   } else {
     NULL
   }
-  title <- paste0(
-    "HPAFII | K30 | ", row$support_label[[1L]],
-    " | Gene:Peak ", row$gene_to_peak[[1L]], ":1 | p = 1e-10"
-  )
+  title <- if ("qc_title" %in% names(row) &&
+      nzchar(as.character(row$qc_title[[1L]]))) {
+    as.character(row$qc_title[[1L]])
+  } else {
+    paste0(
+      "HPAFII | K30 | ", row$support_label[[1L]],
+      " | Gene:Peak ", row$gene_to_peak[[1L]], ":1 | p = 1e-10"
+    )
+  }
   log_info("Writing QC report: ", row$qc_name[[1L]])
   craftgrn:::.write_module3_topic_assignment_qc(
     optimization,
@@ -1579,7 +1675,7 @@ write_qc_one <- function(row) {
     qc_pdf = normalizePath(qc_path, winslash = "/", mustWork = TRUE)
   )
   data.table::fwrite(metrics, metrics_path)
-  write_run_config(row, status = "qc_complete")
+  config_writer(row, status = "qc_complete")
   rm(
     theta, phi, score, candidates, terms, peak_map, pairs, genes,
     diagnostics, optimization, condition_theta, condition_correlation,
@@ -2100,7 +2196,1180 @@ deliver_results <- function() {
   invisible(manifest)
 }
 
-if (stage == "documents") {
+strict_predicted_manifest_path <- file.path(
+  strict_module1_root,
+  "module1_predicted_tfbs_manifest.csv"
+)
+strict_dtm_path <- file.path(strict_model_root, "rds", "dtm.rds")
+strict_input_summary_path <- file.path(
+  strict_model_root,
+  "topic_input_summary.csv"
+)
+
+run_strict_upstream <- function() {
+  environment <- c(
+    paste0("CRAFTGRN_METHOD10_PROJECT=", project_root),
+    paste0("CRAFTGRN_STRICT_M1_R=", strict_cutoff),
+    paste0("CRAFTGRN_STRICT_M2_TF_R=", strict_cutoff),
+    paste0("CRAFTGRN_STRICT_M2_FP_R=", strict_cutoff)
+  )
+  rscript <- file.path(R.home("bin"), "Rscript")
+  scripts <- c(
+    file.path(
+      repository_root,
+      "dev",
+      "benchmark",
+      "01_build_hpafii_strict_bound_sensitivity.R"
+    ),
+    file.path(
+      repository_root,
+      "dev",
+      "benchmark",
+      "02_build_hpafii_strict_bound_documents.R"
+    )
+  )
+  stages <- c("module1", "module2")
+  for (i in seq_along(scripts)) {
+    log_info(
+      "Running the true 0.7 sensitivity upstream stage ", i,
+      "/", length(scripts), "."
+    )
+    status <- system2(
+      rscript,
+      c(shQuote(scripts[[i]]), stages[[i]]),
+      env = environment
+    )
+    if (!identical(status, 0L)) {
+      stop("The 0.7 upstream stage failed: ", basename(scripts[[i]]), ".")
+    }
+  }
+  required <- c(strict_predicted_manifest_path, strict_module2_manifest_path)
+  if (any(!file.exists(required))) {
+    stop("The true 0.7 upstream run did not write all required manifests.")
+  }
+  invisible(required)
+}
+
+strict_source_signature <- function() {
+  if (!file.exists(strict_module2_manifest_path) ||
+      !file.exists(strict_predicted_manifest_path)) {
+    stop("The true 0.7 upstream manifests are missing.")
+  }
+  module1_manifest <- data.table::fread(
+    strict_predicted_manifest_path,
+    showProgress = FALSE
+  )
+  module2_manifest <- data.table::fread(
+    strict_module2_manifest_path,
+    showProgress = FALSE
+  )
+  source_paths <- unique(c(
+    strict_predicted_manifest_path,
+    strict_module2_manifest_path,
+    as.character(module1_manifest$path),
+    as.character(module2_manifest$path),
+    bound_path,
+    multiomic_path,
+    gene_union_path,
+    strict_expression_path,
+    project_config_path
+  ))
+  missing <- source_paths[!file.exists(source_paths)]
+  if (length(missing)) {
+    stop("A strict sensitivity source artifact is missing: ", missing[[1L]])
+  }
+  digest::digest(
+    list(
+      files = lapply(source_paths, file_identity),
+      module1_r = strict_cutoff,
+      module2_tf_r = strict_cutoff,
+      module2_fp_r = strict_cutoff,
+      footprint_p = 1e-10,
+      peak_support = "condition_specific",
+      gene_to_peak = 2L,
+      token_budget = "natural strict document totals after standard count cap",
+      K = 30L,
+      seed = 123L
+    ),
+    algo = "xxhash64"
+  )
+}
+
+check_strict_signature <- function(signature) {
+  dir.create(strict_benchmark_root, recursive = TRUE, showWarnings = FALSE)
+  if (file.exists(strict_signature_path)) {
+    old <- trimws(readLines(strict_signature_path, warn = FALSE)[[1L]])
+    if (!identical(old, signature)) {
+      stop(
+        "Existing R 0.7 sensitivity output has a different source signature."
+      )
+    }
+  } else {
+    writeLines(signature, strict_signature_path, useBytes = TRUE)
+  }
+  invisible(signature)
+}
+
+read_strict_links <- function() {
+  manifest <- data.table::fread(
+    strict_module2_manifest_path,
+    showProgress = FALSE
+  )
+  if (!all(c("path", "format") %in% names(manifest)) ||
+      any(!file.exists(manifest$path))) {
+    stop("The strict Module 2 link manifest is incomplete.")
+  }
+  pieces <- lapply(seq_len(nrow(manifest)), function(i) {
+    path <- as.character(manifest$path[[i]])
+    format <- as.character(manifest$format[[i]])
+    columns <- c(
+      "link_id", "tf", "fp_id", "target_gene", "module2_link_pass"
+    )
+    value <- if (identical(format, "parquet") ||
+        grepl("[.]parquet$", path, ignore.case = TRUE)) {
+      data.table::as.data.table(arrow::read_parquet(
+        path,
+        col_select = tidyselect::all_of(columns),
+        as_data_frame = TRUE
+      ))
+    } else {
+      data.table::fread(path, select = columns, showProgress = FALSE)
+    }
+    value[module2_link_pass %in% TRUE]
+  })
+  links <- data.table::rbindlist(pieces, use.names = TRUE)
+  if (!nrow(links)) stop("No links pass the true 0.7 Module 2 run.")
+  if (anyDuplicated(links$link_id)) {
+    stop("The strict Module 2 link IDs are not unique.")
+  }
+  links[]
+}
+
+build_strict_dtm <- function() {
+  run_strict_upstream()
+  signature <- strict_source_signature()
+  check_strict_signature(signature)
+  complete <- all(file.exists(c(
+    strict_dtm_path,
+    strict_input_summary_path,
+    strict_support_path,
+    strict_peak_gene_map_path,
+    strict_condition_audit_path,
+    file.path(strict_model_root, "document_term_qc.pdf"),
+    file.path(strict_model_root, "document_term_qc_summary.csv")
+  )))
+  if (complete) {
+    log_info("Reusing the validated R 0.7 sensitivity DTM.")
+    return(invisible(strict_dtm_path))
+  }
+
+  log_info("Building p = 1e-10 documents from the true 0.7 upstream links.")
+  links <- read_strict_links()
+  multiomic <- readRDS(multiomic_path)
+  fp_bound <- readRDS(bound_path)
+  fp_ids <- rownames(fp_bound)
+  if (is.null(fp_ids)) fp_ids <- rownames(multiomic$matrices$fp_score)
+  gene_ids <- rownames(multiomic$matrices$gene_expr)
+  gene_union_table <- data.table::fread(gene_union_path, showProgress = FALSE)
+  gene_union <- unique(as.character(
+    gene_union_table[pass_abs_log2fc %in% TRUE, gene_key]
+  ))
+  if (!length(gene_union)) stop("The differential-gene union is empty.")
+  condition_manifest <- data.table::fread(
+    condition_manifest_path,
+    showProgress = FALSE
+  )
+  conditions <- as.character(condition_manifest$condition_id)
+  if (length(conditions) != 17L || anyDuplicated(conditions)) {
+    stop("Expected 17 unique HPAFII conditions.")
+  }
+  missing_conditions <- setdiff(
+    conditions,
+    Reduce(
+      intersect,
+      list(
+        colnames(fp_bound),
+        colnames(multiomic$matrices$fp_score),
+        colnames(multiomic$matrices$gene_expr)
+      )
+    )
+  )
+  if (length(missing_conditions)) {
+    stop("The strict inputs are missing condition: ", missing_conditions[[1L]])
+  }
+  fp_index <- match(links$fp_id, fp_ids)
+  target_index <- match(links$target_gene, gene_ids)
+  tf_index <- match(links$tf, gene_ids)
+  base_valid <- !is.na(fp_index) & !is.na(target_index) & !is.na(tf_index) &
+    links$target_gene %in% gene_union
+  links <- links[base_valid]
+  fp_index <- fp_index[base_valid]
+  target_index <- target_index[base_valid]
+  tf_index <- tf_index[base_valid]
+  if (!nrow(links)) stop("No strict links align to the model inputs.")
+
+  edge_parts <- vector("list", length(conditions))
+  audit_parts <- vector("list", length(conditions))
+  for (i in seq_along(conditions)) {
+    condition_id <- conditions[[i]]
+    condition_index <- match(condition_id, colnames(fp_bound))
+    fp_score_index <- match(
+      condition_id,
+      colnames(multiomic$matrices$fp_score)
+    )
+    gene_expression_index <- match(
+      condition_id,
+      colnames(multiomic$matrices$gene_expr)
+    )
+    gene_expression <- multiomic$matrices$gene_expr[, gene_expression_index]
+    keep <- fp_bound[cbind(fp_index, condition_index)] > 0 &
+      is.finite(gene_expression[target_index]) &
+      gene_expression[target_index] >= 10 &
+      is.finite(gene_expression[tf_index]) & gene_expression[tf_index] > 0
+    selected <- links[keep]
+    selected_fp <- fp_index[keep]
+    selected_target <- target_index[keep]
+    selected_tf <- tf_index[keep]
+    if (!nrow(selected)) {
+      stop("No strict links remain for condition ", condition_id, ".")
+    }
+    edge_parts[[i]] <- data.table::data.table(
+      condition_label = condition_id,
+      tf_doc = as.character(selected$tf),
+      tf = as.character(selected$tf),
+      gene_key = as.character(selected$target_gene),
+      peak_id = as.character(selected$fp_id),
+      fp_score_condition = as.numeric(
+        multiomic$matrices$fp_score[selected_fp, fp_score_index]
+      ),
+      gene_expr_condition = as.numeric(gene_expression[selected_target]),
+      tf_expr_condition = as.numeric(gene_expression[selected_tf])
+    )
+    audit_parts[[i]] <- data.table::data.table(
+      condition_id = condition_id,
+      link_rows = nrow(selected),
+      tf_documents = data.table::uniqueN(selected$tf),
+      unique_target_genes = data.table::uniqueN(selected$target_gene),
+      unique_peaks = data.table::uniqueN(selected$fp_id)
+    )
+    rm(selected, selected_fp, selected_target, selected_tf, gene_expression)
+  }
+  edges <- data.table::rbindlist(edge_parts, use.names = TRUE)
+  condition_audit <- data.table::rbindlist(audit_parts, use.names = TRUE)
+  if (nrow(edges) != sum(condition_audit$link_rows) ||
+      data.table::uniqueN(condition_audit$condition_id) != 17L) {
+    stop("The strict condition audit does not match the retained edges.")
+  }
+  condition_audit[, source_signature := signature]
+  data.table::fwrite(condition_audit, strict_condition_audit_path)
+
+  specificity <- craftgrn:::.module3_condition_gene_specificity_lookup(
+    expression_file = strict_expression_path,
+    expression_min = 10,
+    temperature = 0.5,
+    uniform_floor = 0.1
+  )
+  doc_term <- craftgrn:::build_doc_term_condition_union(
+    edges_condition = edges,
+    count_method = "log",
+    count_scale = 50,
+    prefix_terms = TRUE,
+    threshold_gene_expr = 10,
+    threshold_fp_score = -Inf,
+    threshold_tf_expr = -Inf,
+    include_tf_terms = FALSE,
+    require_tf_expr = TRUE,
+    fp_term_mode = "unique",
+    condition_peak_weighting = "tf_expression",
+    condition_gene_specificity = specificity,
+    balance_mode = "min",
+    check_repeated_values = FALSE
+  )
+  if (!nrow(doc_term)) stop("Strict document construction returned no terms.")
+  doc_term[, modality := data.table::fifelse(
+    startsWith(term_id, "GENE:"),
+    "gene",
+    data.table::fifelse(startsWith(term_id, "PEAK:"), "peak", NA_character_)
+  )]
+  if (anyNA(doc_term$modality)) stop("The strict documents have an unknown term type.")
+  token_cap <- craftgrn:::.cap_warplda_token_counts(
+    as.numeric(doc_term$pseudo_count_log)
+  )
+  doc_term[, source_count := as.numeric(token_cap$counts)]
+  arrow::write_parquet(
+    doc_term[, .(doc_id, term_id, modality, source_count)],
+    strict_support_path,
+    compression = "zstd"
+  )
+
+  documents <- sort(unique(doc_term$doc_id))
+  vocabulary <- c(
+    sort(unique(doc_term[modality == "gene", term_id])),
+    sort(unique(doc_term[modality == "peak", term_id]))
+  )
+  entries <- data.table::data.table(
+    i = match(doc_term$doc_id, documents),
+    j = match(doc_term$term_id, vocabulary),
+    x = doc_term$source_count
+  )
+  if (anyNA(entries$i) || anyNA(entries$j) || any(entries$x <= 0)) {
+    stop("The strict document entries do not align to the DTM index.")
+  }
+  dtm <- Matrix::sparseMatrix(
+    i = entries$i,
+    j = entries$j,
+    x = entries$x,
+    dims = c(length(documents), length(vocabulary)),
+    dimnames = list(documents, vocabulary),
+    repr = "R"
+  )
+  dtm <- methods::as(dtm, "RsparseMatrix")
+  target_budget <- as.numeric(Matrix::rowSums(dtm))
+  gene_term <- startsWith(vocabulary, "GENE:")
+  finalized <- craftgrn:::.topic_finalize_sparse_counts_cpp(
+    row_pointer = dtm@p,
+    column_index = dtm@j,
+    source_count = dtm@x,
+    gene_term = gene_term,
+    idf_multiplier = rep(1, length(vocabulary)),
+    peak_gene_ratio = 0.5
+  )
+  dtm@x <- as.numeric(finalized$counts)
+  dtm <- methods::as(dtm, "CsparseMatrix")
+  if (!identical(as.numeric(Matrix::rowSums(dtm)), target_budget)) {
+    stop("The strict DTM did not preserve its natural document budgets.")
+  }
+  peak_tokens <- as.numeric(Matrix::rowSums(dtm[, !gene_term, drop = FALSE]))
+  expected_peak <- floor(target_budget / 3 + 0.5)
+  if (any(peak_tokens != expected_peak)) {
+    stop("The strict DTM did not realize the Gene:Peak 2:1 ratio.")
+  }
+  dir.create(file.path(strict_model_root, "rds"), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(dtm, strict_dtm_path, compress = TRUE)
+
+  peak_gene_map <- unique(edges[, .(
+    tf = as.character(tf),
+    peak_id = as.character(peak_id),
+    gene_key = as.character(gene_key)
+  )])
+  peak_gene_map <- peak_gene_map[
+    paste0("PEAK:", peak_id) %in% vocabulary &
+      paste0("GENE:", gene_key) %in% vocabulary
+  ]
+  if (!nrow(peak_gene_map)) stop("The strict Peak-gene map is empty.")
+  data.table::setorder(peak_gene_map, peak_id, gene_key, tf)
+  data.table::fwrite(peak_gene_map, strict_peak_gene_map_path)
+
+  input_summary <- data.table::data.table(
+    analysis_label = "HPAFII_p1e10_R0p7_K30_Gene2_Peak1",
+    source_signature = signature,
+    module1_r = strict_cutoff,
+    module2_tf_target_r = strict_cutoff,
+    module2_fp_target_r = strict_cutoff,
+    footprint_p = 1e-10,
+    support = "condition_specific",
+    gene_peak_ratio = "2:1",
+    condition_link_rows = nrow(edges),
+    documents = nrow(dtm),
+    gene_terms = sum(gene_term),
+    peak_terms = sum(!gene_term),
+    nonzero_document_terms = length(dtm@x),
+    model_tokens = sum(dtm@x),
+    token_budget = "natural strict document totals after standard count cap",
+    raw_model_tokens = token_cap$raw_tokens,
+    capped_model_tokens = token_cap$tokens,
+    global_token_scale_factor = token_cap$scale_factor,
+    count_method = "log",
+    count_scale = 50,
+    min_df = 1L
+  )
+  data.table::fwrite(input_summary, strict_input_summary_path)
+  write_document_qc(dtm, strict_run_row, overwrite = TRUE)
+  write_strict_config(strict_run_row, status = "documents_complete")
+  log_info(
+    "Built the strict DTM: ", format(nrow(dtm), big.mark = ","),
+    " documents, ", format(sum(gene_term), big.mark = ","),
+    " Genes, and ", format(sum(!gene_term), big.mark = ","), " Peaks."
+  )
+  rm(
+    links, multiomic, fp_bound, edges, edge_parts, doc_term, dtm,
+    specificity, finalized, entries, peak_gene_map
+  )
+  invisible(gc())
+  invisible(strict_dtm_path)
+}
+
+strict_run_configuration <- function(row, status = "configured") {
+  signature <- if (file.exists(strict_signature_path)) {
+    trimws(readLines(strict_signature_path, warn = FALSE)[[1L]])
+  } else {
+    NA_character_
+  }
+  input <- if (file.exists(strict_input_summary_path)) {
+    data.table::fread(strict_input_summary_path, nrows = 1L, showProgress = FALSE)
+  } else {
+    data.table::data.table(
+      documents = NA_integer_, gene_terms = NA_integer_,
+      peak_terms = NA_integer_, condition_link_rows = NA_integer_,
+      model_tokens = NA_real_
+    )
+  }
+  metrics_path <- file.path(strict_model_root, "model_metrics.csv")
+  recorded_threads <- if (file.exists(metrics_path)) {
+    as.integer(data.table::fread(
+      metrics_path,
+      nrows = 1L,
+      showProgress = FALSE
+    )$threads[[1L]])
+  } else {
+    parse_workers()
+  }
+  list(
+    schema_version = 1L,
+    plan_date = plan_date,
+    run_id = as.character(row$run_id[[1L]]),
+    status = status,
+    purpose = paste0(
+      "Test the effect of setting Module 1, TF-target, and FP-target ",
+      "correlation cutoffs to 0.7 in the HPAFII Method 10 model."
+    ),
+    comparison = list(
+      baseline_run = "run_027_lda_condition_tf_unique_fp_p1e10_condition_specific_K30_g2p1",
+      baseline_cutoffs = "0.5 / 0.5 / 0.3",
+      changed_setting = "Module 1 / TF-target / FP-target = 0.7 / 0.7 / 0.7",
+      fixed_settings = paste0(
+        "p = 1e-10, condition-specific coordinate Peaks, ",
+        "Gene:Peak 2:1, LDA K30, seed 123"
+      )
+    ),
+    project = list(
+      name = "nutrient_stress_strict_JASPAR2024_expanded",
+      cell_line = "HPAFII",
+      local_root = project_root,
+      project_yaml = project_config_path,
+      analysis_root = analysis_root,
+      conditions = 17L
+    ),
+    source_artifacts = list(
+      source_signature = signature,
+      multiomic_object = multiomic_path,
+      p1e10_condition_bound_matrix = bound_path,
+      module1_predicted_tfbs_manifest = strict_predicted_manifest_path,
+      module2_links_manifest = strict_module2_manifest_path,
+      differential_gene_union = gene_union_path,
+      condition_expression = strict_expression_path,
+      baseline_document_summary = file.path(
+        strict_root,
+        "p_only_document_summary.csv"
+      )
+    ),
+    upstream_filters = list(
+      module1_tf_peak_min_r = strict_cutoff,
+      module2_tf_target_min_r = strict_cutoff,
+      module2_fp_target_min_r = strict_cutoff,
+      correlation_statistic = "positive maximum of Pearson and Spearman",
+      correlation_p_or_fdr_gate = FALSE,
+      footprint_cutoff = list(
+        method = "sample-specific learned null distribution",
+        p_value = 1e-10,
+        condition_minimum_passing_samples = 1L
+      ),
+      target_gene_set = "global union with abs(log2FC) >= 1 in at least one comparison",
+      target_condition_expression_min = 10,
+      tf_condition_expression = "positive finite expression required"
+    ),
+    document_construction = list(
+      document_id = "condition::TF",
+      peak_support = "condition-specific p = 1e-10 passing Peaks",
+      gene_weight = "condition expression with condition-gene specificity",
+      peak_weight = "condition footprint score with TF-expression scaling",
+      modality_balance_before_counting = "equal Gene and Peak weight mass within each document",
+      count_conversion = "ceiling(log1p(weight) * 50)",
+      final_gene_peak_ratio = "2:1",
+      token_budget = "natural strict document totals after standard count cap",
+      documents = as.integer(input$documents[[1L]]),
+      genes = as.integer(input$gene_terms[[1L]]),
+      peaks = as.integer(input$peak_terms[[1L]]),
+      condition_link_rows = as.integer(input$condition_link_rows[[1L]]),
+      model_tokens = as.numeric(input$model_tokens[[1L]])
+    ),
+    model = list(
+      family = "LDA",
+      backend = "WarpLDA OpenMP",
+      topics = 30L,
+      alpha_sum = 20,
+      alpha_per_topic = 20 / 30,
+      beta = 1 / 30,
+      iterations = 200L,
+      convergence_tolerance = 0.001,
+      seed = 123L,
+      threads = recorded_threads,
+      memory_safety = "strict",
+      maximum_memory_fraction = 0.8
+    ),
+    topic_assignment = list(
+      score = "normtop_specificity",
+      candidate_filter = "GammaFit by topic and term group",
+      gammafit_thrP = 0.7,
+      gammafit_min_terms = 50L,
+      assignment = "gammafit_maxprob",
+      unique_peak_assignment = "independent coordinate Peaks",
+      tf_membership = "raw document theta >= 0.3"
+    ),
+    outputs = list(
+      local_run_root = strict_run_root,
+      comparison_root = strict_benchmark_root,
+      qc_pdf = file.path(strict_benchmark_root, "qc", strict_qc_name),
+      comparison_pdf = strict_comparison_pdf,
+      box_delivery_root = strict_box_root,
+      box_plan = paste0(box_plans_root, "/", strict_box_plan_name),
+      files = list(
+        dtm = artifact_record(strict_dtm_path),
+        metrics = artifact_record(metrics_path),
+        theta = artifact_record(file.path(
+          strict_model_root,
+          "vae_models",
+          "theta_K30.csv"
+        )),
+        phi = artifact_record(file.path(
+          strict_model_root,
+          "vae_models",
+          "phi_K30.csv"
+        )),
+        qc = artifact_record(file.path(
+          strict_benchmark_root,
+          "qc",
+          strict_qc_name
+        )),
+        comparison = artifact_record(strict_comparison_pdf)
+      )
+    ),
+    execution = list(
+      script = script_path,
+      command = paste0(
+        "Rscript dev/benchmark/",
+        "03_benchmark_hpafii_p1e10_peak_support_gene_weight.R r0p7"
+      ),
+      upstream_environment = list(
+        CRAFTGRN_STRICT_M1_R = strict_cutoff,
+        CRAFTGRN_STRICT_M2_TF_R = strict_cutoff,
+        CRAFTGRN_STRICT_M2_FP_R = strict_cutoff
+      ),
+      software = software_versions()
+    )
+  )
+}
+
+write_strict_config <- function(row = strict_run_row,
+                                status = "configured") {
+  config <- strict_run_configuration(row, status = status)
+  dir.create(strict_benchmark_root, recursive = TRUE, showWarnings = FALSE)
+  dir.create(strict_run_root, recursive = TRUE, showWarnings = FALSE)
+  yaml::write_yaml(
+    config,
+    strict_plan_path,
+    indent.mapping.sequence = TRUE
+  )
+  yaml::write_yaml(
+    config,
+    file.path(strict_run_root, "run_config.yaml"),
+    indent.mapping.sequence = TRUE
+  )
+  invisible(strict_plan_path)
+}
+
+train_strict_model <- function() {
+  build_strict_dtm()
+  phi_path <- file.path(strict_model_root, "vae_models", "phi_K30.csv")
+  theta_path <- file.path(strict_model_root, "vae_models", "theta_K30.csv")
+  if (file.exists(phi_path) && file.exists(theta_path)) {
+    log_info("Reusing the trained R 0.7 K30 model.")
+    return(invisible(TRUE))
+  }
+  dtm <- readRDS(strict_dtm_path)
+  log_info("Training the true 0.7 / 0.7 / 0.7 K30 WarpLDA model.")
+  fits <- craftgrn:::run_warplda_models(
+    dtm,
+    K_grid = 30L,
+    iterations = 200L,
+    alpha_by_topic = TRUE,
+    alpha_sum = 20,
+    beta = 1 / 30,
+    seed = 123L,
+    save_tmp_dir = file.path(strict_model_root, "tmp_models"),
+    workers = 1L,
+    threads_per_model = parse_workers(),
+    sampler = "warp_omp",
+    metrics_file = file.path(strict_model_root, "model_metrics.csv"),
+    memory_safety = "strict",
+    memory_max_fraction = 0.8
+  )
+  fit <- readRDS(fits$fit_files[[1L]])
+  dir.create(
+    file.path(strict_model_root, "vae_models"),
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+  write_probability(fit$theta, "doc_id", theta_path)
+  write_probability(fit$phi, "term_id", phi_path)
+  metrics <- data.table::as.data.table(fits$metrics)
+  metrics[, `:=`(
+    source_signature = trimws(readLines(
+      strict_signature_path,
+      warn = FALSE
+    )[[1L]]),
+    support = "condition_specific_r0p7",
+    gene_peak_ratio = "2:1",
+    run_id = strict_run_row$run_id[[1L]]
+  )]
+  data.table::fwrite(metrics, file.path(strict_model_root, "model_metrics.csv"))
+  selection <- craftgrn:::plot_model_selection_cistopic(
+    metrics,
+    file.path(strict_model_root, "model_selection.pdf"),
+    title_prefix = "HPAFII p = 1e-10 | R 0.7 / 0.7 / 0.7 | Gene:Peak 2:1"
+  )
+  saveRDS(selection, file.path(strict_model_root, "rds", "model_selection.rds"))
+  write_strict_config(strict_run_row, status = "model_complete")
+  rm(dtm, fits, fit, selection)
+  invisible(gc())
+  invisible(TRUE)
+}
+
+write_strict_qc <- function() {
+  train_strict_model()
+  if (!requireNamespace("devtools", quietly = TRUE)) {
+    stop("Package devtools is required to load the current QC report code.")
+  }
+  devtools::load_all(
+    repository_root,
+    quiet = TRUE,
+    export_all = FALSE,
+    helpers = FALSE
+  )
+  write_qc_one(
+    strict_run_row,
+    peak_map_file = strict_peak_gene_map_path,
+    config_writer = write_strict_config,
+    qc_root = strict_benchmark_root
+  )
+}
+
+baseline_condition_counts <- function() {
+  cache_path <- file.path(
+    strict_benchmark_root,
+    "baseline_condition_counts.csv"
+  )
+  if (file.exists(cache_path)) {
+    return(data.table::fread(cache_path, showProgress = FALSE))
+  }
+  pieces <- lapply(raw_doc_paths, function(path) {
+    value <- data.table::as.data.table(arrow::read_parquet(
+      path,
+      col_select = c("doc_id", "term_id"),
+      as_data_frame = TRUE
+    ))
+    condition_id <- sub("::[^:]+$", "", value$doc_id[[1L]])
+    data.table::data.table(
+      condition_id = condition_id,
+      tf_documents = data.table::uniqueN(value$doc_id),
+      unique_target_genes = data.table::uniqueN(
+        value[startsWith(term_id, "GENE:"), term_id]
+      ),
+      unique_peaks = data.table::uniqueN(
+        value[startsWith(term_id, "PEAK:"), term_id]
+      )
+    )
+  })
+  output <- data.table::rbindlist(pieces, use.names = TRUE)
+  data.table::fwrite(output, cache_path)
+  output
+}
+
+strict_simple_condition_label <- function(value) {
+  value <- sub("^HPAFII_", "", value)
+  value <- sub("_Ctrl$", "", value)
+  value <- gsub("Gln[.]Arg", "Gln + Arg", value)
+  value <- gsub("Met[.]Cys", "Met + Cys", value)
+  gsub("_", " ", value, fixed = TRUE)
+}
+
+write_strict_comparison <- function() {
+  strict_metrics <- write_strict_qc()
+  baseline_metrics_path <- file.path(
+    run_table[run_number == 27L, extraction_root],
+    "benchmark_metrics.csv"
+  )
+  if (!file.exists(baseline_metrics_path)) {
+    stop("The matched baseline model metrics are missing.")
+  }
+  baseline_metrics <- data.table::fread(
+    baseline_metrics_path,
+    showProgress = FALSE
+  )[1L]
+  strict_input <- data.table::fread(
+    strict_input_summary_path,
+    showProgress = FALSE
+  )[1L]
+  baseline_document <- data.table::fread(
+    file.path(strict_root, "p_only_document_summary.csv"),
+    showProgress = FALSE
+  )[p_id == "p1e10"][1L]
+  if (!nrow(baseline_document)) stop("The matched p = 1e-10 summary is missing.")
+  module1_baseline <- data.table::fread(
+    file.path(strict_root, "module1_r0p5_p1e10", "module1_qc_summary.csv"),
+    showProgress = FALSE
+  )
+  module1_strict <- data.table::fread(
+    file.path(strict_module1_root, "module1_qc_summary.csv"),
+    showProgress = FALSE
+  )
+  module2_baseline <- data.table::fread(
+    file.path(
+      strict_root,
+      "module2_tf0p5_fp0p3_p1e10",
+      "module2_run_summary.csv"
+    ),
+    showProgress = FALSE
+  )
+  module2_strict <- data.table::fread(
+    file.path(strict_module2_root, "module2_run_summary.csv"),
+    showProgress = FALSE
+  )
+  summary_value <- function(value, metric_name) {
+    output <- suppressWarnings(as.numeric(
+      value[metric == metric_name, value][[1L]]
+    ))
+    if (!is.finite(output)) stop("Missing upstream metric: ", metric_name)
+    output
+  }
+
+  comparison <- data.table::rbindlist(list(
+    data.table::data.table(
+      section = "Input",
+      metric = c(
+        "Module 1 predicted TFBS", "Module 2 network links",
+        "Condition link rows", "TF documents", "Gene terms", "Peak terms"
+      ),
+      baseline = c(
+        summary_value(module1_baseline, "n_predicted_tfbs"),
+        summary_value(module2_baseline, "n_module2_links"),
+        baseline_document$eligible_links,
+        baseline_document$documents,
+        baseline_document$unique_gene_terms,
+        baseline_document$unique_peak_terms
+      ),
+      strict = c(
+        summary_value(module1_strict, "n_predicted_tfbs"),
+        summary_value(module2_strict, "n_module2_links"),
+        strict_input$condition_link_rows,
+        strict_input$documents,
+        strict_input$gene_terms,
+        strict_input$peak_terms
+      )
+    ),
+    data.table::data.table(
+      section = "Topics",
+      metric = c(
+        "Assigned target genes", "Largest Topic share",
+        "Topic similarity", "Condition similarity"
+      ),
+      baseline = c(
+        baseline_metrics$assigned_target_genes,
+        baseline_metrics$largest_topic_gene_fraction,
+        baseline_metrics$mean_topic_similarity,
+        baseline_metrics$mean_condition_correlation
+      ),
+      strict = c(
+        strict_metrics$assigned_target_genes,
+        strict_metrics$largest_topic_gene_fraction,
+        strict_metrics$mean_topic_similarity,
+        strict_metrics$mean_condition_correlation
+      )
+    )
+  ), use.names = TRUE)
+  comparison[, strict_vs_baseline_percent := 100 * strict / baseline]
+  comparison[, `:=`(
+    baseline_run = run_table[run_number == 27L, run_id],
+    strict_run = strict_run_row$run_id[[1L]],
+    source_signature = trimws(readLines(
+      strict_signature_path,
+      warn = FALSE
+    )[[1L]])
+  )]
+  data.table::fwrite(comparison, strict_comparison_metrics_path)
+
+  input_data <- data.table::melt(
+    comparison[section == "Input"],
+    id.vars = c("metric", "strict_vs_baseline_percent"),
+    measure.vars = c("baseline", "strict"),
+    variable.name = "setup",
+    value.name = "value"
+  )
+  input_data[, setup := factor(
+    setup,
+    levels = c("baseline", "strict"),
+    labels = c("0.5 / 0.5 / 0.3", "0.7 / 0.7 / 0.7")
+  )]
+  input_plot <- ggplot2::ggplot(
+    input_data,
+    ggplot2::aes(setup, value, fill = setup)
+  ) +
+    ggplot2::geom_col(width = 0.66, color = "#222222", linewidth = 0.25) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = scales::comma(round(value))),
+      vjust = -0.35,
+      size = 3.4,
+      fontface = "bold"
+    ) +
+    ggplot2::facet_wrap(ggplot2::vars(metric), scales = "free_y", ncol = 3L) +
+    ggplot2::scale_fill_manual(
+      values = c("0.5 / 0.5 / 0.3" = "#4C78A8", "0.7 / 0.7 / 0.7" = "#E45756"),
+      guide = "none"
+    ) +
+    ggplot2::scale_y_continuous(
+      labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+      expand = ggplot2::expansion(mult = c(0, 0.18))
+    ) +
+    ggplot2::labs(
+      title = "What remains after the stricter cutoffs",
+      subtitle = paste0(
+        "All other settings are unchanged: p = 1e-10, ",
+        "condition-specific Peaks, and Gene:Peak 2:1."
+      ),
+      x = "Module 1 / TF-target / FP-target",
+      y = NULL
+    ) +
+    comparison_theme(11)
+
+  baseline_condition <- baseline_condition_counts()
+  strict_condition <- data.table::fread(
+    strict_condition_audit_path,
+    showProgress = FALSE
+  )
+  condition_data <- data.table::rbindlist(list(
+    baseline_condition[, .(
+      condition_id,
+      setup = "0.5 / 0.5 / 0.3",
+      tf_documents,
+      unique_target_genes
+    )],
+    strict_condition[, .(
+      condition_id,
+      setup = "0.7 / 0.7 / 0.7",
+      tf_documents,
+      unique_target_genes
+    )]
+  ))
+  condition_order_strict <- as.character(data.table::fread(
+    condition_manifest_path,
+    showProgress = FALSE
+  )$condition_id)
+  condition_data[, condition := factor(
+    strict_simple_condition_label(condition_id),
+    levels = rev(strict_simple_condition_label(condition_order_strict))
+  )]
+  condition_long <- data.table::melt(
+    condition_data,
+    id.vars = c("condition", "setup"),
+    measure.vars = c("tf_documents", "unique_target_genes"),
+    variable.name = "metric",
+    value.name = "value"
+  )
+  condition_long[, metric := factor(
+    metric,
+    levels = c("tf_documents", "unique_target_genes"),
+    labels = c("TF documents", "Target genes")
+  )]
+  condition_plot <- ggplot2::ggplot(
+    condition_long,
+    ggplot2::aes(condition, value, fill = setup)
+  ) +
+    ggplot2::geom_col(
+      position = ggplot2::position_dodge2(width = 0.82, preserve = "single"),
+      width = 0.72,
+      color = "#222222",
+      linewidth = 0.15
+    ) +
+    ggplot2::coord_flip() +
+    ggplot2::facet_wrap(ggplot2::vars(metric), scales = "free_x", ncol = 2L) +
+    ggplot2::scale_fill_manual(
+      values = c("0.5 / 0.5 / 0.3" = "#4C78A8", "0.7 / 0.7 / 0.7" = "#E45756")
+    ) +
+    ggplot2::scale_y_continuous(
+      labels = scales::label_number(big.mark = ","),
+      expand = ggplot2::expansion(mult = c(0, 0.04))
+    ) +
+    ggplot2::labs(
+      title = "Coverage in each condition",
+      subtitle = "The strict setup keeps every condition, but far fewer TFs and target genes.",
+      x = NULL,
+      y = NULL,
+      fill = "Module 1 / TF-target / FP-target"
+    ) +
+    comparison_theme(9) +
+    ggplot2::theme(panel.grid.major.y = ggplot2::element_blank())
+
+  topic_data <- data.table::melt(
+    comparison[section == "Topics"],
+    id.vars = "metric",
+    measure.vars = c("baseline", "strict"),
+    variable.name = "setup",
+    value.name = "value"
+  )
+  topic_data[, setup := factor(
+    setup,
+    levels = c("baseline", "strict"),
+    labels = c("0.5 / 0.5 / 0.3", "0.7 / 0.7 / 0.7")
+  )]
+  topic_plot <- ggplot2::ggplot(
+    topic_data,
+    ggplot2::aes(setup, value, fill = setup)
+  ) +
+    ggplot2::geom_col(width = 0.66, color = "#222222", linewidth = 0.25) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = ifelse(value >= 10, scales::comma(round(value)), sprintf("%.2f", value))),
+      vjust = -0.35,
+      size = 3.4,
+      fontface = "bold"
+    ) +
+    ggplot2::facet_wrap(ggplot2::vars(metric), scales = "free_y", ncol = 2L) +
+    ggplot2::scale_fill_manual(
+      values = c("0.5 / 0.5 / 0.3" = "#4C78A8", "0.7 / 0.7 / 0.7" = "#E45756"),
+      guide = "none"
+    ) +
+    ggplot2::scale_y_continuous(
+      labels = scales::label_number(big.mark = ","),
+      expand = ggplot2::expansion(mult = c(0, 0.18))
+    ) +
+    ggplot2::labs(
+      title = "Effect on the K30 Topics",
+      subtitle = "Lower Topic or condition similarity means stronger separation.",
+      x = "Module 1 / TF-target / FP-target",
+      y = NULL
+    ) +
+    comparison_theme(11)
+
+  grDevices::cairo_pdf(
+    strict_comparison_pdf,
+    width = 15,
+    height = 10,
+    family = "Helvetica",
+    bg = "white",
+    onefile = TRUE
+  )
+  print(input_plot)
+  print(condition_plot)
+  print(topic_plot)
+  grDevices::dev.off()
+  pages <- suppressWarnings(as.integer(system2(
+    "qpdf",
+    c("--show-npages", shQuote(strict_comparison_pdf)),
+    stdout = TRUE
+  )[[1L]]))
+  if (!identical(pages, 3L)) {
+    stop("The strict comparison report must contain three pages.")
+  }
+  write_strict_config(strict_run_row, status = "comparison_complete")
+  invisible(comparison)
+}
+
+write_strict_readme <- function() {
+  comparison <- data.table::fread(
+    strict_comparison_metrics_path,
+    showProgress = FALSE
+  )
+  retained <- function(metric) {
+    metric_name <- metric
+    comparison[section == "Input" & metric == metric_name,
+      strict_vs_baseline_percent][[1L]]
+  }
+  topic_value <- function(metric, column) {
+    metric_name <- metric
+    comparison[section == "Topics" & get("metric") == metric_name,
+      get(column)][[1L]]
+  }
+  text <- c(
+    "# HPAFII K30 R-cutoff sensitivity",
+    "",
+    "This is a true rerun at Module 1 / TF-target / FP-target = 0.7 / 0.7 / 0.7.",
+    "The matched baseline is 0.5 / 0.5 / 0.3.",
+    "",
+    paste0("- Module 1 predicted TFBS retained: ", sprintf("%.1f%%", retained("Module 1 predicted TFBS")), "."),
+    paste0("- Module 2 network links retained: ", sprintf("%.1f%%", retained("Module 2 network links")), "."),
+    paste0("- Link rows retained: ", sprintf("%.1f%%", retained("Condition link rows")), "."),
+    paste0("- TF documents retained: ", sprintf("%.1f%%", retained("TF documents")), "."),
+    paste0("- Gene terms retained: ", sprintf("%.1f%%", retained("Gene terms")), "."),
+    paste0("- Peak terms retained: ", sprintf("%.1f%%", retained("Peak terms")), "."),
+    "",
+    paste0(
+      "Conclusion: keep this as a sensitivity result, not the primary model. ",
+      "Condition similarity increases from ",
+      sprintf("%.2f", topic_value("Condition similarity", "baseline")),
+      " to ", sprintf("%.2f", topic_value("Condition similarity", "strict")),
+      ", while the model assigns only ",
+      format(round(topic_value("Assigned target genes", "strict")), big.mark = ","),
+      " target genes."
+    ),
+    "",
+    "All other settings are fixed: p = 1e-10, condition-specific coordinate Peaks, Gene:Peak 2:1, LDA K30, and seed 123.",
+    "Start with `HPAFII_K30_R0p7_Sensitivity_Comparison.pdf`.",
+    "The QC PDF uses the current six-page standard report.",
+    "The YAML file contains the full run record."
+  )
+  path <- file.path(strict_benchmark_root, "README.md")
+  writeLines(text, path, useBytes = TRUE)
+  path
+}
+
+update_strict_box_parent_index <- function() {
+  update_root <- file.path(strict_benchmark_root, "parent_index_update")
+  dir.create(update_root, recursive = TRUE, showWarnings = FALSE)
+  local_index <- file.path(update_root, "INPUT_DESIGN_INDEX.csv")
+  local_readme <- file.path(update_root, "README.md")
+  for (filename in c("INPUT_DESIGN_INDEX.csv", "README.md")) {
+    local <- file.path(update_root, filename)
+    remote <- paste0(box_parent, "/", filename)
+    status <- system2(
+      "rclone",
+      c("copyto", shQuote(remote), shQuote(local))
+    )
+    if (!identical(status, 0L) || !file.exists(local)) {
+      stop("Could not download the Box parent file: ", filename)
+    }
+  }
+  index <- data.table::fread(local_index, showProgress = FALSE)
+  relative_qc <- file.path(
+    "17_Method10_P1e10_R0p7_K30_Sensitivity",
+    strict_qc_name
+  )
+  index <- index[file != relative_qc]
+  input <- data.table::fread(strict_input_summary_path, nrows = 1L)
+  row <- data.table::data.table(
+    order = max(as.integer(index$order), na.rm = TRUE) + 1L,
+    file = relative_qc,
+    source_run = strict_run_row$run_id[[1L]],
+    model = "LDA",
+    K = 30L,
+    document_unit = paste0(
+      "condition::TF (", input$documents[[1L]], " documents)"
+    ),
+    input_terms = "Gene expression + condition-specific coordinate Peaks",
+    gene_weight = "Condition expression + specificity",
+    peak_weight = "Condition footprint score + TF expression",
+    gene_peak_ratio = "2:1",
+    status = "active_experimental",
+    pages = 6L,
+    role = "p = 1e-10 sensitivity at R 0.7 / 0.7 / 0.7"
+  )
+  row <- row[, intersect(names(index), names(row)), with = FALSE]
+  index <- data.table::rbindlist(list(index, row), use.names = TRUE, fill = TRUE)
+  data.table::setorder(index, order)
+  data.table::fwrite(index, local_index)
+
+  readme <- readLines(local_readme, warn = FALSE)
+  marker <- "## Method 10 R = 0.7 sensitivity"
+  note <- paste0(
+    "See `17_Method10_P1e10_R0p7_K30_Sensitivity/` for the matched ",
+    "K30 comparison of 0.5 / 0.5 / 0.3 and 0.7 / 0.7 / 0.7."
+  )
+  if (!marker %in% readme) {
+    readme <- c(readme, "", marker, "", note)
+  } else {
+    marker_index <- match(marker, readme)
+    next_line <- marker_index + 2L
+    if (length(readme) >= next_line) {
+      readme[[next_line]] <- note
+    } else {
+      readme <- c(readme, "", note)
+    }
+  }
+  writeLines(readme, local_readme, useBytes = TRUE)
+  for (path in c(local_index, local_readme)) {
+    remote <- paste0(box_parent, "/", basename(path))
+    status <- system2(
+      "rclone",
+      c("copyto", shQuote(path), shQuote(remote), "--checksum")
+    )
+    if (!identical(status, 0L)) {
+      stop("Could not update the Box parent file: ", basename(path))
+    }
+  }
+  invisible(TRUE)
+}
+
+deliver_strict_sensitivity <- function() {
+  write_strict_comparison()
+  write_strict_readme()
+  write_strict_config(strict_run_row, status = "delivered")
+  qc_path <- file.path(strict_benchmark_root, "qc", strict_qc_name)
+  files <- c(
+    strict_comparison_pdf,
+    qc_path,
+    strict_comparison_metrics_path,
+    strict_condition_audit_path,
+    strict_plan_path,
+    file.path(strict_benchmark_root, "README.md")
+  )
+  if (any(!file.exists(files))) {
+    stop("A strict sensitivity delivery file is missing.")
+  }
+  dir.create(strict_delivery_root, recursive = TRUE, showWarnings = FALSE)
+  copied <- file.copy(
+    files,
+    file.path(strict_delivery_root, basename(files)),
+    overwrite = TRUE,
+    copy.mode = TRUE
+  )
+  if (!all(copied)) stop("Could not assemble the strict compact delivery.")
+  manifest <- data.table::data.table(
+    file = basename(files),
+    bytes = as.numeric(file.info(files)$size),
+    md5 = unname(tools::md5sum(files)),
+    source_signature = trimws(readLines(
+      strict_signature_path,
+      warn = FALSE
+    )[[1L]]),
+    box_folder = strict_box_root
+  )
+  manifest_path <- file.path(strict_delivery_root, "delivery_manifest.csv")
+  data.table::fwrite(manifest, manifest_path)
+
+  status <- system2(
+    "rclone",
+    c("copy", shQuote(strict_delivery_root), shQuote(strict_box_root), "--checksum")
+  )
+  if (!identical(status, 0L)) stop("The strict Box upload failed.")
+  check <- system2(
+    "rclone",
+    c("check", shQuote(strict_delivery_root), shQuote(strict_box_root), "--checksum")
+  )
+  if (!identical(check, 0L)) stop("The strict Box checksum check failed.")
+  expected <- sort(c(basename(files), basename(manifest_path)))
+  observed <- system2(
+    "rclone",
+    c("lsf", shQuote(strict_box_root), "--files-only"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  if (!identical(attr(observed, "status") %||% 0L, 0L) ||
+      !identical(sort(observed), expected)) {
+    stop("The strict Box folder contains an unexpected or missing file.")
+  }
+  plan_remote <- paste0(box_plans_root, "/", strict_box_plan_name)
+  plan_status <- system2(
+    "rclone",
+    c("copyto", shQuote(strict_plan_path), shQuote(plan_remote), "--checksum")
+  )
+  if (!identical(plan_status, 0L)) stop("The dated strict Box plan upload failed.")
+  update_strict_box_parent_index()
+  write_strict_config(strict_run_row, status = "delivered")
+  log_info("Validated the compact R 0.7 Box delivery: ", strict_box_root)
+  invisible(manifest)
+}
+
+if (stage == "r0p7") {
+  deliver_strict_sensitivity()
+} else if (stage == "documents") {
   prepare_documents()
 } else if (stage == "train") {
   train_models()

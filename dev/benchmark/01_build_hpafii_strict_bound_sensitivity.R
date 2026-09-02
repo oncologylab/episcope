@@ -24,6 +24,18 @@ log_info <- function(...) {
   craftgrn:::.log_inform(paste0(...))
 }
 
+parse_cutoff <- function(name, default) {
+  value <- suppressWarnings(as.numeric(Sys.getenv(name, unset = as.character(default))))
+  if (!is.finite(value) || value < 0 || value > 1) {
+    stop(name, " must be a finite value between 0 and 1.")
+  }
+  value
+}
+
+cutoff_tag <- function(value) {
+  gsub("[.]", "p", format(value, trim = TRUE, scientific = FALSE))
+}
+
 parse_workers <- function() {
   workers <- suppressWarnings(as.integer(Sys.getenv(
     "CRAFTGRN_STRICT_BOUND_WORKERS",
@@ -55,7 +67,11 @@ output_root <- file.path(
   "method10_module1_module2_r_cutoff_sensitivity"
 )
 work_root <- file.path(output_root, "hpa_strict_bound_sensitivity")
-module1_root <- file.path(work_root, "module1_r0p5_p1e10")
+module1_r <- parse_cutoff("CRAFTGRN_STRICT_M1_R", 0.5)
+module1_root <- file.path(
+  work_root,
+  paste0("module1_r", cutoff_tag(module1_r), "_p1e10")
+)
 dir.create(work_root, recursive = TRUE, showWarnings = FALSE)
 
 project_config_path <- file.path(project_root, "project.yaml")
@@ -467,14 +483,17 @@ run_module1 <- function() {
   }
   multiomic <- readRDS(multiomic_path)
   dir.create(module1_root, recursive = TRUE, showWarnings = FALSE)
-  log_info("Running Module 1 at R >= 0.5 on the p = 1e-10 universe.")
+  log_info(
+    "Running Module 1 at R >= ", module1_r,
+    " on the p = 1e-10 universe."
+  )
   result <- craftgrn::predict_tfbs(
     omics_data = multiomic,
     out_dir = module1_root,
     db = "JASPAR2024",
     label_col = "name",
     project_config = project_config_path,
-    r_cutoff = 0.5,
+    r_cutoff = module1_r,
     p_cutoff = NULL,
     fdr_cutoff = NULL,
     filter_to_canonical_bound = TRUE,
@@ -494,7 +513,7 @@ run_module1 <- function() {
   writeLines(
     c(
       paste0("completed=", format(Sys.time(), tz = "UTC", usetz = TRUE)),
-      "module1_r=0.5",
+      paste0("module1_r=", module1_r),
       "bound_cutoff=p1e10",
       paste0("predicted_tfbs_manifest=", normalizePath(manifest, winslash = "/"))
     ),

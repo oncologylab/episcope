@@ -25,6 +25,18 @@ log_info <- function(...) {
   craftgrn:::.log_inform(paste0(...))
 }
 
+parse_cutoff <- function(name, default) {
+  value <- suppressWarnings(as.numeric(Sys.getenv(name, unset = as.character(default))))
+  if (!is.finite(value) || value < 0 || value > 1) {
+    stop(name, " must be a finite value between 0 and 1.")
+  }
+  value
+}
+
+cutoff_tag <- function(value) {
+  gsub("[.]", "p", format(value, trim = TRUE, scientific = FALSE))
+}
+
 parse_workers <- function() {
   workers <- suppressWarnings(as.integer(Sys.getenv(
     "CRAFTGRN_STRICT_BOUND_WORKERS",
@@ -56,10 +68,37 @@ output_root <- file.path(
   "method10_module1_module2_r_cutoff_sensitivity"
 )
 work_root <- file.path(output_root, "hpa_strict_bound_sensitivity")
-module1_root <- file.path(work_root, "module1_r0p5_p1e10")
-module2_root <- file.path(work_root, "module2_tf0p5_fp0p3_p1e10")
-raw_doc_root <- file.path(work_root, "document_terms_raw")
-final_doc_root <- file.path(work_root, "document_terms_final")
+module1_r <- parse_cutoff("CRAFTGRN_STRICT_M1_R", 0.5)
+module2_tf_r <- parse_cutoff("CRAFTGRN_STRICT_M2_TF_R", 0.5)
+module2_fp_r <- parse_cutoff("CRAFTGRN_STRICT_M2_FP_R", 0.3)
+is_default_cutoff <- identical(module1_r, 0.5) &&
+  identical(module2_tf_r, 0.5) && identical(module2_fp_r, 0.3)
+cutoff_id <- paste0(
+  "m1r", cutoff_tag(module1_r),
+  "_tfr", cutoff_tag(module2_tf_r),
+  "_fpr", cutoff_tag(module2_fp_r),
+  "_p1e10"
+)
+module1_root <- file.path(
+  work_root,
+  paste0("module1_r", cutoff_tag(module1_r), "_p1e10")
+)
+module2_root <- file.path(
+  work_root,
+  if (is_default_cutoff) {
+    "module2_tf0p5_fp0p3_p1e10"
+  } else {
+    paste0("module2_", cutoff_id)
+  }
+)
+raw_doc_root <- file.path(
+  work_root,
+  if (is_default_cutoff) "document_terms_raw" else paste0("document_terms_raw_", cutoff_id)
+)
+final_doc_root <- file.path(
+  work_root,
+  if (is_default_cutoff) "document_terms_final" else paste0("document_terms_final_", cutoff_id)
+)
 dir.create(work_root, recursive = TRUE, showWarnings = FALSE)
 
 multiomic_path <- file.path(work_root, "multiomic_p1e10.rds")
@@ -133,12 +172,15 @@ run_module2 <- function() {
     gene_tss = gene_tss_path,
     link_window_bp = 100000,
     module2 = list(
-      threshold_tf_target_corr_r = 0.5,
-      threshold_fp_target_corr_r = 0.3
+      threshold_tf_target_corr_r = module2_tf_r,
+      threshold_fp_target_corr_r = module2_fp_r
     )
   )
   dir.create(module2_root, recursive = TRUE, showWarnings = FALSE)
-  log_info("Running Module 2 at TF-target R >= 0.5 and FP-target R >= 0.3.")
+  log_info(
+    "Running Module 2 at TF-target R >= ", module2_tf_r,
+    " and FP-target R >= ", module2_fp_r, "."
+  )
   result <- craftgrn::predict_tf_targets(
     multiomic_data = multiomic,
     predicted_tfbs = predicted_manifest_path,
@@ -159,9 +201,9 @@ run_module2 <- function() {
   writeLines(
     c(
       paste0("completed=", format(Sys.time(), tz = "UTC", usetz = TRUE)),
-      "module1_r=0.5",
-      "tf_target_r=0.5",
-      "fp_target_r=0.3",
+      paste0("module1_r=", module1_r),
+      paste0("tf_target_r=", module2_tf_r),
+      paste0("fp_target_r=", module2_fp_r),
       "bound_cutoff=p1e10",
       paste0("links_manifest=", normalizePath(manifest, winslash = "/"))
     ),
@@ -683,7 +725,8 @@ build_report_page <- function() {
     patchwork::plot_annotation(
       title = "How stricter bound calls change the documents",
       subtitle = paste0(
-        "Fixed cutoffs: Module 1 / TF-target / FP-target = 0.5 / 0.5 / 0.3. ",
+        "Fixed cutoffs: Module 1 / TF-target / FP-target = ",
+        module1_r, " / ", module2_tf_r, " / ", module2_fp_r, ". ",
         "No extra footprint-score cutoff."
       ),
       theme = ggplot2::theme(
