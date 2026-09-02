@@ -1398,7 +1398,7 @@ write_qc_one <- function(row) {
   } else {
     NA_integer_
   }
-  if (identical(existing_pages, 7L) && file.exists(metrics_path)) {
+  if (identical(existing_pages, 6L) && file.exists(metrics_path)) {
     log_info("Reusing QC report: ", row$qc_name[[1L]])
     return(data.table::fread(metrics_path, showProgress = FALSE))
   }
@@ -1510,7 +1510,7 @@ write_qc_one <- function(row) {
     tf_target_panel = tf_panel,
     top_n_tfs = 25L,
     seed = 20260902L + as.integer(row$run_number[[1L]]),
-    sections = "standard_hellinger",
+    sections = "standard",
     peak_umap_top_n = Inf,
     report_scope = "condition_correlation",
     sidebar_mode = "terms"
@@ -1525,8 +1525,8 @@ write_qc_one <- function(row) {
     stdout = TRUE,
     stderr = TRUE
   )[[1L]]))
-  if (!identical(pages, 7L)) {
-    stop("Expected seven QC pages but found ", pages, " in ", qc_path, ".")
+  if (!identical(pages, 6L)) {
+    stop("Expected six QC pages but found ", pages, " in ", qc_path, ".")
   }
 
   condition_theta <- craftgrn:::.m3_qc_condition_tf_topic_theta(
@@ -1692,8 +1692,8 @@ write_comparison_report <- function() {
   if (!file.exists(metrics_path)) write_qc_reports()
   metrics <- data.table::fread(metrics_path, showProgress = FALSE)
   if (nrow(metrics) != nrow(run_table) || any(!metrics$converged) ||
-      any(metrics$qc_pages != 7L)) {
-    stop("Benchmark metrics do not describe all converged seven-page runs.")
+      any(metrics$qc_pages != 6L)) {
+    stop("Benchmark metrics do not describe all converged six-page runs.")
   }
   support <- data.table::fread(support_summary_path, showProgress = FALSE)
   alignment <- data.table::rbindlist(lapply(
@@ -1878,7 +1878,7 @@ write_delivery_readme <- function() {
     "- Ratios above 4:1 use a larger budget so every Peak stays in the document.",
     "",
     "Start with `HPAFII_K30_PeakSupport_GeneWeight_Comparison.pdf`.",
-    "Each QC PDF adds matched-TF Hellinger separation as page 7.",
+    "Each QC PDF follows the current six-page report format.",
     "The two YAML files contain the full input, filter, document, model, and output records.",
     "",
     paste0("Source signature: `", source_signature, "`")
@@ -1961,7 +1961,7 @@ update_box_parent_index <- function() {
     peak_weight = "Condition footprint score + TF expression",
     gene_peak_ratio = paste0(run_table$gene_to_peak, ":1"),
     status = "active_experimental",
-    pages = 7L,
+    pages = 6L,
     role = "p = 1e-10 Peak-support and Gene-weight benchmark"
   )
   new_rows <- new_rows[, intersect(names(index), names(new_rows)), with = FALSE]
