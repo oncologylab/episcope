@@ -1772,15 +1772,15 @@ assemble_report <- function() {
       stdout = TRUE
     )[[1L]]))
   }, integer(1L))
-  if (!identical(source_page_counts[[1L]], 3L)) {
-    stop("The footprint-bound sensitivity front PDF must contain three pages.")
+  if (!identical(source_page_counts[[1L]], 1L)) {
+    stop("The footprint-bound sensitivity PDF must contain one page.")
   }
   if (!identical(source_page_counts[[2L]], 1L)) {
     stop("The p-only document comparison must contain one page.")
   }
   expected_page_count <- sum(source_page_counts)
-  if (!identical(expected_page_count, 16L)) {
-    stop("The assembled source PDFs must contain 16 pages in total.")
+  if (!identical(expected_page_count, 14L)) {
+    stop("The assembled source PDFs must contain 14 pages in total.")
   }
   if (!identical(page_count, expected_page_count)) {
     stop(

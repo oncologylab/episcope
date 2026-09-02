@@ -91,9 +91,12 @@ p_grid <- data.table::data.table(
   p_label = c("p = 1e-10", "p = 1e-12", "p = 1e-15", "p = 1e-20"),
   p_value = c(1e-10, 1e-12, 1e-15, 1e-20)
 )
-p_colors <- stats::setNames(
-  c("#2C7BB6", "#00A6CA", "#F4A261", "#B2182B"),
-  p_grid$p_label
+plot_p_grid <- data.table::data.table(
+  p_label = c(
+    "p = 1e-3 (default)", "p = 1e-4", "p = 1e-5", "p = 1e-6",
+    "p = 1e-10"
+  ),
+  p_value = c(1e-3, 1e-4, 1e-5, 1e-6, 1e-10)
 )
 
 load_metadata <- function() {
@@ -199,6 +202,24 @@ histogram_one <- function(scores, bound, breaks, sample_id, condition_label) {
 build_front_pages <- function() {
   metadata <- load_metadata()
   strict <- build_strict_cutoffs(metadata)
+  plot_cutoffs <- unique(
+    strict[, .(sample_id, null_mode, null_sd, cutoff_p1e3)]
+  )
+  plot_cutoffs[, join_key__ := 1L]
+  plot_grid_join <- data.table::copy(plot_p_grid)
+  plot_grid_join[, join_key__ := 1L]
+  plot_cutoffs <- merge(
+    plot_cutoffs,
+    plot_grid_join,
+    by = "join_key__",
+    allow.cartesian = TRUE
+  )
+  plot_cutoffs[, join_key__ := NULL]
+  plot_cutoffs[, cutoff := null_mode + stats::qnorm(
+    p_value,
+    lower.tail = FALSE
+  ) * null_sd]
+  plot_cutoffs[p_value == 1e-3, cutoff := cutoff_p1e3]
   if (file.exists(histogram_path)) {
     histogram <- data.table::fread(histogram_path, showProgress = FALSE)
   } else {
@@ -241,38 +262,7 @@ build_front_pages <- function() {
     invisible(gc())
   }
 
-  combined <- histogram[, .(count = sum(count)), by = .(status, score_log)]
-  combined[, share := count / sum(count)]
-  score_breaks <- c(0, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256)
   status_colors <- c(Bound = "#D95F02", Unbound = "#4C78A8")
-  combined_plot <- ggplot2::ggplot(
-    combined,
-    ggplot2::aes(score_log, share, color = status, fill = status)
-  ) +
-    ggplot2::geom_area(alpha = 0.2, position = "identity") +
-    ggplot2::geom_line(linewidth = 1.05) +
-    ggplot2::scale_color_manual(values = status_colors) +
-    ggplot2::scale_fill_manual(values = status_colors) +
-    ggplot2::scale_x_continuous(
-      breaks = log1p(score_breaks),
-      labels = score_breaks,
-      expand = ggplot2::expansion(mult = c(0, 0.01))
-    ) +
-    ggplot2::scale_y_continuous(
-      labels = scales::label_percent(accuracy = 0.1),
-      expand = ggplot2::expansion(mult = c(0, 0.05))
-    ) +
-    ggplot2::labs(
-      title = "HPAFII footprint-score distribution",
-      subtitle = "All 33 samples and all footprint sites",
-      x = "Footprint score (log scale)",
-      y = "Share of all sites",
-      color = NULL,
-      fill = NULL,
-      caption = "Bound and unbound are the original fp-tools calls."
-    ) +
-    report_theme(13)
-
   metadata[, facet_label := paste(id, simple_condition_label(name), sep = " | ")]
   facet_levels <- rev(metadata$facet_label)
   histogram[, facet_label := factor(
@@ -280,7 +270,7 @@ build_front_pages <- function() {
     levels = facet_levels
   )]
   strict_plot_data <- merge(
-    strict,
+    plot_cutoffs,
     metadata[, .(sample_id = id, condition_label = name)],
     by = "sample_id",
     all.x = TRUE,
@@ -291,7 +281,7 @@ build_front_pages <- function() {
     levels = facet_levels
   )]
   strict_plot_data[, cutoff_log := log1p(cutoff)]
-  strict_plot_data[, p_label := factor(p_label, levels = p_grid$p_label)]
+  strict_plot_data[, p_label := factor(p_label, levels = plot_p_grid$p_label)]
   sample_plot <- ggplot2::ggplot(
     histogram,
     ggplot2::aes(score_log, share, color = status)
@@ -312,7 +302,7 @@ build_front_pages <- function() {
     ggplot2::facet_wrap(~facet_label, ncol = 6, scales = "free_y") +
     ggplot2::scale_color_manual(values = status_colors) +
     ggplot2::scale_linetype_manual(
-      values = c("solid", "22", "42", "13"),
+      values = c("solid", "22", "42", "13", "73"),
       drop = FALSE
     ) +
     ggplot2::scale_x_continuous(
@@ -323,71 +313,14 @@ build_front_pages <- function() {
     ggplot2::scale_y_continuous(labels = scales::label_percent(accuracy = 0.1)) +
     ggplot2::labs(
       title = "Stricter learned cutoffs in each sample",
-      subtitle = "Black lines show p = 1e-10 to 1e-20. Red line shows score 2.",
+      subtitle = paste0(
+        "Black lines show the default and stricter learned cutoffs. ",
+        "Red line shows score 2."
+      ),
       x = "Footprint score (log scale)",
       y = "Share of sites in the sample",
       color = NULL,
       linetype = "Learned cutoff"
-    ) +
-    report_theme(8) +
-    ggplot2::theme(
-      panel.spacing = grid::unit(0.35, "lines"),
-      axis.text = ggplot2::element_text(size = 6),
-      axis.title = ggplot2::element_text(size = 9),
-      legend.text = ggplot2::element_text(size = 8)
-    )
-
-  multiplier <- merge(
-    strict[, .(cutoff_p1e3 = unique(cutoff_p1e3)), by = sample_id],
-    metadata[, .(sample_id = id, condition_label = name)],
-    by = "sample_id",
-    all.x = TRUE,
-    sort = FALSE
-  )
-  multiplier <- multiplier[, .(
-    multiplier = c("1.5x", "2x", "3x"),
-    cutoff = cutoff_p1e3 * c(1.5, 2, 3)
-  ), by = .(sample_id, condition_label)]
-  multiplier[, `:=`(
-    facet_label = factor(
-      paste(sample_id, simple_condition_label(condition_label), sep = " | "),
-      levels = facet_levels
-    ),
-    cutoff_log = log1p(cutoff),
-    multiplier = factor(multiplier, levels = c("1.5x", "2x", "3x"))
-  )]
-  multiplier_plot <- ggplot2::ggplot(
-    histogram,
-    ggplot2::aes(score_log, share, color = status)
-  ) +
-    ggplot2::geom_line(linewidth = 0.3, alpha = 0.9) +
-    ggplot2::geom_vline(
-      data = multiplier,
-      ggplot2::aes(xintercept = cutoff_log, linetype = multiplier),
-      color = "#111111",
-      linewidth = 0.34
-    ) +
-    ggplot2::geom_vline(
-      xintercept = log1p(2),
-      color = "#B2182B",
-      linewidth = 0.34
-    ) +
-    ggplot2::facet_wrap(~facet_label, ncol = 6, scales = "free_y") +
-    ggplot2::scale_color_manual(values = status_colors) +
-    ggplot2::scale_linetype_manual(values = c("solid", "22", "42")) +
-    ggplot2::scale_x_continuous(
-      breaks = log1p(c(0, 1, 2, 4, 16, 64, 256)),
-      labels = c(0, 1, 2, 4, 16, 64, 256),
-      expand = ggplot2::expansion(mult = c(0, 0.01))
-    ) +
-    ggplot2::scale_y_continuous(labels = scales::label_percent(accuracy = 0.1)) +
-    ggplot2::labs(
-      title = "Multiples of the original learned cutoff",
-      subtitle = "Black lines show 1.5x, 2x, and 3x. Red line shows score 2.",
-      x = "Footprint score (log scale)",
-      y = "Share of sites in the sample",
-      color = NULL,
-      linetype = "Multiplier"
     ) +
     report_theme(8) +
     ggplot2::theme(
@@ -405,11 +338,9 @@ build_front_pages <- function() {
     bg = "white",
     onefile = TRUE
   )
-  print(combined_plot)
   print(sample_plot)
-  print(multiplier_plot)
   grDevices::dev.off()
-  log_info("Wrote three footprint-bound sensitivity pages: ", front_pdf)
+  log_info("Wrote the footprint-bound sensitivity page: ", front_pdf)
   invisible(front_pdf)
 }
 
