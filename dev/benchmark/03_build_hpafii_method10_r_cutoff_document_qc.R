@@ -93,33 +93,46 @@ output_root <- Sys.getenv(
 )
 output_root <- path.expand(output_root)
 dir.create(output_root, recursive = TRUE, showWarnings = FALSE)
-work_root <- file.path(output_root, "hpa_r03_fp_score_sensitivity")
+work_root <- file.path(output_root, "hpa_explicit_module2_r_sensitivity")
 dir.create(work_root, recursive = TRUE, showWarnings = FALSE)
 
 reuse <- parse_bool("CRAFTGRN_METHOD10_REUSE", default = TRUE)
 minimum_r <- 0.3
 score_floor <- 2
 
-combination_table <- data.table::data.table(
-  module1_r = c(0.3, 0.3, 0.5, 0.5, 0.5, 0.7, 0.7, 0.3, 0.3),
-  module2_r = c(0.3, 0.5, 0.3, 0.5, 0.7, 0.5, 0.7, 0.3, 0.3),
-  fp_score_min = c(2, 2, 2, 2, 2, 2, 2, 3, 4)
+combination_table <- data.table::CJ(
+  module1_r = c(0.3, 0.5),
+  module2_tf_r = c(0.3, 0.5),
+  module2_fp_r = c(0.3, 0.5),
+  unique = TRUE
 )
+combination_table[, fp_score_min := score_floor]
+combination_table <- data.table::rbindlist(list(
+  combination_table,
+  data.table::data.table(
+    module1_r = 0.3,
+    module2_tf_r = 0.3,
+    module2_fp_r = 0.3,
+    fp_score_min = c(3, 4)
+  )
+))
 combination_table[, `:=`(
   combination_id = sprintf(
-    "M1R%s_M2R%s_FP%s",
+    "M1R%s_M2TFR%s_M2FPR%s_FP%s",
     gsub("[.]", "p", module1_r),
-    gsub("[.]", "p", module2_r),
+    gsub("[.]", "p", module2_tf_r),
+    gsub("[.]", "p", module2_fp_r),
     fp_score_min
   ),
   combination_label = sprintf(
-    "M1 R >= %.1f / M2 R >= %.1f / FP >= %d",
+    "M1 R >= %.1f / TF-target R >= %.1f / FP-target R >= %.1f / FP >= %d",
     module1_r,
-    module2_r,
+    module2_tf_r,
+    module2_fp_r,
     fp_score_min
   )
 )]
-baseline_combination_id <- "M1R0p3_M2R0p3_FP2"
+baseline_combination_id <- "M1R0p3_M2TFR0p3_M2FPR0p3_FP2"
 
 stats_manifest_path <- file.path(
   module1_root,
@@ -779,6 +792,83 @@ load_annotated_condition_links <- function(manifest) {
 document_summary_path <- file.path(work_root, "document_combination_summary.csv")
 target_count_path <- file.path(work_root, "target_gene_counts.csv")
 
+reuse_legacy_document_qc <- function() {
+  if (!isTRUE(reuse)) return(invisible(NULL))
+  legacy_root <- file.path(
+    output_root,
+    "hpa_r03_fp_score_sensitivity",
+    "document_qc"
+  )
+  legacy_map <- data.table::data.table(
+    module1_r = c(0.3, 0.3, 0.5, 0.5, 0.3, 0.3),
+    module2_tf_r = c(0.3, 0.5, 0.3, 0.5, 0.3, 0.3),
+    module2_fp_r = c(0.3, 0.5, 0.3, 0.5, 0.3, 0.3),
+    fp_score_min = c(2, 2, 2, 2, 3, 4),
+    legacy_id = c(
+      "M1R0p3_M2R0p3_FP2",
+      "M1R0p3_M2R0p5_FP2",
+      "M1R0p5_M2R0p3_FP2",
+      "M1R0p5_M2R0p5_FP2",
+      "M1R0p3_M2R0p3_FP3",
+      "M1R0p3_M2R0p3_FP4"
+    )
+  )
+  metadata_files <- c(
+    "combination_summary.csv",
+    "target_gene_counts.csv",
+    "compact_qc_summary.csv"
+  )
+  required_files <- c(
+    "document_term_qc.pdf",
+    "document_term_qc_summary.csv",
+    metadata_files
+  )
+  for (i in seq_len(nrow(legacy_map))) {
+    legacy <- legacy_map[i]
+    current <- combination_table[
+      module1_r == legacy$module1_r &
+        module2_tf_r == legacy$module2_tf_r &
+        module2_fp_r == legacy$module2_fp_r &
+        fp_score_min == legacy$fp_score_min
+    ]
+    if (nrow(current) != 1L) {
+      stop("Legacy document-QC mapping is not unique.")
+    }
+    source_dir <- file.path(legacy_root, legacy$legacy_id)
+    target_dir <- file.path(work_root, "document_qc", current$combination_id)
+    if (all(file.exists(file.path(target_dir, required_files)))) next
+    if (!all(file.exists(file.path(source_dir, required_files)))) next
+    dir.create(target_dir, recursive = TRUE, showWarnings = FALSE)
+    copied <- file.copy(
+      file.path(source_dir, required_files),
+      file.path(target_dir, required_files),
+      overwrite = TRUE,
+      copy.mode = TRUE,
+      copy.date = TRUE
+    )
+    if (!all(copied)) {
+      stop("Failed to reuse validated document QC from ", source_dir, ".")
+    }
+    for (filename in metadata_files) {
+      path <- file.path(target_dir, filename)
+      value <- data.table::fread(path, showProgress = FALSE)
+      value[, `:=`(
+        module1_r = current$module1_r,
+        module2_tf_r = current$module2_tf_r,
+        module2_fp_r = current$module2_fp_r,
+        fp_score_min = current$fp_score_min,
+        combination_id = current$combination_id,
+        combination_label = current$combination_label,
+        source_signature = source_signature
+      )]
+      if ("module2_r" %in% names(value)) value[, module2_r := NULL]
+      data.table::fwrite(value, path)
+    }
+    log_info("Reused validated document QC for ", current$combination_label, ".")
+  }
+  invisible(NULL)
+}
+
 build_one_document_qc <- function(edges, row, specificity_lookup) {
   combo_dir <- file.path(work_root, "document_qc", row$combination_id)
   dir.create(combo_dir, recursive = TRUE, showWarnings = FALSE)
@@ -806,8 +896,8 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
 
   filtered <- data.table::copy(edges[
     module1_best_r >= row$module1_r &
-      tf_target_best_r >= row$module2_r &
-      fp_target_best_r >= row$module2_r &
+      tf_target_best_r >= row$module2_tf_r &
+      fp_target_best_r >= row$module2_fp_r &
       is.finite(fp_score_condition) &
       fp_score_condition >= row$fp_score_min
   ])
@@ -874,8 +964,10 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   title <- paste0(
     "HPAFII document-term QC - Module 1 R >= ",
     row$module1_r,
-    "; Module 2 TF-target and FP-target R >= ",
-    row$module2_r,
+    "; TF-target R >= ",
+    row$module2_tf_r,
+    "; FP-target R >= ",
+    row$module2_fp_r,
     "; footprint score >= ",
     row$fp_score_min
   )
@@ -911,7 +1003,8 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   target_counts <- data.table::rbindlist(list(target_counts, all_union))
   target_counts[, `:=`(
     module1_r = row$module1_r,
-    module2_r = row$module2_r,
+    module2_tf_r = row$module2_tf_r,
+    module2_fp_r = row$module2_fp_r,
     fp_score_min = row$fp_score_min,
     combination_id = row$combination_id,
     combination_label = row$combination_label
@@ -924,7 +1017,8 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   )
   summary <- data.table::data.table(
     module1_r = row$module1_r,
-    module2_r = row$module2_r,
+    module2_tf_r = row$module2_tf_r,
+    module2_fp_r = row$module2_fp_r,
     fp_score_min = row$fp_score_min,
     combination_id = row$combination_id,
     combination_label = row$combination_label,
@@ -978,7 +1072,8 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   )
   compact[, `:=`(
     module1_r = row$module1_r,
-    module2_r = row$module2_r,
+    module2_tf_r = row$module2_tf_r,
+    module2_fp_r = row$module2_fp_r,
     fp_score_min = row$fp_score_min,
     combination_id = row$combination_id,
     combination_label = row$combination_label,
@@ -1000,32 +1095,32 @@ build_one_document_qc <- function(edges, row, specificity_lookup) {
   )
 }
 
-strictness_relationships <- data.table::data.table(
-  strict = c(
-    "M1R0p3_M2R0p5_FP2",
-    "M1R0p5_M2R0p3_FP2",
-    "M1R0p5_M2R0p5_FP2",
-    "M1R0p5_M2R0p5_FP2",
-    "M1R0p5_M2R0p7_FP2",
-    "M1R0p7_M2R0p5_FP2",
-    "M1R0p7_M2R0p7_FP2",
-    "M1R0p7_M2R0p7_FP2",
-    "M1R0p3_M2R0p3_FP3",
-    "M1R0p3_M2R0p3_FP4"
-  ),
-  loose = c(
-    baseline_combination_id,
-    baseline_combination_id,
-    "M1R0p3_M2R0p5_FP2",
-    "M1R0p5_M2R0p3_FP2",
-    "M1R0p5_M2R0p5_FP2",
-    "M1R0p5_M2R0p5_FP2",
-    "M1R0p5_M2R0p7_FP2",
-    "M1R0p7_M2R0p5_FP2",
-    baseline_combination_id,
-    "M1R0p3_M2R0p3_FP3"
-  )
+strictness_relationships <- data.table::CJ(
+  strict = combination_table$combination_id,
+  loose = combination_table$combination_id,
+  unique = TRUE
 )
+for (column in c(
+  "module1_r", "module2_tf_r", "module2_fp_r", "fp_score_min"
+)) {
+  strictness_relationships[, paste0("strict_", column) :=
+    combination_table[[column]][match(strict, combination_table$combination_id)]]
+  strictness_relationships[, paste0("loose_", column) :=
+    combination_table[[column]][match(loose, combination_table$combination_id)]]
+}
+strictness_relationships <- strictness_relationships[
+  strict_module1_r >= loose_module1_r &
+    strict_module2_tf_r >= loose_module2_tf_r &
+    strict_module2_fp_r >= loose_module2_fp_r &
+    strict_fp_score_min >= loose_fp_score_min &
+    (
+      strict_module1_r > loose_module1_r |
+        strict_module2_tf_r > loose_module2_tf_r |
+        strict_module2_fp_r > loose_module2_fp_r |
+        strict_fp_score_min > loose_fp_score_min
+    ),
+  .(strict, loose)
+]
 
 validate_summary_monotonicity <- function(document_summary) {
   audit <- lapply(seq_len(nrow(strictness_relationships)), function(i) {
@@ -1101,7 +1196,9 @@ validate_current_baseline <- function(document_summary) {
   baseline_summary <- document_summary[
     combination_id == baseline_combination_id
   ][1L]
-  if (!nrow(baseline_summary)) stop("The current 0.3/0.3 baseline is missing.")
+  if (!nrow(baseline_summary)) {
+    stop("The current 0.3/0.3/0.3 baseline is missing.")
+  }
   expected_input <- data.table::fread(
     baseline_input_summary_path,
     showProgress = FALSE
@@ -1131,7 +1228,7 @@ validate_current_baseline <- function(document_summary) {
   if (!identical(unname(observed), unname(expected))) {
     mismatch <- names(expected)[observed != expected]
     stop(
-      "The 0.3/0.3, footprint-score 2 setup does not match run 21: ",
+      "The 0.3/0.3/0.3, footprint-score 2 setup does not match run 21: ",
       paste(mismatch, collapse = ", "), "."
     )
   }
@@ -1180,6 +1277,7 @@ validate_current_baseline <- function(document_summary) {
 }
 
 build_documents <- function() {
+  reuse_legacy_document_qc()
   results <- vector("list", nrow(combination_table))
   names(results) <- combination_table$combination_id
   cached_complete <- isTRUE(reuse) && all(vapply(
@@ -1200,7 +1298,10 @@ build_documents <- function() {
     logical(1L)
   ))
   if (cached_complete) {
-    log_info("Reusing all nine cached HPAFII document summaries.")
+    log_info(
+      "Reusing all ", nrow(combination_table),
+      " cached HPAFII document summaries."
+    )
     for (i in seq_len(nrow(combination_table))) {
       row <- combination_table[i]
       combo_dir <- file.path(work_root, "document_qc", row$combination_id)
@@ -1272,6 +1373,10 @@ footprint_comparison_pdf <- file.path(
 final_pdf <- file.path(
   output_root,
   "15_Method10_K30_RCutoff_and_FPStrength_DocumentTermQC.pdf"
+)
+all_score_footprint_pdf <- file.path(
+  output_root,
+  "16_HPAFII_FootprintScore_Distribution_Bound-Unbound.pdf"
 )
 
 compact_qc_summary_path <- file.path(
@@ -1444,13 +1549,18 @@ build_comparison_page <- function(
 build_comparison_pages <- function(target_counts) {
   correlation_rows <- combination_table[fp_score_min == score_floor]
   correlation_labels <- stats::setNames(
-    sprintf("%.1f / %.1f", correlation_rows$module1_r, correlation_rows$module2_r),
+    sprintf(
+      "%.1f / %.1f / %.1f",
+      correlation_rows$module1_r,
+      correlation_rows$module2_tf_r,
+      correlation_rows$module2_fp_r
+    ),
     correlation_rows$combination_id
   )
   correlation_colors <- stats::setNames(
     c(
       "#1B4F72", "#2874A6", "#5DADE2", "#117864",
-      "#73C6B6", "#B03A2E", "#E67E22"
+      "#73C6B6", "#B03A2E", "#E67E22", "#8E44AD"
     ),
     unname(correlation_labels)
   )
@@ -1461,12 +1571,15 @@ build_comparison_pages <- function(target_counts) {
     colors = correlation_colors,
     output_path = correlation_comparison_pdf,
     page_title = "How correlation cutoffs change target-gene coverage",
-    page_subtitle = "Footprint-score cutoff is 2 for every setup.",
-    legend_title = "Module 1 / Module 2"
+    page_subtitle = paste0(
+      "Cutoff order: Module 1 / TF-target / FP-target. ",
+      "Footprint-score cutoff is 2."
+    ),
+    legend_title = "Module 1 / TF-target / FP-target"
   )
 
   footprint_rows <- combination_table[
-    module1_r == 0.3 & module2_r == 0.3
+    module1_r == 0.3 & module2_tf_r == 0.3 & module2_fp_r == 0.3
   ]
   footprint_labels <- stats::setNames(
     paste0("Score >= ", footprint_rows$fp_score_min),
@@ -1483,7 +1596,7 @@ build_comparison_pages <- function(target_counts) {
     colors = footprint_colors,
     output_path = footprint_comparison_pdf,
     page_title = "How footprint-score cutoffs change target-gene coverage",
-    page_subtitle = "Module 1 and Module 2 correlation cutoffs are 0.3.",
+    page_subtitle = "Module 1, TF-target, and FP-target cutoffs are 0.3.",
     legend_title = "Footprint cutoff"
   )
   invisible(c(correlation_comparison_pdf, footprint_comparison_pdf))
@@ -1573,7 +1686,8 @@ build_compact_qc_pages <- function(document_summary, compact_summary) {
       patchwork::plot_annotation(
         title = paste0(
           "HPAFII documents: Module 1 cutoff ", combo$module1_r,
-          ", Module 2 cutoff ", combo$module2_r,
+          ", TF-target cutoff ", combo$module2_tf_r,
+          ", FP-target cutoff ", combo$module2_fp_r,
           ", footprint cutoff ", combo$fp_score_min
         ),
         subtitle = subtitle,
@@ -1602,7 +1716,7 @@ build_compact_qc_pages <- function(document_summary, compact_summary) {
 
 assemble_report <- function() {
   required <- c(
-    footprint_pdf,
+    all_score_footprint_pdf,
     document_summary_path,
     target_count_path
   )
@@ -1623,7 +1737,7 @@ assemble_report <- function() {
   qpdf <- Sys.which("qpdf")
   if (!nzchar(qpdf)) stop("qpdf is required to assemble the final report.")
   source_pdfs <- c(
-    footprint_pdf,
+    all_score_footprint_pdf,
     correlation_comparison_pdf,
     footprint_comparison_pdf,
     compact_qc_paths
@@ -1644,8 +1758,22 @@ assemble_report <- function() {
     c("--show-npages", final_pdf),
     stdout = TRUE
   )[[1L]]))
-  if (!identical(page_count, 12L)) {
-    stop("Final report must contain 12 pages; found ", page_count, ".")
+  source_page_counts <- vapply(source_pdfs, function(path) {
+    suppressWarnings(as.integer(system2(
+      qpdf,
+      c("--show-npages", path),
+      stdout = TRUE
+    )[[1L]]))
+  }, integer(1L))
+  if (!identical(source_page_counts[[1L]], 3L)) {
+    stop("The full footprint-distribution PDF must contain three pages.")
+  }
+  expected_page_count <- sum(source_page_counts)
+  if (!identical(page_count, expected_page_count)) {
+    stop(
+      "Final report must contain ", expected_page_count,
+      " pages; found ", page_count, "."
+    )
   }
   check_status <- system2(qpdf, c("--check", final_pdf))
   if (!identical(check_status, 0L)) stop("qpdf integrity validation failed.")
@@ -1661,11 +1789,11 @@ assemble_report <- function() {
     report_manifest,
     file.path(output_root, "final_report_manifest.csv")
   )
-  log_info("Wrote final 12-page report: ", final_pdf)
+  log_info("Wrote final ", page_count, "-page report: ", final_pdf)
   invisible(final_pdf)
 }
 
-if (stage %in% c("all", "footprint")) {
+if (stage == "footprint") {
   build_footprint_diagnostic()
 }
 if (stage %in% c("all", "eligibility")) {
