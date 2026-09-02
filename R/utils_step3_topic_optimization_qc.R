@@ -1497,6 +1497,66 @@
   out
 }
 
+.m3_qc_condition_tf_hellinger <- function(theta) {
+  theta <- as.matrix(theta)
+  if (!nrow(theta) || !ncol(theta)) {
+    .log_abort("Condition::TF theta must contain documents and topics.")
+  }
+  document_ids <- rownames(theta)
+  if (is.null(document_ids) || anyNA(document_ids) ||
+      any(!nzchar(document_ids)) || anyDuplicated(document_ids) ||
+      any(!grepl("::[^:]+$", document_ids))) {
+    .log_abort(
+      "Condition::TF theta must have unique '<condition>::<TF>' row names."
+    )
+  }
+  document_index <- data.table::data.table(
+    row_id = seq_len(nrow(theta)),
+    condition_id = sub("::[^:]+$", "", document_ids),
+    tf = sub("^.*::", "", document_ids)
+  )
+  if (document_index[, anyDuplicated(paste(condition_id, tf))] > 0L) {
+    .log_abort("Condition::TF theta contains duplicated condition/TF documents.")
+  }
+  conditions <- sort(unique(document_index$condition_id))
+  shared_tfs <- Reduce(
+    intersect,
+    split(document_index$tf, document_index$condition_id)
+  )
+  if (!length(shared_tfs)) {
+    .log_abort("No TF documents are shared by all conditions.")
+  }
+  theta <- .m3_opt_row_normalize(theta)
+  profiles <- lapply(conditions, function(condition) {
+    rows <- document_index[
+      condition_id == condition & tf %in% shared_tfs,
+      .(row_id, tf)
+    ]
+    data.table::setorder(rows, tf)
+    value <- theta[rows$row_id, , drop = FALSE]
+    rownames(value) <- rows$tf
+    value
+  })
+  names(profiles) <- conditions
+  out <- matrix(
+    0,
+    nrow = length(conditions),
+    ncol = length(conditions),
+    dimnames = list(conditions, conditions)
+  )
+  for (i in seq_along(conditions)) {
+    if (i == 1L) next
+    for (j in seq_len(i - 1L)) {
+      distance <- sqrt(rowSums(
+        (sqrt(profiles[[i]]) - sqrt(profiles[[j]]))^2
+      )) / sqrt(2)
+      out[i, j] <- out[j, i] <- stats::median(distance)
+    }
+  }
+  attr(out, "tf_count") <- length(shared_tfs)
+  out
+}
+
 .m3_qc_correlation_plot <- function(x,
                                     title,
                                     subtitle = NULL,
@@ -1517,6 +1577,48 @@
       midpoint = 0,
       limits = c(-1, 1),
       name = "Pearson r"
+    ) +
+    ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
+    ggplot2::coord_fixed(ratio = 1) +
+    .m3_qc_theme() +
+    ggplot2::theme(
+      axis.text = ggplot2::element_text(size = layout_spec$axis_size),
+      axis.text.x = ggplot2::element_text(
+        angle = 90,
+        hjust = 1,
+        vjust = 0.5
+      ),
+      panel.grid = ggplot2::element_blank(),
+      legend.position = "right",
+      plot.margin = layout_spec$plot_margin
+    )
+}
+
+.m3_qc_hellinger_plot <- function(x,
+                                  title,
+                                  subtitle = NULL,
+                                  order = NULL) {
+  x <- as.matrix(x)
+  if (is.null(order)) {
+    order <- if (nrow(x) < 2L) {
+      seq_len(nrow(x))
+    } else {
+      stats::hclust(stats::as.dist(x), method = "average")$order
+    }
+  }
+  layout_spec <- .m3_qc_heatmap_layout_spec(nrow(x), ncol(x))
+  long <- .m3_qc_matrix_long(x, order, order)
+  ggplot2::ggplot(
+    long,
+    ggplot2::aes(column_label, row_label, fill = value)
+  ) +
+    ggplot2::geom_tile(colour = "#D6DCE1", linewidth = 0.25) +
+    ggplot2::scale_fill_gradient(
+      low = "#F7FBFF",
+      high = "#2166AC",
+      limits = c(0, 1),
+      oob = scales::squish,
+      name = "Median H"
     ) +
     ggplot2::labs(title = title, subtitle = subtitle, x = NULL, y = NULL) +
     ggplot2::coord_fixed(ratio = 1) +
@@ -4498,16 +4600,24 @@
     "pathway_gene_umap",
     "tf_target_gene_umap",
     "raw_structure",
-    "condition_correlation"
+    "condition_correlation",
+    "condition_hellinger"
   )
-  standard_report <- identical(sections, "standard")
+  standard_hellinger_report <- identical(sections, "standard_hellinger")
+  standard_report <- identical(sections, "standard") ||
+    standard_hellinger_report
   full_report <- identical(sections, "all")
   if (!length(sections) ||
-      (any(c("standard", "all") %in% sections) &&
+      (any(c("standard", "standard_hellinger", "all") %in% sections) &&
        !standard_report && !full_report) ||
-      any(!sections %in% c("standard", "all", allowed_sections))) {
+      any(!sections %in% c(
+        "standard", "standard_hellinger", "all", allowed_sections
+      ))) {
     .log_abort(paste0(
-      "Topic-assignment QC sections must be 'standard', 'all', or a subset of: ",
+      paste0(
+        "Topic-assignment QC sections must be 'standard', ",
+        "'standard_hellinger', 'all', or a subset of: "
+      ),
       paste(allowed_sections, collapse = ", "),
       "."
     ))
@@ -4518,7 +4628,8 @@
       if (has_peak_terms) "peak_phi_umap",
       if (!is.null(tf_target_gene_sets)) "tf_target_gene_umap",
       "raw_structure",
-      "condition_correlation"
+      "condition_correlation",
+      if (standard_hellinger_report) "condition_hellinger"
     )
   }
   report_scope <- match.arg(report_scope)
@@ -4852,6 +4963,49 @@
     )
   }
 
+  compact_condition_hellinger_plot <- NULL
+  compact_condition_hellinger_title <-
+    "Condition separation across matched TFs"
+  if (!full_report && "condition_hellinger" %in% sections) {
+    if (identical(
+      optimization$document_design %||% "condition_tf",
+      "condition"
+    )) {
+      .log_abort(
+        "condition_hellinger requires condition::TF document theta."
+      )
+    }
+    condition_hellinger <- .m3_qc_condition_tf_hellinger(
+      optimization$theta
+    )
+    tf_count <- as.integer(attr(condition_hellinger, "tf_count"))
+    display_conditions <- .m3_qc_short_condition_labels(
+      rownames(condition_hellinger)
+    )
+    rownames(condition_hellinger) <- colnames(condition_hellinger) <-
+      display_conditions
+    condition_hellinger_order <- if (nrow(condition_hellinger) < 2L) {
+      seq_len(nrow(condition_hellinger))
+    } else {
+      stats::hclust(
+        stats::as.dist(condition_hellinger),
+        method = "average"
+      )$order
+    }
+    compact_condition_hellinger_plot <- .m3_qc_hellinger_plot(
+      condition_hellinger,
+      title = NULL,
+      subtitle = sprintf(
+        paste0(
+          "Median Hellinger distance across %d TF documents shared by all ",
+          "conditions; higher means more different"
+        ),
+        tf_count
+      ),
+      order = condition_hellinger_order
+    )
+  }
+
   if (!full_report) {
     pages <- c(
       gene_umap_pages,
@@ -4871,6 +5025,13 @@
         compact_condition_correlation_plot,
         ncol = 1L,
         title = compact_condition_correlation_title
+      )
+    }
+    if ("condition_hellinger" %in% sections) {
+      pages[[length(pages) + 1L]] <- .m3_qc_arrange(
+        compact_condition_hellinger_plot,
+        ncol = 1L,
+        title = compact_condition_hellinger_title
       )
     }
     if (standard_report) {

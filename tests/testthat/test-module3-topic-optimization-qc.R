@@ -1296,6 +1296,28 @@ test_that("condition::TF correlation uses TF documents shared by all conditions"
   expect_identical(attr(observed, "tf_count"), 1L)
 })
 
+test_that("condition::TF Hellinger distance preserves matched TF differences", {
+  theta <- rbind(
+    `C1::TF1` = c(1, 0),
+    `C1::TF2` = c(0.5, 0.5),
+    `C2::TF1` = c(0, 1),
+    `C2::TF2` = c(0.5, 0.5),
+    `C3::TF1` = c(1, 0),
+    `C3::TF2` = c(0.5, 0.5)
+  )
+
+  observed <- .m3_qc_condition_tf_hellinger(theta)
+  plot <- .m3_qc_hellinger_plot(observed, "Condition separation")
+
+  expect_equal(observed["C1", "C2"], 0.5)
+  expect_equal(observed["C1", "C3"], 0)
+  expect_equal(observed["C2", "C3"], 0.5)
+  expect_equal(observed, t(observed))
+  expect_equal(unname(diag(observed)), rep(0, 3))
+  expect_identical(attr(observed, "tf_count"), 2L)
+  expect_equal(plot$coordinates$ratio, 1)
+})
+
 test_that("pathway Gene sets retain expressed genes unique to one pathway", {
   sets <- data.table::data.table(
     pathway = c("P1", "P1", "P2", "P2", "P3"),
@@ -1537,7 +1559,7 @@ test_that("compact topic QC writes Gene, Peak, pathway, TF-target, and structure
       out_file = output,
       sections = "later_pages"
     ),
-    "must be 'standard', 'all', or a subset"
+    "must be 'standard', 'standard_hellinger', 'all', or a subset"
   )
 })
 
@@ -1623,6 +1645,7 @@ test_that("standard topic QC is the default compact input-design report", {
     gene_term_assignment = gene_assignment,
     peak_term_assignment = peak_assignment,
     tf_target_gene_sets = tf_target_gene_sets,
+    sections = "standard_hellinger",
     sidebar_mode = "terms",
     seed = 13L
   ))
@@ -1651,7 +1674,7 @@ test_that("standard topic QC is the default compact input-design report", {
   if (nzchar(qpdf)) {
     expect_identical(
       system2(qpdf, c("--show-npages", output_gene_peak), stdout = TRUE),
-      "6"
+      "7"
     )
     expect_identical(
       system2(qpdf, c("--show-npages", output_gene_only), stdout = TRUE),
@@ -1709,7 +1732,8 @@ test_that("compact condition::TF QC adds a matched-theta correlation page", {
       "gene_phi_umap",
       "pathway_gene_umap",
       "raw_structure",
-      "condition_correlation"
+      "condition_correlation",
+      "condition_hellinger"
     ),
     sidebar_mode = "terms",
     seed = 9L
@@ -1718,7 +1742,7 @@ test_that("compact condition::TF QC adds a matched-theta correlation page", {
   if (nzchar(qpdf)) {
     expect_identical(
       system2(qpdf, c("--show-npages", output), stdout = TRUE),
-      "4"
+      "5"
     )
   }
 })

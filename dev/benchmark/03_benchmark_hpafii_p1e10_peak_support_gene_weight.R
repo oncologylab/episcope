@@ -128,6 +128,11 @@ box_root <- paste0(
   box_parent,
   "/16_Method10_P1e10_PeakSupport_GeneWeight_Benchmark"
 )
+box_plans_root <- "yilab:Yaoxiang/thesis_project/plans"
+box_plan_names <- c(
+  condition_specific = "HPAFII_Method10_P1e10_ConditionSpecificPeaks.yaml",
+  tf_union = "HPAFII_Method10_P1e10_TFUnionPeaks.yaml"
+)
 
 raw_doc_root <- file.path(strict_root, "document_terms_raw", "p1e10")
 baseline_doc_path <- file.path(
@@ -181,11 +186,20 @@ support_manifest_path <- file.path(cache_root, "support_manifest.csv")
 source_signature_path <- file.path(cache_root, "source_signature.txt")
 source_identity_cache_path <- file.path(cache_root, "source_file_identities.rds")
 
-run_table <- data.table::data.table(
-  run_number = 27:32,
-  support = rep(c("condition_specific", "tf_union"), each = 3L),
-  gene_to_peak = rep(c(2L, 3L, 4L), times = 2L)
-)
+ratio_levels <- c(2L, 3L, 4L, 6L, 8L, 10L)
+run_table <- data.table::rbindlist(list(
+  data.table::data.table(
+    run_number = c(27:29, 33:35),
+    support = "condition_specific",
+    gene_to_peak = ratio_levels
+  ),
+  data.table::data.table(
+    run_number = c(30:32, 36:38),
+    support = "tf_union",
+    gene_to_peak = ratio_levels
+  )
+))
+data.table::setorder(run_table, run_number)
 run_table[, support_label := data.table::fifelse(
   support == "condition_specific",
   "Condition-specific Peaks",
@@ -798,17 +812,17 @@ run_configuration <- function(row, status = "configured") {
       vocabulary = list(
         genes = 8085L,
         peaks = 21298L,
-        shared_across_all_six_models = TRUE
+        shared_across_all_models = TRUE
       )
     ),
     token_allocation = list(
-      fixed_document_budget = TRUE,
+      fixed_between_support_designs_at_each_ratio = TRUE,
       budget_source = "p = 1e-10 condition-specific Gene2:Peak1 documents",
       budget_rule = paste0(
-        "max(baseline tokens, 5 * TF-union Peak terms, ",
-        "ceiling(1.5 * Gene terms))"
+        "max(original common budget, (Gene:Peak ratio + 1) * ",
+        "TF-union Peak terms)"
       ),
-      same_budget_for_all_six_models = TRUE,
+      higher_ratio_expansion = gene_to_peak > 4L,
       gene_to_peak_ratio = paste0(gene_to_peak, ":1"),
       peak_to_gene_ratio_argument = 1 / gene_to_peak,
       minimum_tokens_per_present_term = 1L,
@@ -848,6 +862,7 @@ run_configuration <- function(row, status = "configured") {
       qc_pdf = qc_path,
       comparison_root = benchmark_root,
       box_delivery_root = box_root,
+      box_plan = paste0(box_plans_root, "/", box_plan_names[[support]]),
       files = list(
         dtm = artifact_record(file.path(model_root, "rds", "dtm.rds")),
         metrics = artifact_record(file.path(model_root, "model_metrics.csv")),
@@ -890,6 +905,11 @@ write_design_configs <- function(status = "configured") {
     shared_model <- representative$model
     shared_model$threads_per_model <- NULL
     shared_model$threads_recorded_per_run <- TRUE
+    shared_allocation <- representative$token_allocation
+    shared_allocation$higher_ratio_expansion <- NULL
+    shared_allocation$gene_to_peak_ratio <- NULL
+    shared_allocation$peak_to_gene_ratio_argument <- NULL
+    shared_allocation$ratios_above_4_expand_budget_to_keep_all_peaks <- TRUE
     config <- list(
       schema_version = 1L,
       design_id = support_id,
@@ -906,9 +926,10 @@ write_design_configs <- function(status = "configured") {
       source_artifacts = representative$source_artifacts,
       upstream_filters = representative$upstream_filters,
       document_construction = representative$document_construction,
-      token_allocation = representative$token_allocation,
+      token_allocation = shared_allocation,
       ratios = lapply(seq_len(nrow(rows)), function(i) list(
         gene_to_peak = paste0(rows$gene_to_peak[[i]], ":1"),
+        expanded_budget = rows$gene_to_peak[[i]] > 4L,
         run_id = rows$run_id[[i]],
         threads_per_model = run_configuration(
           rows[i],
@@ -920,7 +941,8 @@ write_design_configs <- function(status = "configured") {
       model = shared_model,
       topic_assignment = representative$topic_assignment,
       execution = representative$execution,
-      box_delivery_root = box_root
+      box_delivery_root = box_root,
+      box_plan = paste0(box_plans_root, "/", box_plan_names[[support_id]])
     )
     yaml::write_yaml(
       config,
@@ -984,22 +1006,28 @@ make_source_dtm <- function(support_id, documents, vocabulary, budget) {
   )
   dtm <- methods::as(dtm, "RsparseMatrix")
   source_totals <- as.numeric(Matrix::rowSums(dtm))
-  target_budget <- budget$common_tokens[match(documents, budget$doc_id)]
-  if (anyNA(target_budget) || any(source_totals <= 0)) {
+  budget_index <- match(documents, budget$doc_id)
+  common_budget <- budget$common_tokens[budget_index]
+  union_peak_terms <- budget$union_peak_terms[budget_index]
+  if (anyNA(common_budget) || anyNA(union_peak_terms) ||
+      any(source_totals <= 0)) {
     stop("A document is missing its source count or common token budget.")
   }
-  dtm <- allocate_common_document_budget(dtm, target_budget)
-  if (any(as.numeric(Matrix::rowSums(dtm)) != target_budget)) {
-    stop("The source DTM does not preserve the common document budget.")
-  }
-  list(dtm = dtm, support_rows = nrow(support), target_budget = target_budget)
+  list(
+    dtm = dtm,
+    support_rows = nrow(support),
+    common_budget = common_budget,
+    union_peak_terms = union_peak_terms
+  )
 }
 
-write_document_qc <- function(dtm, row) {
+write_document_qc <- function(dtm, row, overwrite = FALSE) {
   model_root <- as.character(row$model_root[[1L]])
   qc_path <- file.path(model_root, "document_term_qc.pdf")
   summary_path <- file.path(model_root, "document_term_qc_summary.csv")
-  if (file.exists(qc_path) && file.exists(summary_path)) return(invisible(qc_path))
+  if (!overwrite && file.exists(qc_path) && file.exists(summary_path)) {
+    return(invisible(qc_path))
+  }
   entries <- Matrix::summary(dtm)
   doc_term <- data.table::data.table(
     doc_id = rownames(dtm)[entries$i],
@@ -1025,7 +1053,28 @@ write_document_qc <- function(dtm, row) {
 prepare_design_matrices <- function(support_id) {
   build_document_supports()
   rows <- run_table[support == support_id]
-  if (all(file.exists(file.path(rows$model_root, "rds", "dtm.rds")))) {
+  dtm_is_current <- function(row) {
+    dtm_path <- file.path(row$model_root[[1L]], "rds", "dtm.rds")
+    if (!file.exists(dtm_path)) return(FALSE)
+    if (row$gene_to_peak[[1L]] <= 4L) return(TRUE)
+    summary_path <- file.path(row$model_root[[1L]], "topic_input_summary.csv")
+    if (!file.exists(summary_path)) return(FALSE)
+    summary <- data.table::fread(summary_path, nrows = 1L, showProgress = FALSE)
+    qc_paths <- file.path(
+      row$model_root[[1L]],
+      c("document_term_qc.pdf", "document_term_qc_summary.csv")
+    )
+    "ratio_budget_version" %in% names(summary) &&
+      identical(as.integer(summary$ratio_budget_version[[1L]]), 2L) &&
+      all(file.exists(qc_paths)) &&
+      all(file.info(qc_paths)$mtime >= file.info(dtm_path)$mtime)
+  }
+  current <- vapply(
+    seq_len(nrow(rows)),
+    function(i) dtm_is_current(rows[i]),
+    logical(1L)
+  )
+  if (all(current)) {
     log_info("Reusing all DTM files for ", support_id, ".")
     return(invisible(TRUE))
   }
@@ -1052,26 +1101,30 @@ prepare_design_matrices <- function(support_id) {
     row <- rows[i]
     model_root <- as.character(row$model_root[[1L]])
     dtm_path <- file.path(model_root, "rds", "dtm.rds")
-    if (file.exists(dtm_path)) next
+    if (current[[i]]) next
     dir.create(file.path(model_root, "rds"), recursive = TRUE, showWarnings = FALSE)
     log_info(
       "Allocating ", support_id, " DTM at Gene:Peak ",
       row$gene_to_peak[[1L]], ":1."
     )
+    target_budget <- pmax(
+      source$common_budget,
+      (as.integer(row$gene_to_peak[[1L]]) + 1L) * source$union_peak_terms
+    )
+    dtm <- allocate_common_document_budget(source$dtm, target_budget)
     finalized <- craftgrn:::.topic_finalize_sparse_counts_cpp(
-      row_pointer = source$dtm@p,
-      column_index = source$dtm@j,
-      source_count = source$dtm@x,
+      row_pointer = dtm@p,
+      column_index = dtm@j,
+      source_count = dtm@x,
       gene_term = gene_term,
       idf_multiplier = rep(1, length(vocabulary)),
       peak_gene_ratio = 1 / row$gene_to_peak[[1L]]
     )
-    dtm <- source$dtm
     dtm@x <- as.numeric(finalized$counts)
     dtm <- methods::as(dtm, "CsparseMatrix")
     observed_budget <- as.numeric(Matrix::rowSums(dtm))
-    if (!identical(observed_budget, as.numeric(source$target_budget))) {
-      stop("Final DTM did not preserve the common document token budget.")
+    if (!identical(observed_budget, as.numeric(target_budget))) {
+      stop("Final DTM did not preserve the ratio-specific document budget.")
     }
     peak_tokens <- as.numeric(Matrix::rowSums(dtm[, !gene_term, drop = FALSE]))
     peak_gene_ratio <- 1 / row$gene_to_peak[[1L]]
@@ -1098,6 +1151,8 @@ prepare_design_matrices <- function(support_id) {
       common_budget_added_tokens = sum(
         budget$tokens_added[match(rownames(dtm), budget$doc_id)]
       ),
+      ratio_budget_added_tokens = sum(target_budget - source$common_budget),
+      ratio_budget_version = 2L,
       count_method = "log",
       count_scale = 50,
       min_df = 1L
@@ -1113,7 +1168,7 @@ prepare_design_matrices <- function(support_id) {
       copy.mode = TRUE
     )
     write_run_config(row, status = "documents_complete")
-    write_document_qc(dtm, row)
+    write_document_qc(dtm, row, overwrite = TRUE)
     rm(dtm, finalized)
     invisible(gc())
   }
@@ -1324,7 +1379,17 @@ write_qc_one <- function(row) {
   qc_dir <- file.path(benchmark_root, "qc")
   qc_path <- file.path(qc_dir, as.character(row$qc_name[[1L]]))
   metrics_path <- file.path(extraction_root, "benchmark_metrics.csv")
-  if (file.exists(qc_path) && file.exists(metrics_path)) {
+  existing_pages <- if (file.exists(qc_path)) {
+    suppressWarnings(as.integer(system2(
+      "qpdf",
+      c("--show-npages", shQuote(qc_path)),
+      stdout = TRUE,
+      stderr = TRUE
+    )[[1L]]))
+  } else {
+    NA_integer_
+  }
+  if (identical(existing_pages, 7L) && file.exists(metrics_path)) {
     log_info("Reusing QC report: ", row$qc_name[[1L]])
     return(data.table::fread(metrics_path, showProgress = FALSE))
   }
@@ -1436,7 +1501,7 @@ write_qc_one <- function(row) {
     tf_target_panel = tf_panel,
     top_n_tfs = 25L,
     seed = 20260902L + as.integer(row$run_number[[1L]]),
-    sections = "standard",
+    sections = "standard_hellinger",
     peak_umap_top_n = Inf,
     report_scope = "condition_correlation",
     sidebar_mode = "terms"
@@ -1451,8 +1516,8 @@ write_qc_one <- function(row) {
     stdout = TRUE,
     stderr = TRUE
   )[[1L]]))
-  if (!identical(pages, 6L)) {
-    stop("Expected six QC pages but found ", pages, " in ", qc_path, ".")
+  if (!identical(pages, 7L)) {
+    stop("Expected seven QC pages but found ", pages, " in ", qc_path, ".")
   }
 
   condition_theta <- craftgrn:::.m3_qc_condition_tf_topic_theta(
@@ -1617,13 +1682,13 @@ write_comparison_report <- function() {
   metrics_path <- file.path(benchmark_root, "benchmark_metrics.csv")
   if (!file.exists(metrics_path)) write_qc_reports()
   metrics <- data.table::fread(metrics_path, showProgress = FALSE)
-  if (nrow(metrics) != 6L || any(!metrics$converged) ||
-      any(metrics$qc_pages != 6L)) {
-    stop("Benchmark metrics do not describe six converged six-page runs.")
+  if (nrow(metrics) != nrow(run_table) || any(!metrics$converged) ||
+      any(metrics$qc_pages != 7L)) {
+    stop("Benchmark metrics do not describe all converged seven-page runs.")
   }
   support <- data.table::fread(support_summary_path, showProgress = FALSE)
   alignment <- data.table::rbindlist(lapply(
-    c(2L, 3L, 4L),
+    sort(unique(run_table$gene_to_peak)),
     topic_alignment_one
   ))
   data.table::fwrite(
@@ -1714,7 +1779,7 @@ write_comparison_report <- function() {
     patchwork::plot_layout(widths = c(1, 1.15)) +
     patchwork::plot_annotation(
       title = "HPAFII p = 1e-10 Peak-support benchmark",
-      subtitle = "All six K30 models use the same document token budget."
+      subtitle = "Both Peak-support designs use the same token budget at each ratio."
     )
 
   metric_data <- data.table::melt(
@@ -1799,11 +1864,12 @@ write_delivery_readme <- function() {
     "",
     "- Condition-specific: each document keeps only Peaks that pass p = 1e-10 in that condition.",
     "- TF-union: each TF keeps its union of passing Peaks across conditions. Each condition uses its own raw footprint score.",
-    "- Gene:Peak ratios tested: 2:1, 3:1, and 4:1.",
-    "- All six models use the same per-document token budget and K = 30.",
+    "- Gene:Peak ratios tested: 2:1, 3:1, 4:1, 6:1, 8:1, and 10:1.",
+    "- Both designs use the same document budget at each ratio and K = 30.",
+    "- Ratios above 4:1 use a larger budget so every Peak stays in the document.",
     "",
     "Start with `HPAFII_K30_PeakSupport_GeneWeight_Comparison.pdf`.",
-    "Each QC PDF follows the same six-page report format used by the current Method 10 report.",
+    "Each QC PDF adds matched-TF Hellinger separation as page 7.",
     "The two YAML files contain the full input, filter, document, model, and output records.",
     "",
     paste0("Source signature: `", source_signature, "`")
@@ -1886,7 +1952,7 @@ update_box_parent_index <- function() {
     peak_weight = "Condition footprint score + TF expression",
     gene_peak_ratio = paste0(run_table$gene_to_peak, ":1"),
     status = "active_experimental",
-    pages = 6L,
+    pages = 7L,
     role = "p = 1e-10 Peak-support and Gene-weight benchmark"
   )
   new_rows <- new_rows[, intersect(names(index), names(new_rows)), with = FALSE]
@@ -1896,20 +1962,32 @@ update_box_parent_index <- function() {
 
   readme <- readLines(local_readme, warn = FALSE)
   marker <- "## Method 10 p = 1e-10 Peak-support benchmark"
+  benchmark_note <- paste0(
+    "See `16_Method10_P1e10_PeakSupport_GeneWeight_Benchmark/` for ",
+    "the condition-specific and TF-union Peak comparison at Gene:Peak ",
+    "ratios 2:1, 3:1, 4:1, 6:1, 8:1, and 10:1."
+  )
   if (!marker %in% readme) {
     readme <- c(
       readme,
       "",
       marker,
       "",
-      paste0(
-        "See `16_Method10_P1e10_PeakSupport_GeneWeight_Benchmark/` for ",
-        "the condition-specific and TF-union Peak comparison at Gene:Peak ",
-        "ratios 2:1, 3:1, and 4:1."
-      )
+      benchmark_note
     )
-    writeLines(readme, local_readme, useBytes = TRUE)
+  } else {
+    marker_index <- match(marker, readme)
+    note_index <- which(
+      seq_along(readme) > marker_index &
+        startsWith(readme, "See `16_Method10_P1e10_PeakSupport_GeneWeight_Benchmark/")
+    )
+    if (length(note_index)) {
+      readme[note_index[[1L]]] <- benchmark_note
+    } else {
+      readme <- append(readme, c("", benchmark_note), after = marker_index)
+    }
   }
+  writeLines(readme, local_readme, useBytes = TRUE)
 
   for (path in c(local_index, local_readme)) {
     remote <- paste0(box_parent, "/", basename(path))
@@ -1921,6 +1999,32 @@ update_box_parent_index <- function() {
     )
     if (!identical(attr(status, "status") %||% 0L, 0L)) {
       stop("Could not update Box file: ", basename(path))
+    }
+  }
+  invisible(TRUE)
+}
+
+update_box_plans <- function() {
+  plans <- data.table::data.table(
+    source = file.path(
+      benchmark_root,
+      c("condition_specific_config.yaml", "tf_union_config.yaml")
+    ),
+    remote_name = unname(box_plan_names)
+  )
+  if (any(!file.exists(plans$source))) {
+    stop("A Box plans YAML is missing locally.")
+  }
+  for (i in seq_len(nrow(plans))) {
+    remote <- paste0(box_plans_root, "/", plans$remote_name[[i]])
+    status <- system2(
+      "rclone",
+      c("copyto", shQuote(plans$source[[i]]), shQuote(remote), "--checksum"),
+      stdout = TRUE,
+      stderr = TRUE
+    )
+    if (!identical(attr(status, "status") %||% 0L, 0L)) {
+      stop("Could not update Box plan: ", plans$remote_name[[i]])
     }
   }
   invisible(TRUE)
@@ -1979,6 +2083,7 @@ deliver_results <- function() {
     stop("The Box folder contains an unexpected or missing delivery file.")
   }
   update_box_parent_index()
+  update_box_plans()
   for (i in seq_len(nrow(run_table))) {
     write_run_config(run_table[i], status = "delivered")
   }
