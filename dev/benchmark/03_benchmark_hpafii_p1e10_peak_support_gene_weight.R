@@ -129,9 +129,16 @@ box_root <- paste0(
   "/16_Method10_P1e10_PeakSupport_GeneWeight_Benchmark"
 )
 box_plans_root <- "yilab:Yaoxiang/thesis_project/plans"
+plan_date <- "2026-09-02"
 box_plan_names <- c(
-  condition_specific = "HPAFII_Method10_P1e10_ConditionSpecificPeaks.yaml",
-  tf_union = "HPAFII_Method10_P1e10_TFUnionPeaks.yaml"
+  condition_specific = paste0(
+    plan_date,
+    "_HPAFII_Method10_P1e10_ConditionSpecificPeaks.yaml"
+  ),
+  tf_union = paste0(
+    plan_date,
+    "_HPAFII_Method10_P1e10_TFUnionPeaks.yaml"
+  )
 )
 
 raw_doc_root <- file.path(strict_root, "document_terms_raw", "p1e10")
@@ -729,6 +736,7 @@ run_configuration <- function(row, status = "configured") {
   }
   list(
     schema_version = 1L,
+    plan_date = plan_date,
     run_id = as.character(row$run_id[[1L]]),
     status = status,
     purpose = paste0(
@@ -912,6 +920,7 @@ write_design_configs <- function(status = "configured") {
     shared_allocation$ratios_above_4_expand_budget_to_keep_all_peaks <- TRUE
     config <- list(
       schema_version = 1L,
+      plan_date = plan_date,
       design_id = support_id,
       status = status,
       source_signature = source_signature,
