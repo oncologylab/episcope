@@ -1374,9 +1374,14 @@ final_pdf <- file.path(
   output_root,
   "15_Method10_K30_RCutoff_and_FPStrength_DocumentTermQC.pdf"
 )
-all_score_footprint_pdf <- file.path(
-  output_root,
-  "16_HPAFII_FootprintScore_Distribution_Bound-Unbound.pdf"
+strict_bound_root <- file.path(output_root, "hpa_strict_bound_sensitivity")
+strict_bound_front_pdf <- file.path(
+  strict_bound_root,
+  "footprint_bound_sensitivity_front.pdf"
+)
+strict_bound_document_pdf <- file.path(
+  strict_bound_root,
+  "p_only_document_comparison.pdf"
 )
 
 compact_qc_summary_path <- file.path(
@@ -1716,7 +1721,8 @@ build_compact_qc_pages <- function(document_summary, compact_summary) {
 
 assemble_report <- function() {
   required <- c(
-    all_score_footprint_pdf,
+    strict_bound_front_pdf,
+    strict_bound_document_pdf,
     document_summary_path,
     target_count_path
   )
@@ -1737,7 +1743,8 @@ assemble_report <- function() {
   qpdf <- Sys.which("qpdf")
   if (!nzchar(qpdf)) stop("qpdf is required to assemble the final report.")
   source_pdfs <- c(
-    all_score_footprint_pdf,
+    strict_bound_front_pdf,
+    strict_bound_document_pdf,
     correlation_comparison_pdf,
     footprint_comparison_pdf,
     compact_qc_paths
@@ -1766,9 +1773,15 @@ assemble_report <- function() {
     )[[1L]]))
   }, integer(1L))
   if (!identical(source_page_counts[[1L]], 3L)) {
-    stop("The full footprint-distribution PDF must contain three pages.")
+    stop("The footprint-bound sensitivity front PDF must contain three pages.")
+  }
+  if (!identical(source_page_counts[[2L]], 1L)) {
+    stop("The p-only document comparison must contain one page.")
   }
   expected_page_count <- sum(source_page_counts)
+  if (!identical(expected_page_count, 16L)) {
+    stop("The assembled source PDFs must contain 16 pages in total.")
+  }
   if (!identical(page_count, expected_page_count)) {
     stop(
       "Final report must contain ", expected_page_count,

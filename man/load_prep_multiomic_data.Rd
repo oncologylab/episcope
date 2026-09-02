@@ -105,7 +105,9 @@ the input tables.}
 
 \item{threshold_gene_expr}{Expression threshold for Step 1 expression flags.}
 
-\item{threshold_fp_score}{Footprint-score threshold for Step 1 bound flags.}
+\item{threshold_fp_score}{Footprint-score threshold for Step 1 bound flags.
+Supply one value for every sample or a named numeric vector with one value
+per sample id.}
 
 \item{use_parallel}{Logical; if `TRUE`, allow parallel work in supported
 helpers.}

@@ -153,6 +153,15 @@ plot_fp_norm_bound_qc <- function(
     bound_peaks = as.integer(bound_counts),
     stringsAsFactors = FALSE
   )
+  bound_caption <- if (length(threshold_fp_score) == 1L) {
+    paste0("Bound: fp_score >= ", threshold_fp_score, ".")
+  } else {
+    paste0(
+      "Bound: sample-specific fp_score cutoffs (",
+      format(min(threshold_fp_score), digits = 3L), " to ",
+      format(max(threshold_fp_score), digits = 3L), ")."
+    )
+  }
 
   base_theme <- ggplot2::theme_classic(base_size = 12) +
     ggplot2::theme(
@@ -192,7 +201,7 @@ plot_fp_norm_bound_qc <- function(
       title = "Total bound footprints per condition",
       x = "Condition",
       y = "Bound footprints",
-      caption = paste0("Bound: fp_score >= ", threshold_fp_score, ".")
+      caption = bound_caption
     ) +
     base_theme +
     ggplot2::coord_flip()

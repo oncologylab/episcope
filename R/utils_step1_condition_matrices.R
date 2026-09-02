@@ -258,6 +258,28 @@ make_fp_bound_condition <- function(
     }
     .log_abort("No overlapping ids across fp_bound, fp_score, and metadata.")
   }
+  if (!is.numeric(threshold_fp_score) || !length(threshold_fp_score) ||
+      any(!is.finite(threshold_fp_score))) {
+    .log_abort("`threshold_fp_score` must be a finite numeric scalar or named sample vector.")
+  }
+  if (length(threshold_fp_score) == 1L) {
+    score_thresholds <- rep(as.numeric(threshold_fp_score), length(ids_use))
+  } else {
+    threshold_names <- names(threshold_fp_score)
+    if (is.null(threshold_names) || anyNA(threshold_names) ||
+        any(!nzchar(threshold_names))) {
+      .log_abort("A multi-value `threshold_fp_score` must be named by sample id.")
+    }
+    if (anyDuplicated(threshold_names)) {
+      duplicates <- unique(threshold_names[duplicated(threshold_names)])
+      .log_abort("`threshold_fp_score` has duplicate sample ids: {paste(duplicates, collapse = ', ')}.")
+    }
+    missing_thresholds <- setdiff(ids_use, threshold_names)
+    if (length(missing_thresholds)) {
+      .log_abort("`threshold_fp_score` is missing sample ids: {paste(missing_thresholds, collapse = ', ')}.")
+    }
+    score_thresholds <- as.numeric(threshold_fp_score[match(ids_use, threshold_names)])
+  }
   meta_use <- meta_use[meta_use$id %in% ids_use, , drop = FALSE]
   cond_levels <- unique(meta_use[[label_col]])
   if (!length(cond_levels)) .log_abort("No condition labels found in metadata.")
@@ -278,7 +300,8 @@ make_fp_bound_condition <- function(
   score_mat <- as.matrix(score_tbl[, ids_use, drop = FALSE])
   bound_mat[is.na(bound_mat)] <- 0L
   score_mat[is.na(score_mat)] <- NA_real_
-  bound_mat <- bound_mat > 0 & score_mat >= threshold_fp_score
+  score_pass <- sweep(score_mat, 2L, score_thresholds, FUN = ">=")
+  bound_mat <- bound_mat > 0 & score_pass
   storage.mode(bound_mat) <- "integer"
 
   atac_mat <- NULL

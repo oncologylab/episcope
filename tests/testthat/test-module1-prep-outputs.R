@@ -62,3 +62,85 @@ test_that("condition matrix helpers preserve data.table metadata columns", {
   expect_equal(names(fp_condition)[-1L], expected_names)
   expect_equal(names(fp_bound)[-1L], expected_names)
 })
+
+test_that("condition bound flags support sample-specific score cutoffs", {
+  metadata <- tibble::tibble(
+    id = c("sample_a", "sample_b"),
+    condition_id = c("condition_a", "condition_b")
+  )
+  fp_bound <- tibble::tibble(
+    peak_ID = c("peak_1", "peak_2"),
+    sample_a = 1L,
+    sample_b = 1L
+  )
+  fp_score <- tibble::tibble(
+    peak_ID = c("peak_1", "peak_2"),
+    sample_a = c(1, 3),
+    sample_b = c(1, 3)
+  )
+
+  scalar <- make_fp_bound_condition(
+    fp_bound_tbl = fp_bound,
+    fp_score_tbl = fp_score,
+    atac_overlap_tbl = NULL,
+    fp_annotation_tbl = NULL,
+    metadata = metadata,
+    label_col = "condition_id",
+    threshold_fp_score = 2
+  )
+  sample_specific <- make_fp_bound_condition(
+    fp_bound_tbl = fp_bound,
+    fp_score_tbl = fp_score,
+    atac_overlap_tbl = NULL,
+    fp_annotation_tbl = NULL,
+    metadata = metadata,
+    label_col = "condition_id",
+    threshold_fp_score = c(sample_b = 4, sample_a = 0.5)
+  )
+
+  expect_equal(scalar$condition_a, c(0L, 1L))
+  expect_equal(scalar$condition_b, c(0L, 1L))
+  expect_equal(sample_specific$condition_a, c(1L, 1L))
+  expect_equal(sample_specific$condition_b, c(0L, 0L))
+})
+
+test_that("sample-specific score cutoffs validate sample ids", {
+  metadata <- tibble::tibble(
+    id = c("sample_a", "sample_b"),
+    condition_id = c("condition_a", "condition_b")
+  )
+  fp_bound <- tibble::tibble(
+    peak_ID = "peak_1",
+    sample_a = 1L,
+    sample_b = 1L
+  )
+  fp_score <- tibble::tibble(
+    peak_ID = "peak_1",
+    sample_a = 1,
+    sample_b = 1
+  )
+  call_helper <- function(threshold) {
+    make_fp_bound_condition(
+      fp_bound_tbl = fp_bound,
+      fp_score_tbl = fp_score,
+      atac_overlap_tbl = NULL,
+      fp_annotation_tbl = NULL,
+      metadata = metadata,
+      label_col = "condition_id",
+      threshold_fp_score = threshold
+    )
+  }
+
+  expect_error(call_helper(c(1, 2)), "named by sample id", fixed = TRUE)
+  expect_error(
+    call_helper(c(sample_a = 1, unused = 2)),
+    "missing sample ids: sample_b",
+    fixed = TRUE
+  )
+  expect_error(
+    call_helper(stats::setNames(c(1, 2), c("sample_a", "sample_a"))),
+    "duplicate sample ids: sample_a",
+    fixed = TRUE
+  )
+  expect_error(call_helper(c(sample_a = 1, sample_b = Inf)), "finite numeric", fixed = TRUE)
+})
