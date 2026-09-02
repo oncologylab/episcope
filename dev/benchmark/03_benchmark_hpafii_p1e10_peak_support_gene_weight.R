@@ -3,7 +3,8 @@
 args <- commandArgs(trailingOnly = TRUE)
 stage <- if (length(args)) tolower(args[[1L]]) else "all"
 allowed_stages <- c(
-  "all", "documents", "train", "qc", "compare", "deliver", "r0p7"
+  "all", "documents", "train", "qc", "compare", "deliver", "extreme",
+  "r0p7"
 )
 if (!stage %in% allowed_stages) {
   stop("Stage must be one of: ", paste(allowed_stages, collapse = ", "))
@@ -310,6 +311,55 @@ run_table[, qc_name := sprintf(
     "ConditionSpecific",
     "TFUnion"
   ),
+  gene_to_peak
+)]
+
+standard_benchmark_root <- benchmark_root
+extreme_ratio_levels <- c(50L, 100L, 150L)
+extreme_benchmark_root <- file.path(
+  topic_runs,
+  "review",
+  "method10_p1e10_extreme_peak_downweighting"
+)
+extreme_delivery_root <- file.path(extreme_benchmark_root, "delivery")
+extreme_box_root <- paste0(
+  box_parent,
+  "/19_Method10_P1e10_ExtremePeakDownweighting"
+)
+extreme_box_plan_name <- paste0(
+  plan_date,
+  "_HPAFII_Method10_P1e10_ExtremePeakDownweighting.yaml"
+)
+extreme_plan_path <- file.path(extreme_benchmark_root, "run_config.yaml")
+extreme_metrics_path <- file.path(extreme_benchmark_root, "benchmark_metrics.csv")
+extreme_comparison_metrics_path <- file.path(
+  extreme_benchmark_root,
+  "comparison_metrics.csv"
+)
+extreme_comparison_pdf <- file.path(
+  extreme_benchmark_root,
+  "HPAFII_K30_ExtremePeakDownweighting_Comparison.pdf"
+)
+extreme_run_table <- data.table::data.table(
+  run_number = 41:43,
+  support = "condition_specific",
+  gene_to_peak = extreme_ratio_levels,
+  support_label = "Condition-specific Peaks"
+)
+extreme_run_table[, run_id := sprintf(
+  "run_%03d_lda_condition_tf_unique_fp_p1e10_condition_specific_K30_g%dp1",
+  run_number,
+  gene_to_peak
+)]
+extreme_run_table[, run_root := file.path(topic_runs, run_id)]
+extreme_run_table[, model_root := file.path(run_root, "topic_models")]
+extreme_run_table[, extraction_root := file.path(
+  run_root,
+  "topic_extraction",
+  "K30"
+)]
+extreme_run_table[, qc_name := sprintf(
+  "LDA_K30_IndividualPeaks_Ratio-Gene%d-Peak1_QC.pdf",
   gene_to_peak
 )]
 
@@ -2196,6 +2246,570 @@ deliver_results <- function() {
   invisible(manifest)
 }
 
+activate_extreme_benchmark <- function() {
+  run_table <<- data.table::copy(extreme_run_table)
+  benchmark_root <<- extreme_benchmark_root
+  delivery_root <<- extreme_delivery_root
+  box_root <<- extreme_box_root
+  box_plan_names <<- c(condition_specific = extreme_box_plan_name)
+  invisible(TRUE)
+}
+
+train_extreme_models <- function() {
+  activate_extreme_benchmark()
+  build_document_supports()
+  prepare_design_matrices("condition_specific")
+  pending <- which(!file.exists(file.path(
+    run_table$model_root,
+    "vae_models",
+    "phi_K30.csv"
+  )))
+  if (length(pending)) {
+    log_info(
+      "Training ", length(pending),
+      " extreme Peak-downweighting models sequentially."
+    )
+    for (i in pending) train_one_model(run_table[i])
+  }
+  write_design_configs(status = "models_complete")
+  invisible(TRUE)
+}
+
+write_extreme_qc <- function() {
+  train_extreme_models()
+  if (!requireNamespace("devtools", quietly = TRUE)) {
+    stop("Package devtools is required to load the current QC report code.")
+  }
+  devtools::load_all(
+    repository_root,
+    quiet = TRUE,
+    export_all = FALSE,
+    helpers = FALSE
+  )
+  metrics <- data.table::rbindlist(lapply(
+    seq_len(nrow(run_table)),
+    function(i) write_qc_one(run_table[i])
+  ), use.names = TRUE, fill = TRUE)
+  data.table::fwrite(metrics, extreme_metrics_path)
+  write_design_configs(status = "qc_complete")
+  metrics
+}
+
+mean_condition_correlation_from_theta <- function(path) {
+  theta <- read_probability(path)
+  document_ids <- rownames(theta)
+  index <- data.table::data.table(
+    row_id = seq_len(nrow(theta)),
+    condition_id = sub("::[^:]+$", "", document_ids),
+    tf = sub("^.*::", "", document_ids)
+  )
+  shared_tfs <- Reduce(
+    intersect,
+    split(index$tf, index$condition_id)
+  )
+  if (!length(shared_tfs)) {
+    stop("No TF is shared by every condition in ", path, ".")
+  }
+  index <- index[tf %in% shared_tfs]
+  theta <- theta / rowSums(theta)
+  condition_theta <- t(vapply(
+    sort(unique(index$condition_id)),
+    function(condition_value) {
+      rows <- index[get("condition_id") == condition_value, row_id]
+      colMeans(theta[rows, , drop = FALSE])
+    },
+    numeric(ncol(theta))
+  ))
+  correlation <- suppressWarnings(stats::cor(
+    t(condition_theta),
+    use = "pairwise.complete.obs"
+  ))
+  values <- correlation[upper.tri(correlation)]
+  if (!length(values) || any(!is.finite(values))) {
+    stop("Could not calculate condition correlation from ", path, ".")
+  }
+  mean(values)
+}
+
+write_extreme_comparison <- function() {
+  metrics <- write_extreme_qc()
+  standard_metrics <- data.table::fread(
+    file.path(standard_benchmark_root, "benchmark_metrics.csv"),
+    showProgress = FALSE
+  )[support == "condition_specific"]
+  historical_root <- file.path(topic_runs)
+  historical <- data.table::data.table(
+    design = c("Method 05", "Method 07"),
+    ratio = NA_integer_,
+    label = c("05 Aggregate", "07 Aggregate + TF expression"),
+    mean_condition_correlation = c(
+      mean_condition_correlation_from_theta(file.path(
+        historical_root,
+        "run_009_lda_gene_peak_K30_shared_de_union_expr_scaled",
+        "topic_models",
+        "vae_models",
+        "theta_K30.csv"
+      )),
+      mean_condition_correlation_from_theta(file.path(
+        historical_root,
+        paste0(
+          "run_012_lda_gene_peak_K30_shared_de_union_expr_scaled_",
+          "tf_peak_scaled"
+        ),
+        "topic_models",
+        "vae_models",
+        "theta_K30.csv"
+      ))
+    ),
+    assigned_target_genes = NA_real_,
+    largest_topic_gene_fraction = NA_real_,
+    mean_topic_similarity = NA_real_,
+    model_tokens = NA_real_
+  )
+  unique_metrics <- data.table::rbindlist(list(
+    standard_metrics[, .(
+      design = "Individual Peaks",
+      ratio = as.integer(gene_to_peak),
+      label = paste0(gene_to_peak, ":1"),
+      mean_condition_correlation,
+      assigned_target_genes,
+      largest_topic_gene_fraction,
+      mean_topic_similarity,
+      model_tokens = tokens
+    )],
+    metrics[, .(
+      design = "Individual Peaks",
+      ratio = as.integer(gene_to_peak),
+      label = paste0(gene_to_peak, ":1"),
+      mean_condition_correlation,
+      assigned_target_genes,
+      largest_topic_gene_fraction,
+      mean_topic_similarity,
+      model_tokens = tokens
+    )]
+  ), use.names = TRUE)
+  comparison <- data.table::rbindlist(
+    list(historical, unique_metrics),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  label_levels <- c(
+    historical$label,
+    paste0(sort(unique(unique_metrics$ratio)), ":1")
+  )
+  comparison[, label := factor(label, levels = label_levels)]
+  comparison[, peak_mass_percent := data.table::fifelse(
+    is.finite(ratio),
+    100 / (ratio + 1),
+    NA_real_
+  )]
+  data.table::fwrite(comparison, extreme_comparison_metrics_path)
+
+  colors <- c(
+    "Method 05" = "#4C78A8",
+    "Method 07" = "#59A14F",
+    "Individual Peaks" = "#E45756"
+  )
+  correlation_plot <- ggplot2::ggplot(
+    comparison,
+    ggplot2::aes(label, mean_condition_correlation, fill = design)
+  ) +
+    ggplot2::geom_col(width = 0.72, color = "#222222", linewidth = 0.25) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", mean_condition_correlation)),
+      vjust = -0.35,
+      size = 3.5,
+      fontface = "bold"
+    ) +
+    ggplot2::scale_fill_manual(values = colors) +
+    ggplot2::scale_y_continuous(
+      limits = c(0, max(comparison$mean_condition_correlation) * 1.18),
+      expand = ggplot2::expansion(mult = c(0, 0.02))
+    ) +
+    ggplot2::labs(
+      title = "Condition similarity after extreme Peak downweighting",
+      subtitle = paste0(
+        "Individual coordinate Peaks remain in the model. ",
+        "Lower is better for condition separation."
+      ),
+      x = "Document design or Gene:Peak ratio",
+      y = "Mean condition correlation",
+      fill = NULL
+    ) +
+    comparison_theme(11) +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(
+        angle = 35,
+        hjust = 1,
+        vjust = 1
+      )
+    )
+
+  extreme_long <- data.table::melt(
+    comparison[design == "Individual Peaks" & ratio %in% extreme_ratio_levels],
+    id.vars = c("label", "ratio"),
+    measure.vars = c(
+      "mean_condition_correlation",
+      "assigned_target_genes",
+      "largest_topic_gene_fraction",
+      "mean_topic_similarity"
+    ),
+    variable.name = "metric",
+    value.name = "value"
+  )
+  extreme_long[, metric := factor(
+    metric,
+    levels = c(
+      "mean_condition_correlation",
+      "assigned_target_genes",
+      "largest_topic_gene_fraction",
+      "mean_topic_similarity"
+    ),
+    labels = c(
+      "Condition correlation",
+      "Assigned target genes",
+      "Largest Topic share",
+      "Topic similarity"
+    )
+  )]
+  extreme_plot <- ggplot2::ggplot(
+    extreme_long,
+    ggplot2::aes(label, value, fill = label)
+  ) +
+    ggplot2::geom_col(width = 0.68, color = "#222222", linewidth = 0.25) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = data.table::fifelse(
+        value >= 10,
+        scales::comma(round(value)),
+        sprintf("%.2f", value)
+      )),
+      vjust = -0.35,
+      size = 3.4,
+      fontface = "bold"
+    ) +
+    ggplot2::facet_wrap(ggplot2::vars(metric), scales = "free_y", ncol = 2L) +
+    ggplot2::scale_fill_brewer(palette = "OrRd", guide = "none") +
+    ggplot2::scale_y_continuous(
+      labels = scales::label_number(big.mark = ","),
+      expand = ggplot2::expansion(mult = c(0, 0.18))
+    ) +
+    ggplot2::labs(
+      title = "K30 results at very low Peak mass",
+      subtitle = "Peak mass is 1.96%, 0.99%, and 0.66% of each document.",
+      x = "Gene:Peak ratio",
+      y = NULL
+    ) +
+    comparison_theme(11)
+
+  dir.create(extreme_benchmark_root, recursive = TRUE, showWarnings = FALSE)
+  grDevices::cairo_pdf(
+    extreme_comparison_pdf,
+    width = 15,
+    height = 10,
+    family = "Helvetica",
+    bg = "white",
+    onefile = TRUE
+  )
+  print(correlation_plot)
+  print(extreme_plot)
+  grDevices::dev.off()
+  pages <- suppressWarnings(as.integer(system2(
+    "qpdf",
+    c("--show-npages", shQuote(extreme_comparison_pdf)),
+    stdout = TRUE
+  )[[1L]]))
+  if (!identical(pages, 2L)) {
+    stop("The extreme Peak comparison report must contain two pages.")
+  }
+  comparison
+}
+
+extreme_configuration <- function(status = "configured") {
+  metrics <- if (file.exists(extreme_metrics_path)) {
+    data.table::fread(extreme_metrics_path, showProgress = FALSE)
+  } else {
+    data.table::data.table()
+  }
+  ratio_records <- lapply(seq_len(nrow(extreme_run_table)), function(i) {
+    row <- extreme_run_table[i]
+    summary_path <- file.path(row$model_root[[1L]], "topic_input_summary.csv")
+    summary <- if (file.exists(summary_path)) {
+      data.table::fread(summary_path, nrows = 1L, showProgress = FALSE)
+    } else {
+      data.table::data.table(model_tokens = NA_real_)
+    }
+    metric <- metrics[run_id == row$run_id[[1L]]]
+    list(
+      gene_to_peak = paste0(row$gene_to_peak[[1L]], ":1"),
+      peak_mass_percent = 100 / (row$gene_to_peak[[1L]] + 1),
+      run_id = row$run_id[[1L]],
+      model_tokens = as.numeric(summary$model_tokens[[1L]]),
+      mean_condition_correlation = if (nrow(metric)) {
+        as.numeric(metric$mean_condition_correlation[[1L]])
+      } else {
+        NA_real_
+      },
+      local_run_root = row$run_root[[1L]],
+      qc_pdf = file.path(extreme_benchmark_root, "qc", row$qc_name[[1L]])
+    )
+  })
+  list(
+    schema_version = 1L,
+    plan_date = plan_date,
+    status = status,
+    purpose = paste0(
+      "Test whether extremely low individual-Peak mass can recover the ",
+      "condition separation of target-aggregated Peak documents."
+    ),
+    project = list(
+      name = "nutrient_stress_strict_JASPAR2024_expanded",
+      cell_line = "HPAFII",
+      conditions = 17L,
+      local_root = project_root
+    ),
+    fixed_settings = list(
+      document_id = "condition::TF",
+      peak_terms = "individual genomic coordinates",
+      peak_support = "condition-specific p = 1e-10 passing Peaks",
+      gene_weight = "condition expression with condition-gene specificity",
+      peak_weight = "condition footprint score with TF-expression scaling",
+      module1_tf_peak_min_r = 0.5,
+      module2_tf_target_min_r = 0.5,
+      module2_fp_target_min_r = 0.3,
+      topics = 30L,
+      alpha_sum = 20,
+      beta = 1 / 30,
+      seed = 123L
+    ),
+    token_allocation = list(
+      scope = "within each document",
+      ratios = "50:1, 100:1, and 150:1",
+      minimum_tokens_per_present_term = 1L,
+      budget_rule = paste0(
+        "Increase a document budget when required to keep at least one token ",
+        "for every individual Peak term."
+      ),
+      note = paste0(
+        "The 150:1 endpoint uses 2,006,165,073 tokens. A 200:1 design ",
+        "would use 2,670,457,298 tokens and exceed WarpLDA's signed ",
+        "integer range."
+      )
+    ),
+    runs = ratio_records,
+    references = list(
+      method_05 = "run_009_lda_gene_peak_K30_shared_de_union_expr_scaled",
+      method_07 = paste0(
+        "run_012_lda_gene_peak_K30_shared_de_union_expr_scaled_",
+        "tf_peak_scaled"
+      )
+    ),
+    outputs = list(
+      local_comparison_root = extreme_benchmark_root,
+      comparison_pdf = extreme_comparison_pdf,
+      box_delivery_root = extreme_box_root,
+      box_plan = paste0(box_plans_root, "/", extreme_box_plan_name)
+    ),
+    execution = list(
+      script = script_path,
+      command = paste0(
+        "Rscript dev/benchmark/",
+        "03_benchmark_hpafii_p1e10_peak_support_gene_weight.R extreme"
+      ),
+      software = software_versions()
+    )
+  )
+}
+
+write_extreme_config <- function(status = "configured") {
+  dir.create(extreme_benchmark_root, recursive = TRUE, showWarnings = FALSE)
+  yaml::write_yaml(
+    extreme_configuration(status),
+    extreme_plan_path,
+    indent.mapping.sequence = TRUE
+  )
+  invisible(extreme_plan_path)
+}
+
+write_extreme_readme <- function(comparison) {
+  extreme <- comparison[
+    design == "Individual Peaks" & ratio %in% extreme_ratio_levels
+  ]
+  best <- extreme[which.min(mean_condition_correlation)]
+  method07 <- comparison[design == "Method 07"]
+  text <- c(
+    "# HPAFII extreme individual-Peak downweighting",
+    "",
+    paste0(
+      "The models retain individual coordinate Peaks at Gene:Peak ratios ",
+      "50:1, 100:1, and 150:1."
+    ),
+    "",
+    paste0(
+      "The lowest condition correlation is ",
+      sprintf("%.3f", best$mean_condition_correlation[[1L]]),
+      " at ", best$label[[1L]], "."
+    ),
+    paste0(
+      "The 150:1 endpoint is the strongest safe setting with all Peaks; ",
+      "200:1 exceeds WarpLDA's token-index range."
+    ),
+    paste0(
+      "Method 07 has condition correlation ",
+      sprintf("%.3f", method07$mean_condition_correlation[[1L]]),
+      "."
+    ),
+    "",
+    "Start with `HPAFII_K30_ExtremePeakDownweighting_Comparison.pdf`.",
+    "The three QC PDFs use the current six-page report.",
+    "The YAML file records the complete model and document settings."
+  )
+  path <- file.path(extreme_benchmark_root, "README.md")
+  writeLines(text, path, useBytes = TRUE)
+  path
+}
+
+update_extreme_box_parent_index <- function() {
+  update_root <- file.path(extreme_benchmark_root, "parent_index_update")
+  dir.create(update_root, recursive = TRUE, showWarnings = FALSE)
+  local_index <- file.path(update_root, "INPUT_DESIGN_INDEX.csv")
+  local_readme <- file.path(update_root, "README.md")
+  for (filename in c("INPUT_DESIGN_INDEX.csv", "README.md")) {
+    local <- file.path(update_root, filename)
+    remote <- paste0(box_parent, "/", filename)
+    result <- system2("rclone", c("copyto", shQuote(remote), shQuote(local)))
+    if (!identical(result, 0L) || !file.exists(local)) {
+      stop("Could not download the Box parent file: ", filename)
+    }
+  }
+  index <- data.table::fread(local_index, showProgress = FALSE)
+  prefix <- "19_Method10_P1e10_ExtremePeakDownweighting/"
+  index <- index[!startsWith(file, prefix)]
+  new_rows <- data.table::data.table(
+    order = max(as.integer(index$order), na.rm = TRUE) +
+      seq_len(nrow(extreme_run_table)),
+    status = "active_experimental",
+    file = paste0(prefix, extreme_run_table$qc_name),
+    source_run = extreme_run_table$run_id,
+    model = "LDA",
+    K = 30L,
+    document_unit = "condition::TF (7,381 documents)",
+    input_terms = "Gene expression + condition-specific individual Peaks",
+    gene_weight = "Condition expression + specificity",
+    peak_weight = "Condition footprint score + TF expression",
+    gene_peak_ratio = paste0(extreme_run_table$gene_to_peak, ":1"),
+    pages = 6L,
+    role = "Extreme individual-Peak downweighting sensitivity"
+  )
+  new_rows <- new_rows[, intersect(names(index), names(new_rows)), with = FALSE]
+  index <- data.table::rbindlist(
+    list(index, new_rows),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  data.table::setorder(index, order)
+  data.table::fwrite(index, local_index)
+
+  readme <- readLines(local_readme, warn = FALSE)
+  marker <- "## Extreme individual-Peak downweighting"
+  note <- paste0(
+    "See `19_Method10_P1e10_ExtremePeakDownweighting/` for the ",
+    "Gene:Peak 50:1, 100:1, and 150:1 K30 sensitivity models."
+  )
+  if (!marker %in% readme) {
+    readme <- c(readme, "", marker, "", note)
+  } else {
+    marker_index <- match(marker, readme)
+    note_index <- marker_index + 2L
+    if (length(readme) >= note_index) {
+      readme[[note_index]] <- note
+    } else {
+      readme <- c(readme, "", note)
+    }
+  }
+  writeLines(readme, local_readme, useBytes = TRUE)
+  for (path in c(local_index, local_readme)) {
+    result <- system2(
+      "rclone",
+      c(
+        "copyto",
+        shQuote(path),
+        shQuote(paste0(box_parent, "/", basename(path))),
+        "--checksum"
+      )
+    )
+    if (!identical(result, 0L)) {
+      stop("Could not update the Box parent file: ", basename(path))
+    }
+  }
+  invisible(TRUE)
+}
+
+deliver_extreme_benchmark <- function() {
+  activate_extreme_benchmark()
+  comparison <- write_extreme_comparison()
+  write_extreme_readme(comparison)
+  write_extreme_config(status = "delivered")
+  qc_paths <- file.path(extreme_benchmark_root, "qc", run_table$qc_name)
+  files <- c(
+    extreme_comparison_pdf,
+    qc_paths,
+    extreme_metrics_path,
+    extreme_comparison_metrics_path,
+    extreme_plan_path,
+    file.path(extreme_benchmark_root, "README.md")
+  )
+  if (any(!file.exists(files))) {
+    stop("An extreme Peak-downweighting delivery file is missing.")
+  }
+  dir.create(extreme_delivery_root, recursive = TRUE, showWarnings = FALSE)
+  copied <- file.copy(
+    files,
+    file.path(extreme_delivery_root, basename(files)),
+    overwrite = TRUE,
+    copy.mode = TRUE
+  )
+  if (!all(copied)) stop("Could not assemble the compact extreme delivery.")
+  manifest <- data.table::data.table(
+    file = basename(files),
+    bytes = as.numeric(file.info(files)$size),
+    md5 = unname(tools::md5sum(files)),
+    box_folder = extreme_box_root
+  )
+  manifest_path <- file.path(extreme_delivery_root, "delivery_manifest.csv")
+  data.table::fwrite(manifest, manifest_path)
+  result <- system2(
+    "rclone",
+    c("copy", shQuote(extreme_delivery_root), shQuote(extreme_box_root), "--checksum")
+  )
+  if (!identical(result, 0L)) stop("The extreme Box upload failed.")
+  result <- system2(
+    "rclone",
+    c("check", shQuote(extreme_delivery_root), shQuote(extreme_box_root), "--checksum")
+  )
+  if (!identical(result, 0L)) stop("The extreme Box checksum check failed.")
+  expected <- sort(c(basename(files), basename(manifest_path)))
+  observed <- system2(
+    "rclone",
+    c("lsf", shQuote(extreme_box_root), "--files-only"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  if (!identical(attr(observed, "status") %||% 0L, 0L) ||
+      !identical(sort(observed), expected)) {
+    stop("The extreme Box folder contains an unexpected or missing file.")
+  }
+  plan_remote <- paste0(box_plans_root, "/", extreme_box_plan_name)
+  result <- system2(
+    "rclone",
+    c("copyto", shQuote(extreme_plan_path), shQuote(plan_remote), "--checksum")
+  )
+  if (!identical(result, 0L)) stop("The dated extreme Box plan upload failed.")
+  update_extreme_box_parent_index()
+  write_extreme_config(status = "delivered")
+  log_info("Validated the compact extreme Box delivery: ", extreme_box_root)
+  invisible(manifest)
+}
+
 strict_predicted_manifest_path <- file.path(
   strict_module1_root,
   "module1_predicted_tfbs_manifest.csv"
@@ -3367,7 +3981,9 @@ deliver_strict_sensitivity <- function() {
   invisible(manifest)
 }
 
-if (stage == "r0p7") {
+if (stage == "extreme") {
+  deliver_extreme_benchmark()
+} else if (stage == "r0p7") {
   deliver_strict_sensitivity()
 } else if (stage == "documents") {
   prepare_documents()
