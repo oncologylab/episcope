@@ -3241,7 +3241,7 @@
                                                      gene_term_assignment,
                                                      tf_panel = NULL,
                                                      top_n_tfs = 30L,
-                                                     top_n_targets = 500L,
+                                                     top_n_targets = 200L,
                                                      include_all_target_topics = FALSE) {
   tf_target_gene_sets <- data.table::as.data.table(
     data.table::copy(tf_target_gene_sets)
@@ -3302,6 +3302,22 @@
       !is.finite(top_n_targets) || top_n_targets < 1L) {
     .log_abort("`top_n_tfs` and `top_n_targets` must be positive integers.")
   }
+  full_tf_topic <- eligible[, .(
+    topic_target_count = data.table::uniqueN(target_gene),
+    topic_median_r = stats::median(best_r, na.rm = TRUE)
+  ), by = .(tf, selected_topic)]
+  full_tf_summary <- full_tf_topic[, .(
+    tf_target_total = sum(topic_target_count),
+    mean_r = stats::median(topic_median_r, na.rm = TRUE)
+  ), by = tf]
+  data.table::setorderv(
+    eligible,
+    c("tf", "best_r", "supporting_peak_count", "target_gene"),
+    c(1L, -1L, -1L, 1L),
+    na.last = TRUE
+  )
+  eligible[, display_pool_rank := seq_len(.N), by = tf]
+  eligible <- eligible[display_pool_rank <= top_n_targets]
   tf_topic <- eligible[, .(
     topic_target_count = data.table::uniqueN(target_gene),
     topic_median_r = stats::median(best_r, na.rm = TRUE)
@@ -3354,11 +3370,7 @@
       tf_function = NA_character_,
       panel_rank = NA_integer_
     )]
-    candidate_tfs <- unique(tf_topic[, .(
-      tf,
-      tf_target_total,
-      mean_r = stats::median(topic_median_r, na.rm = TRUE)
-    )])
+    candidate_tfs <- full_tf_summary[tf %in% unique(tf_topic$tf)]
     data.table::setorderv(
       candidate_tfs,
       c("tf_target_total", "mean_r", "tf"),
@@ -3524,15 +3536,6 @@
   )$tf
   tf_order <- tf_order[tf_order %in% unique(highlighted$tf)]
   highlighted[, tf := factor(tf, levels = tf_order)]
-  counts <- highlighted[, .(targets = data.table::uniqueN(target_gene)), by = tf]
-  panel_labels <- stats::setNames(
-    sprintf(
-      "%s (n=%s)",
-      as.character(counts$tf),
-      scales::comma(counts$targets)
-    ),
-    as.character(counts$tf)
-  )
   if (is.null(min_r)) min_r <- attr(tf_target_gene_sets, "min_r") %||% 0.5
   min_r <- as.numeric(min_r)[1L]
   if (!is.finite(min_r)) min_r <- 0.5
@@ -3542,6 +3545,37 @@
   if (!length(topic_ids) || any(!is.finite(highlighted$gene_topic_num))) {
     .log_abort("TF-target Gene-term UMAP requires assigned Gene topics.")
   }
+  if (!"panel_topic" %in% names(highlighted)) {
+    highlighted[, panel_topic := selected_topic]
+  }
+  highlighted[, panel_topic_num := suppressWarnings(as.integer(panel_topic))]
+  panel_topic_counts <- highlighted[
+    , .(topics = data.table::uniqueN(panel_topic_num)),
+    by = tf
+  ]
+  if (any(!is.finite(highlighted$panel_topic_num)) ||
+      any(panel_topic_counts$topics != 1L)) {
+    .log_abort("Each TF-target UMAP panel must have one representative topic.")
+  }
+  highlighted[, focus_topic := gene_topic_num == panel_topic_num]
+  counts <- highlighted[, .(
+    targets = data.table::uniqueN(target_gene),
+    focus_targets = data.table::uniqueN(target_gene[focus_topic]),
+    panel_topic = panel_topic_num[[1L]]
+  ), by = tf]
+  if (any(counts$focus_targets < 1L)) {
+    .log_abort("Each TF-target UMAP panel must contain a focus-topic target.")
+  }
+  panel_labels <- stats::setNames(
+    sprintf(
+      "%s - T%d (%s/%s)",
+      as.character(counts$tf),
+      counts$panel_topic,
+      scales::comma(counts$focus_targets),
+      scales::comma(counts$targets)
+    ),
+    as.character(counts$tf)
+  )
   topic_labels <- paste0("T", topic_ids)
   highlighted[, gene_topic := factor(
     paste0("T", gene_topic_num),
@@ -3582,20 +3616,22 @@
       size = 0.08
     ) +
     point_layer(
-      highlighted,
+      highlighted[focus_topic == FALSE],
+      ggplot2::aes(UMAP1, UMAP2),
+      color = "#65717C",
+      alpha = 0.62,
+      size = 0.18
+    ) +
+    point_layer(
+      highlighted[focus_topic == TRUE],
       ggplot2::aes(UMAP1, UMAP2, color = gene_topic),
-      alpha = 0.90,
-      size = 0.24
+      alpha = 0.95,
+      size = 0.34
     ) +
     ggplot2::scale_color_manual(
       values = topic_colors,
       drop = FALSE,
-      name = "Gene topic",
-      guide = ggplot2::guide_legend(
-        nrow = max(1L, ceiling(length(topic_ids) / 10L)),
-        byrow = TRUE,
-        override.aes = list(alpha = 1, size = 1.8)
-      )
+      guide = "none"
     ) +
     ggplot2::facet_wrap(
       ggplot2::vars(tf),
@@ -3610,7 +3646,14 @@
       ratio = 1,
       expand = FALSE
     ) +
-    ggplot2::labs(x = "UMAP1", y = "UMAP2") +
+    ggplot2::labs(
+      x = "UMAP1",
+      y = "UMAP2",
+      caption = paste0(
+        "Color: representative topic. Dark gray: other predicted targets. ",
+        "Light gray: other genes."
+      )
+    ) +
     .m3_qc_theme() +
     ggplot2::theme(
       panel.grid = ggplot2::element_blank(),
@@ -3624,10 +3667,7 @@
       strip.text = ggplot2::element_text(size = 9, face = "bold"),
       aspect.ratio = 1,
       panel.spacing = grid::unit(0.04, "in"),
-      legend.position = "bottom",
-      legend.key.width = grid::unit(0.18, "in"),
-      legend.spacing.x = grid::unit(0.03, "in"),
-      legend.text = ggplot2::element_text(size = 7.5)
+      legend.position = "none"
     )
 }
 
@@ -4775,6 +4815,7 @@
                                                pathway_colors = NULL,
                                                tf_target_gene_sets = NULL,
                                                tf_target_panel = NULL,
+                                               tf_target_top_n = 200L,
                                                top_n_tfs = 150L,
                                                seed = 20260716L,
                                                sections = "standard",
@@ -4851,6 +4892,10 @@
   }
   if ("tf_target_gene_umap" %in% sections && is.null(tf_target_gene_sets)) {
     .log_abort("tf_target_gene_umap requires tf_target_gene_sets.")
+  }
+  tf_target_top_n <- as.integer(tf_target_top_n)[1L]
+  if (!is.finite(tf_target_top_n) || tf_target_top_n < 1L) {
+    .log_abort("`tf_target_top_n` must be a positive integer.")
   }
   needs_gene_umap <- full_report || any(c(
     "gene_phi_umap",
@@ -5016,7 +5061,7 @@
         gene_term_assignment = gene_term_assignment,
         tf_panel = tf_target_panel,
         top_n_tfs = 30L,
-        top_n_targets = 500L,
+        top_n_targets = tf_target_top_n,
         include_all_target_topics = TRUE
       )
     }
@@ -5027,7 +5072,10 @@
         topic_palette = topic_palette
       ),
       ncol = 1L,
-      title = paste0(title_prefix, ": High-confidence TF targets")
+      title = paste0(
+        title_prefix,
+        ": Predicted TF targets by representative topic"
+      )
     ))
   }
 

@@ -1419,7 +1419,11 @@ test_that("TF-target Gene sets use supported positive Module 2 links", {
 test_that("TF-target QC selection covers topics with a curated TF panel", {
   expect_identical(
     formals(.m3_qc_select_topic_tf_target_gene_sets)$top_n_targets,
-    500L
+    200L
+  )
+  expect_identical(
+    formals(.write_module3_topic_assignment_qc)$tf_target_top_n,
+    200L
   )
   eligible <- data.table::data.table(
     tf = rep(c("TF_A", "TF_B", "TF_C"), each = 4L),
@@ -1467,6 +1471,66 @@ test_that("TF-target QC selection covers topics with a curated TF panel", {
                rep(2L, 3L))
   expect_equal(all_topics[, data.table::uniqueN(panel_topic), by = tf]$V1,
                rep(1L, 3L))
+})
+
+test_that("TF-target QC uses one evidence-ranked display pool", {
+  eligible <- data.table::data.table(
+    tf = rep(c("TF_A", "TF_B"), each = 6L),
+    target_gene = c(paste0("G", 1:6), paste0("H", 1:6)),
+    best_r = c(seq(0.99, 0.94, by = -0.01), seq(0.93, 0.88, by = -0.01)),
+    supporting_peak_count = rep(6:1, 2L)
+  )
+  assignment <- data.table::data.table(
+    target_gene = c(paste0("G", 1:6), paste0("H", 1:6)),
+    assigned_topic = rep(c(1L, 1L, 2L, 2L, 3L, 3L), 2L),
+    assigned = TRUE
+  )
+
+  observed <- .m3_qc_select_topic_tf_target_gene_sets(
+    eligible,
+    assignment,
+    top_n_tfs = 2L,
+    top_n_targets = 3L,
+    include_all_target_topics = TRUE
+  )
+
+  expect_equal(observed[, .N, by = tf]$N, rep(3L, 2L))
+  expect_setequal(
+    observed[tf == "TF_A", target_gene],
+    paste0("G", 1:3)
+  )
+  expect_setequal(
+    observed[tf == "TF_B", target_gene],
+    paste0("H", 1:3)
+  )
+  expect_true(all(observed[
+    , any(selected_topic == panel_topic),
+    by = tf
+  ]$V1))
+})
+
+test_that("TF-target UMAP separates focus and other predicted targets", {
+  gene_umap <- data.table::data.table(
+    target_gene = paste0("G", 1:4),
+    UMAP1 = c(-1, 0, 1, 2),
+    UMAP2 = c(0, 1, 0, -1),
+    topic_num = c(1L, 1L, 2L, 2L)
+  )
+  targets <- data.table::data.table(
+    display_rank = 1L,
+    tf = "TF_A",
+    selected_topic = c(1L, 1L, 2L, 2L),
+    panel_topic = 1L,
+    target_gene = paste0("G", 1:4),
+    best_r = c(0.9, 0.8, 0.7, 0.6)
+  )
+
+  plot <- .m3_qc_tf_target_gene_umap_plot(gene_umap, targets)
+  built <- ggplot2::ggplot_build(plot)
+
+  expect_equal(nrow(built$data[[1L]]), 4L)
+  expect_equal(nrow(built$data[[2L]]), 2L)
+  expect_equal(nrow(built$data[[3L]]), 2L)
 })
 
 test_that("compact topic QC writes Gene, Peak, pathway, TF-target, and structure sections", {
