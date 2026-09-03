@@ -1453,6 +1453,20 @@ test_that("TF-target QC selection covers topics with a curated TF panel", {
   expect_equal(sort(unique(observed$selected_topic)), 1:2)
   expect_equal(observed[, .N, by = tf]$N, rep(1L, 3L))
   expect_setequal(unique(observed$tf_function), panel$tf_function)
+
+  all_topics <- .m3_qc_select_topic_tf_target_gene_sets(
+    eligible,
+    assignment,
+    tf_panel = panel,
+    top_n_tfs = 3L,
+    top_n_targets = 4L,
+    include_all_target_topics = TRUE
+  )
+  expect_equal(all_topics[, .N, by = tf]$N, rep(4L, 3L))
+  expect_equal(all_topics[, data.table::uniqueN(selected_topic), by = tf]$V1,
+               rep(2L, 3L))
+  expect_equal(all_topics[, data.table::uniqueN(panel_topic), by = tf]$V1,
+               rep(1L, 3L))
 })
 
 test_that("compact topic QC writes Gene, Peak, pathway, TF-target, and structure sections", {

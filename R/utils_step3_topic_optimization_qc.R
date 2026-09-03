@@ -3241,7 +3241,8 @@
                                                      gene_term_assignment,
                                                      tf_panel = NULL,
                                                      top_n_tfs = 30L,
-                                                     top_n_targets = 500L) {
+                                                     top_n_targets = 500L,
+                                                     include_all_target_topics = FALSE) {
   tf_target_gene_sets <- data.table::as.data.table(
     data.table::copy(tf_target_gene_sets)
   )
@@ -3444,22 +3445,34 @@
   )
   selected_tfs[, topic_tf_rank := seq_len(.N), by = selected_topic]
   selected_tfs[, display_rank := seq_len(.N)]
-  selected <- merge(
-    eligible,
-    selected_tfs[, .(
-      tf,
-      selected_topic,
-      display_rank,
-      topic_tf_rank,
-      topic_target_count,
-      assigned_topic_genes,
-      tf_function,
-      topic_selection_score
-    )],
-    by = c("tf", "selected_topic"),
-    all = FALSE,
-    sort = FALSE
+  selected_columns <- c(
+    "tf", "selected_topic", "display_rank", "topic_tf_rank",
+    "topic_target_count", "assigned_topic_genes", "tf_function",
+    "topic_selection_score"
   )
+  selected_tf_rows <- selected_tfs[, ..selected_columns]
+  if (isTRUE(include_all_target_topics)) {
+    data.table::setnames(
+      selected_tf_rows,
+      "selected_topic",
+      "panel_topic"
+    )
+    selected <- merge(
+      eligible,
+      selected_tf_rows,
+      by = "tf",
+      all = FALSE,
+      sort = FALSE
+    )
+  } else {
+    selected <- merge(
+      eligible,
+      selected_tf_rows,
+      by = c("tf", "selected_topic"),
+      all = FALSE,
+      sort = FALSE
+    )
+  }
   data.table::setorderv(
     selected,
     c("display_rank", "best_r", "supporting_peak_count", "target_gene"),
@@ -3477,7 +3490,8 @@
 
 .m3_qc_tf_target_gene_umap_plot <- function(gene_umap,
                                              tf_target_gene_sets,
-                                             min_r = NULL) {
+                                             min_r = NULL,
+                                             topic_palette = NULL) {
   gene_umap <- data.table::as.data.table(data.table::copy(gene_umap))
   tf_target_gene_sets <- data.table::as.data.table(
     data.table::copy(tf_target_gene_sets)
@@ -3511,13 +3525,10 @@
   tf_order <- tf_order[tf_order %in% unique(highlighted$tf)]
   highlighted[, tf := factor(tf, levels = tf_order)]
   counts <- highlighted[, .(targets = data.table::uniqueN(target_gene)), by = tf]
-  topic_lookup <- unique(tf_target_gene_sets[, .(tf, selected_topic)])
-  counts <- merge(counts, topic_lookup, by = "tf", all.x = TRUE, sort = FALSE)
   panel_labels <- stats::setNames(
     sprintf(
-      "%s | T%d (n=%s)",
+      "%s (n=%s)",
       as.character(counts$tf),
-      as.integer(counts$selected_topic),
       scales::comma(counts$targets)
     ),
     as.character(counts$tf)
@@ -3525,7 +3536,29 @@
   if (is.null(min_r)) min_r <- attr(tf_target_gene_sets, "min_r") %||% 0.5
   min_r <- as.numeric(min_r)[1L]
   if (!is.finite(min_r)) min_r <- 0.5
-  max_r <- max(1, max(highlighted$best_r, na.rm = TRUE))
+  highlighted[, gene_topic_num := suppressWarnings(as.integer(topic_num))]
+  topic_ids <- sort(unique(suppressWarnings(as.integer(gene_umap$topic_num))))
+  topic_ids <- topic_ids[is.finite(topic_ids)]
+  if (!length(topic_ids) || any(!is.finite(highlighted$gene_topic_num))) {
+    .log_abort("TF-target Gene-term UMAP requires assigned Gene topics.")
+  }
+  topic_labels <- paste0("T", topic_ids)
+  highlighted[, gene_topic := factor(
+    paste0("T", gene_topic_num),
+    levels = topic_labels
+  )]
+  if (is.null(topic_palette)) {
+    topic_colors <- stats::setNames(
+      .module3_bright_topic_palette(topic_labels),
+      topic_labels
+    )
+  } else {
+    topic_colors <- topic_palette[paste0("Topic ", topic_ids)]
+    if (anyNA(topic_colors)) {
+      .log_abort("The TF-target Gene UMAP topic palette is incomplete.")
+    }
+    names(topic_colors) <- topic_labels
+  }
   point_layer <- function(data, mapping, ...) {
     args <- c(list(data = data, mapping = mapping), list(...))
     if (requireNamespace("ggrastr", quietly = TRUE)) {
@@ -3550,15 +3583,19 @@
     ) +
     point_layer(
       highlighted,
-      ggplot2::aes(UMAP1, UMAP2, color = best_r),
+      ggplot2::aes(UMAP1, UMAP2, color = gene_topic),
       alpha = 0.90,
       size = 0.24
     ) +
-    ggplot2::scale_color_gradientn(
-      colors = c("#F4D35E", "#E66B2E", "#7A1F5C", "#183153"),
-      limits = c(min_r, max_r),
-      oob = scales::squish,
-      name = "Module 2 R"
+    ggplot2::scale_color_manual(
+      values = topic_colors,
+      drop = FALSE,
+      name = "Gene topic",
+      guide = ggplot2::guide_legend(
+        nrow = max(1L, ceiling(length(topic_ids) / 10L)),
+        byrow = TRUE,
+        override.aes = list(alpha = 1, size = 1.8)
+      )
     ) +
     ggplot2::facet_wrap(
       ggplot2::vars(tf),
@@ -3588,7 +3625,9 @@
       aspect.ratio = 1,
       panel.spacing = grid::unit(0.04, "in"),
       legend.position = "bottom",
-      legend.key.width = grid::unit(0.65, "in")
+      legend.key.width = grid::unit(0.18, "in"),
+      legend.spacing.x = grid::unit(0.03, "in"),
+      legend.text = ggplot2::element_text(size = 7.5)
     )
 }
 
@@ -4977,13 +5016,15 @@
         gene_term_assignment = gene_term_assignment,
         tf_panel = tf_target_panel,
         top_n_tfs = 30L,
-        top_n_targets = 500L
+        top_n_targets = 500L,
+        include_all_target_topics = TRUE
       )
     }
     tf_target_umap_pages <- list(.m3_qc_arrange(
       .m3_qc_tf_target_gene_umap_plot(
         gene_umap = gene_umap,
-        tf_target_gene_sets = displayed_tf_target_gene_sets
+        tf_target_gene_sets = displayed_tf_target_gene_sets,
+        topic_palette = topic_palette
       ),
       ncol = 1L,
       title = paste0(title_prefix, ": High-confidence TF targets")
