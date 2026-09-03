@@ -3503,7 +3503,8 @@
 .m3_qc_tf_target_gene_umap_plot <- function(gene_umap,
                                              tf_target_gene_sets,
                                              min_r = NULL,
-                                             topic_palette = NULL) {
+                                             topic_palette = NULL,
+                                             top_n_topics = 3L) {
   gene_umap <- data.table::as.data.table(data.table::copy(gene_umap))
   tf_target_gene_sets <- data.table::as.data.table(
     data.table::copy(tf_target_gene_sets)
@@ -3545,32 +3546,51 @@
   if (!length(topic_ids) || any(!is.finite(highlighted$gene_topic_num))) {
     .log_abort("TF-target Gene-term UMAP requires assigned Gene topics.")
   }
-  if (!"panel_topic" %in% names(highlighted)) {
-    highlighted[, panel_topic := selected_topic]
+  top_n_topics <- as.integer(top_n_topics)[1L]
+  if (!is.finite(top_n_topics) || top_n_topics < 1L) {
+    .log_abort("`top_n_topics` must be a positive integer.")
   }
-  highlighted[, panel_topic_num := suppressWarnings(as.integer(panel_topic))]
-  panel_topic_counts <- highlighted[
-    , .(topics = data.table::uniqueN(panel_topic_num)),
-    by = tf
+  focus_topics <- highlighted[, .(
+    topic_targets = data.table::uniqueN(target_gene),
+    topic_median_r = stats::median(best_r, na.rm = TRUE)
+  ), by = .(tf, gene_topic_num)]
+  data.table::setorderv(
+    focus_topics,
+    c("tf", "topic_targets", "topic_median_r", "gene_topic_num"),
+    c(1L, -1L, -1L, 1L),
+    na.last = TRUE
+  )
+  focus_topics[, topic_rank := seq_len(.N), by = tf]
+  focus_topics <- focus_topics[topic_rank <= top_n_topics]
+  highlighted[
+    focus_topics[, .(tf, gene_topic_num, topic_rank)],
+    on = c("tf", "gene_topic_num"),
+    topic_rank := i.topic_rank
   ]
-  if (any(!is.finite(highlighted$panel_topic_num)) ||
-      any(panel_topic_counts$topics != 1L)) {
-    .log_abort("Each TF-target UMAP panel must have one representative topic.")
-  }
-  highlighted[, focus_topic := gene_topic_num == panel_topic_num]
-  counts <- highlighted[, .(
-    targets = data.table::uniqueN(target_gene),
-    focus_targets = data.table::uniqueN(target_gene[focus_topic]),
-    panel_topic = panel_topic_num[[1L]]
+  highlighted[, focus_topic := is.finite(topic_rank)]
+  focus_labels <- focus_topics[, .(
+    focus_targets = sum(topic_targets),
+    focus_topics = paste0(
+      "T",
+      gene_topic_num[order(topic_rank)],
+      collapse = "/"
+    )
   ), by = tf]
+  counts <- merge(
+    highlighted[, .(targets = data.table::uniqueN(target_gene)), by = tf],
+    focus_labels,
+    by = "tf",
+    all.x = TRUE,
+    sort = FALSE
+  )
   if (any(counts$focus_targets < 1L)) {
-    .log_abort("Each TF-target UMAP panel must contain a focus-topic target.")
+    .log_abort("Each TF-target UMAP panel must contain a dominant-topic target.")
   }
   panel_labels <- stats::setNames(
     sprintf(
-      "%s - T%d (%s/%s)",
+      "%s\n%s (%s/%s)",
       as.character(counts$tf),
-      counts$panel_topic,
+      counts$focus_topics,
       scales::comma(counts$focus_targets),
       scales::comma(counts$targets)
     ),
@@ -3650,7 +3670,8 @@
       x = "UMAP1",
       y = "UMAP2",
       caption = paste0(
-        "Color: representative topic. Dark gray: other predicted targets. ",
+        "Color: three topics with the most predicted targets in each panel. ",
+        "Dark gray: other predicted targets. ",
         "Light gray: other genes."
       )
     ) +
@@ -3664,7 +3685,7 @@
       ),
       axis.text = ggplot2::element_blank(),
       axis.ticks = ggplot2::element_blank(),
-      strip.text = ggplot2::element_text(size = 9, face = "bold"),
+      strip.text = ggplot2::element_text(size = 8.5, face = "bold"),
       aspect.ratio = 1,
       panel.spacing = grid::unit(0.04, "in"),
       legend.position = "none"
@@ -4533,9 +4554,56 @@
   data.table::uniqueN(values)
 }
 
+.m3_qc_gene_only_retention_gene_sets <- function(optimization) {
+  assignment_mode <- optimization$assignment_mode %||% "gene_peak"
+  if (!assignment_mode %in% c("gene", "gene_only")) {
+    .log_abort("Gene retention sets require a Gene-only assignment.")
+  }
+  qc <- optimization$qc
+  assignments <- data.table::as.data.table(qc$assignments)
+  pairs <- data.table::as.data.table(optimization$raw_pair_assignment)
+  .assert_has_cols(
+    assignments,
+    c("target_index", "raw_aligned"),
+    context = "Gene-only topic-assignment retention links"
+  )
+  .assert_has_cols(
+    pairs,
+    c("target_gene", "gene_gammafit_topics", "assigned_topic"),
+    context = "Gene-only topic-assignment retention targets"
+  )
+  pair_candidates <- .m3_opt_parse_topics(
+    pairs$gene_gammafit_topics,
+    qc$raw_topic_ids
+  )
+  pair_index <- if ("pair_index" %in% names(assignments)) {
+    suppressWarnings(as.integer(assignments$pair_index))
+  } else {
+    suppressWarnings(as.integer(assignments$target_index))
+  }
+  aligned_pair_index <- unique(pair_index[assignments$raw_aligned %in% TRUE])
+  aligned_pair_index <- aligned_pair_index[
+    is.finite(aligned_pair_index) &
+      aligned_pair_index >= 1L & aligned_pair_index <= nrow(pairs)
+  ]
+  clean_genes <- function(values) {
+    values <- toupper(trimws(as.character(values)))
+    sort(unique(values[!is.na(values) & nzchar(values)]))
+  }
+  list(
+    total = clean_genes(pairs$target_gene),
+    gamma = clean_genes(pairs$target_gene[lengths(pair_candidates) > 0L]),
+    max = clean_genes(pairs$target_gene[
+      is.finite(suppressWarnings(as.integer(pairs$assigned_topic)))
+    ]),
+    tf = clean_genes(pairs$target_gene[aligned_pair_index])
+  )
+}
+
 .m3_qc_retention_page <- function(optimization,
                                   title_prefix = NULL,
-                                  standardized = FALSE) {
+                                  standardized = FALSE,
+                                  peak_counts = NULL) {
   qc <- optimization$qc
   assignments <- data.table::as.data.table(qc$assignments)
   pairs <- data.table::as.data.table(optimization$raw_pair_assignment)
@@ -4591,6 +4659,20 @@
     .m3_qc_unique_link_count(assignments[link_max %in% TRUE]),
     .m3_qc_unique_link_count(assignments[raw_aligned == TRUE])
   )
+  if (!is.null(peak_counts)) {
+    peak_counts <- as.numeric(peak_counts)
+    if (length(peak_counts) != length(retention_labels$links) ||
+        any(!is.finite(peak_counts)) || any(peak_counts < 0)) {
+      .log_abort("`peak_counts` must contain four non-negative counts.")
+    }
+    retention_links <- peak_counts
+    retention_labels$links <- c(
+      "Total unique input Peaks",
+      "Peaks pass gamma filter",
+      "Peaks pass max filter",
+      "Peaks pass TF filter"
+    )
+  }
   retention_genes <- if (
     identical(optimization$assignment_mode, "tf_target") &&
       !is.null(optimization$raw_correspondence_assignment)
@@ -4611,6 +4693,9 @@
         assignments[raw_aligned == TRUE, target_index]
       )
     )
+  } else if (gene_only_assignment) {
+    gene_sets <- .m3_qc_gene_only_retention_gene_sets(optimization)
+    vapply(gene_sets, length, integer(1))
   } else {
     c(
       .m3_qc_unique_target_count(pairs$target_gene),
@@ -4621,7 +4706,9 @@
       )
     )
   }
-  link_title <- if (isTRUE(standardized)) {
+  link_title <- if (!is.null(peak_counts)) {
+    "Unique Peaks linked to retained genes"
+  } else if (isTRUE(standardized)) {
     "Unique TF-target pairs"
   } else {
     "TF-target links"
@@ -4816,6 +4903,8 @@
                                                tf_target_gene_sets = NULL,
                                                tf_target_panel = NULL,
                                                tf_target_top_n = 200L,
+                                               tf_target_top_topics = 3L,
+                                               retention_peak_counts = NULL,
                                                top_n_tfs = 150L,
                                                seed = 20260716L,
                                                sections = "standard",
@@ -4896,6 +4985,10 @@
   tf_target_top_n <- as.integer(tf_target_top_n)[1L]
   if (!is.finite(tf_target_top_n) || tf_target_top_n < 1L) {
     .log_abort("`tf_target_top_n` must be a positive integer.")
+  }
+  tf_target_top_topics <- as.integer(tf_target_top_topics)[1L]
+  if (!is.finite(tf_target_top_topics) || tf_target_top_topics < 1L) {
+    .log_abort("`tf_target_top_topics` must be a positive integer.")
   }
   needs_gene_umap <- full_report || any(c(
     "gene_phi_umap",
@@ -5069,12 +5162,13 @@
       .m3_qc_tf_target_gene_umap_plot(
         gene_umap = gene_umap,
         tf_target_gene_sets = displayed_tf_target_gene_sets,
-        topic_palette = topic_palette
+        topic_palette = topic_palette,
+        top_n_topics = tf_target_top_topics
       ),
       ncol = 1L,
       title = paste0(
         title_prefix,
-        ": Predicted TF targets by representative topic"
+        ": Predicted TF targets by dominant topics"
       )
     ))
   }
@@ -5232,7 +5326,8 @@
       pages[[length(pages) + 1L]] <- .m3_qc_retention_page(
         optimization,
         title_prefix = title_prefix,
-        standardized = TRUE
+        standardized = TRUE,
+        peak_counts = retention_peak_counts
       )
     }
     dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)

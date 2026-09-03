@@ -923,6 +923,38 @@ test_that("topic retention counts links and genes uniquely across conditions", {
   )
 })
 
+test_that("Gene-only retention exposes the genes used at every stage", {
+  optimization <- list(
+    assignment_mode = "gene_only",
+    raw_pair_assignment = data.table::data.table(
+      target_gene = c("A", "B", "C", "D"),
+      gene_gammafit_topics = c("1", "2", "", "1"),
+      assigned_topic = c(1L, 2L, NA_integer_, 1L)
+    ),
+    qc = list(
+      raw_topic_ids = 1:2,
+      assignments = data.table::data.table(
+        tf_index = 1L,
+        target_index = 1:4,
+        pair_index = 1:4,
+        raw_aligned = c(TRUE, FALSE, TRUE, FALSE)
+      )
+    )
+  )
+
+  observed <- .m3_qc_gene_only_retention_gene_sets(optimization)
+
+  expect_identical(observed$total, c("A", "B", "C", "D"))
+  expect_identical(observed$gamma, c("A", "B", "D"))
+  expect_identical(observed$max, c("A", "B", "D"))
+  expect_identical(observed$tf, c("A", "C"))
+  expect_silent(.m3_qc_retention_page(
+    optimization,
+    standardized = TRUE,
+    peak_counts = c(10, 8, 7, 5)
+  ))
+})
+
 test_that("TF heatmap pools conditions and deduplicates targets per topic", {
   n_tfs <- 160L
   assignments <- data.table::data.table(
@@ -1425,6 +1457,10 @@ test_that("TF-target QC selection covers topics with a curated TF panel", {
     formals(.write_module3_topic_assignment_qc)$tf_target_top_n,
     200L
   )
+  expect_identical(
+    formals(.write_module3_topic_assignment_qc)$tf_target_top_topics,
+    3L
+  )
   eligible <- data.table::data.table(
     tf = rep(c("TF_A", "TF_B", "TF_C"), each = 4L),
     target_gene = rep(c("G1", "G2", "G3", "G4"), 3L),
@@ -1509,28 +1545,31 @@ test_that("TF-target QC uses one evidence-ranked display pool", {
   ]$V1))
 })
 
-test_that("TF-target UMAP separates focus and other predicted targets", {
+test_that("TF-target UMAP highlights the three largest target topics", {
   gene_umap <- data.table::data.table(
-    target_gene = paste0("G", 1:4),
-    UMAP1 = c(-1, 0, 1, 2),
-    UMAP2 = c(0, 1, 0, -1),
-    topic_num = c(1L, 1L, 2L, 2L)
+    target_gene = paste0("G", 1:8),
+    UMAP1 = seq(-1, 1, length.out = 8),
+    UMAP2 = rev(seq(-1, 1, length.out = 8)),
+    topic_num = c(1L, 1L, 1L, 2L, 2L, 3L, 3L, 4L)
   )
   targets <- data.table::data.table(
     display_rank = 1L,
     tf = "TF_A",
-    selected_topic = c(1L, 1L, 2L, 2L),
-    panel_topic = 1L,
-    target_gene = paste0("G", 1:4),
-    best_r = c(0.9, 0.8, 0.7, 0.6)
+    selected_topic = c(1L, 1L, 1L, 2L, 2L, 3L, 3L, 4L),
+    target_gene = paste0("G", 1:8),
+    best_r = seq(0.9, 0.55, by = -0.05)
   )
 
   plot <- .m3_qc_tf_target_gene_umap_plot(gene_umap, targets)
   built <- ggplot2::ggplot_build(plot)
 
-  expect_equal(nrow(built$data[[1L]]), 4L)
-  expect_equal(nrow(built$data[[2L]]), 2L)
-  expect_equal(nrow(built$data[[3L]]), 2L)
+  expect_equal(nrow(built$data[[1L]]), 8L)
+  expect_equal(nrow(built$data[[2L]]), 1L)
+  expect_equal(nrow(built$data[[3L]]), 7L)
+  expect_identical(
+    plot$facet$params$labeller(data.frame(tf = factor("TF_A")))$tf,
+    "TF_A\nT1/T2/T3 (7/8)"
+  )
 })
 
 test_that("compact topic QC writes Gene, Peak, pathway, TF-target, and structure sections", {
