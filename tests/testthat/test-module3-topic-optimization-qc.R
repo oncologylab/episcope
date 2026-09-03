@@ -1660,6 +1660,75 @@ test_that("standard topic QC is the default compact input-design report", {
   }
 })
 
+test_that("Gene-only topics project Peaks without target-count duplication", {
+  theta <- rbind(
+    `C1::TF1` = c(Topic1 = 0.8, Topic2 = 0.2),
+    `C1::TF2` = c(Topic1 = 0.2, Topic2 = 0.8)
+  )
+  phi <- rbind(
+    Topic1 = c(`GENE:A` = 0.9, `GENE:B` = 0.1),
+    Topic2 = c(`GENE:A` = 0.1, `GENE:B` = 0.9)
+  )
+  edges <- data.table::data.table(
+    condition_id = "C1",
+    doc_id = c("C1::TF1", "C1::TF1", "C1::TF1", "C1::TF2"),
+    tf = c("TF1", "TF1", "TF1", "TF2"),
+    peak_id = "P1",
+    target_gene = c("A", "B", "B", "A"),
+    tf_target_r = c(1, 0.5, 0.5, 1),
+    fp_target_r = 1,
+    tf_peak_r = 1,
+    fp_score = 1,
+    tf_expression = 1
+  )
+
+  projected <- .m3_project_peaks_from_gene_topics(
+    theta,
+    phi,
+    edges,
+    chunk_size = 2L
+  )
+  expect_equal(projected$audit$input_rows, 4L)
+  expect_equal(projected$audit$deduplicated_rows, 3L)
+  expect_equal(projected$audit$tf_peak_groups, 2L)
+  expect_equal(projected$tf_peak_assignments$n_targets, c(2L, 1L))
+  probability <- as.matrix(projected$condition_peak_probabilities[, .(
+    Topic1,
+    Topic2
+  )])
+  expect_equal(rowSums(probability), 1, tolerance = 1e-12)
+
+  gene_probability <- .m3_opt_row_normalize(t(phi))
+  tf1_a <- .m3_opt_row_normalize(
+    theta[1, , drop = FALSE] * gene_probability["GENE:A", , drop = FALSE]
+  )
+  tf1_b <- .m3_opt_row_normalize(
+    theta[1, , drop = FALSE] * gene_probability["GENE:B", , drop = FALSE]
+  )
+  tf2_a <- .m3_opt_row_normalize(
+    theta[2, , drop = FALSE] * gene_probability["GENE:A", , drop = FALSE]
+  )
+  tf1 <- (tf1_a + 0.5 * tf1_b) / 1.5
+  expected <- (0.75 * tf1 + tf2_a) / 1.75
+  expect_equal(as.numeric(probability[1, ]), as.numeric(expected), tolerance = 1e-12)
+})
+
+test_that("condition Peak probabilities aggregate by evidence", {
+  condition_peaks <- data.table::data.table(
+    condition_id = c("C1", "C2", "C1"),
+    peak_id = c("P1", "P1", "P2"),
+    projection_evidence = c(2, 1, 1),
+    Topic1 = c(0.75, 0.25, 0.1),
+    Topic2 = c(0.25, 0.75, 0.9)
+  )
+  aggregated <- .m3_aggregate_projected_peak_topics(condition_peaks)
+  expect_equal(aggregated[peak_id == "P1", Topic1], 7 / 12)
+  expect_equal(aggregated[peak_id == "P1", Topic2], 5 / 12)
+  expect_equal(aggregated[peak_id == "P1", primary_topic], 1L)
+  expect_equal(aggregated[peak_id == "P2", primary_topic], 2L)
+  expect_equal(aggregated[, Topic1 + Topic2], c(1, 1))
+})
+
 test_that("compact condition::TF QC adds a matched-theta correlation page", {
   phi <- rbind(
     Topic1 = c(0.8, 0.2, 0.7, 0.3),

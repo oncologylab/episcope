@@ -243,6 +243,272 @@
   )
 }
 
+.m3_project_peaks_from_gene_topics <- function(theta,
+                                               phi,
+                                               edges,
+                                               chunk_size = 50000L) {
+  .assert_pkg("data.table")
+  theta <- as.matrix(theta)
+  phi <- as.matrix(phi)
+  if (is.null(rownames(theta)) || is.null(colnames(theta)) ||
+      is.null(rownames(phi)) || is.null(colnames(phi))) {
+    .log_abort(
+      "Gene-topic Peak projection requires named theta and phi matrices."
+    )
+  }
+  if (!setequal(colnames(theta), rownames(phi))) {
+    .log_abort("Theta topics and phi topics do not match for Peak projection.")
+  }
+  phi <- phi[colnames(theta), , drop = FALSE]
+  gene_terms <- startsWith(colnames(phi), "GENE:")
+  if (!any(gene_terms)) {
+    .log_abort("Gene-topic Peak projection requires GENE terms in phi.")
+  }
+  gene_ids <- sub("^GENE:", "", colnames(phi)[gene_terms])
+  if (anyDuplicated(gene_ids)) {
+    .log_abort("Gene-topic Peak projection found duplicated Gene terms in phi.")
+  }
+  chunk_size <- as.integer(chunk_size)
+  if (!is.finite(chunk_size) || chunk_size < 1L) {
+    .log_abort("Peak projection chunk_size must be a positive integer.")
+  }
+
+  required <- c(
+    "condition_id", "doc_id", "tf", "peak_id", "target_gene",
+    "tf_target_r", "fp_target_r", "tf_peak_r", "fp_score",
+    "tf_expression"
+  )
+  x <- data.table::copy(data.table::as.data.table(edges))
+  .assert_has_cols(x, required, context = "Gene-topic Peak projection edges")
+  x <- x[, ..required]
+  input_rows <- nrow(x)
+  for (column in c("condition_id", "doc_id", "tf", "peak_id", "target_gene")) {
+    data.table::set(x, j = column, value = as.character(x[[column]]))
+  }
+  text_ok <- Reduce(`&`, lapply(
+    c("condition_id", "doc_id", "tf", "peak_id", "target_gene"),
+    function(column) !is.na(x[[column]]) & nzchar(x[[column]])
+  ))
+  numeric_columns <- c(
+    "tf_target_r", "fp_target_r", "tf_peak_r", "fp_score",
+    "tf_expression"
+  )
+  for (column in numeric_columns) {
+    data.table::set(
+      x,
+      j = column,
+      value = suppressWarnings(as.numeric(x[[column]]))
+    )
+  }
+  evidence_ok <- Reduce(`&`, lapply(
+    numeric_columns,
+    function(column) is.finite(x[[column]]) & x[[column]] > 0
+  ))
+  valid_input_rows <- sum(text_ok & evidence_ok)
+  x <- x[text_ok & evidence_ok]
+  if (!nrow(x)) {
+    .log_abort("No valid positive-evidence edges remain for Peak projection.")
+  }
+
+  doc_index <- stats::setNames(seq_len(nrow(theta)), rownames(theta))
+  gene_index <- stats::setNames(seq_along(gene_ids), gene_ids)
+  x[, `:=`(
+    doc_index = unname(doc_index[doc_id]),
+    gene_index = unname(gene_index[target_gene]),
+    target_evidence = tf_target_r * fp_target_r
+  )]
+  matched_rows <- x[
+    is.finite(doc_index) & is.finite(gene_index) &
+      is.finite(target_evidence) & target_evidence > 0
+  ]
+  if (!nrow(matched_rows)) {
+    .log_abort("No Peak-projection edges match both theta documents and phi Genes.")
+  }
+  x <- matched_rows
+  data.table::setorderv(
+    x,
+    c(
+      "condition_id", "doc_id", "tf", "peak_id", "target_gene",
+      "target_evidence", "tf_peak_r", "fp_score", "tf_expression"
+    ),
+    c(rep(1L, 5L), rep(-1L, 4L)),
+    na.last = TRUE
+  )
+  x <- x[!duplicated(
+    x,
+    by = c("condition_id", "doc_id", "tf", "peak_id", "target_gene")
+  )]
+  deduplicated_rows <- nrow(x)
+  x[, group_index := .GRP, by = .(condition_id, doc_id, tf, peak_id)]
+
+  gene_probability <- .m3_opt_row_normalize(t(phi[, gene_terms, drop = FALSE]))
+  group_count <- max(x$group_index)
+  topic_count <- ncol(theta)
+  group_score <- matrix(0, nrow = group_count, ncol = topic_count)
+  starts <- seq.int(1L, nrow(x), by = chunk_size)
+  for (start in starts) {
+    rows <- start:min(start + chunk_size - 1L, nrow(x))
+    probability <- .m3_opt_row_normalize(
+      theta[x$doc_index[rows], , drop = FALSE] *
+        gene_probability[x$gene_index[rows], , drop = FALSE]
+    )
+    contribution <- probability * x$target_evidence[rows]
+    collapsed <- rowsum(
+      contribution,
+      x$group_index[rows],
+      reorder = FALSE
+    )
+    group_rows <- as.integer(rownames(collapsed))
+    group_score[group_rows, ] <-
+      group_score[group_rows, , drop = FALSE] + collapsed
+  }
+  group_target_total <- x[, .(
+    target_evidence_total = sum(target_evidence),
+    target_evidence_mean = mean(target_evidence),
+    n_targets = .N,
+    tf_peak_r = max(tf_peak_r),
+    fp_score = max(fp_score),
+    tf_expression = max(tf_expression)
+  ), by = .(group_index, condition_id, doc_id, tf, peak_id)]
+  data.table::setorder(group_target_total, group_index)
+  group_probability <- group_score / group_target_total$target_evidence_total
+  group_probability <- .m3_opt_row_normalize(group_probability)
+  group_evidence <- with(
+    group_target_total,
+    tf_peak_r * fp_score * tf_expression * target_evidence_mean
+  )
+  group_metrics <- .m3_opt_probability_metrics(group_probability)
+  topic_ids <- .m3_opt_topic_ids(theta, "column")
+  group_assignment <- group_target_total[, .(
+    condition_id,
+    doc_id,
+    tf,
+    peak_id,
+    n_targets,
+    projection_evidence = group_evidence,
+    primary_topic = topic_ids[group_metrics$topic_index],
+    primary_probability = group_metrics$probability,
+    primary_margin = group_metrics$margin
+  )]
+
+  condition_peak <- unique(group_assignment[, .(condition_id, peak_id)])
+  condition_peak[, condition_peak_index := seq_len(.N)]
+  group_assignment[
+    condition_peak,
+    condition_peak_index := i.condition_peak_index,
+    on = c("condition_id", "peak_id")
+  ]
+  weighted_group_probability <- group_probability *
+    group_assignment$projection_evidence
+  condition_peak_score <- rowsum(
+    weighted_group_probability,
+    group_assignment$condition_peak_index,
+    reorder = FALSE
+  )
+  condition_peak_probability <- .m3_opt_row_normalize(condition_peak_score)
+  condition_summary <- group_assignment[, .(
+    n_tf_groups = .N,
+    n_target_links = sum(n_targets),
+    projection_evidence = sum(projection_evidence)
+  ), by = .(condition_peak_index, condition_id, peak_id)]
+  data.table::setorder(condition_summary, condition_peak_index)
+  probability_names <- paste0("Topic", topic_ids)
+  colnames(condition_peak_probability) <- probability_names
+  condition_peak_probabilities <- cbind(
+    condition_summary[, !"condition_peak_index"],
+    data.table::as.data.table(condition_peak_probability)
+  )
+  condition_metrics <- .m3_opt_probability_metrics(condition_peak_probability)
+  condition_peak_probabilities[, `:=`(
+    primary_topic = topic_ids[condition_metrics$topic_index],
+    primary_probability = condition_metrics$probability,
+    primary_margin = condition_metrics$margin
+  )]
+  data.table::setcolorder(
+    condition_peak_probabilities,
+    c(
+      "condition_id", "peak_id", "n_tf_groups", "n_target_links",
+      "projection_evidence", "primary_topic", "primary_probability",
+      "primary_margin", probability_names
+    )
+  )
+
+  audit <- data.table::data.table(
+    input_rows = input_rows,
+    valid_positive_evidence_rows = valid_input_rows,
+    matched_rows = nrow(matched_rows),
+    deduplicated_rows = deduplicated_rows,
+    tf_peak_groups = nrow(group_assignment),
+    condition_peaks = nrow(condition_peak_probabilities),
+    unique_peaks = data.table::uniqueN(condition_peak_probabilities$peak_id)
+  )
+  list(
+    condition_peak_probabilities = condition_peak_probabilities[],
+    tf_peak_assignments = group_assignment[],
+    audit = audit[]
+  )
+}
+
+.m3_aggregate_projected_peak_topics <- function(condition_peak_probabilities) {
+  .assert_pkg("data.table")
+  x <- data.table::copy(data.table::as.data.table(
+    condition_peak_probabilities
+  ))
+  required <- c("condition_id", "peak_id", "projection_evidence")
+  .assert_has_cols(
+    x,
+    required,
+    context = "condition-level projected Peak probabilities"
+  )
+  topic_columns <- grep("^Topic[0-9]+$", names(x), value = TRUE)
+  if (!length(topic_columns)) {
+    .log_abort("Projected Peak probabilities do not contain Topic columns.")
+  }
+  topic_ids <- suppressWarnings(as.integer(sub("^Topic", "", topic_columns)))
+  if (anyNA(topic_ids) || anyDuplicated(topic_ids)) {
+    .log_abort("Projected Peak probability Topic columns are not unique.")
+  }
+  data.table::setorderv(x, c("peak_id", "condition_id"))
+  valid <- !is.na(x$peak_id) & nzchar(as.character(x$peak_id)) &
+    is.finite(x$projection_evidence) & x$projection_evidence > 0
+  x <- x[valid]
+  if (!nrow(x)) {
+    .log_abort("No positive-evidence condition Peaks remain for aggregation.")
+  }
+  probability <- .m3_opt_row_normalize(as.matrix(x[, ..topic_columns]))
+  x[, peak_index := .GRP, by = peak_id]
+  peak_score <- rowsum(
+    probability * x$projection_evidence,
+    x$peak_index,
+    reorder = FALSE
+  )
+  peak_probability <- .m3_opt_row_normalize(peak_score)
+  peak_summary <- x[, .(
+    n_conditions = data.table::uniqueN(condition_id),
+    projection_evidence = sum(projection_evidence)
+  ), by = .(peak_index, peak_id)]
+  data.table::setorder(peak_summary, peak_index)
+  colnames(peak_probability) <- topic_columns
+  out <- cbind(
+    peak_summary[, !"peak_index"],
+    data.table::as.data.table(peak_probability)
+  )
+  metrics <- .m3_opt_probability_metrics(peak_probability)
+  out[, `:=`(
+    primary_topic = topic_ids[metrics$topic_index],
+    primary_probability = metrics$probability,
+    primary_margin = metrics$margin
+  )]
+  data.table::setcolorder(
+    out,
+    c(
+      "peak_id", "n_conditions", "projection_evidence", "primary_topic",
+      "primary_probability", "primary_margin", topic_columns
+    )
+  )
+  out[]
+}
+
 .m3_opt_balanced_sample <- function(condition_id,
                                     max_per_condition = 10000L,
                                     seed = 20260716L) {
