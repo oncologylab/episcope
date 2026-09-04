@@ -1545,6 +1545,39 @@ test_that("TF-target QC uses one evidence-ranked display pool", {
   ]$V1))
 })
 
+test_that("TF-target QC can select the union of top TFs per topic", {
+  eligible <- data.table::data.table(
+    tf = c(
+      rep("TF_A", 4L), rep("TF_B", 3L), rep("TF_C", 2L),
+      rep("TF_D", 4L), rep("TF_E", 3L), rep("TF_F", 2L)
+    ),
+    target_gene = c(
+      paste0("A", 1:4), paste0("B", 1:3), paste0("C", 1:2),
+      paste0("D", 1:4), paste0("E", 1:3), paste0("F", 1:2)
+    ),
+    best_r = 0.8,
+    supporting_peak_count = 1L
+  )
+  assignment <- data.table::data.table(
+    target_gene = eligible$target_gene,
+    assigned_topic = c(rep(1L, 9L), rep(2L, 9L)),
+    assigned = TRUE
+  )
+
+  observed <- .m3_qc_select_topic_tf_target_gene_sets(
+    eligible,
+    assignment,
+    top_n_tfs = 4L,
+    top_n_targets = 10L,
+    include_all_target_topics = TRUE,
+    selection_mode = "top_per_topic",
+    top_tfs_per_topic = 2L
+  )
+
+  expect_setequal(unique(observed$tf), c("TF_A", "TF_B", "TF_D", "TF_E"))
+  expect_equal(data.table::uniqueN(observed$display_rank), 4L)
+})
+
 test_that("TF-target UMAP highlights the three largest target topics", {
   gene_umap <- data.table::data.table(
     target_gene = paste0("G", 1:8),
@@ -1564,11 +1597,10 @@ test_that("TF-target UMAP highlights the three largest target topics", {
   built <- ggplot2::ggplot_build(plot)
 
   expect_equal(nrow(built$data[[1L]]), 8L)
-  expect_equal(nrow(built$data[[2L]]), 1L)
-  expect_equal(nrow(built$data[[3L]]), 7L)
+  expect_equal(nrow(built$data[[2L]]), 7L)
   expect_identical(
     plot$facet$params$labeller(data.frame(tf = factor("TF_A")))$tf,
-    "TF_A\nT1/T2/T3 (7/8)"
+    "TF_A\nT1/T2/T3 (3/2/2)"
   )
 })
 

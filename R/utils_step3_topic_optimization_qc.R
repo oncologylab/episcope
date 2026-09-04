@@ -390,7 +390,6 @@
     primary_probability = group_metrics$probability,
     primary_margin = group_metrics$margin
   )]
-
   condition_peak <- unique(group_assignment[, .(condition_id, peak_id)])
   condition_peak[, condition_peak_index := seq_len(.N)]
   group_assignment[
@@ -3242,7 +3241,13 @@
                                                      tf_panel = NULL,
                                                      top_n_tfs = 30L,
                                                      top_n_targets = 200L,
-                                                     include_all_target_topics = FALSE) {
+                                                     include_all_target_topics = FALSE,
+                                                     selection_mode = c(
+                                                       "coverage",
+                                                       "top_per_topic"
+                                                     ),
+                                                     top_tfs_per_topic = 2L) {
+  selection_mode <- match.arg(selection_mode)
   tf_target_gene_sets <- data.table::as.data.table(
     data.table::copy(tf_target_gene_sets)
   )
@@ -3298,9 +3303,13 @@
   }
   top_n_tfs <- as.integer(top_n_tfs)[1L]
   top_n_targets <- as.integer(top_n_targets)[1L]
+  top_tfs_per_topic <- as.integer(top_tfs_per_topic)[1L]
   if (!is.finite(top_n_tfs) || top_n_tfs < 1L ||
       !is.finite(top_n_targets) || top_n_targets < 1L) {
     .log_abort("`top_n_tfs` and `top_n_targets` must be positive integers.")
+  }
+  if (!is.finite(top_tfs_per_topic) || top_tfs_per_topic < 1L) {
+    .log_abort("`top_tfs_per_topic` must be a positive integer.")
   }
   full_tf_topic <- eligible[, .(
     topic_target_count = data.table::uniqueN(target_gene),
@@ -3365,6 +3374,28 @@
     candidate_tfs <- unique(
       tf_topic[order(panel_rank), .(tf, panel_rank, tf_function)]
     )[seq_len(min(top_n_tfs, .N))]
+  } else if (identical(selection_mode, "top_per_topic")) {
+    ranked_tf_topic <- data.table::copy(full_tf_topic)
+    data.table::setorderv(
+      ranked_tf_topic,
+      c("selected_topic", "topic_target_count", "topic_median_r", "tf"),
+      c(1L, -1L, -1L, 1L),
+      na.last = TRUE
+    )
+    ranked_tf_topic[, topic_tf_rank := seq_len(.N), by = selected_topic]
+    candidate_order <- unique(ranked_tf_topic[
+      topic_tf_rank <= top_tfs_per_topic,
+      tf
+    ])
+    candidate_order <- head(candidate_order, top_n_tfs)
+    candidate_tfs <- full_tf_summary[
+      match(candidate_order, tf)
+    ]
+    candidate_tfs[, `:=`(
+      panel_rank = match(tf, candidate_order),
+      tf_function = NA_character_
+    )]
+    data.table::setorder(candidate_tfs, panel_rank)
   } else {
     tf_topic[, `:=`(
       tf_function = NA_character_,
@@ -3568,33 +3599,22 @@
     topic_rank := i.topic_rank
   ]
   highlighted[, focus_topic := is.finite(topic_rank)]
-  focus_labels <- focus_topics[, .(
+  focus_labels <- focus_topics[order(topic_rank), .(
     focus_targets = sum(topic_targets),
-    focus_topics = paste0(
-      "T",
-      gene_topic_num[order(topic_rank)],
-      collapse = "/"
-    )
+    focus_topics = paste0("T", gene_topic_num, collapse = "/"),
+    focus_counts = paste(scales::comma(topic_targets), collapse = "/")
   ), by = tf]
-  counts <- merge(
-    highlighted[, .(targets = data.table::uniqueN(target_gene)), by = tf],
-    focus_labels,
-    by = "tf",
-    all.x = TRUE,
-    sort = FALSE
-  )
-  if (any(counts$focus_targets < 1L)) {
+  if (any(focus_labels$focus_targets < 1L)) {
     .log_abort("Each TF-target UMAP panel must contain a dominant-topic target.")
   }
   panel_labels <- stats::setNames(
     sprintf(
-      "%s\n%s (%s/%s)",
-      as.character(counts$tf),
-      counts$focus_topics,
-      scales::comma(counts$focus_targets),
-      scales::comma(counts$targets)
+      "%s\n%s (%s)",
+      as.character(focus_labels$tf),
+      focus_labels$focus_topics,
+      focus_labels$focus_counts
     ),
-    as.character(counts$tf)
+    as.character(focus_labels$tf)
   )
   topic_labels <- paste0("T", topic_ids)
   highlighted[, gene_topic := factor(
@@ -3636,13 +3656,6 @@
       size = 0.08
     ) +
     point_layer(
-      highlighted[focus_topic == FALSE],
-      ggplot2::aes(UMAP1, UMAP2),
-      color = "#65717C",
-      alpha = 0.62,
-      size = 0.18
-    ) +
-    point_layer(
       highlighted[focus_topic == TRUE],
       ggplot2::aes(UMAP1, UMAP2, color = gene_topic),
       alpha = 0.95,
@@ -3670,9 +3683,8 @@
       x = "UMAP1",
       y = "UMAP2",
       caption = paste0(
-        "Color: three topics with the most predicted targets in each panel. ",
-        "Dark gray: other predicted targets. ",
-        "Light gray: other genes."
+        "Color: the three topics with the most predicted targets in each ",
+        "panel. Light gray: other genes."
       )
     ) +
     .m3_qc_theme() +
@@ -4904,6 +4916,12 @@
                                                tf_target_panel = NULL,
                                                tf_target_top_n = 200L,
                                                tf_target_top_topics = 3L,
+                                               tf_target_selection = c(
+                                                 "coverage",
+                                                 "top_per_topic"
+                                               ),
+                                               tf_target_top_per_topic = 2L,
+                                               tf_target_page_size = 30L,
                                                retention_peak_counts = NULL,
                                                top_n_tfs = 150L,
                                                seed = 20260716L,
@@ -4989,6 +5007,16 @@
   tf_target_top_topics <- as.integer(tf_target_top_topics)[1L]
   if (!is.finite(tf_target_top_topics) || tf_target_top_topics < 1L) {
     .log_abort("`tf_target_top_topics` must be a positive integer.")
+  }
+  tf_target_selection <- match.arg(tf_target_selection)
+  tf_target_top_per_topic <- as.integer(tf_target_top_per_topic)[1L]
+  tf_target_page_size <- as.integer(tf_target_page_size)[1L]
+  if (!is.finite(tf_target_top_per_topic) || tf_target_top_per_topic < 1L ||
+      !is.finite(tf_target_page_size) || tf_target_page_size < 1L) {
+    .log_abort(paste0(
+      "`tf_target_top_per_topic` and `tf_target_page_size` must be positive ",
+      "integers."
+    ))
   }
   needs_gene_umap <- full_report || any(c(
     "gene_phi_umap",
@@ -5153,24 +5181,55 @@
         tf_target_gene_sets = tf_target_gene_sets,
         gene_term_assignment = gene_term_assignment,
         tf_panel = tf_target_panel,
-        top_n_tfs = 30L,
+        top_n_tfs = if (identical(
+          tf_target_selection,
+          "top_per_topic"
+        )) {
+          length(topic_values) * tf_target_top_per_topic
+        } else {
+          30L
+        },
         top_n_targets = tf_target_top_n,
-        include_all_target_topics = TRUE
+        include_all_target_topics = TRUE,
+        selection_mode = tf_target_selection,
+        top_tfs_per_topic = tf_target_top_per_topic
       )
     }
-    tf_target_umap_pages <- list(.m3_qc_arrange(
-      .m3_qc_tf_target_gene_umap_plot(
-        gene_umap = gene_umap,
-        tf_target_gene_sets = displayed_tf_target_gene_sets,
-        topic_palette = topic_palette,
-        top_n_topics = tf_target_top_topics
-      ),
-      ncol = 1L,
-      title = paste0(
+    display_ranks <- sort(unique(displayed_tf_target_gene_sets$display_rank))
+    display_chunks <- split(
+      display_ranks,
+      ceiling(seq_along(display_ranks) / tf_target_page_size)
+    )
+    tf_target_umap_pages <- lapply(seq_along(display_chunks), function(i) {
+      page_title <- paste0(
         title_prefix,
-        ": Predicted TF targets by dominant topics"
+        if (identical(tf_target_selection, "top_per_topic")) {
+          ": Top two TFs per topic - predicted targets"
+        } else {
+          ": Predicted TF targets by dominant topics"
+        }
       )
-    ))
+      if (length(display_chunks) > 1L) {
+        page_title <- sprintf(
+          "%s (%d/%d)",
+          page_title,
+          i,
+          length(display_chunks)
+        )
+      }
+      .m3_qc_arrange(
+        .m3_qc_tf_target_gene_umap_plot(
+          gene_umap = gene_umap,
+          tf_target_gene_sets = displayed_tf_target_gene_sets[
+            display_rank %in% display_chunks[[i]]
+          ],
+          topic_palette = topic_palette,
+          top_n_topics = tf_target_top_topics
+        ),
+        ncol = 1L,
+        title = page_title
+      )
+    })
   }
 
   term_sidebar <- identical(sidebar_mode, "terms") ||
